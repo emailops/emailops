@@ -84,18 +84,37 @@ export function SkillsView() {
 
   const handleSave = async () => {
     if (!selected) return;
+    // What goes to disk, and what disk held when the editor opened it: the
+    // backend refuses the save if someone edited the file in the meantime.
+    const sent = text;
+    const base = saved[selected] ?? '';
     setError(null);
     setStatus(null);
     try {
-      await saveSkill(selected, text);
-      setSaved((s) => ({ ...s, [selected]: text }));
-      setDrafts(({ [selected]: _, ...rest }) => rest);
+      const name = await saveSkill(selected, sent, base);
+      setSaved(({ [selected]: _, ...rest }) => ({ ...rest, [name]: sent }));
+      // Keep anything typed while the save was in flight.
+      setDrafts(({ [selected]: current, ...rest }) =>
+        current !== undefined && current !== sent ? { ...rest, [name]: current } : rest,
+      );
+      if (name !== selected) {
+        setSelected(name);
+        addLog('success', 'ai', `Saved skill ${selected} as ${name}`);
+      } else {
+        addLog('success', 'ai', `Saved skill ${name}`);
+      }
       setStatus(t('settings:skills.view.saved'));
-      addLog('success', 'ai', `Saved skill ${selected}`);
       await reload();
     } catch (err) {
       fail(`Failed to save skill ${selected}`, err);
     }
+  };
+
+  const handleReloadFromDisk = async () => {
+    if (!selected) return;
+    const name = selected;
+    setDrafts(({ [name]: _, ...rest }) => rest);
+    await open(name);
   };
 
   const handleCreate = async () => {
@@ -217,6 +236,16 @@ export function SkillsView() {
             className="m-3 mb-0 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm"
           >
             {error}
+            {selected && (
+              <button
+                type="button"
+                data-testid="skill-reload"
+                onClick={() => void handleReloadFromDisk()}
+                className="ml-3 px-2 py-0.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+              >
+                {t('settings:skills.view.reloadFromDisk')}
+              </button>
+            )}
           </div>
         )}
         {selected ? (

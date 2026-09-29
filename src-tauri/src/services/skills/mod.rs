@@ -33,8 +33,8 @@ pub const SKILL_FILE: &str = "SKILL.md";
 /// Folder under the data dir that holds one sub-folder per skill.
 pub const SKILLS_DIR: &str = "skills";
 
-/// Preference key gating the whole feature (default on: with no skills on
-/// disk the feature costs nothing).
+/// Preference key gating the whole feature. Experimental, so off unless the
+/// user turns it on in Settings → AI Skills.
 pub const SKILLS_ENABLED_PREF: &str = "skills_enabled";
 
 /// Preference holding the skills the user switched off (JSON array of names).
@@ -119,25 +119,7 @@ struct Frontmatter {
 /// holds it: the frontmatter `name` must match it, as in the Agent Skills
 /// spec, so the name the user types (`/name`) is the one they see on disk.
 pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
-    let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
-    let rest = text
-        .strip_prefix("---\n")
-        .ok_or("SKILL.md must start with a `---` frontmatter block holding `name` and `description`")?;
-    let (yaml, body) = match rest.find("\n---") {
-        Some(end) => {
-            let after = &rest[end + 4..];
-            // The closing fence must be a line of its own.
-            let after = match after.find('\n') {
-                Some(nl) if after[..nl].trim().is_empty() => &after[nl + 1..],
-                None if after.trim().is_empty() => "",
-                _ => return Err("the frontmatter's closing `---` must be on its own line".to_string()),
-            };
-            (&rest[..end], after)
-        }
-        None => return Err("the frontmatter block is never closed with `---`".to_string()),
-    };
-    let fm: Frontmatter = serde_yaml::from_str(yaml).map_err(|e| format!("invalid frontmatter: {e}"))?;
-
+    let (fm, body) = read_frontmatter(text)?;
     let name = fm.name.map(|n| n.trim().to_string()).unwrap_or_default();
     if name.is_empty() {
         return Err("the frontmatter has no `name`".to_string());
@@ -179,6 +161,35 @@ pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
         path: PathBuf::new(),
         files: Vec::new(),
     })
+}
+
+/// The `name` a `SKILL.md` declares, before any other check.
+fn declared_name(text: &str) -> Result<String, String> {
+    let (fm, _) = read_frontmatter(text)?;
+    Ok(fm.name.map(|n| n.trim().to_string()).unwrap_or_default())
+}
+
+/// Split a `SKILL.md` into its parsed frontmatter and the text after it.
+fn read_frontmatter(text: &str) -> Result<(Frontmatter, String), String> {
+    let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
+    let rest = text
+        .strip_prefix("---\n")
+        .ok_or("SKILL.md must start with a `---` frontmatter block holding `name` and `description`")?;
+    let (yaml, body) = match rest.find("\n---") {
+        Some(end) => {
+            let after = &rest[end + 4..];
+            // The closing fence must be a line of its own.
+            let after = match after.find('\n') {
+                Some(nl) if after[..nl].trim().is_empty() => &after[nl + 1..],
+                None if after.trim().is_empty() => "",
+                _ => return Err("the frontmatter's closing `---` must be on its own line".to_string()),
+            };
+            (&rest[..end], after)
+        }
+        None => return Err("the frontmatter block is never closed with `---`".to_string()),
+    };
+    let fm: Frontmatter = serde_yaml::from_str(yaml).map_err(|e| format!("invalid frontmatter: {e}"))?;
+    Ok((fm, body.to_string()))
 }
 
 /// Agent Skills naming: lowercase ASCII letters, digits and single hyphens,
@@ -242,11 +253,26 @@ pub fn plan_invocation(message: &str, names: &[&str]) -> Option<Invocation> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillTurn {
     pub skills: Vec<String>,
-    /// What the turn asks: the text after `/name`, or a request to apply the
-    /// skill when the user typed nothing else.
+    /// What the turn asks: the text after `/name`, or the skills' own
+    /// descriptions when the user typed nothing else.
     pub question: String,
     /// `render_skill_block` of the skill, for the final user message.
     pub block: String,
+}
+
+/// What a message asks once any leading `/name` invocation is taken out —
+/// the question the turn will actually run (see [`plan_skill_turn`]).
+pub fn question_of(message: &str, catalog: &SkillCatalog) -> String {
+    plan_skill_turn(message, catalog)
+        .map(|t| t.question)
+        .unwrap_or_else(|| message.to_string())
+}
+
+/// The switched-off skill a message starts with (`/name …`), so the turn can
+/// say why it was not applied instead of treating it as plain text silently.
+pub fn invoked_disabled_skill<'a>(message: &str, disabled: &'a std::collections::BTreeSet<String>) -> Option<&'a str> {
+    let first = message.split_whitespace().next()?.strip_prefix('/')?;
+    disabled.get(first).map(String::as_str)
 }
 
 /// Plan a turn whose message may start with `/name`. `None` for any message
@@ -257,11 +283,17 @@ pub fn plan_skill_turn(message: &str, catalog: &SkillCatalog) -> Option<SkillTur
     if skills.is_empty() {
         return None;
     }
-    let quoted: Vec<String> = skills.iter().map(|s| format!("\"{}\"", s.name)).collect();
-    let question = match (invocation.rest.is_empty(), quoted.len()) {
-        (false, _) => invocation.rest,
-        (true, 1) => format!("Apply the skill {}.", quoted.join("")),
-        (true, _) => format!("Apply the skills {}.", quoted.join(", ")),
+    // A bare `/name` asks for what the skill is for. Its description says
+    // that in the user's terms, which is what retrieval, routing and the
+    // conversation title need to read.
+    let question = if invocation.rest.is_empty() {
+        skills
+            .iter()
+            .map(|s| s.description.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        invocation.rest
     };
     Some(SkillTurn {
         skills: skills.iter().map(|s| s.name.clone()).collect(),
@@ -364,7 +396,16 @@ fn list_skill_files(dir: &Path) -> Vec<String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            // `DirEntry::file_type` does not follow links. A symlink is never
+            // listed or walked: a skill copied from elsewhere could point one
+            // at the user's own files, and listing it hands them to the model.
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
                 if depth < MAX_FILE_DEPTH {
                     walk(root, &path, depth + 1, out);
                 }
@@ -406,7 +447,7 @@ pub fn render_skill_block(skill: &Skill) -> String {
         )
     };
     format!(
-        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already loaded — do not call load_skill for \"{0}\". Follow them:\n\n{1}{files}\n</skill>",
+        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already here — do not load them again. Follow them:\n\n{1}{files}\n</skill>",
         skill.name, skill.body
     )
 }
@@ -432,7 +473,7 @@ pub fn skills_enabled(db: &Database) -> bool {
 
 /// Names of the skills the user switched off, stored as a JSON array in
 /// [`SKILLS_DISABLED_PREF`]. A skill's folder is never touched to disable it.
-fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
+pub fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
     db.get_preference(SKILLS_DISABLED_PREF)
         .ok()
         .flatten()
@@ -443,6 +484,11 @@ fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
 /// Switch one skill on or off for the chat. It stays in the folder and in the
 /// listing either way.
 pub fn set_skill_enabled(db: &Database, name: &str, enabled: bool) -> crate::models::error::Result<()> {
+    check_name(name)?;
+    // Read-modify-write of one preference: two quick toggles must not both
+    // read the old set and drop one change.
+    static TOGGLE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = TOGGLE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut disabled = disabled_skills(db);
     if enabled {
         disabled.remove(name);
@@ -564,14 +610,21 @@ pub fn ensure_skills_dir(db: &Database) -> crate::models::error::Result<PathBuf>
     Ok(dir)
 }
 
-/// `<skills dir>/<name>`, once `name` is a valid skill name — so a name from
-/// the frontend can never point outside the skills folder.
-fn skill_folder(db: &Database, name: &str) -> crate::models::error::Result<PathBuf> {
+/// A name from the frontend, checked against the skill naming rules before
+/// it is stored or turned into a path.
+fn check_name(name: &str) -> crate::models::error::Result<()> {
     use crate::models::error::AppError;
     if name.is_empty() {
         return Err(AppError::InvalidInput("a skill needs a name".to_string()));
     }
-    validate_name(name).map_err(AppError::InvalidInput)?;
+    validate_name(name).map_err(AppError::InvalidInput)
+}
+
+/// `<skills dir>/<name>`, once `name` is a valid skill name — so a name from
+/// the frontend can never point outside the skills folder.
+fn skill_folder(db: &Database, name: &str) -> crate::models::error::Result<PathBuf> {
+    use crate::models::error::AppError;
+    check_name(name)?;
     let dir = skills_dir(db).ok_or_else(|| AppError::IoError("this install has no data folder".to_string()))?;
     Ok(dir.join(name))
 }
@@ -585,17 +638,60 @@ pub fn read_skill_source(db: &Database, name: &str) -> crate::models::error::Res
     })
 }
 
-/// Replace an existing skill's `SKILL.md`. The text must load as that skill
-/// (same checks as the catalog), so the editor can never save a skill the chat
-/// would then reject; nothing is written otherwise.
-pub fn save_skill_source(db: &Database, name: &str, text: &str) -> crate::models::error::Result<()> {
+/// Replace an existing skill's `SKILL.md` and return the skill's name after
+/// the save.
+///
+/// - The text must load (same checks as the catalog); nothing is written
+///   otherwise.
+/// - `base` is the text the editor opened. If the file no longer matches it,
+///   someone edited it outside the app and the save is refused rather than
+///   silently overwriting their change.
+/// - The file wins on the name: text declaring another `name:` renames the
+///   folder (and moves its on/off switch), unless a skill by that name exists.
+pub fn save_skill_source(db: &Database, name: &str, text: &str, base: &str) -> crate::models::error::Result<String> {
     use crate::models::error::AppError;
-    let file = skill_folder(db, name)?.join(SKILL_FILE);
+    let folder = skill_folder(db, name)?;
+    let file = folder.join(SKILL_FILE);
     if !file.is_file() {
         return Err(AppError::NotFound(format!("skill {name}")));
     }
-    parse_skill_md(text, name).map_err(AppError::InvalidInput)?;
-    write_atomically(&file, text)
+    let on_disk = std::fs::read_to_string(&file)
+        .map_err(|e| AppError::IoError(format!("could not read '{}': {e}", file.display())))?;
+    if on_disk != base {
+        return Err(AppError::InvalidInput(format!(
+            "{name}/SKILL.md changed on disk since you opened it; reload it before saving"
+        )));
+    }
+    let declared = declared_name(text).map_err(AppError::InvalidInput)?;
+    let target = if declared.is_empty() {
+        name.to_string()
+    } else {
+        declared
+    };
+    parse_skill_md(text, &target).map_err(AppError::InvalidInput)?;
+    if target == name {
+        write_atomically(&file, text)?;
+        return Ok(target);
+    }
+    let new_folder = skill_folder(db, &target)?;
+    if new_folder.exists() {
+        return Err(AppError::InvalidInput(format!(
+            "a skill named {target} already exists; pick another name"
+        )));
+    }
+    std::fs::rename(&folder, &new_folder).map_err(|e| {
+        AppError::IoError(format!(
+            "could not rename '{}' to '{}': {e}",
+            folder.display(),
+            new_folder.display()
+        ))
+    })?;
+    write_atomically(&new_folder.join(SKILL_FILE), text)?;
+    if disabled_skills(db).contains(name) {
+        set_skill_enabled(db, name, true)?;
+        set_skill_enabled(db, &target, false)?;
+    }
+    Ok(target)
 }
 
 /// Create `<skills dir>/<name>/SKILL.md` from a template the catalog accepts,

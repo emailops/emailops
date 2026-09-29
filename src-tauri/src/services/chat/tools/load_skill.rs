@@ -1,9 +1,9 @@
 //! `load_skill` — the model's way into the user's skills (`services::skills`).
 //!
 //! Progressive disclosure: the catalog (`- name: description`, one line per
-//! skill) rides in this tool's `name` parameter description, so it lands in the
-//! system prompt's `<tools>` block; a skill's body is returned only when the
-//! model calls the tool. The catalog changes only when the skills folder does,
+//! skill) is the skills index the registry renders after the tool list; the
+//! `name` parameter only carries an `enum` of the names. A skill's body is
+//! returned only when the model calls the tool. The catalog changes only when the skills folder does,
 //! so the system prefix stays byte-identical turn to turn and the KV-prefix
 //! cache keeps working.
 
@@ -48,7 +48,8 @@ impl Tool for LoadSkillTool {
     }
 
     /// The names become an `enum`, so a model with constrained decoding
-    /// cannot invent one. The descriptions ride once, in `prompt_appendix`.
+    /// cannot invent one. The descriptions ride once, in the skills index the
+    /// registry renders after the tool list (`render_system_prompt_section`).
     fn parameters_schema_for(&self, db: &Database) -> Value {
         let catalog = skills::catalog_for(db);
         let (_, names) = skills::render_catalog(&catalog.skills);
@@ -57,13 +58,6 @@ impl Tool for LoadSkillTool {
             schema["properties"]["name"]["enum"] = json!(names);
         }
         schema
-    }
-
-    /// Hermes-style skills index: the catalog plus the instruction to load a
-    /// matching skill before answering. Depends only on the skills folder, so
-    /// the system prefix stays byte-identical turn to turn.
-    fn prompt_appendix(&self, db: &Database) -> Option<String> {
-        skills::render_skills_index(&skills::catalog_for(db).skills)
     }
 
     /// Hidden unless the feature is on AND at least one valid skill exists: an
@@ -163,19 +157,6 @@ mod tests {
         assert!(schema["properties"]["file"].is_object(), "{schema}");
         // Descriptions ride once, in the system-prompt index, not again here.
         assert!(!schema.to_string().contains("Weekly recap by client."), "{schema}");
-    }
-
-    #[test]
-    fn the_prompt_appendix_is_the_skills_index() {
-        let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendor quotes.", "Be brief.")]);
-        let appendix = LoadSkillTool.prompt_appendix(&db).unwrap();
-        assert!(
-            appendix.contains("- vendor-reply: Reply to vendor quotes."),
-            "{appendix}"
-        );
-        assert!(appendix.contains("FIRST"), "{appendix}");
-        // The body stays out of every-turn text — that is the point.
-        assert!(!appendix.contains("Be brief."), "{appendix}");
     }
 
     #[test]

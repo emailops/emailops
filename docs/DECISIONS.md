@@ -1970,3 +1970,25 @@ before and after (same four failures) and the chat smoke tier 38/41 in both.
   says a skill never changes the verdict (2 cases, one of them noise).
 - *Thinking on round 0 of the tool loop*: not needed once the planner selects; not tried.
 - *Keeping skills on by default*: the developer wants them opt-in while experimental.
+
+## 2026-09-29 — Skill turns replay as a one-line note; a saved SKILL.md's name wins
+
+**Decision:** Later turns of a conversation replay a skill turn with a one-line
+`[skill X was applied to this request]` note, not the skill's body. Saving a `SKILL.md`
+whose `name:` differs from its folder renames the skill to that name (folder and on/off
+switch), refusing when the name is taken; a save is also refused when the file changed on
+disk since the editor opened it. A bare `/name` asks the skill's description instead of a
+made-up "Apply the skill" sentence.
+**Context:** A review of the skills feature found that replaying the body cost up to ~2k
+tokens per past skill turn (a large share of the 8192-token floor), kept applying an old
+procedure to unrelated follow-ups and froze a copy the user may have edited since. Pasting
+a skill written elsewhere into a skill created under another name failed to save, and the
+synthetic "Apply the skill" question steered routing, retrieval and titles (a bare
+`/weekly-digest` was answered from the app guides).
+**Rejected:**
+- *Replaying the body byte-identically (the 27/09 design)*: better KV-prefix reuse on the
+  next turn, but the costs above hit every later turn.
+- *A "use the folder's name" fix-up button*: keeps the folder authoritative, but the user
+  just pasted the name they want.
+- *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
+  against 9–14 s turns) — no measured problem, so no cache.

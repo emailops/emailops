@@ -471,14 +471,37 @@ fn last_assistant_content(messages: &[AiMessage]) -> Option<&str> {
         .map(|m| m.content.as_str())
 }
 
-fn persist_prompted_tail(db: &Database, user_message_id: &str, messages: &[(String, String)]) {
+/// The final user message as later turns replay it: a skill's body is
+/// replaced by a one-line note. Replaying the body kept applying an old
+/// procedure to unrelated follow-ups, cost context on every later turn and
+/// froze a copy the user may since have edited. The price is one partial
+/// re-prefill of the history on the next turn.
+fn history_form(content: &str, skill_block: Option<&str>, skills: &[String]) -> String {
+    match skill_block {
+        Some(block) if !block.is_empty() => content.replacen(
+            block,
+            &format!("[skill {} was applied to this request]", skills.join(", ")),
+            1,
+        ),
+        _ => content.to_string(),
+    }
+}
+
+fn persist_prompted_tail(
+    db: &Database,
+    user_message_id: &str,
+    messages: &[(String, String)],
+    skill_block: Option<&str>,
+    skills: &[String],
+) {
     let Some((role, content)) = messages.last() else {
         return;
     };
     if role != "user" {
         return;
     }
-    if let Err(e) = db.update_chat_message_prompt_content(user_message_id, content) {
+    let content = history_form(content, skill_block, skills);
+    if let Err(e) = db.update_chat_message_prompt_content(user_message_id, &content) {
         emit_log("debug", &format!("prompt_content persist skipped: {e}"));
     }
 }
@@ -2984,7 +3007,16 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
             &format!("skill not loaded ({}): {}", err.path.display(), err.message),
         );
     }
-    let turn = crate::services::skills::plan_skill_turn(message, &catalog)?;
+    let Some(turn) = crate::services::skills::plan_skill_turn(message, &catalog) else {
+        let disabled = crate::services::skills::disabled_skills(db);
+        if let Some(name) = crate::services::skills::invoked_disabled_skill(message, &disabled) {
+            emit_log(
+                "warn",
+                &format!("skill {name} is switched off in the Skills view, so /{name} was sent as plain text"),
+            );
+        }
+        return None;
+    };
     emit_log(
         "info",
         &format!("skill(s) applied to this turn: {}", turn.skills.join(", ")),
@@ -4383,7 +4415,14 @@ pub async fn run_chat_turn(
 
     // The final user-message bytes are now fixed — persist them so the next
     // turn's history replay extends this prompt instead of diverging from it.
-    persist_prompted_tail(&db, &user_message_id, &initial_messages);
+    let applied_names: Vec<String> = applied_skills.iter().map(|s| s.name.clone()).collect();
+    persist_prompted_tail(
+        &db,
+        &user_message_id,
+        &initial_messages,
+        skill_block.as_deref(),
+        &applied_names,
+    );
 
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
@@ -4515,6 +4554,7 @@ pub async fn run_chat_turn(
                 map_template: &map_template,
                 condense_template: &condense_template,
                 reduce_template: &reduce_template,
+                skill: skill_block.as_deref(),
                 stop: &guard.flag,
             },
             &on_progress,
@@ -6730,7 +6770,7 @@ mod tests {
             ("system".to_string(), "SYS".to_string()),
             ("user".to_string(), "HEADER\n\nSources …\n\nraw question".to_string()),
         ];
-        persist_prompted_tail(&db, &user.id, &messages);
+        persist_prompted_tail(&db, &user.id, &messages, None, &[]);
 
         let msgs = db.get_chat_messages(&conv.id).expect("msgs");
         assert_eq!(msgs[0].content, "raw question", "display content untouched");
@@ -6756,7 +6796,7 @@ mod tests {
             .expect("user msg");
 
         let messages = vec![("assistant".to_string(), "answer".to_string())];
-        persist_prompted_tail(&db, &user.id, &messages);
+        persist_prompted_tail(&db, &user.id, &messages, None, &[]);
 
         let msgs = db.get_chat_messages(&conv.id).expect("msgs");
         assert_eq!(msgs[0].prompt_content, None);
@@ -6853,6 +6893,22 @@ mod tests {
         let last = &msgs.last().unwrap().1;
         assert!(last.starts_with("<memory>user likes tables</memory>"));
         assert!(last.trim_end().ends_with("anything?"));
+    }
+
+    #[test]
+    fn history_keeps_a_one_line_note_instead_of_the_skill_body() {
+        // Replaying the whole body in every later turn cost context, applied an
+        // old procedure to unrelated follow-ups, and froze a stale copy.
+        let block = "<skill name=\"weekly-report\">\nlong steps\n</skill>";
+        let prompted = format!("Sources: …\n\n{block}\n\nhazme un reporte semanal");
+        let replay = history_form(&prompted, Some(block), &["weekly-report".to_string()]);
+        assert!(!replay.contains("long steps"), "{replay}");
+        assert!(
+            replay.contains("[skill weekly-report was applied to this request]"),
+            "{replay}"
+        );
+        assert!(replay.ends_with("hazme un reporte semanal"), "{replay}");
+        assert_eq!(history_form(&prompted, None, &[]), prompted);
     }
 
     #[test]

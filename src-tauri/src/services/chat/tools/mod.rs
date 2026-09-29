@@ -281,14 +281,6 @@ pub trait Tool: Send + Sync {
         self.description()
     }
 
-    /// Extra guidance rendered into the system prompt after the `Tools:` list,
-    /// for a tool whose use depends on settings-driven content (the skills
-    /// index). Must be stable turn to turn — it sits in the cached system
-    /// prefix. Only rendered while the tool is available. Default: none.
-    fn prompt_appendix(&self, _db: &Database) -> Option<String> {
-        None
-    }
-
     /// Whether this tool should be advertised to the LLM right now. Default:
     /// always available. Override only for tools whose underlying feature
     /// has a Settings toggle. Returns plain `bool` (not `Result<bool>`) so
@@ -409,19 +401,16 @@ impl ToolRegistry {
             out.push('\n');
         }
 
-        // Tool appendices (e.g. the skills index), in tool-name order so the
-        // cached prefix is byte-stable.
-        let mut appendices: Vec<(&'static str, String)> = self
-            .tools
-            .values()
-            .filter(|t| t.is_available(db))
-            .filter_map(|t| t.prompt_appendix(db).map(|a| (t.name(), a)))
-            .collect();
-        appendices.sort_by_key(|(name, _)| *name);
-        for (_, appendix) in appendices {
-            out.push('\n');
-            out.push_str(&appendix);
-            out.push('\n');
+        // The skills index, while `load_skill` is on the menu. It depends only
+        // on the skills folder, so the cached system prefix stays stable.
+        if self.get("load_skill", db).is_some() {
+            if let Some(index) =
+                crate::services::skills::render_skills_index(&crate::services::skills::catalog_for(db).skills)
+            {
+                out.push('\n');
+                out.push_str(&index);
+                out.push('\n');
+            }
         }
 
         // Qwen 3 expects the tool catalogue as a structured `<tools>…</tools>`
@@ -866,36 +855,37 @@ mod tests {
         );
     }
 
-    struct AppendixTool;
-
-    #[async_trait]
-    impl Tool for AppendixTool {
-        fn name(&self) -> &'static str {
-            "with_appendix"
-        }
-        fn description(&self) -> &'static str {
-            "d"
-        }
-        fn parameters_schema(&self) -> serde_json::Value {
-            serde_json::json!({"type": "object", "properties": {}})
-        }
-        fn prompt_appendix(&self, _db: &Database) -> Option<String> {
-            Some("Extra guidance block.".into())
-        }
-        async fn execute(&self, _ctx: &ToolCtx<'_>, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
-            Ok(ToolOutput::text(""))
-        }
-    }
-
     #[test]
-    fn render_system_prompt_section_appends_tool_appendices_before_the_tools_block() {
-        let db = Database::new_for_testing().expect("db");
-        let registry = ToolRegistry::with_tools(vec![Arc::new(AppendixTool)]);
+    fn the_skills_index_follows_the_tool_list_while_load_skill_is_available() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db = Database::new(tmp.path().to_path_buf()).expect("db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
+        // No skills yet: load_skill is hidden and so is the index.
+        assert!(!registry.render_system_prompt_section(&db).contains("Skills ("));
+
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
+            .expect("pref");
+        let dir = tmp
+            .path()
+            .join(crate::services::skills::SKILLS_DIR)
+            .join("vendor-reply");
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(
+            dir.join(crate::services::skills::SKILL_FILE),
+            "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
+        )
+        .expect("write");
         let section = registry.render_system_prompt_section(&db);
-        let appendix = section.find("Extra guidance block.").expect("appendix rendered");
+        let list = section.find("  - load_skill(").expect("tool line");
+        let index = section
+            .find("- vendor-reply: Reply to vendor quotes.")
+            .expect("index rendered");
         let tools_block = section.find("<tools>").expect("tools block");
-        let list = section.find("  - with_appendix(").expect("tool line");
-        assert!(list < appendix && appendix < tools_block, "{section}");
+        assert!(list < index && index < tools_block, "{section}");
+        assert!(
+            !section.contains("Be brief."),
+            "a body leaked into the prefix: {section}"
+        );
     }
 
     #[test]

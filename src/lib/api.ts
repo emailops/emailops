@@ -1015,9 +1015,14 @@ export async function readSkill(name: string): Promise<string> {
   return invoke('read_skill', { name });
 }
 
-/** Save an edited `SKILL.md`. Rejected, with nothing written, if it would not load. */
-export async function saveSkill(name: string, content: string): Promise<void> {
-  return invoke('save_skill', { name, content });
+/**
+ * Save an edited `SKILL.md` and get the skill's name back: the file wins on
+ * the name, so a save that declares another `name:` renames the skill.
+ * Rejected, with nothing written, if the text would not load or the file
+ * changed on disk since `base` (the text the editor opened) was read.
+ */
+export async function saveSkill(name: string, content: string, base: string): Promise<string> {
+  return invoke('save_skill', { name, content, base });
 }
 
 /** Create a new skill from the template. */

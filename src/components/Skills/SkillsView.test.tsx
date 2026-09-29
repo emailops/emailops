@@ -14,13 +14,13 @@ vi.mock('@/stores/logStore', () => ({
 
 const listSkills = vi.fn<() => Promise<SkillsOverview>>();
 const readSkill = vi.fn<(name: string) => Promise<string>>();
-const saveSkill = vi.fn<(name: string, content: string) => Promise<void>>();
+const saveSkill = vi.fn<(name: string, content: string, base: string) => Promise<string>>();
 const createSkill = vi.fn<(name: string) => Promise<void>>();
 const setSkillEnabled = vi.fn<(name: string, enabled: boolean) => Promise<void>>();
 vi.mock('@/lib/api', () => ({
   listSkills: () => listSkills(),
   readSkill: (n: string) => readSkill(n),
-  saveSkill: (n: string, c: string) => saveSkill(n, c),
+  saveSkill: (n: string, c: string, b: string) => saveSkill(n, c, b),
   createSkill: (n: string) => createSkill(n),
   setSkillEnabled: (n: string, e: boolean) => setSkillEnabled(n, e),
 }));
@@ -73,7 +73,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.clearAllMocks();
   readSkill.mockImplementation((n) => Promise.resolve(`---\nname: ${n}\n---\nbody of ${n}`));
-  saveSkill.mockResolvedValue();
+  saveSkill.mockImplementation((n) => Promise.resolve(n));
   createSkill.mockResolvedValue();
   setSkillEnabled.mockResolvedValue();
 });
@@ -109,7 +109,7 @@ describe('SkillsView', () => {
     expect(readSkill).toHaveBeenLastCalledWith('beta');
     await type(q('skill-editor'), 'edited text');
     await click(q('skill-save'));
-    expect(saveSkill).toHaveBeenCalledWith('beta', 'edited text');
+    expect(saveSkill).toHaveBeenCalledWith('beta', 'edited text', '---\nname: beta\n---\nbody of beta');
   });
 
   it('keeps the edit and shows why a save was rejected', async () => {
@@ -132,5 +132,43 @@ describe('SkillsView', () => {
     expect(createSkill).toHaveBeenCalledWith('weekly-digest');
     expect(readSkill).toHaveBeenLastCalledWith('weekly-digest');
     expect((q('skill-editor') as HTMLTextAreaElement).value).toContain('body of weekly-digest');
+  });
+
+  it('keeps what was typed while a save was in flight', async () => {
+    listSkills.mockResolvedValue(overview([{ name: 'alpha' }]));
+    let finish: (name: string) => void = () => {};
+    saveSkill.mockImplementation(() => new Promise<string>((resolve) => (finish = resolve)));
+    await render();
+    await type(q('skill-editor'), 'first');
+    await click(q('skill-save'));
+    await type(q('skill-editor'), 'first and more');
+    await act(async () => finish('alpha'));
+    expect((q('skill-editor') as HTMLTextAreaElement).value).toBe('first and more');
+    expect(container.textContent).toContain('settings:skills.view.unsaved');
+  });
+
+  it('follows the skill when the saved name renames it', async () => {
+    listSkills.mockResolvedValue(overview([{ name: 'weekly-report' }]));
+    await render();
+    await type(q('skill-editor'), '---\nname: weekly-email-summary\n---\nsteps');
+    saveSkill.mockResolvedValue('weekly-email-summary');
+    listSkills.mockResolvedValue(overview([{ name: 'weekly-email-summary' }]));
+    await click(q('skill-save'));
+    expect(q('skill-row-weekly-email-summary')).not.toBeNull();
+    expect(container.textContent).toContain('weekly-email-summary/SKILL.md');
+    expect((q('skill-editor') as HTMLTextAreaElement).value).toContain('name: weekly-email-summary');
+    expect(container.textContent).not.toContain('settings:skills.view.unsaved');
+  });
+
+  it('offers to reload a skill that changed on disk', async () => {
+    listSkills.mockResolvedValue(overview([{ name: 'alpha' }]));
+    saveSkill.mockRejectedValue(new Error('alpha/SKILL.md changed on disk since you opened it'));
+    await render();
+    await type(q('skill-editor'), 'mine');
+    await click(q('skill-save'));
+    readSkill.mockResolvedValue('theirs');
+    await click(q('skill-reload'));
+    expect((q('skill-editor') as HTMLTextAreaElement).value).toBe('theirs');
+    expect(q('skills-error')).toBeNull();
   });
 });

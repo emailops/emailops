@@ -24,11 +24,14 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   names in the `skills_disabled` preference. A disabled skill leaves
   `catalog_for` (so the prompt) but stays in `overview`; its folder is never
   touched.
-- **Editing from the app** — `read_skill_source`, `save_skill_source` (the
-  text must pass `parse_skill_md` for that folder or nothing is written) and
-  `create_skill` (a template the catalog accepts). Every name from the
-  frontend goes through `validate_name` before it becomes a path, and writes
-  go through a temp file + rename.
+- **Editing from the app** — `read_skill_source`, `save_skill_source` and
+  `create_skill` (a template the catalog accepts). A save must load as a
+  skill or nothing is written; it is refused if the file changed on disk
+  since the editor opened it (`base`); and the file wins on the name — text
+  declaring another `name:` renames the folder and moves its switch, unless
+  that name is taken. Every name from the frontend goes through
+  `check_name` before it is stored or becomes a path; writes go through a
+  temp file + rename; toggles are serialized.
 
 ## What it does NOT own
 
@@ -51,7 +54,8 @@ levels:
 1. **Index (every turn).** `render_skills_index` — the `- name: description`
    catalog plus the instruction to call `load_skill` FIRST when a skill matches
    and never to claim a load that did not happen — is rendered into the system
-   prompt through the `load_skill` tool's `prompt_appendix`. It depends only on
+   prompt by the tool registry, after the tool list, while `load_skill` is
+   available (`ToolRegistry::render_system_prompt_section`). It depends only on
    the folder's contents, sorted by name, so it is byte-identical from turn to
    turn and the llama.cpp KV-prefix anchor keeps matching. It is capped at
    `MAX_CATALOG_CHARS`; skills past the cap are still reachable with `/name`.
@@ -60,7 +64,8 @@ levels:
 3. **Reference files (on demand).** `load_skill(name, file)` returns one of the
    `.md` / `.txt` files under the skill folder (depth ≤ 2, at most
    `MAX_SKILL_FILES`). `read_reference` only serves paths it listed at load
-   time, so nothing outside the skill folder is reachable.
+   time, and symlinks are never listed or walked, so nothing outside the skill
+   folder is reachable.
 
 A body enters the prompt only on a turn that uses the skill:
 
@@ -80,9 +85,17 @@ A body enters the prompt only on a turn that uses the skill:
   `load_skill` round. The rest of the
   message becomes the question that retrieval, the planner and the title see.
   Skills stack — `/a /b request` applies both, in order; parsing stops at the
-  first token that is not a skill, so a path in the request survives. The block
-  is persisted with the rest of the prompted tail, so later turns in the
-  conversation replay it byte-identically.
+  first token that is not a skill, so a path in the request survives. A bare
+  `/name` asks the skill's description. A `/name` aimed at a switched-off skill
+  is sent as plain text with a warning in the output panel. In research mode
+  the block rides in the report prompt's tail, and the research estimate is
+  keyed on the question without the invocation (`question_of`).
+- **History.** Later turns replay the turn with a one-line
+  `[skill X was applied to this request]` note instead of the body
+  (`chat::turn::history_form`): replaying the body cost context on every turn,
+  kept applying an old procedure to unrelated follow-ups and froze a copy the
+  user may since have edited. The price is a partial re-prefill on the next
+  turn.
 
 With no skills (or the feature off) `load_skill` is hidden by `is_available`,
 so an install that never uses skills pays nothing.

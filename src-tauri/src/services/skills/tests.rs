@@ -316,7 +316,9 @@ fn a_bare_invocation_asks_to_apply_the_skill() {
     // question; an empty one would give them nothing to work with.
     let catalog = catalog_of(vec![skill("weekly-summary", "Weekly recap.")]);
     let turn = plan_skill_turn("/weekly-summary", &catalog).unwrap();
-    assert_eq!(turn.question, "Apply the skill \"weekly-summary\".");
+    // The description says what the user wants done; a made-up "Apply the
+    // skill" sentence sent retrieval, routing and the title the wrong way.
+    assert_eq!(turn.question, "Weekly recap.");
 }
 
 #[test]
@@ -324,7 +326,7 @@ fn a_stacked_turn_carries_every_block_in_order() {
     let catalog = catalog_of(vec![skill("a-skill", "A."), skill("b-skill", "B.")]);
     let turn = plan_skill_turn("/b-skill /a-skill", &catalog).unwrap();
     assert_eq!(turn.skills, vec!["b-skill".to_string(), "a-skill".to_string()]);
-    assert_eq!(turn.question, "Apply the skills \"b-skill\", \"a-skill\".");
+    assert_eq!(turn.question, "B. A.");
     let b = turn.block.find("<skill name=\"b-skill\">").unwrap();
     let a = turn.block.find("<skill name=\"a-skill\">").unwrap();
     assert!(b < a, "{}", turn.block);
@@ -432,10 +434,18 @@ fn the_skill_block_says_it_is_already_loaded() {
     // A `/name` turn carries the block in the user message; without this the
     // index's "call load_skill FIRST" made the model load it a second time.
     let block = render_skill_block(&skill("vendor-reply", "d"));
-    assert!(
-        block.contains("already loaded — do not call load_skill for \"vendor-reply\""),
-        "{block}"
-    );
+    assert!(block.contains("already here — do not load them again"), "{block}");
+}
+
+#[test]
+fn the_already_loaded_note_still_lets_the_model_read_reference_files() {
+    // Forbidding load_skill outright made small models skip the reference
+    // files the body relies on.
+    let mut s = skill("vendor-support", "d");
+    s.files = vec!["references/escalation.md".into()];
+    let block = render_skill_block(&s);
+    assert!(!block.contains("do not call load_skill"), "{block}");
+    assert!(block.contains("load_skill(name=\"vendor-support\", file="), "{block}");
 }
 
 #[test]
@@ -525,7 +535,7 @@ fn a_name_that_is_not_a_skill_name_never_reaches_the_disk() {
     for bad in ["", "../escape", "Upper", "a/b", "-x"] {
         assert!(create_skill(&db, bad).is_err(), "{bad:?}");
         assert!(read_skill_source(&db, bad).is_err(), "{bad:?}");
-        assert!(save_skill_source(&db, bad, "x").is_err(), "{bad:?}");
+        assert!(save_skill_source(&db, bad, "x", "x").is_err(), "{bad:?}");
     }
     assert!(!tmp.path().join("escape").exists());
 }
@@ -537,7 +547,7 @@ fn save_validates_before_writing() {
     create_skill(&db, "alpha").unwrap();
     let before = read_skill_source(&db, "alpha").unwrap();
 
-    let err = save_skill_source(&db, "alpha", "no frontmatter")
+    let err = save_skill_source(&db, "alpha", "no frontmatter", &before)
         .unwrap_err()
         .to_string();
     assert!(err.contains("frontmatter"), "{err}");
@@ -548,7 +558,7 @@ fn save_validates_before_writing() {
     );
 
     let good = skill_md("alpha", "Updated.", "New steps.");
-    save_skill_source(&db, "alpha", &good).unwrap();
+    assert_eq!(save_skill_source(&db, "alpha", &good, &before).unwrap(), "alpha");
     assert_eq!(read_skill_source(&db, "alpha").unwrap(), good);
 }
 
@@ -556,9 +566,130 @@ fn save_validates_before_writing() {
 fn save_only_edits_an_existing_skill() {
     let tmp = tempfile::tempdir().unwrap();
     let db = db_in(&tmp);
-    let err = save_skill_source(&db, "ghost", &skill_md("ghost", "D.", "B."))
+    let err = save_skill_source(&db, "ghost", &skill_md("ghost", "D.", "B."), "")
         .unwrap_err()
         .to_string();
     assert!(err.contains("ghost"), "{err}");
     assert!(read_skill_source(&db, "ghost").is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn reference_files_never_follow_a_symlink_out_of_the_skill() {
+    // A skill copied from elsewhere may ship links into the user's files;
+    // listing them would hand those files to the model.
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("private.md"), "secret").unwrap();
+
+    let dir = tmp.path().join(SKILLS_DIR);
+    write_skill(&dir, "alpha", &skill_md("alpha", "First.", "Body."));
+    let refs = dir.join("alpha/references");
+    fs::create_dir_all(&refs).unwrap();
+    fs::write(refs.join("real.md"), "fine").unwrap();
+    std::os::unix::fs::symlink(outside.join("private.md"), refs.join("linked.md")).unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("alpha/linked-dir")).unwrap();
+
+    let catalog = load_catalog(&dir);
+    let skill = catalog.get("alpha").unwrap();
+    assert_eq!(skill.files, vec!["references/real.md".to_string()]);
+    assert!(read_reference(skill, "references/linked.md").is_err());
+    assert!(read_reference(skill, "linked-dir/private.md").is_err());
+}
+
+#[test]
+fn a_toggle_only_accepts_a_skill_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    for bad in ["", "../x", "Upper", "a b"] {
+        assert!(set_skill_enabled(&db, bad, false).is_err(), "{bad:?}");
+    }
+    assert_eq!(db.get_preference(SKILLS_DISABLED_PREF).unwrap(), None);
+}
+
+#[test]
+fn concurrent_toggles_keep_every_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(db_in(&tmp));
+    let handles: Vec<_> = (0..16)
+        .map(|i| {
+            let db = db.clone();
+            std::thread::spawn(move || set_skill_enabled(&db, &format!("s{i:02}"), false).unwrap())
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let stored: Vec<String> = serde_json::from_str(&db.get_preference(SKILLS_DISABLED_PREF).unwrap().unwrap()).unwrap();
+    assert_eq!(stored.len(), 16, "{stored:?}");
+}
+
+#[test]
+fn save_refuses_to_overwrite_an_edit_made_outside_the_app() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "alpha").unwrap();
+    let opened = read_skill_source(&db, "alpha").unwrap();
+    let theirs = skill_md("alpha", "Edited in another editor.", "Their steps.");
+    fs::write(tmp.path().join(SKILLS_DIR).join("alpha").join(SKILL_FILE), &theirs).unwrap();
+
+    let err = save_skill_source(&db, "alpha", &skill_md("alpha", "Mine.", "My steps."), &opened)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("changed on disk"), "{err}");
+    assert_eq!(read_skill_source(&db, "alpha").unwrap(), theirs);
+}
+
+#[test]
+fn saving_a_different_name_renames_the_skill_and_keeps_its_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "weekly-report").unwrap();
+    set_skill_enabled(&db, "weekly-report", false).unwrap();
+    let base = read_skill_source(&db, "weekly-report").unwrap();
+    let pasted = skill_md("weekly-email-summary", "Weekly recap.", "Steps.");
+
+    assert_eq!(
+        save_skill_source(&db, "weekly-report", &pasted, &base).unwrap(),
+        "weekly-email-summary"
+    );
+    assert_eq!(read_skill_source(&db, "weekly-email-summary").unwrap(), pasted);
+    assert!(!tmp.path().join(SKILLS_DIR).join("weekly-report").exists());
+    let listed: Vec<(String, bool)> = overview(&db).skills.into_iter().map(|s| (s.name, s.enabled)).collect();
+    assert_eq!(listed, vec![("weekly-email-summary".to_string(), false)]);
+}
+
+#[test]
+fn a_rename_onto_an_existing_skill_changes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "alpha").unwrap();
+    create_skill(&db, "beta").unwrap();
+    let base = read_skill_source(&db, "alpha").unwrap();
+    let err = save_skill_source(&db, "alpha", &skill_md("beta", "D.", "B."), &base)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("beta") && err.contains("already exists"), "{err}");
+    assert_eq!(read_skill_source(&db, "alpha").unwrap(), base);
+}
+
+#[test]
+fn an_invocation_of_a_switched_off_skill_is_recognised() {
+    let disabled: std::collections::BTreeSet<String> = ["weekly-summary".to_string()].into();
+    assert_eq!(
+        invoked_disabled_skill("/weekly-summary last week", &disabled),
+        Some("weekly-summary")
+    );
+    assert_eq!(invoked_disabled_skill("/other thing", &disabled), None);
+    assert_eq!(invoked_disabled_skill("weekly-summary", &disabled), None);
+}
+
+#[test]
+fn the_question_of_a_skill_turn_drops_the_invocation() {
+    // Research estimates are keyed on the question the turn will ask.
+    let catalog = catalog_of(vec![skill("weekly-summary", "Weekly recap.")]);
+    assert_eq!(question_of("/weekly-summary acme", &catalog), "acme");
+    assert_eq!(question_of("/weekly-summary", &catalog), "Weekly recap.");
+    assert_eq!(question_of("plain question", &catalog), "plain question");
 }

@@ -31,10 +31,17 @@ pub async fn read_skill(state: State<'_, AppState>, name: String) -> Result<Stri
     skills::read_skill_source(&state.db, &name)
 }
 
-/// Save an edited `SKILL.md`; rejected (nothing written) if it would not load.
+/// Save an edited `SKILL.md` and return the skill's name afterwards (the file
+/// wins on the name, so a save can rename it). Rejected, with nothing written,
+/// if the text would not load or the file changed on disk since `base` was read.
 #[tauri::command]
-pub async fn save_skill(state: State<'_, AppState>, name: String, content: String) -> Result<(), AppError> {
-    skills::save_skill_source(&state.db, &name, &content)
+pub async fn save_skill(
+    state: State<'_, AppState>,
+    name: String,
+    content: String,
+    base: String,
+) -> Result<String, AppError> {
+    skills::save_skill_source(&state.db, &name, &content, &base)
 }
 
 /// Create a new skill from the template.

@@ -522,7 +522,8 @@
       "saved": "Saved",
       "unsaved": "Unsaved changes",
       "pick": "Pick a skill to edit it.",
-      "hint": "SKILL.md: a frontmatter block with name (the folder name) and description, then the instructions. Changes apply to the next chat message."
+      "hint": "SKILL.md: a frontmatter block with name (the folder name) and description, then the instructions. Changes apply to the next chat message.",
+      "reloadFromDisk": "Reload from disk"
     }
   }
 }

@@ -522,7 +522,8 @@
       "saved": "Gespeichert",
       "unsaved": "Ungespeicherte Änderungen",
       "pick": "Wähle einen Skill zum Bearbeiten.",
-      "hint": "SKILL.md: ein Frontmatter-Block mit name (dem Ordnernamen) und description, danach die Anweisungen. Änderungen gelten ab der nächsten Chat-Nachricht."
+      "hint": "SKILL.md: ein Frontmatter-Block mit name (dem Ordnernamen) und description, danach die Anweisungen. Änderungen gelten ab der nächsten Chat-Nachricht.",
+      "reloadFromDisk": "Von der Festplatte neu laden"
     }
   }
 }

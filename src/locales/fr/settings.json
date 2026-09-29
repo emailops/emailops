@@ -522,7 +522,8 @@
       "saved": "Enregistré",
       "unsaved": "Modifications non enregistrées",
       "pick": "Choisissez un skill pour le modifier.",
-      "hint": "SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions. Les modifications s'appliquent au prochain message du chat."
+      "hint": "SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions. Les modifications s'appliquent au prochain message du chat.",
+      "reloadFromDisk": "Recharger depuis le disque"
     }
   }
 }
