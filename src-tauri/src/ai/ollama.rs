@@ -1267,37 +1267,47 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
     }
     let query = rest_tokens.join(" ");
     let query = query.as_str();
-    let query_lower = query.to_lowercase();
+    // Operators and phrases are matched per token, never by byte offsets
+    // into a lowercased copy: lowercasing can change a character's byte
+    // length (`İ` → `i̇`), so such offsets do not index the original.
+    let tokens = split_query_tokens(query);
+    let words: Vec<String> = tokens.iter().map(|t| normalize_token(t)).collect();
+    let has_word = |w: &str| words.iter().any(|word| word == w);
+    let has_seq = |seq: &[&str]| {
+        words
+            .windows(seq.len())
+            .any(|win| win.iter().zip(seq).all(|(a, b)| a == b))
+    };
 
-    if let Some(value) = extract_prefixed_value(query, &query_lower, &["from:", "de:"]) {
+    if let Some(value) = operator_value(&tokens, &["from:", "de:"]) {
         parsed.from_filter = Some(value);
         has_filter = true;
     }
 
-    if let Some(value) = extract_prefixed_value(query, &query_lower, &["to:", "para:"]) {
+    if let Some(value) = operator_value(&tokens, &["to:", "para:"]) {
         parsed.to_filter = Some(value);
         has_filter = true;
     }
 
-    if let Some(value) = extract_prefixed_value(query, &query_lower, &["subject:", "asunto:"]) {
+    if let Some(value) = operator_value(&tokens, &["subject:", "asunto:"]) {
         parsed.subject_filter = Some(value);
         has_filter = true;
     }
 
     if parsed.from_filter.is_none() {
-        if let Some(value) = extract_phrase_filter(
-            query,
-            &query_lower,
+        if let Some(value) = phrase_filter(
+            &tokens,
+            &words,
             &[
-                "emails from ",
-                "messages from ",
-                "mails from ",
-                "correos de ",
-                "mails de ",
-                "emails de",
-                "mensajes de ",
-                "sin leer de ",
-                "unread from ",
+                &["emails", "from"],
+                &["messages", "from"],
+                &["mails", "from"],
+                &["correos", "de"],
+                &["mails", "de"],
+                &["emails", "de"],
+                &["mensajes", "de"],
+                &["sin", "leer", "de"],
+                &["unread", "from"],
             ],
         ) {
             parsed.from_filter = Some(value);
@@ -1305,56 +1315,53 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         }
     }
 
-    if query_lower.contains("is:unread")
-        || query_lower.contains("unread")
-        || query_lower.contains("sin leer")
-        || query_lower.contains("no leidos")
-        || query_lower.contains("no leídos")
+    if has_word("is:unread")
+        || has_word("unread")
+        || has_seq(&["sin", "leer"])
+        || has_seq(&["no", "leidos"])
+        || has_seq(&["no", "leídos"])
     {
         parsed.is_unread = Some(true);
         has_filter = true;
     }
 
-    if let Some(value) = extract_prefixed_value(query, &query_lower, &["after:", "despues:", "después:"]) {
+    if let Some(value) = operator_value(&tokens, &["after:", "despues:", "después:"]) {
         if let Some(ts) = parse_date_to_timestamp(&value) {
             parsed.after_timestamp = Some(ts);
             has_filter = true;
         }
     }
 
-    if let Some(value) = extract_prefixed_value(query, &query_lower, &["before:", "antes:"]) {
+    if let Some(value) = operator_value(&tokens, &["before:", "antes:"]) {
         if let Some(ts) = parse_date_to_timestamp(&value) {
             parsed.before_timestamp = Some(end_of_day_timestamp(ts));
             has_filter = true;
         }
     }
 
-    if query_lower.contains("today") || query_lower.contains("hoy") {
+    if has_word("today") || has_word("hoy") {
         parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_today_timestamp);
         has_filter = true;
     }
 
-    if query_lower.contains("this week") || query_lower.contains("esta semana") {
+    if has_seq(&["this", "week"]) || has_seq(&["esta", "semana"]) {
         parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_week_timestamp);
         has_filter = true;
     }
 
-    if query_lower.contains("this month") || query_lower.contains("este mes") {
+    if has_seq(&["this", "month"]) || has_seq(&["este", "mes"]) {
         parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_month_timestamp);
         has_filter = true;
     }
 
     // Extract tag: filters (e.g., tag:billing, tag:urgent)
-    {
-        let mut rest = query_lower.as_str();
-        while let Some(idx) = rest.find("tag:") {
-            let after = &rest[idx + 4..];
-            let value = after.split_whitespace().next().unwrap_or(after).trim();
+    for token in &tokens {
+        if let Some(value) = strip_prefix_ci(token, "tag:") {
+            let value = value.trim_matches('"').trim();
             if !value.is_empty() {
-                parsed.tag_filters.push(value.to_string());
+                parsed.tag_filters.push(value.to_lowercase());
                 has_filter = true;
             }
-            rest = &rest[idx + 4..];
         }
     }
 
@@ -1375,11 +1382,60 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
     None
 }
 
-fn extract_prefixed_value(query: &str, query_lower: &str, prefixes: &[&str]) -> Option<String> {
+/// Split on whitespace, keeping a double-quoted run (`from:"Ann Lee"`) in
+/// one token. Quotes stay in the token; value extraction strips them.
+fn split_query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for c in query.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+            current.push(c);
+        } else if c.is_whitespace() && !in_quotes {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// Case-insensitive `strip_prefix` for a lowercase `prefix`, returning the
+/// remainder of the original token (so no byte offset is ever reused across
+/// strings of different lengths).
+fn strip_prefix_ci<'a>(token: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut chars = token.char_indices();
+    for p in prefix.chars() {
+        let (_, c) = chars.next()?;
+        if !c.to_lowercase().eq(std::iter::once(p)) {
+            return None;
+        }
+    }
+    let rest_start = chars.next().map_or(token.len(), |(i, _)| i);
+    Some(&token[rest_start..])
+}
+
+/// Value of the first `prefix:value` operator found (prefixes in priority
+/// order). Operators only count at the start of a token, so `photo:x` is not
+/// `to:x`. A bare `from:` takes the next token as its value.
+fn operator_value(tokens: &[String], prefixes: &[&str]) -> Option<String> {
     for prefix in prefixes {
-        if let Some(idx) = query_lower.find(prefix) {
-            let rest = &query[idx + prefix.len()..].trim_start();
-            let value = rest.split_whitespace().next().unwrap_or(rest).trim();
+        for (i, token) in tokens.iter().enumerate() {
+            let Some(rest) = strip_prefix_ci(token, prefix) else {
+                continue;
+            };
+            let raw = if rest.is_empty() {
+                tokens.get(i + 1).map(String::as_str).unwrap_or("")
+            } else {
+                rest
+            };
+            let value = raw.trim_matches('"').trim();
             if !value.is_empty() {
                 return Some(value.to_string());
             }
@@ -1388,34 +1444,35 @@ fn extract_prefixed_value(query: &str, query_lower: &str, prefixes: &[&str]) -> 
     None
 }
 
-fn extract_phrase_filter(query: &str, query_lower: &str, patterns: &[&str]) -> Option<String> {
-    const SEPARATORS: [&str; 11] = [
-        " about ",
-        " sobre ",
-        " after ",
-        " despues ",
-        " después ",
-        " before ",
-        " antes ",
-        " this week",
-        " this month",
-        " esta semana",
-        " este mes",
-    ];
+/// Value following a natural-language phrase (`emails from <value>`), up to a
+/// separator word (`about`, `after`, `this week`…) or an operator token.
+fn phrase_filter(tokens: &[String], words: &[String], patterns: &[&[&str]]) -> Option<String> {
+    const STOP_WORDS: [&str; 7] = ["about", "sobre", "after", "despues", "después", "before", "antes"];
+    const PERIOD_LEADS: [&str; 3] = ["this", "esta", "este"];
+    const PERIODS: [&str; 4] = ["week", "month", "semana", "mes"];
 
     for pattern in patterns {
-        if let Some(idx) = query_lower.find(pattern) {
-            let start = idx + pattern.len();
-            let rest_lower = &query_lower[start..];
-            let end = SEPARATORS
-                .iter()
-                .filter_map(|separator| rest_lower.find(separator))
-                .min()
-                .unwrap_or(rest_lower.len());
-            let value = query[start..start + end].trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
+        let Some(at) = words
+            .windows(pattern.len())
+            .position(|win| win.iter().zip(pattern.iter()).all(|(a, b)| a == b))
+        else {
+            continue;
+        };
+        let start = at + pattern.len();
+        let mut end = start;
+        while end < tokens.len() {
+            let word = words[end].as_str();
+            let is_period =
+                PERIOD_LEADS.contains(&word) && words.get(end + 1).is_some_and(|next| PERIODS.contains(&next.as_str()));
+            if STOP_WORDS.contains(&word) || is_period || tokens[end].contains(':') {
+                break;
             }
+            end += 1;
+        }
+        let value = tokens[start..end].join(" ");
+        let value = value.trim_matches('"').trim();
+        if !value.is_empty() {
+            return Some(value.to_string());
         }
     }
     None
@@ -1746,6 +1803,55 @@ mod pattern_parser_tests {
     fn a_word_containing_id_is_not_an_id_operator() {
         let parsed = parse_search_query_patterns("paid:invoice").unwrap_or_default();
         assert!(parsed.id_filters.is_empty());
+    }
+
+    /// `İ` lowercases to three bytes, so offsets taken from the lowercased
+    /// query used to slice the original mid-character (panic) or off by one.
+    #[test]
+    fn a_char_whose_lowercase_is_longer_does_not_shift_operator_values() {
+        let parsed = parse_search_query_patterns("İ from:ébé@example.com").unwrap();
+        assert_eq!(parsed.from_filter.as_deref(), Some("ébé@example.com"));
+    }
+
+    #[test]
+    fn a_char_whose_lowercase_is_longer_does_not_shift_phrase_values() {
+        let parsed = parse_search_query_patterns("emails from İİé about budget").unwrap();
+        assert_eq!(parsed.from_filter.as_deref(), Some("İİé"));
+        assert_eq!(parsed.keywords, vec!["budget"]);
+    }
+
+    #[test]
+    fn operators_only_match_at_the_start_of_a_word() {
+        assert!(parse_search_query_patterns("photo:beach").is_none(), "photo:beach");
+        assert!(
+            parse_search_query_patterns("hashtag:summer").is_none(),
+            "hashtag:summer"
+        );
+    }
+
+    #[test]
+    fn date_and_unread_terms_match_whole_words_only() {
+        assert!(parse_search_query_patterns("Hoyos invoice").is_none(), "Hoyos invoice");
+        assert!(
+            parse_search_query_patterns("todayshow tickets").is_none(),
+            "todayshow tickets"
+        );
+        assert!(
+            parse_search_query_patterns("unreadable scan").is_none(),
+            "unreadable scan"
+        );
+
+        let parsed = parse_search_query_patterns("invoices today").unwrap();
+        assert!(parsed.after_timestamp.is_some());
+        let parsed = parse_search_query_patterns("correos sin leer").unwrap();
+        assert_eq!(parsed.is_unread, Some(true));
+    }
+
+    #[test]
+    fn a_quoted_operator_value_keeps_its_words_and_drops_the_quotes() {
+        let parsed = parse_search_query_patterns(r#"from:"Ann Lee" invoice"#).unwrap();
+        assert_eq!(parsed.from_filter.as_deref(), Some("Ann Lee"));
+        assert_eq!(parsed.keywords, vec!["invoice"]);
     }
 }
 
