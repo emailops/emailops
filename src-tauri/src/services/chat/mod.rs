@@ -560,6 +560,7 @@ pub(crate) fn or_fallback_search(
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
     limit: i32,
     unread_only: bool,
+    received_only: bool,
     // "Emails with X" terms: broadening the keywords never drops the person.
     participants: Option<&[String]>,
 ) -> Option<Vec<Email>> {
@@ -583,6 +584,7 @@ pub(crate) fn or_fallback_search(
             limit,
             false,
             unread_only,
+            received_only,
             participants,
         ) {
             for e in rs {

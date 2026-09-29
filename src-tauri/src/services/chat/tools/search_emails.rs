@@ -489,6 +489,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             offset + limit,
             ascending,
             unread_only,
+            received_only,
             participants_arg,
         );
 
@@ -520,14 +521,6 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             map
         };
 
-        let primary = primary.map(|emails| {
-            if received_only {
-                emails.into_iter().filter(|e| !e.is_sent).collect()
-            } else {
-                emails
-            }
-        });
-
         // The classifier stores ONE intent per email and older mail carries
         // none, so a tag is a preference, not a gate: when the tagged rows do
         // not fill the page, the same search without the tag tops it up. The
@@ -550,6 +543,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     (offset + limit) * 2,
                     ascending,
                     unread_only,
+                    received_only,
                     participants_arg,
                 )
                 .unwrap_or_default();
@@ -558,9 +552,6 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                 for email in extra {
                     if rows.len() >= wanted {
                         break;
-                    }
-                    if received_only && email.is_sent {
-                        continue;
                     }
                     if !seen.contains(&email.id) {
                         rows.push(email);
@@ -605,6 +596,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         COUNT_PROBE_LIMIT,
                         ascending,
                         unread_only,
+                        received_only,
                         participants_arg,
                     )
                     .map(|all| all.len() as i32)
@@ -656,6 +648,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         limit,
                         ascending,
                         unread_only,
+                        received_only,
                         participants_arg,
                     );
                     match &retry {
@@ -691,6 +684,7 @@ showing recent matches without since/until instead)\n",
                     tag_filter_arg,
                     limit,
                     unread_only,
+                    received_only,
                     participants_arg,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");

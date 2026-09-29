@@ -389,6 +389,7 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[
         GATHER_LIMIT,
         false,
         plan.unread == Some(true),
+        false,
         (!participants.is_empty()).then_some(participants.as_slice()),
     );
     let matches = match matches {

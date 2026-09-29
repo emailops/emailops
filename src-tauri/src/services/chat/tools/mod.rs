@@ -2482,6 +2482,57 @@ mod tests {
         );
     }
 
+    /// `received_only` used to drop sent rows AFTER the SQL limit: a page
+    /// crowded by the user's own replies came back short (or empty) and the
+    /// total probe counted the sent mail, so the "showing N of M" note lied.
+    #[test]
+    fn search_emails_received_only_fills_the_page_and_counts_received_mail() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-04-17").unwrap();
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("in{i}"),
+                "acc",
+                &format!("ti{i}"),
+                "Alice",
+                "alice@example.com",
+                "Hello",
+                "hi",
+                t + i as i64,
+            );
+        }
+        // Newer than every received email, so they fill a newest-first page.
+        for i in 0..3 {
+            seed_email(
+                &db,
+                &format!("out{i}"),
+                "acc",
+                &format!("to{i}"),
+                "Me",
+                "me@example.com",
+                "Re: Hello",
+                "reply",
+                t + 100 + i as i64,
+            );
+            db.connection()
+                .execute("UPDATE emails SET is_sent = 1 WHERE id = ?1", [format!("out{i}")])
+                .unwrap();
+        }
+        let args =
+            serde_json::json!({ "since": "2026-04-17", "until": "2026-04-18", "limit": 2, "received_only": true });
+        let out = execute_tool(&db, "acc", &[], "search_emails", &arg(args));
+        assert!(
+            out.contains("id=in2") && out.contains("id=in1"),
+            "a full page of received mail; out:\n{out}"
+        );
+        assert!(!out.contains("id=out"), "no sent mail; out:\n{out}");
+        assert!(
+            out.contains("of 3 matching"),
+            "the total counts received mail only; out:\n{out}"
+        );
+    }
+
     /// The "emails I received today" shortcut listed a reply the user had
     /// just SENT among the received mail, and the model summarised it as if
     /// it had arrived. The shortcut asks for received mail only.
