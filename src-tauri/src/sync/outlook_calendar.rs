@@ -35,7 +35,7 @@ pub struct OutlookCalendarClient {
 impl OutlookCalendarClient {
     pub fn new(access_token: String, refresh_token: Option<String>, account_id: Option<String>) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT),
             access_token: std::sync::Mutex::new(access_token),
             refresh_token,
             account_id,

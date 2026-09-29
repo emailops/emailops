@@ -165,7 +165,7 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
     let code = wait_for_callback(listener, csrf_token.secret())?;
 
     // Exchange code for tokens
-    let http_client = reqwest::Client::new();
+    let http_client = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT);
     let token_result = client
         .exchange_code(AuthorizationCode::new(code))
         .set_pkce_verifier(pkce_verifier)
@@ -236,7 +236,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
 
     let client = oauth_client(config, None)?;
 
-    let http_client = reqwest::Client::new();
+    let http_client = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT);
     let token_result = client
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
         .request_async(&http_client)
@@ -261,7 +261,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
 /// refresh token ends the whole grant, so the app loses access immediately
 /// instead of when the user finds it in their Google Account settings.
 pub async fn revoke_token(revoke_url: &str, token: &str) -> Result<()> {
-    let response = reqwest::Client::new()
+    let response = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT)
         .post(revoke_url)
         .form(&[("token", token)])
         .send()

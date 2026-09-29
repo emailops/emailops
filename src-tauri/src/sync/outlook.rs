@@ -209,7 +209,7 @@ impl OutlookClient {
         account_id: Option<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::MAIL_REQUEST_TIMEOUT),
             access_token: std::sync::Mutex::new(access_token),
             refresh_token,
             app,
