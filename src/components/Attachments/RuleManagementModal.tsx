@@ -520,7 +520,8 @@ export function RuleManagementModal({
 
           {/* Existing rules */}
           {rules.length > 0 && (
-            <div className="space-y-2">
+            <section className="space-y-2">
+              <h3 className="text-sm font-medium text-gray-900">{t('attachments:rules.existingTitle')}</h3>
               {rules.map((rule) => (
                 <div
                   key={rule.id}
@@ -675,7 +676,7 @@ export function RuleManagementModal({
                   </div>
                 </div>
               ))}
-            </div>
+            </section>
           )}
         </div>
 

@@ -144,6 +144,20 @@ describe('RuleManagementModal suggestions', () => {
     expect(container.textContent).not.toContain('attachments:suggestions.title');
   });
 
+  it('heads the existing rules with their own title, below the suggestions', () => {
+    render([SUGGESTION], [makeRule('Acme invoices')]);
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('attachments:rules.existingTitle');
+    expect(text.indexOf('attachments:suggestions.title')).toBeLessThan(text.indexOf('attachments:rules.existingTitle'));
+    expect(text.indexOf('attachments:rules.existingTitle')).toBeLessThan(text.indexOf('Acme invoices'));
+  });
+
+  it('shows no existing-rules title when there are no rules', () => {
+    render([SUGGESTION]);
+    expect(container.textContent).not.toContain('attachments:rules.existingTitle');
+  });
+
   it('lists each suggestion with its sender and filename patterns', () => {
     render([SUGGESTION]);
 

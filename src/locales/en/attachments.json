@@ -32,6 +32,7 @@
   "rules": {
     "title": "Attachment rules",
     "modalTitle": "Attachment Rules",
+    "existingTitle": "Your rules",
     "ruleName": "Rule Name",
     "senderPattern": "Sender Email Pattern",
     "senderPatternExample": "*apple.com*",

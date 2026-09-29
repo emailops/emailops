@@ -32,6 +32,7 @@
   "rules": {
     "title": "Reglas de adjuntos",
     "modalTitle": "Reglas de adjuntos",
+    "existingTitle": "Tus reglas",
     "ruleName": "Nombre de la regla",
     "senderPattern": "Patrón del remitente",
     "senderPatternExample": "*apple.com*",

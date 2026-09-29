@@ -32,6 +32,7 @@
   "rules": {
     "title": "Règles de pièces jointes",
     "modalTitle": "Règles de pièces jointes",
+    "existingTitle": "Vos règles",
     "ruleName": "Nom de la règle",
     "senderPattern": "Motif de l'expéditeur",
     "senderPatternExample": "*apple.com*",

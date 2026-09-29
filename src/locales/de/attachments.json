@@ -32,6 +32,7 @@
   "rules": {
     "title": "Anhang-Regeln",
     "modalTitle": "Anhang-Regeln",
+    "existingTitle": "Ihre Regeln",
     "ruleName": "Regelname",
     "senderPattern": "Absender-Muster",
     "senderPatternExample": "*apple.com*",
