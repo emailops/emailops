@@ -4993,3 +4993,48 @@ async fn the_attachment_backfill_runs_once_per_account() {
     );
     assert!(db.get_email_attachment_metas("stored-without-meta").unwrap().is_empty());
 }
+
+/// A sync that brings new mail re-mines the rule suggestions, so a sender that
+/// just crossed the "recurring" threshold shows up without opening the modal.
+#[tokio::test]
+async fn a_sync_with_new_recurring_documents_proposes_a_rule() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-sg", "sg@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-sg"), "1")
+        .unwrap();
+    let account = db.get_account("acc-sg").unwrap().unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    let provider = FakeEmailProvider::new("sg@example.com", "Sg");
+    for (i, days_ago) in [95_i64, 64, 33].into_iter().enumerate() {
+        provider.add_message(
+            make_email_with(
+                &format!("inv-{i}"),
+                "acc-sg",
+                now - days_ago * 86_400,
+                "billing@acme-synthetic.com",
+                "inbox",
+            ),
+            EmailCategory::Primary,
+            vec![pdf_attachment(&format!("att-{i}"), &format!("Invoice_000{i}.pdf"))],
+        );
+    }
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let pending = emailops_lib::services::attachment_suggestions::list_suggestions(&db, "acc-sg").unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].filename_pattern.as_deref(), Some("Invoice_*.pdf"));
+}
