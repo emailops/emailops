@@ -4625,6 +4625,13 @@ pub async fn run_chat_turn(
         // user's correction; every step sees both.
         let research_q =
             super::research::research_question(&db, &conversation_id, &user_question, context.correction.as_ref());
+        // Registered before the gathering, so a Cancel pressed while the set is
+        // planned and gathered reaches the run; one pressed even earlier (the
+        // turn's own flag) is carried over.
+        let guard = super::research::register_run(&assistant_message_id);
+        if turn_guard.is_cancelled() {
+            guard.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let confirmed = context
             .research_estimate_id
             .as_deref()
@@ -4664,7 +4671,6 @@ pub async fn run_chat_turn(
         // Read the window now, with the model loaded by the planner: batches
         // and notes are sized to what the runtime really runs with.
         let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref());
-        let guard = super::research::register_run(&assistant_message_id);
         let run = super::research::run_research(
             super::research::ResearchInput {
                 db: &db,

@@ -823,6 +823,21 @@ fn load_docs(
         .collect()
 }
 
+/// A run the user cancelled after the reading: no further call, and the answer
+/// says how far the reading got.
+fn cancelled_run(
+    mut run: ResearchRun,
+    language_code: &str,
+    emails_read: usize,
+    total_emails: usize,
+    step: &str,
+) -> ResearchRun {
+    run.trace.stopped = true;
+    super::emit_log("info", &format!("research: cancelled by the user while {step}"));
+    run.answer = Some(cancelled_note(language_code, emails_read, total_emails));
+    run
+}
+
 /// Map → condense → reduce over a prepared set. Never fails the turn on its
 /// own: a batch that errors is logged and skipped, and only a failed report
 /// comes back as `answer: None` for the caller to surface.
@@ -947,6 +962,18 @@ pub(crate) async fn run_research(
         );
     }
     run.trace.map_ms = t_map.elapsed().as_millis() as i64;
+    // Cancel pressed while the last batch was read: the loop has no next
+    // iteration to notice it, so check once more before anything else runs.
+    if !run.trace.stopped && input.stop.load(Ordering::Relaxed) {
+        run.trace.stopped = true;
+        super::emit_log(
+            "info",
+            &format!(
+                "research: cancelled by the user after {} of {total_emails} emails",
+                emails_in(read)
+            ),
+        );
+    }
     run.analyzed = docs[..read].iter().flat_map(|d| d.ids().cloned()).collect();
     run.trace.findings = findings.len() as u32;
     // The matches come from the reading verdicts, before any condense round:
@@ -998,6 +1025,9 @@ pub(crate) async fn run_research(
                 total_emails,
                 &found,
             );
+            if input.stop.load(Ordering::Relaxed) {
+                return cancelled_run(run, input.language_code, emails_read, total_emails, "condensing");
+            }
             let group_notes: Vec<Note> = notes[group.clone()].iter().flatten().cloned().collect();
             let (prefix, suffix) = split_condense_prompt(
                 input.condense_template,
@@ -1042,6 +1072,9 @@ pub(crate) async fn run_research(
         total_emails,
         &found,
     );
+    if input.stop.load(Ordering::Relaxed) {
+        return cancelled_run(run, input.language_code, emails_read, total_emails, "writing");
+    }
     // The conversations the notes cover, numbered for the report to cite.
     let order = number_conversations(&notes);
     let notes_block = if order.is_empty() {
@@ -1522,6 +1555,61 @@ mod tests {
         assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
         let answer = run.answer.expect("a cancellation note");
         assert!(answer.contains("11") && answer.contains("30"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_the_last_batch_writes_no_report() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 4);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        assert_eq!(batches_of(&db, &prepared, 16384).len(), 1);
+        provider.push_completion(NO_FINDINGS);
+        provider.push_completion("A report nobody wants any more.");
+        let stop = AtomicBool::new(false);
+        // Cancel pressed while the one (and last) batch was being read.
+        let on_progress = |p: ResearchProgress| {
+            if p.stage == ResearchStage::Reading && p.batch == 1 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        };
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &on_progress).await;
+
+        assert!(run.trace.stopped);
+        assert_eq!(provider.prefix_completion_calls().len(), 1, "the map call only");
+        assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
+    }
+
+    #[tokio::test]
+    async fn a_cancel_while_condensing_stops_before_the_next_call() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 59);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        let budget = plan_research_budget(4096);
+        let batches = batches_of(&db, &prepared, 4096);
+        for batch in &batches {
+            provider.push_completion(all_match(&batch[..1], &"x".repeat(budget.notes_chars / 2)));
+        }
+        for _ in 0..batches.len() {
+            provider.push_completion(r#"{"notes":[{"text":"merged","from":["N1"]}]}"#);
+        }
+        provider.push_completion("Informe [1].");
+        let stop = AtomicBool::new(false);
+        let on_progress = |p: ResearchProgress| {
+            if p.stage == ResearchStage::Condensing {
+                stop.store(true, Ordering::Relaxed);
+            }
+        };
+        let run = run_research(run_input(&db, &provider, &prepared, 4096, &stop), &on_progress).await;
+
+        assert!(run.trace.stopped);
+        assert_eq!(run.trace.condense_calls, 0, "{:?}", run.trace);
+        assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
+        let answer = run.answer.expect("a cancellation note");
+        assert!(!answer.contains("Informe"), "{answer}");
     }
 
     #[tokio::test]
