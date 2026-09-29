@@ -1937,3 +1937,36 @@ prompt, and per-turn content must stay out of it.
   applying the right procedure without being told.
 - *Running scripts bundled in a skill*: a local email client executing arbitrary code
   from a folder is a security surface this feature does not need.
+
+## 2026-09-29 — Skills are experimental and off by default; the planner can pick one; they are edited in a Skills view
+
+**Decision:** Chat skills ship as an **experimental** feature, **off by default**
+(`skills_enabled` defaults to false; the Settings tab carries the Experimental badge).
+When on, a **Skills view** in the sidebar lists every skill with its own on/off switch
+(`skills_disabled` preference, a JSON array of names — a disabled skill leaves the prompt
+but stays listed) and edits the selected `SKILL.md` in an editor on the right; **New**
+creates one from a template. Saving validates the text with the same parser the catalog
+uses and writes nothing if it would not load. The files on disk remain the source of truth.
+The **query planner** may also name a skill (`"skill": "<name>"`) next to any verdict,
+before retrieval; the turn then applies it exactly like `/name`, and `load_skill` stays as
+the fallback. The trace records how each skill arrived (`applied_skills`, `via: slash |
+planner`), and eval cases assert on the skill (`expected_skill` / `expected_no_skill`)
+rather than on the `load_skill` call.
+**Context:** The developer asked for skills to be opt-in and experimental, and for a
+Hermes-style view with per-skill switches and an in-app editor, replacing the 27/09
+choice of "files only, Settings just lists them". A 15-case skills eval showed the common
+miss was selection: when the RAG sources already held the answer, the model answered
+without loading the skill, on every model. Letting the planner choose before retrieval,
+measured on the demo DB with an LLM judge (qwen3.6-35b): cases passed 4B 9→10,
+9B 8→10, 35B 12→12 (one case lost to a GPU out-of-memory during the run); correct skill
+on the 6 selection cases 4→5, 2→4, 4→6; zero skills applied where none fits on every
+model. With no skills the planner prompt is byte-identical: `query_plan_eval` 35/39
+before and after (same four failures) and the chat smoke tier 38/41 in both.
+**Rejected:**
+- *A fifth planner verdict (`{"skill": …}` instead of search/defer)*: a skill usually
+  still needs its search, so the field rides alongside the verdict.
+- *Wording the planner rule as "add the skill to whatever you output (a filter, …)"*:
+  it pushed the 9B to swap `defer` for invented search filters (4 cases); the rule now
+  says a skill never changes the verdict (2 cases, one of them noise).
+- *Thinking on round 0 of the tool loop*: not needed once the planner selects; not tried.
+- *Keeping skills on by default*: the developer wants them opt-in while experimental.

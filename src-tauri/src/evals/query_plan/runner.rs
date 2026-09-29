@@ -168,6 +168,9 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             // The harness scores the routing, so it always shows the model the
             // full catalog rather than whatever the copied DB happens to enable.
             &forms_catalog,
+            // Planner cases carry no user skills, so the prompt is the one
+            // every install without skills sends.
+            "",
         )
         .await;
         let latency_ms = started.elapsed().as_millis();

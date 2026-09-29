@@ -503,13 +503,26 @@
   },
   "skills": {
     "enable": "Activar skills",
-    "enableDesc": "Permite que el chat use tus skills: carga una cuando la petición encaja con su descripción, y puedes invocarla directamente empezando el mensaje con /nombre.",
+    "enableDesc": "Experimental. Permite que el chat use tus skills: aplica una cuando la petición encaja con su descripción, y puedes invocarla directamente empezando el mensaje con /nombre. Al activarlo aparece la vista Skills en la barra lateral para activarlas, desactivarlas y editarlas.",
     "folderTitle": "Carpeta de skills",
     "folderDesc": "Cada skill es una carpeta aquí con un fichero SKILL.md: un bloque de cabecera con name (el nombre de la carpeta) y description, y después las instrucciones en Markdown. En el prompt del chat solo quedan el nombre y la descripción; las instrucciones se leen al usar la skill.",
     "openFolder": "Abrir carpeta",
     "reload": "Recargar",
     "listTitle": "Skills disponibles",
     "empty": "Aún no hay skills. Abre la carpeta y añade una.",
-    "errorsTitle": "No cargadas"
+    "errorsTitle": "No cargadas",
+    "view": {
+      "title": "Skills",
+      "new": "Nueva",
+      "newPlaceholder": "nombre-de-skill (minúsculas, guiones)",
+      "create": "Crear",
+      "empty": "Aún no hay skills. Crea una con Nueva.",
+      "toggle": "Usar {{name}} en el chat",
+      "save": "Guardar",
+      "saved": "Guardado",
+      "unsaved": "Cambios sin guardar",
+      "pick": "Elige una skill para editarla.",
+      "hint": "SKILL.md: un bloque de cabecera con name (el nombre de la carpeta) y description, y después las instrucciones. Los cambios se aplican al siguiente mensaje del chat."
+    }
   }
 }

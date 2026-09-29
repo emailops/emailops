@@ -503,13 +503,26 @@
   },
   "skills": {
     "enable": "Enable skills",
-    "enableDesc": "Let the chat use your skills: it loads one when a request matches its description, and you can call one directly by starting a message with /name.",
+    "enableDesc": "Experimental. Lets the chat use your skills: it applies one when the request matches its description, and you can invoke one directly by starting a message with /name. When on, the Skills view appears in the sidebar to switch skills on or off and edit them.",
     "folderTitle": "Skills folder",
     "folderDesc": "Each skill is a folder here holding a SKILL.md file: a frontmatter block with name (the folder's name) and description, then the instructions in Markdown. Only the name and description stay in the chat's prompt; the instructions are read when the skill is used.",
     "openFolder": "Open folder",
     "reload": "Reload",
     "listTitle": "Available skills",
     "empty": "No skills yet. Open the folder and add one.",
-    "errorsTitle": "Not loaded"
+    "errorsTitle": "Not loaded",
+    "view": {
+      "title": "Skills",
+      "new": "New",
+      "newPlaceholder": "skill-name (lowercase, hyphens)",
+      "create": "Create",
+      "empty": "No skills yet. Create one with New.",
+      "toggle": "Use {{name}} in the chat",
+      "save": "Save",
+      "saved": "Saved",
+      "unsaved": "Unsaved changes",
+      "pick": "Pick a skill to edit it.",
+      "hint": "SKILL.md: a frontmatter block with name (the folder name) and description, then the instructions. Changes apply to the next chat message."
+    }
   }
 }

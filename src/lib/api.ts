@@ -984,6 +984,8 @@ export interface SkillInfo {
   name: string;
   description: string;
   path: string;
+  /** False when the user switched this skill off in the Skills view. */
+  enabled: boolean;
 }
 
 /** Mirrors `services::skills::SkillsOverview`. */
@@ -1001,6 +1003,26 @@ export async function listSkills(): Promise<SkillsOverview> {
 /** Create the skills folder if needed and open it in the OS file manager. */
 export async function openSkillsFolder(): Promise<void> {
   return invoke('open_skills_folder');
+}
+
+/** Switch one skill on or off for the chat. */
+export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke('set_skill_enabled', { name, enabled });
+}
+
+/** The raw `SKILL.md` text of one skill, for the editor. */
+export async function readSkill(name: string): Promise<string> {
+  return invoke('read_skill', { name });
+}
+
+/** Save an edited `SKILL.md`. Rejected, with nothing written, if it would not load. */
+export async function saveSkill(name: string, content: string): Promise<void> {
+  return invoke('save_skill', { name, content });
+}
+
+/** Create a new skill from the template. */
+export async function createSkill(name: string): Promise<void> {
+  return invoke('create_skill', { name });
 }
 
 export async function listPrompts(): Promise<PromptInfo[]> {

@@ -24,16 +24,20 @@ pub struct SkillFixture {
     pub body: String,
 }
 
-/// Removes the fixture folders it created when dropped.
-#[derive(Debug)]
-pub struct SkillFixtureGuard {
+/// Removes the fixture folders it created when dropped, and puts the
+/// `skills_enabled` preference back the way it found it.
+pub struct SkillFixtureGuard<'a> {
+    db: &'a Database,
     created: Vec<PathBuf>,
+    /// The preference before the case switched the (experimental, default
+    /// off) feature on; `None` when it was unset.
+    enabled_before: Option<String>,
 }
 
-impl SkillFixtureGuard {
+impl<'a> SkillFixtureGuard<'a> {
     /// Write `fixtures` into the DB's skills folder. `Ok(None)` when the case
     /// has none.
-    pub fn install(db: &Database, fixtures: &[SkillFixture]) -> EvalResult<Option<Self>> {
+    pub fn install(db: &'a Database, fixtures: &[SkillFixture]) -> EvalResult<Option<Self>> {
         if fixtures.is_empty() {
             return Ok(None);
         }
@@ -50,7 +54,15 @@ impl SkillFixtureGuard {
         }
         // Built before the first write: if a later write fails, dropping it
         // removes what was already created.
-        let mut guard = Self { created: Vec::new() };
+        let mut guard = Self {
+            db,
+            created: Vec::new(),
+            enabled_before: db
+                .get_preference(skills::SKILLS_ENABLED_PREF)
+                .map_err(|e| EvalError::Config(format!("cannot read {}: {e}", skills::SKILLS_ENABLED_PREF)))?,
+        };
+        db.set_preference(skills::SKILLS_ENABLED_PREF, "true")
+            .map_err(|e| EvalError::Config(format!("cannot enable skills for the case: {e}")))?;
         for f in fixtures {
             let folder = dir.join(&f.name);
             std::fs::create_dir_all(&folder)?;
@@ -67,8 +79,25 @@ impl SkillFixtureGuard {
     }
 }
 
-impl Drop for SkillFixtureGuard {
+// Manual: `Database` is not `Debug`.
+impl std::fmt::Debug for SkillFixtureGuard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkillFixtureGuard")
+            .field("created", &self.created)
+            .field("enabled_before", &self.enabled_before)
+            .finish()
+    }
+}
+
+impl Drop for SkillFixtureGuard<'_> {
     fn drop(&mut self) {
+        let restored = match &self.enabled_before {
+            Some(v) => self.db.set_preference(skills::SKILLS_ENABLED_PREF, v),
+            None => self.db.delete_preference(skills::SKILLS_ENABLED_PREF),
+        };
+        if let Err(e) = restored {
+            eprintln!("[eval] could not restore {}: {e}", skills::SKILLS_ENABLED_PREF);
+        }
         for folder in &self.created {
             if let Err(e) = std::fs::remove_dir_all(folder) {
                 eprintln!("[eval] could not remove case skill {}: {e}", folder.display());
@@ -107,6 +136,17 @@ mod tests {
         assert!(catalog.errors.is_empty(), "{:?}", catalog.errors);
         drop(guard);
         assert!(skills::catalog_for(&db).skills.is_empty());
+    }
+
+    #[test]
+    fn switches_the_feature_on_for_the_case_and_restores_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::new(tmp.path().to_path_buf()).unwrap();
+        assert!(!skills::skills_enabled(&db));
+        let guard = SkillFixtureGuard::install(&db, &[fixture("alpha")]).unwrap();
+        assert!(skills::skills_enabled(&db));
+        drop(guard);
+        assert!(!skills::skills_enabled(&db));
     }
 
     #[test]

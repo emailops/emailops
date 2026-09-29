@@ -66,6 +66,13 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
         ));
     }
 
+    if case.expected_skill.is_some() || case.expected_no_skill {
+        checks.push(check_skill(
+            case.expected_skill.as_deref(),
+            outcome.assistant_trace.as_ref(),
+        ));
+    }
+
     if !case.expected_answer_contains.is_empty() {
         checks.push(check_answer_contains(
             &case.expected_answer_contains,
@@ -209,6 +216,50 @@ fn check_tools_not_called(forbidden: &[String], trace: Option<&ChatTrace>) -> He
         } else {
             format!("forbidden tool calls: {}", violations.join(", "))
         },
+    }
+}
+
+/// Which user skills reached the turn, by any path: applied before the model
+/// ran (`/name`, the planner) or loaded by the model with `load_skill`.
+/// `expected = None` asserts that none did.
+fn check_skill(expected: Option<&str>, trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let mut applied: Vec<(String, &'static str)> = Vec::new();
+    if let Some(t) = trace {
+        for s in &t.applied_skills {
+            let via = match s.via {
+                crate::models::SkillVia::Slash => "slash",
+                crate::models::SkillVia::Planner => "planner",
+            };
+            applied.push((s.name.clone(), via));
+        }
+        for tc in t.tool_calls.iter().filter(|tc| tc.name == "load_skill") {
+            let name = tc.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            applied.push((name.to_string(), "load_skill"));
+        }
+    }
+    let actual = if applied.is_empty() {
+        "<none>".to_string()
+    } else {
+        applied
+            .iter()
+            .map(|(n, via)| format!("{n} ({via})"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (passed, expected_text) = match expected {
+        Some(name) => (applied.iter().any(|(n, _)| n == name), name.to_string()),
+        None => (applied.is_empty(), "no skill".to_string()),
+    };
+    HeuristicCheck {
+        name: "skill".into(),
+        passed,
+        expected: expected_text,
+        detail: if passed {
+            format!("skills applied: {actual}")
+        } else {
+            format!("wrong skill: applied {actual}")
+        },
+        actual,
     }
 }
 
@@ -692,8 +743,54 @@ mod tests {
             help: None,
             research: None,
             llm_calls: vec![],
+            applied_skills: Vec::new(),
             steps: vec![],
         }
+    }
+
+    // ── skills ──────────────────────────────────────────────────────────
+    // A skill reaches a turn three ways — `/name`, the planner, or the model's
+    // own `load_skill` call — and a case asserts on the skill, not the path.
+
+    fn with_applied(mut t: ChatTrace, name: &str, via: crate::models::SkillVia) -> ChatTrace {
+        t.applied_skills
+            .push(crate::models::AppliedSkill { name: name.into(), via });
+        t
+    }
+
+    #[test]
+    fn expected_skill_passes_whichever_way_it_was_applied() {
+        use crate::models::SkillVia;
+        let by_planner = with_applied(trace_with(vec![]), "travel-brief", SkillVia::Planner);
+        let by_slash = with_applied(trace_with(vec![]), "travel-brief", SkillVia::Slash);
+        let by_model = trace_with(vec![tool_call(
+            "load_skill",
+            serde_json::json!({"name": "travel-brief"}),
+        )]);
+        for t in [by_planner, by_slash, by_model] {
+            let check = check_skill(Some("travel-brief"), Some(&t));
+            assert!(check.passed, "{}", check.detail);
+        }
+    }
+
+    #[test]
+    fn expected_skill_fails_on_the_wrong_skill_or_none() {
+        use crate::models::SkillVia;
+        let wrong = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Planner);
+        let check = check_skill(Some("travel-brief"), Some(&wrong));
+        assert!(!check.passed);
+        assert!(check.actual.contains("vendor-support (planner)"), "{}", check.actual);
+        assert!(!check_skill(Some("travel-brief"), Some(&trace_with(vec![]))).passed);
+    }
+
+    #[test]
+    fn no_skill_fails_when_any_path_applied_one() {
+        use crate::models::SkillVia;
+        assert!(check_skill(None, Some(&trace_with(vec![]))).passed);
+        let planner = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Planner);
+        assert!(!check_skill(None, Some(&planner)).passed);
+        let model = trace_with(vec![tool_call("load_skill", serde_json::json!({"name": "x"}))]);
+        assert!(!check_skill(None, Some(&model)).passed);
     }
 
     // ── help grounding ──────────────────────────────────────────────────

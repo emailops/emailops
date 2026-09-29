@@ -88,6 +88,9 @@ pub struct PlanRun {
     /// What the backend's one-shot prefix slot did — `"Reuse"`, `"Reseed"`,
     /// `"Bypass"`, or `None` from a backend without one.
     pub aux_plan: Option<&'static str>,
+    /// The user skill the planner named for this turn, unvalidated — the turn
+    /// checks it against the skills catalog before using it.
+    pub skill: Option<String>,
 }
 
 /// The subset of `search_emails` arguments the planner can fill. All optional;
@@ -275,7 +278,10 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
     let Some(obj) = extract_json_object(text) else {
         return (Plan::Defer, PlanOutcome::Unparseable);
     };
-    if obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
+    // A reply that only names a skill (`{"skill": "…"}`) had nothing to
+    // search for: a deliberate defer, not an empty filter.
+    let only_skill = obj.len() == 1 && obj.contains_key("skill");
+    if only_skill || obj.get("defer").and_then(|v| v.as_bool()) == Some(true) {
         return (Plan::Defer, PlanOutcome::Deferred);
     }
     match obj.get("app_help") {
@@ -337,6 +343,17 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
         return (Plan::Defer, PlanOutcome::EmptyFilter);
     }
     (Plan::Search(Box::new(plan.normalised())), PlanOutcome::Search)
+}
+
+/// The skill the planner named next to its verdict (`"skill": "<name>"`),
+/// lowercased. Orthogonal to [`parse_plan_detailed`]: a turn can search, defer
+/// or answer from the guides AND follow a skill.
+pub fn parse_plan_skill(text: &str) -> Option<String> {
+    extract_json_object(text)?
+        .get("skill")?
+        .as_str()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
 }
 
 /// Lenient JSON-object extraction: drop ``` fences, then parse the first
@@ -407,6 +424,7 @@ pub(crate) fn split_planner_prompt(
     glossary: &TagGlossary,
     open_form: Option<&str>,
     form_catalog: &str,
+    skill_rule: &str,
 ) -> (String, String) {
     let mut vars = std::collections::HashMap::new();
     vars.insert("user_email", user_email.to_string());
@@ -422,6 +440,9 @@ pub(crate) fn split_planner_prompt(
     // `forms::registry`), so it lives in the planner's cached head and costs
     // nothing per turn.
     vars.insert("form_catalog", form_catalog.to_string());
+    // The user's skills (`skills::render_planner_rule`): empty without any,
+    // and fixed while the skills folder is, so it also lives in the head.
+    vars.insert("skill_rule", skill_rule.to_string());
     // Per-call, so the template places it AFTER `{{query}}` — inside the tail
     // that is re-rendered every call, never in the cached head.
     vars.insert("open_form", super::view_context::planner_form_hint(open_form));
@@ -504,8 +525,18 @@ pub async fn plan_search(
     glossary: &TagGlossary,
     open_form: Option<&str>,
     form_catalog: &str,
+    skill_rule: &str,
 ) -> PlanRun {
-    let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary, open_form, form_catalog);
+    let (prefix, suffix) = split_planner_prompt(
+        template,
+        user_email,
+        today,
+        query,
+        glossary,
+        open_form,
+        form_catalog,
+        skill_rule,
+    );
     let opts = CompletionOptions {
         temperature: Some(0.0),
         max_tokens: Some(128),
@@ -518,6 +549,7 @@ pub async fn plan_search(
             PlanRun {
                 plan,
                 outcome,
+                skill: parse_plan_skill(&result.text),
                 prompt_tokens: result.prompt_tokens,
                 prefill_ms: result.prefill_ms,
                 cached_prompt_tokens: result.cached_prompt_tokens,
@@ -531,6 +563,7 @@ pub async fn plan_search(
             prefill_ms: None,
             cached_prompt_tokens: None,
             aux_plan: None,
+            skill: None,
         },
     }
 }
@@ -546,7 +579,8 @@ mod tests {
         query: &str,
         glossary: &TagGlossary,
     ) -> String {
-        let (prefix, suffix) = split_planner_prompt(template, user_email, today, query, glossary, None, TEST_CATALOG);
+        let (prefix, suffix) =
+            split_planner_prompt(template, user_email, today, query, glossary, None, TEST_CATALOG, "");
         format!("{prefix}{suffix}")
     }
 
@@ -858,6 +892,7 @@ mod tests {
             &g,
             None,
             TEST_CATALOG,
+            "",
         );
         assert!(
             head.contains("ai-features: "),
@@ -1134,6 +1169,80 @@ mod tests {
     }
 
     #[test]
+    fn a_skill_rides_alongside_any_verdict() {
+        // Orthogonal to the verdict: the turn still searches, defers or
+        // answers from the guides, and the skill decides how it answers.
+        for (reply, expected) in [
+            (r#"{"defer": true, "skill": "travel-brief"}"#, Some("travel-brief")),
+            (
+                r#"{"intent": "billing", "skill": " Invoice-Report "}"#,
+                Some("invoice-report"),
+            ),
+            (r#"{"app_help": true, "skill": "weekly-digest"}"#, Some("weekly-digest")),
+            (r#"{"defer": true}"#, None),
+            (r#"{"defer": true, "skill": ""}"#, None),
+            (r#"{"defer": true, "skill": null}"#, None),
+            (r#"{"defer": true, "skill": 3}"#, None),
+            ("no json here", None),
+        ] {
+            assert_eq!(parse_plan_skill(reply).as_deref(), expected, "{reply}");
+        }
+        // The verdict itself is unchanged by the extra field.
+        assert_eq!(
+            parse_plan_detailed(r#"{"defer": true, "skill": "travel-brief"}"#).1,
+            PlanOutcome::Deferred
+        );
+    }
+
+    #[test]
+    fn a_reply_that_only_names_a_skill_is_a_defer() {
+        // The planner matched a skill and had no search to add: that is a
+        // deliberate defer, not an empty filter.
+        assert_eq!(
+            parse_plan_detailed(r#"{"skill": "travel-brief"}"#),
+            (Plan::Defer, PlanOutcome::Deferred)
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_search_returns_the_skill_the_planner_named() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"defer": true, "skill": "travel-brief"}"#);
+        let run = plan_search(
+            &provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "brief me on my trip",
+            &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
+            "",
+        )
+        .await;
+        assert_eq!(run.plan, Plan::Defer);
+        assert_eq!(run.skill.as_deref(), Some("travel-brief"));
+    }
+
+    #[test]
+    fn the_skill_rule_rides_in_the_cached_head() {
+        // Same for every question in a session, so it must sit before
+        // `{{query}}` where the backend keeps it decoded.
+        let (prefix, suffix) = split_planner_prompt(
+            crate::services::prompts::defaults::CHAT_QUERY_PLAN,
+            "me@example.test",
+            "2026-06-15",
+            "brief me on my trip",
+            &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
+            "SKILL RULE MARKER",
+        );
+        assert!(prefix.contains("SKILL RULE MARKER"), "{prefix}");
+        assert!(!suffix.contains("SKILL RULE MARKER"));
+    }
+
+    #[test]
     fn parse_plan_still_returns_just_the_plan() {
         assert_eq!(parse_plan("not json"), Plan::Defer);
         assert!(matches!(parse_plan(r#"{"from": "ana"}"#), Plan::Search(_)));
@@ -1153,6 +1262,7 @@ mod tests {
             &TagGlossary::defaults(),
             None,
             TEST_CATALOG,
+            "",
         )
         .await;
 
@@ -1175,6 +1285,7 @@ mod tests {
             &TagGlossary::defaults(),
             None,
             TEST_CATALOG,
+            "",
         )
         .await;
 
@@ -1194,6 +1305,7 @@ mod tests {
             &glossary,
             None,
             TEST_CATALOG,
+            "",
         );
 
         assert_eq!(
@@ -1225,6 +1337,7 @@ mod tests {
             &glossary,
             None,
             TEST_CATALOG,
+            "",
         );
         let (second, _) = split_planner_prompt(
             template,
@@ -1234,6 +1347,7 @@ mod tests {
             &glossary,
             None,
             TEST_CATALOG,
+            "",
         );
 
         assert_eq!(first, second);
@@ -1250,6 +1364,7 @@ mod tests {
             &glossary,
             None,
             TEST_CATALOG,
+            "",
         );
 
         assert_eq!(prefix, "Plan a search. Today is 2026-06-15.");

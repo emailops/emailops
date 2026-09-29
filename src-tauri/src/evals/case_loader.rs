@@ -249,6 +249,15 @@ pub struct EvalCase {
     /// `evals::skill_fixtures`), so a case can exercise `load_skill` and `/name`.
     #[serde(default)]
     pub skills: Vec<crate::evals::skill_fixtures::SkillFixture>,
+
+    /// The skill this turn must follow, however it got there: `/name`, the
+    /// query planner, or the model's own `load_skill` call.
+    #[serde(default)]
+    pub expected_skill: Option<String>,
+
+    /// No skill may reach this turn by any path.
+    #[serde(default)]
+    pub expected_no_skill: bool,
 }
 
 fn default_category() -> String {

@@ -13,8 +13,9 @@ use crate::ai::provider::{AIProvider, AiMessage};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
-    ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace,
-    ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
+    AppliedSkill, ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent,
+    ChatTrace, ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, SkillVia,
+    ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
@@ -3008,6 +3009,7 @@ async fn run_thread_bound_turn(
     account_id: String,
     user_question: String,
     skill_block: Option<String>,
+    applied_skills: Vec<AppliedSkill>,
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
@@ -3313,6 +3315,7 @@ async fn run_thread_bound_turn(
                 llm_calls: llm_calls.clone(),
                 help: None,
                 research: None,
+                applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -3696,9 +3699,19 @@ pub async fn run_chat_turn(
     // title read it); the skill's instructions ride in the final user message,
     // never the cached system prefix. The folder is only read when the message
     // could be an invocation.
-    let (user_question, skill_block) = match plan_turn_skill(&db, &user_question) {
-        Some(turn) => (turn.question, Some(turn.block)),
-        None => (user_question, None),
+    let (user_question, mut skill_block, mut applied_skills) = match plan_turn_skill(&db, &user_question) {
+        Some(turn) => {
+            let applied = turn
+                .skills
+                .iter()
+                .map(|name| AppliedSkill {
+                    name: name.clone(),
+                    via: SkillVia::Slash,
+                })
+                .collect();
+            (turn.question, Some(turn.block), applied)
+        }
+        None => (user_question, None, Vec::new()),
     };
 
     // Destructured back into locals so the body below reads unchanged.
@@ -3817,6 +3830,7 @@ pub async fn run_chat_turn(
             account_id,
             user_question,
             skill_block,
+            applied_skills,
             history,
             system_messages,
             turn_start,
@@ -3979,6 +3993,13 @@ pub async fn run_chat_turn(
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
+        // The planner may name a skill only when the user did not invoke one.
+        let skill_catalog = if skill_block.is_none() {
+            crate::services::skills::catalog_for(&db)
+        } else {
+            crate::services::skills::SkillCatalog::default()
+        };
+        let skill_rule = crate::services::skills::render_planner_rule(&skill_catalog.skills);
         let run = super::planner::plan_search(
             provider.as_ref(),
             &template,
@@ -3990,6 +4011,7 @@ pub async fn run_chat_turn(
             // Only forms whose feature is switched on: routing to a disabled
             // one would spend a turn opening a view the user cannot reach.
             &crate::services::forms::registry::catalog(&db),
+            &skill_rule,
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -4000,8 +4022,25 @@ pub async fn run_chat_turn(
             prefill_ms: plan_prefill_ms,
             cached_prompt_tokens: plan_cached_tokens,
             aux_plan: plan_aux,
-            ..
+            skill: planner_skill,
         } = run;
+        // A skill the planner matched rides in the final user message exactly
+        // like a `/name` one — decided before retrieval, so the sources can no
+        // longer tempt the model into answering without it. An unknown name is
+        // dropped; the model can still call `load_skill` itself.
+        if let Some(name) = planner_skill {
+            match skill_catalog.get(&name) {
+                Some(skill) => {
+                    emit_log("info", &format!("planner: skill {} applies to this turn", skill.name));
+                    skill_block = Some(crate::services::skills::render_skill_block(skill));
+                    applied_skills.push(AppliedSkill {
+                        name: skill.name.clone(),
+                        via: SkillVia::Planner,
+                    });
+                }
+                None => emit_log("debug", &format!("planner: named unknown skill {name}, ignored")),
+            }
+        }
         let plan_telemetry = PlannerTelemetry {
             prompt_tokens: plan_prompt_tokens,
             prefill_ms: plan_prefill_ms,
@@ -5148,6 +5187,7 @@ pub async fn run_chat_turn(
                 llm_calls: llm_calls.clone(),
                 help: help_trace.clone(),
                 research: research_trace.clone(),
+                applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {

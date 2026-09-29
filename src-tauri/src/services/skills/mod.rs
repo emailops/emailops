@@ -37,6 +37,9 @@ pub const SKILLS_DIR: &str = "skills";
 /// disk the feature costs nothing).
 pub const SKILLS_ENABLED_PREF: &str = "skills_enabled";
 
+/// Preference holding the skills the user switched off (JSON array of names).
+pub const SKILLS_DISABLED_PREF: &str = "skills_disabled";
+
 /// Longest accepted skill name (Agent Skills spec).
 pub const MAX_NAME_CHARS: usize = 64;
 
@@ -307,6 +310,25 @@ Before replying, scan the skills above. If one matches the request, call load_sk
     ))
 }
 
+/// The query planner's skills rule: the same catalog as the index, and how to
+/// name a matching skill next to whatever verdict the planner gives. Empty
+/// with no skills, so an install without them sends the planner the prompt it
+/// always did. Depends only on the folder, so it stays in the planner's cached
+/// head.
+pub fn render_planner_rule(skills: &[Skill]) -> String {
+    let (lines, names) = render_catalog(skills);
+    if names.is_empty() {
+        return String::new();
+    }
+    format!(
+        "- The user has saved skills, procedures for some kinds of request:\n{lines}\n  \
+First decide the verdict exactly as the rules above say. Then, when one of these skills clearly \
+matches the question, add \"skill\": \"<name>\" to that same output — {{\"defer\": true, \"skill\": \"<name>\"}} \
+for a question that is not a single email search. A skill never changes the verdict: do not invent a \
+filter for it. Omit it when none matches — most questions match none.\n"
+    )
+}
+
 /// Read one of `skill`'s supporting files. Only a path listed in
 /// `skill.files` is served, so nothing outside the skill folder is reachable.
 pub fn read_reference(skill: &Skill, file: &str) -> Result<String, String> {
@@ -399,13 +421,37 @@ pub fn skills_dir(db: &Database) -> Option<PathBuf> {
     Some(parent.join(SKILLS_DIR))
 }
 
-/// Whether the feature is on (default on).
+/// Whether the feature is on. Experimental, so off until the user turns it on.
 pub fn skills_enabled(db: &Database) -> bool {
     db.get_preference(SKILLS_ENABLED_PREF)
         .ok()
         .flatten()
         .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(true)
+        .unwrap_or(false)
+}
+
+/// Names of the skills the user switched off, stored as a JSON array in
+/// [`SKILLS_DISABLED_PREF`]. A skill's folder is never touched to disable it.
+fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
+    db.get_preference(SKILLS_DISABLED_PREF)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_str(&v).ok())
+        .unwrap_or_default()
+}
+
+/// Switch one skill on or off for the chat. It stays in the folder and in the
+/// listing either way.
+pub fn set_skill_enabled(db: &Database, name: &str, enabled: bool) -> crate::models::error::Result<()> {
+    let mut disabled = disabled_skills(db);
+    if enabled {
+        disabled.remove(name);
+    } else {
+        disabled.insert(name.to_string());
+    }
+    let json = serde_json::to_string(&disabled)
+        .map_err(|e| crate::models::error::AppError::IoError(format!("could not store the disabled skills: {e}")))?;
+    db.set_preference(SKILLS_DISABLED_PREF, &json)
 }
 
 /// Read every `<dir>/<folder>/SKILL.md`. A missing folder is an empty catalog,
@@ -456,7 +502,10 @@ pub fn catalog_for(db: &Database) -> SkillCatalog {
     if !skills_enabled(db) {
         return SkillCatalog::default();
     }
-    skills_dir(db).map(|d| load_catalog(&d)).unwrap_or_default()
+    let mut catalog = skills_dir(db).map(|d| load_catalog(&d)).unwrap_or_default();
+    let disabled = disabled_skills(db);
+    catalog.skills.retain(|s| !disabled.contains(&s.name));
+    catalog
 }
 
 /// One skill as listed in Settings and the CLI — no body.
@@ -466,6 +515,8 @@ pub struct SkillInfo {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
+    /// False when the user switched this skill off.
+    pub enabled: bool,
 }
 
 /// What Settings and `emailops-cli skills` show.
@@ -484,6 +535,7 @@ pub struct SkillsOverview {
 pub fn overview(db: &Database) -> SkillsOverview {
     let dir = skills_dir(db);
     let catalog = dir.as_deref().map(load_catalog).unwrap_or_default();
+    let disabled = disabled_skills(db);
     SkillsOverview {
         enabled: skills_enabled(db),
         dir,
@@ -491,6 +543,7 @@ pub fn overview(db: &Database) -> SkillsOverview {
             .skills
             .into_iter()
             .map(|s| SkillInfo {
+                enabled: !disabled.contains(&s.name),
                 name: s.name,
                 description: s.description,
                 path: s.path,
@@ -509,6 +562,66 @@ pub fn ensure_skills_dir(db: &Database) -> crate::models::error::Result<PathBuf>
         crate::models::error::AppError::IoError(format!("could not create the skills folder '{}': {e}", dir.display()))
     })?;
     Ok(dir)
+}
+
+/// `<skills dir>/<name>`, once `name` is a valid skill name — so a name from
+/// the frontend can never point outside the skills folder.
+fn skill_folder(db: &Database, name: &str) -> crate::models::error::Result<PathBuf> {
+    use crate::models::error::AppError;
+    if name.is_empty() {
+        return Err(AppError::InvalidInput("a skill needs a name".to_string()));
+    }
+    validate_name(name).map_err(AppError::InvalidInput)?;
+    let dir = skills_dir(db).ok_or_else(|| AppError::IoError("this install has no data folder".to_string()))?;
+    Ok(dir.join(name))
+}
+
+/// The raw text of a skill's `SKILL.md`, for the editor.
+pub fn read_skill_source(db: &Database, name: &str) -> crate::models::error::Result<String> {
+    let file = skill_folder(db, name)?.join(SKILL_FILE);
+    std::fs::read_to_string(&file).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => crate::models::error::AppError::NotFound(format!("skill {name}")),
+        _ => crate::models::error::AppError::IoError(format!("could not read '{}': {e}", file.display())),
+    })
+}
+
+/// Replace an existing skill's `SKILL.md`. The text must load as that skill
+/// (same checks as the catalog), so the editor can never save a skill the chat
+/// would then reject; nothing is written otherwise.
+pub fn save_skill_source(db: &Database, name: &str, text: &str) -> crate::models::error::Result<()> {
+    use crate::models::error::AppError;
+    let file = skill_folder(db, name)?.join(SKILL_FILE);
+    if !file.is_file() {
+        return Err(AppError::NotFound(format!("skill {name}")));
+    }
+    parse_skill_md(text, name).map_err(AppError::InvalidInput)?;
+    write_atomically(&file, text)
+}
+
+/// Create `<skills dir>/<name>/SKILL.md` from a template the catalog accepts,
+/// for the user to fill in from the editor.
+pub fn create_skill(db: &Database, name: &str) -> crate::models::error::Result<()> {
+    use crate::models::error::AppError;
+    let folder = skill_folder(db, name)?;
+    if folder.exists() {
+        return Err(AppError::InvalidInput(format!("a skill named {name} already exists")));
+    }
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| AppError::IoError(format!("could not create '{}': {e}", folder.display())))?;
+    let template = format!(
+        "---\nname: {name}\ndescription: Say what this skill does and when the chat should use it.\n---\n\
+1. First step.\n2. Second step.\n"
+    );
+    write_atomically(&folder.join(SKILL_FILE), &template)
+}
+
+/// Write through a sibling temp file and rename, so a crash mid-save never
+/// leaves a half-written `SKILL.md`.
+fn write_atomically(file: &Path, text: &str) -> crate::models::error::Result<()> {
+    let tmp = file.with_extension("md.tmp");
+    std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::rename(&tmp, file))
+        .map_err(|e| crate::models::error::AppError::IoError(format!("could not write '{}': {e}", file.display())))
 }
 
 #[cfg(test)]

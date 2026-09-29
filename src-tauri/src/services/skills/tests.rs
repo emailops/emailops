@@ -268,9 +268,28 @@ fn catalog_for_is_empty_when_the_feature_is_off_or_there_is_no_data_dir() {
     let db = Database::new_for_testing().unwrap();
     assert!(skills_dir(&db).is_none());
     assert_eq!(catalog_for(&db), SkillCatalog::default());
-    assert!(skills_enabled(&db));
-    db.set_preference(SKILLS_ENABLED_PREF, "false").unwrap();
+    // Experimental: off until the user switches it on.
     assert!(!skills_enabled(&db));
+    db.set_preference(SKILLS_ENABLED_PREF, "true").unwrap();
+    assert!(skills_enabled(&db));
+}
+
+#[test]
+fn a_disabled_skill_leaves_the_catalog_but_stays_listed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::new(tmp.path().to_path_buf()).unwrap();
+    db.set_preference(SKILLS_ENABLED_PREF, "true").unwrap();
+    let dir = tmp.path().join(SKILLS_DIR);
+    write_skill(&dir, "alpha", &skill_md("alpha", "First.", "Body."));
+    write_skill(&dir, "beta", &skill_md("beta", "Second.", "Body."));
+
+    set_skill_enabled(&db, "alpha", false).unwrap();
+    assert_eq!(catalog_for(&db).names(), vec!["beta"]);
+    let listed: Vec<(String, bool)> = overview(&db).skills.into_iter().map(|s| (s.name, s.enabled)).collect();
+    assert_eq!(listed, vec![("alpha".to_string(), false), ("beta".to_string(), true)]);
+
+    set_skill_enabled(&db, "alpha", true).unwrap();
+    assert_eq!(catalog_for(&db).names(), vec!["alpha", "beta"]);
 }
 
 // ── plan_skill_turn ────────────────────────────────────────────────────
@@ -450,4 +469,96 @@ fn a_long_reference_is_cut_with_a_visible_marker() {
     let text = read_reference(catalog.get("big").unwrap(), "notes.md").unwrap();
     assert!(text.ends_with("[truncated]"), "{}", &text[text.len() - 30..]);
     assert!(text.chars().count() <= MAX_BODY_CHARS + 20);
+}
+
+// ── render_planner_rule ────────────────────────────────────────────────
+
+#[test]
+fn the_planner_rule_is_empty_without_skills() {
+    // An install without skills sends the planner the same prompt as before.
+    assert_eq!(render_planner_rule(&[]), "");
+}
+
+#[test]
+fn the_planner_rule_lists_the_skills_and_how_to_name_one() {
+    let rule = render_planner_rule(&[
+        skill("travel-brief", "Brief the user on a trip."),
+        skill("a-skill", "First."),
+    ]);
+    assert!(
+        rule.contains("- a-skill: First.\n- travel-brief: Brief the user on a trip."),
+        "{rule}"
+    );
+    assert!(rule.contains(r#""skill": "<name>""#), "{rule}");
+    // It rides alongside any verdict, a defer included.
+    assert!(rule.contains(r#"{"defer": true, "skill": "<name>"}"#), "{rule}");
+    // Naming a skill must not turn a defer into an invented filter.
+    assert!(rule.contains("never changes the verdict"), "{rule}");
+    // Descriptions only — never a body in the planner prompt.
+    assert!(!rule.contains("Do the thing."), "{rule}");
+}
+
+// ── editing from the app ───────────────────────────────────────────────
+
+fn db_in(tmp: &tempfile::TempDir) -> Database {
+    Database::new(tmp.path().to_path_buf()).unwrap()
+}
+
+#[test]
+fn create_writes_a_loadable_skill_and_refuses_a_second_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "weekly-digest").unwrap();
+    let text = read_skill_source(&db, "weekly-digest").unwrap();
+    assert!(
+        parse_skill_md(&text, "weekly-digest").is_ok(),
+        "the template must load: {text}"
+    );
+    let err = create_skill(&db, "weekly-digest").unwrap_err().to_string();
+    assert!(err.contains("already exists"), "{err}");
+}
+
+#[test]
+fn a_name_that_is_not_a_skill_name_never_reaches_the_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    for bad in ["", "../escape", "Upper", "a/b", "-x"] {
+        assert!(create_skill(&db, bad).is_err(), "{bad:?}");
+        assert!(read_skill_source(&db, bad).is_err(), "{bad:?}");
+        assert!(save_skill_source(&db, bad, "x").is_err(), "{bad:?}");
+    }
+    assert!(!tmp.path().join("escape").exists());
+}
+
+#[test]
+fn save_validates_before_writing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "alpha").unwrap();
+    let before = read_skill_source(&db, "alpha").unwrap();
+
+    let err = save_skill_source(&db, "alpha", "no frontmatter")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("frontmatter"), "{err}");
+    assert_eq!(
+        read_skill_source(&db, "alpha").unwrap(),
+        before,
+        "an invalid save leaves the file alone"
+    );
+
+    let good = skill_md("alpha", "Updated.", "New steps.");
+    save_skill_source(&db, "alpha", &good).unwrap();
+    assert_eq!(read_skill_source(&db, "alpha").unwrap(), good);
+}
+
+#[test]
+fn save_only_edits_an_existing_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    let err = save_skill_source(&db, "ghost", &skill_md("ghost", "D.", "B."))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("ghost"), "{err}");
+    assert!(read_skill_source(&db, "ghost").is_err());
 }

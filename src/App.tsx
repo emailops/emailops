@@ -36,6 +36,7 @@ import { AccountSettingsDialog } from '@/components/Sidebar/AccountSettingsDialo
 import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
+import { SkillsView } from '@/components/Skills/SkillsView';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
@@ -75,6 +76,7 @@ import {
   useHelpDocsEnabledStore,
   useLensesEnabledStore,
   useMemoryEnabledStore,
+  useSkillsEnabledStore,
   useTasksEnabledStore,
   useTranslationEnabledStore,
 } from '@/stores/featureToggleStore';
@@ -193,6 +195,7 @@ function AppInner() {
     setEnabled: setLensesEnabledRaw,
     refresh: refreshLensesEnabled,
   } = useLensesEnabledStore();
+  const { enabled: skillsEnabled, refresh: refreshSkillsEnabled } = useSkillsEnabledStore();
   const { refresh: refreshTranslationEnabled } = useTranslationEnabledStore();
   const { refresh: refreshHelpDocsEnabled } = useHelpDocsEnabledStore();
   const setTasksEnabled = useCallback(
@@ -273,9 +276,10 @@ function AppInner() {
     if (viewMode === 'tasks' && (!tasksEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'memory' && (!memoriesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'lenses' && (!lensesEnabled || !aiEnabled)) setViewMode('inbox');
+    else if (viewMode === 'skills' && (!skillsEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'chat' && !aiEnabled) setViewMode('inbox');
     else if (viewMode === 'tagboard' && !aiEnabled) setViewMode('inbox');
-  }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, aiEnabled]);
+  }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, skillsEnabled, aiEnabled]);
   const addLog = useLogStore((s) => s.addLog);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const tabs = useEmailStore((s) => s.tabs);
@@ -487,7 +491,15 @@ function AppInner() {
     refreshLensesEnabled().catch((err) => console.error('Failed to load lenses_enabled pref', err));
     refreshTranslationEnabled().catch((err) => console.error('Failed to load ai_translation_enabled pref', err));
     refreshHelpDocsEnabled().catch((err) => console.error('Failed to load help_docs_enabled pref', err));
-  }, [refreshAi, refreshMemoriesEnabled, refreshTasksEnabled, refreshLensesEnabled, refreshTranslationEnabled]);
+    refreshSkillsEnabled().catch((err) => console.error('Failed to load skills_enabled pref', err));
+  }, [
+    refreshAi,
+    refreshMemoriesEnabled,
+    refreshTasksEnabled,
+    refreshLensesEnabled,
+    refreshTranslationEnabled,
+    refreshSkillsEnabled,
+  ]);
 
   // Decide whether to show the onboarding wizard. Existing users (anyone with
   // accounts already connected) are auto-marked complete on this boot — they
@@ -1376,6 +1388,7 @@ function AppInner() {
           tasksEnabled={tasksEnabled}
           memoriesEnabled={memoriesEnabled}
           lensesEnabled={lensesEnabled}
+          skillsEnabled={skillsEnabled}
           calendarEnabled={calendarFeatureEnabled}
           onSelectLens={(lensId) => {
             // Selecting a lens in the sidebar: fire the store action so the
@@ -1454,6 +1467,8 @@ function AppInner() {
               <UnifiedScopeBar accountId={effectiveAccountId} />
               <MemoryView accountId={effectiveAccountId} />
             </div>
+          ) : viewMode === 'skills' && skillsEnabled ? (
+            <SkillsView />
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView
               onCreateWithChat={(prompt) => {

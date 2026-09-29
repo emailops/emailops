@@ -13,8 +13,8 @@
 #   an answer that ignores the instructions fails.
 # - A skill that does not match the request stays unloaded and leaves the
 #   answer alone — including near misses (same vendor, different need).
-# - With several skills installed, the model loads the right one
-#   (`expected_tool_args_contains` on the `load_skill` name).
+# - With several skills installed, the right one is applied (`expected_skill`),
+#   whether the query planner picked it or the model called `load_skill`.
 # - `/a /b request` applies both skills; a bare `/name` still answers; an
 #   unknown `/word` is plain text, not an invocation.
 #
@@ -37,7 +37,7 @@
         1. Search the mail for the vendor's support or customer-care emails.
         2. List every support address you find, one per line, with what that email was about.
         3. End the answer with this exact line: Ticket template: SUPPORT-REQ
-  expected_tools_called: ["load_skill"]
+  expected_skill: vendor-support
   expected_answer_contains:
     - "support@kelvo-home.example"
     - "SUPPORT-REQ"
@@ -57,6 +57,7 @@
         2. List every support address you find, one per line, with what that email was about.
         3. End the answer with this exact line: Ticket template: SUPPORT-REQ
   expected_tools_not_called: ["load_skill"]
+  expected_skill: vendor-support
   expected_answer_contains:
     - "support@kelvo-home.example"
     - "SUPPORT-REQ"
@@ -73,7 +74,7 @@
       description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
       body: |
         End the answer with this exact line: Ticket template: SUPPORT-REQ
-  expected_tools_not_called: ["load_skill"]
+  expected_no_skill: true
   expected_answer_contains: ["16:10"]
   expected_answer_not_contains: ["SUPPORT-REQ"]
   expected_output: "Tu vuelo a Bogotá sale de Madrid el 29 de octubre de 2026 a las 16:10."
@@ -105,8 +106,7 @@
         1. Search the mail for invoices and receipts in the period.
         2. List each vendor on its own line with what the invoice covers.
         3. End the answer with this exact line: Report format: INV-TABLE
-  expected_tools_called: ["load_skill"]
-  expected_tool_args_contains: ['"name":"vendor-support"']
+  expected_skill: vendor-support
   expected_answer_contains: ["support@kelvo-home.example", "SUPPORT-REQ"]
   expected_answer_not_contains: ["TRIP-OK", "INV-TABLE"]
   expected_output: "Direcciones de soporte de Kelvo: support@kelvo-home.example (reclamación del AP-300 aprobada) y care@kelvo.example.eu (entrega del reemplazo). Ticket template: SUPPORT-REQ"
@@ -132,8 +132,7 @@
       description: "How to report the user's invoices and receipts from vendors for a period. Use when the user asks for invoices, receipts or what they spent."
       body: |
         End the answer with this exact line: Report format: INV-TABLE
-  expected_tools_called: ["load_skill"]
-  expected_tool_args_contains: ['"name":"travel-brief"']
+  expected_skill: travel-brief
   expected_answer_contains: ["16:10", "TRIP-OK"]
   expected_answer_not_contains: ["SUPPORT-REQ", "INV-TABLE"]
   expected_output: "Your flight to Bogotá leaves Madrid on 29 October 2026 at 16:10, booking code QX7K2M; online check-in is open. Brief: TRIP-OK"
@@ -155,8 +154,7 @@
         1. Find the booking emails for the trip.
         2. Give date, time and booking code for each flight, and check-in, check-out and price for each stay.
         3. End the answer with this exact line: Brief: TRIP-OK
-  expected_tools_called: ["load_skill"]
-  expected_tool_args_contains: ['"name":"travel-brief"']
+  expected_skill: travel-brief
   expected_answer_contains: ["TRIP-OK"]
   expected_answer_contains_any: ["420"]
   expected_answer_not_contains: ["SUPPORT-REQ"]
@@ -183,8 +181,7 @@
         1. Search the mail for invoices and receipts in the period.
         2. List each vendor on its own line with what the invoice covers.
         3. End the answer with this exact line: Report format: INV-TABLE
-  expected_tools_called: ["load_skill"]
-  expected_tool_args_contains: ['"name":"invoice-report"']
+  expected_skill: invoice-report
   expected_answer_contains: ["Hetzner", "INV-TABLE"]
   expected_answer_not_contains: ["SUPPORT-REQ", "TRIP-OK"]
   expected_output: "May 2026 infrastructure invoices: Hetzner Cloud (2 × CPX31), Fly.io (lumen-api, bahia-site), BorgBase (backups), Plausible Analytics and Fastmail. Report format: INV-TABLE"
@@ -210,8 +207,7 @@
       description: "How to report the user's invoices and receipts from vendors for a period. Use when the user asks for invoices, receipts or what they spent."
       body: |
         End the answer with this exact line: Report format: INV-TABLE
-  expected_tools_called: ["load_skill"]
-  expected_tool_args_contains: ['"name":"client-status"']
+  expected_skill: client-status
   expected_answer_contains: ["CLIENT-OK"]
   expected_answer_contains_any: ["processing", "webhook", "Sprint 5", "sprint 5"]
   expected_answer_not_contains: ["SUPPORT-REQ", "INV-TABLE"]
@@ -233,6 +229,7 @@
         2. Give date, time and booking code for each flight, and check-in, check-out and price for each stay.
         3. End the answer with this exact line: Brief: TRIP-OK
   expected_tools_not_called: ["load_skill"]
+  expected_skill: travel-brief
   expected_answer_contains: ["16:10", "TRIP-OK"]
   expected_output: "Your flight to Bogotá leaves on 29 October 2026 at 16:10, booking code QX7K2M. Brief: TRIP-OK"
   metrics: [answer_relevancy, faithfulness]
@@ -255,6 +252,7 @@
         Write in a formal, professional register, with no emoji.
         After everything else, add this exact line: Tone: FORMAL
   expected_tools_not_called: ["load_skill"]
+  expected_skill: client-status
   expected_answer_contains: ["CLIENT-OK", "FORMAL"]
   expected_answer_contains_any: ["processing", "webhook", "Sprint 5", "sprint 5"]
   expected_output: "Estado del proyecto con Faro Logistics: se resolvió el incidente de pedidos atascados en 'processing' (timeout del webhook) y Marisol confirmó la solución; queda el siguiente hito tras la demo del Sprint 5. Status: CLIENT-OK. Tone: FORMAL"
@@ -273,6 +271,7 @@
         2. Group it by topic, one short line per thread that needs attention.
         3. End the answer with this exact line: Digest: WEEK-OK
   expected_tools_not_called: ["load_skill"]
+  expected_skill: weekly-digest
   expected_answer_contains: ["WEEK-OK"]
   expected_output: "This week: a production bug at Faro Logistics (orders stuck in 'processing', now fixed), API latency on Lumen Health's /search endpoint, a mobile nav bug from Bahía Studio, user questions about Ollama and archived-folder search, and PRs on Codeberg. Digest: WEEK-OK"
   metrics: [answer_relevancy, faithfulness]
@@ -287,7 +286,7 @@
       description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
       body: |
         End the answer with this exact line: Ticket template: SUPPORT-REQ
-  expected_tools_not_called: ["load_skill"]
+  expected_no_skill: true
   expected_answer_contains: ["16:10"]
   expected_answer_not_contains: ["SUPPORT-REQ"]
   expected_output: "Your flight to Bogotá leaves on 29 October 2026 at 16:10."
@@ -313,7 +312,7 @@
       description: "How to report the user's invoices and receipts from vendors for a period. Use when the user asks for invoices, receipts or what they spent."
       body: |
         End the answer with this exact line: Report format: INV-TABLE
-  expected_tools_not_called: ["load_skill"]
+  expected_no_skill: true
   expected_answer_contains_any: ["Kwame", "kwame"]
   expected_answer_not_contains: ["SUPPORT-REQ", "TRIP-OK", "INV-TABLE"]
   expected_output: "Kwame (kwame@mailbox.org) asked on 26 September 2026 whether he can point the app at his own Ollama instance instead of the embedded llama.cpp model."
@@ -329,7 +328,7 @@
       description: "How to answer when the user needs a vendor's customer support contacts for a broken or faulty product. Use for any request to find support addresses."
       body: |
         End the answer with this exact line: Ticket template: SUPPORT-REQ
-  expected_tools_not_called: ["load_skill"]
+  expected_no_skill: true
   expected_answer_contains_any: ["review", "rate", "Rate", "expectations", "reseña", "puntu", "Puntu", "opini"]
   expected_answer_not_contains: ["SUPPORT-REQ"]
   expected_output: "Nordmart asked whether the Kelvo AP-300 Air Purifier met your expectations and invited you to rate it in one tap (29 August 2026)."
@@ -349,7 +348,7 @@
       description: "How to brief the user on an upcoming trip: flights, departure times, booking codes and hotel stays. Use when the user asks about a trip, a flight or a stay."
       body: |
         End the answer with this exact line: Brief: TRIP-OK
-  expected_tools_not_called: ["load_skill"]
+  expected_no_skill: true
   expected_answer_contains_any: ["conserje", "concierge", "portero", "recepción"]
   expected_answer_not_contains: ["SUPPORT-REQ", "TRIP-OK"]
   expected_output: "Juan te pidió que dejes las llaves de repuesto al conserje el viernes, porque él llega tarde el sábado."

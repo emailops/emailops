@@ -377,6 +377,7 @@ mod tests {
             llm_calls,
             help: None,
             research: None,
+            applied_skills: Vec::new(),
             steps: vec![],
         }
     }

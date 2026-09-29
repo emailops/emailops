@@ -1,4 +1,4 @@
-//! Tauri commands backing Settings → Skills. Thin wrappers around
+//! Tauri commands backing Settings → Skills and the Skills view. Thin wrappers around
 //! `services::skills`.
 
 use tauri::State;
@@ -17,4 +17,28 @@ pub async fn list_skills(state: State<'_, AppState>) -> Result<SkillsOverview, A
 pub async fn open_skills_folder(state: State<'_, AppState>) -> Result<(), AppError> {
     let dir = skills::ensure_skills_dir(&state.db)?;
     crate::services::attachments::reveal_in_file_manager(&dir)
+}
+
+/// Switch one skill on or off for the chat (Skills view toggle).
+#[tauri::command]
+pub async fn set_skill_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), AppError> {
+    skills::set_skill_enabled(&state.db, &name, enabled)
+}
+
+/// The raw `SKILL.md` of one skill, for the editor.
+#[tauri::command]
+pub async fn read_skill(state: State<'_, AppState>, name: String) -> Result<String, AppError> {
+    skills::read_skill_source(&state.db, &name)
+}
+
+/// Save an edited `SKILL.md`; rejected (nothing written) if it would not load.
+#[tauri::command]
+pub async fn save_skill(state: State<'_, AppState>, name: String, content: String) -> Result<(), AppError> {
+    skills::save_skill_source(&state.db, &name, &content)
+}
+
+/// Create a new skill from the template.
+#[tauri::command]
+pub async fn create_skill(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
+    skills::create_skill(&state.db, &name)
 }

@@ -110,6 +110,7 @@ pub fn form_fill_trace(
         }],
         help: None,
         research: None,
+        applied_skills: Vec::new(),
         steps: Vec::new(),
     })
 }

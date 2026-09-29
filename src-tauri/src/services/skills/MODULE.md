@@ -16,9 +16,19 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   the next chat turn with no reload step.
 - **Planners** — `plan_invocation` / `plan_skill_turn` (does a message start
   with `/name`?), `render_catalog` (the capped `- name: description` lines),
-  `render_skill_block` (the `<skill>` block the body travels in).
-- **The feature gate** — `skills_enabled` (`skills_enabled` preference,
-  default on).
+  `render_skill_block` (the `<skill>` block the body travels in),
+  `render_planner_rule` (the skills rule for the query planner).
+- **The feature gate** — `skills_enabled` (`skills_enabled` preference).
+  Experimental and **off by default**.
+- **Per-skill switches** — `set_skill_enabled`, stored as a JSON array of
+  names in the `skills_disabled` preference. A disabled skill leaves
+  `catalog_for` (so the prompt) but stays in `overview`; its folder is never
+  touched.
+- **Editing from the app** — `read_skill_source`, `save_skill_source` (the
+  text must pass `parse_skill_md` for that folder or nothing is written) and
+  `create_skill` (a template the catalog accepts). Every name from the
+  frontend goes through `validate_name` before it becomes a path, and writes
+  go through a temp file + rename.
 
 ## What it does NOT own
 
@@ -26,8 +36,9 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   returns a body when the model asks for one.
 - **The turn.** `chat::turn::run_chat_turn` calls `plan_skill_turn` and places
   the block; this module never builds a prompt.
-- **Editing skills.** They are files; Settings only lists them and opens the
-  folder (`commands::skills`).
+- **The UI.** Settings → Skills holds the experimental switch and the folder;
+  the Skills view (`src/components/Skills/SkillsView.tsx`) lists skills with
+  their switches and edits `SKILL.md`. The files stay the source of truth.
 - **Running code.** A skill is instructions only. Scripts or other files in a
   skill folder are ignored — only `.md` / `.txt` files are ever listed, and
   nothing here executes anything.
@@ -53,8 +64,14 @@ levels:
 
 A body enters the prompt only on a turn that uses the skill:
 
+- **The planner chooses it**: when the query planner runs, its cached head
+  carries `render_planner_rule` and it may add `"skill": "<name>"` next to any
+  verdict. `run_chat_turn` places that skill's block exactly like a `/name`
+  one — before retrieval, so the sources cannot tempt the model into
+  answering without it. The trace records it in `applied_skills`
+  (`via: planner` or `slash`).
 - **The model chooses it**: it calls `load_skill(name)` and the body comes back
-  as a tool result.
+  as a tool result. The fallback when the planner did not run or missed.
 - **The user invokes it**: a message starting with `/name` puts the block in
   the **final user message** (never the system message), right before the
   question and after the Sources — placed ahead of the Sources, the model

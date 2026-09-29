@@ -64,6 +64,7 @@ describe('SkillsSettings', () => {
           name: 'weekly-summary',
           description: 'Weekly recap by client.',
           path: '/data/skills/weekly-summary/SKILL.md',
+          enabled: true,
         },
       ],
       errors: [],

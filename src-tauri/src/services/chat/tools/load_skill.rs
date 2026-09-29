@@ -110,6 +110,7 @@ mod tests {
     fn db_with_skills(skills: &[(&str, &str, &str)]) -> (tempfile::TempDir, Arc<Database>) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Database::new(tmp.path().to_path_buf()).unwrap());
+        db.set_preference(skills::SKILLS_ENABLED_PREF, "true").unwrap();
         for (name, description, body) in skills {
             let dir = tmp.path().join(skills::SKILLS_DIR).join(name);
             std::fs::create_dir_all(&dir).unwrap();

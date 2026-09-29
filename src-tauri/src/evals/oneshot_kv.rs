@@ -298,6 +298,8 @@ async fn run_planner(db: &Database, provider: &dyn AIProvider, user_email: &str)
         // The KV bench measures the cached head; no form is open.
         None,
         &crate::services::forms::registry::catalog(db),
+        // Same head the chat sends: the rule is empty without skills.
+        &crate::services::skills::render_planner_rule(&crate::services::skills::catalog_for(db).skills),
     )
     .await;
     Ok(())

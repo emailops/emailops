@@ -141,6 +141,7 @@ mod tests {
             llm_calls: Vec::new(),
             help: None,
             research: None,
+            applied_skills: Vec::new(),
             steps: Vec::new(),
         });
         message

@@ -250,6 +250,8 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
         &glossary,
         None,
         &catalog,
+        // Research gathers mail; it does not follow user skills.
+        "",
     )
     .await;
     let latency = t.elapsed().as_millis() as i64;
