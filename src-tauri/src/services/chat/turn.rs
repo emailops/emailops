@@ -3412,25 +3412,8 @@ async fn run_thread_bound_turn(
             );
             Ok(())
         }
-        Err(e) => {
-            let err_text = format!("Chat failed: {e}");
-            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            crate::services::events::emit(
-                "chat-stream",
-                ChatStreamEvent {
-                    message_id: assistant_message_id.clone(),
-                    conversation_id: conversation_id.clone(),
-                    token: String::new(),
-                    done: true,
-                    error: Some(err_text.clone()),
-                    token_count: None,
-                    latency_ms: Some(latency_ms),
-                    replace: None,
-                },
-            );
-            emit_log("error", &err_text);
-            Err(e)
-        }
+        // Reported (row + terminal event) by `run_chat_turn`, like any error.
+        Err(e) => Err(e),
     }
 }
 
@@ -3798,6 +3781,7 @@ pub struct TurnContext {
     pub research_estimate_id: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
@@ -3813,6 +3797,75 @@ pub async fn run_chat_turn(
     // the thread on screen, the view on screen, and whether this is a retry of
     // an answer the user rejected. Grouped so the signature stops growing a
     // parameter per feature.
+    context: TurnContext,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let result = run_chat_turn_inner(
+        Arc::clone(&db),
+        registry,
+        conversation_id.clone(),
+        user_message_id,
+        assistant_message_id.clone(),
+        account_id,
+        user_question,
+        model,
+        history,
+        categories,
+        context,
+    )
+    .await;
+    if let Err(e) = &result {
+        report_turn_failure(
+            &db,
+            &conversation_id,
+            &assistant_message_id,
+            started.elapsed().as_millis() as i64,
+            e,
+        );
+    }
+    result
+}
+
+/// The one place a failed turn is reported, whatever failed and wherever: the
+/// pre-created assistant row gets the failure text and the bubble gets its
+/// terminal `done` event with the error. Every error of a turn — an early `?`
+/// included — reaches it, so none leaves the bubble spinning over an empty row.
+fn report_turn_failure(db: &Database, conversation_id: &str, message_id: &str, latency_ms: i64, e: &AppError) {
+    let err_text = format!("Chat failed: {e}");
+    if let Err(persist) = db.update_chat_message_completion(message_id, &err_text, None, Some(latency_ms)) {
+        emit_log(
+            "error",
+            &format!("failed to persist the failed turn's message: {persist}"),
+        );
+    }
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token: String::new(),
+            done: true,
+            error: Some(err_text.clone()),
+            token_count: None,
+            latency_ms: Some(latency_ms),
+            replace: None,
+        },
+    );
+    emit_log("error", &err_text);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_chat_turn_inner(
+    db: Arc<Database>,
+    registry: Arc<tools::ToolRegistry>,
+    conversation_id: String,
+    user_message_id: String,
+    assistant_message_id: String,
+    account_id: String,
+    user_question: String,
+    model: String,
+    history: Vec<ChatMessage>,
+    categories: Vec<String>,
     context: TurnContext,
 ) -> Result<()> {
     // Registered for the whole turn: the chat's Cancel button finds it here.
@@ -5400,25 +5453,8 @@ pub async fn run_chat_turn(
             );
             Ok(())
         }
-        Err(e) => {
-            let err_text = format!("Chat failed: {}", e);
-            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            crate::services::events::emit(
-                "chat-stream",
-                ChatStreamEvent {
-                    message_id: assistant_message_id.clone(),
-                    conversation_id,
-                    token: String::new(),
-                    done: true,
-                    error: Some(err_text.clone()),
-                    token_count: None,
-                    latency_ms: Some(latency_ms),
-                    replace: None,
-                },
-            );
-            emit_log("error", &err_text);
-            Err(AppError::AiError(err_text))
-        }
+        // Reported (row + terminal event) by `run_chat_turn`, like any error.
+        Err(e) => Err(e),
     }
 }
 
@@ -8841,5 +8877,66 @@ Preséntalos en una tabla markdown …";
         assert!(described.contains("intent=\"request\""), "{described}");
         assert!(described.contains("unread"), "{described}");
         assert!(!described.contains("limit"), "{described}");
+    }
+
+    // Sync with its own runtime so the global seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn a_turn_that_fails_early_still_ends_the_stream_and_fills_its_row() {
+        // An error before the answer (here: AI switched off, the provider never
+        // loads) used to bubble out with no terminal event: the bubble kept
+        // spinning and the pre-created assistant row stayed empty.
+        let _g = crate::services::events::seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('a1', 'gmail', 'a@example.com', 'a', 0, 0, 1)",
+                [],
+            )
+            .expect("seed account");
+        db.set_preference("ai_enabled", "false").expect("pref");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db.insert_chat_message(&conv.id, "user", "hola", None).expect("user");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant");
+
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(run_chat_turn(
+                Arc::clone(&db),
+                Arc::new(tools::ToolRegistry::with_tools(vec![])),
+                conv.id.clone(),
+                user.id.clone(),
+                assistant.id.clone(),
+                "a1".to_string(),
+                "hola".to_string(),
+                String::new(),
+                Vec::new(),
+                Vec::new(),
+                TurnContext::default(),
+            ));
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+
+        assert!(result.is_err());
+        let terminal: Vec<serde_json::Value> = sink
+            .payloads_for("chat-stream")
+            .into_iter()
+            // Other tests may emit into the global sink concurrently.
+            .filter(|p| p["messageId"] == serde_json::json!(assistant.id) && p["done"] == serde_json::json!(true))
+            .collect();
+        assert_eq!(terminal.len(), 1, "exactly one terminal event: {terminal:?}");
+        assert!(terminal[0]["error"].as_str().is_some_and(|e| !e.is_empty()));
+        let row = db
+            .get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row");
+        assert!(row.content.starts_with("Chat failed"), "{}", row.content);
     }
 }
