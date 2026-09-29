@@ -2370,7 +2370,7 @@ fn sanitize_filename_fragment(input: &str) -> String {
     out
 }
 
-fn mime_to_extension(mime_type: &str) -> &str {
+pub(crate) fn mime_to_extension(mime_type: &str) -> &str {
     match mime_type {
         "application/pdf" => "pdf",
         "application/zip" => "zip",

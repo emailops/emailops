@@ -898,18 +898,18 @@ fn collect_attachments(part: &mailparse::ParsedMail, out: &mut Vec<AttachmentInf
 
     let ct = &part.ctype;
     let mime = ct.mimetype.as_str();
-    let disposition = part
-        .headers
-        .get_first_value("Content-Disposition")
-        .unwrap_or_default()
-        .to_lowercase();
+    // mailparse's parser keeps the filename's case, honours quoted `;` and
+    // decodes RFC 2231 (`filename*=UTF-8''…`) — a hand-rolled split on a
+    // lowercased header did none of that.
+    let disposition = part.get_content_disposition();
 
     // Extract filename: Content-Disposition filename= takes precedence, then Content-Type name=.
     let filename = disposition
-        .split(';')
-        .find(|p| p.trim().starts_with("filename"))
-        .and_then(|p| p.split_once('=').map(|x| x.1.trim().trim_matches('"').to_string()))
-        .or_else(|| ct.params.get("name").cloned());
+        .params
+        .get("filename")
+        .or_else(|| ct.params.get("name"))
+        .filter(|name| !name.trim().is_empty())
+        .cloned();
 
     // A MIME part counts as an attachment when:
     // 1. Content-Disposition explicitly says "attachment" (RFC 2183).
@@ -918,14 +918,23 @@ fn collect_attachments(part: &mailparse::ParsedMail, out: &mut Vec<AttachmentInf
     // 3. No Content-Disposition at all but the Content-Type carries a "name"
     //    parameter and the type is not text/plain, text/html, or multipart/*
     //    (common in older mail clients and IMAP Sent-folder copies).
-    let is_attachment = disposition.contains("attachment")
+    let is_attachment = disposition.disposition == mailparse::DispositionType::Attachment
         || (filename.is_some()
             && !mime.starts_with("text/plain")
             && !mime.starts_with("text/html")
             && !mime.starts_with("multipart/"));
 
     if is_attachment {
-        let filename = filename.unwrap_or_else(|| "attachment".to_string());
+        // `(email_id, filename)` is unique, so unnamed parts are numbered by
+        // their position among this message's attachments instead of all
+        // collapsing onto one "attachment" row.
+        let filename = filename.unwrap_or_else(|| {
+            format!(
+                "attachment-{}.{}",
+                out.len() + 1,
+                crate::sync::gmail::mime_to_extension(mime)
+            )
+        });
         if let Ok(data) = part.get_body_raw() {
             out.push(AttachmentInfo {
                 // Use "INLINE::<filename>" so fetch_email_attachment_bytes can look up
@@ -2266,6 +2275,65 @@ mod tests {
             "a read timeout was cleared: {recorded:?}"
         );
         assert_eq!(recorded.last(), Some(&Some(IO_TIMEOUT)));
+    }
+
+    /// A multipart/mixed message with one text body and the given extra parts
+    /// (each a header block + body, without the boundary line).
+    fn mixed_message(parts: &[&str]) -> Vec<u8> {
+        let mut raw = String::from(
+            "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n\
+             Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+             --XX\r\nContent-Type: text/plain\r\n\r\nhello\r\n",
+        );
+        for part in parts {
+            raw.push_str("--XX\r\n");
+            raw.push_str(part);
+            raw.push_str("\r\n");
+        }
+        raw.push_str("--XX--\r\n");
+        raw.into_bytes()
+    }
+
+    fn attachment_names(raw: &[u8]) -> Vec<String> {
+        let parsed = parse_mail(raw).expect("parse");
+        extract_attachments(&parsed).into_iter().map(|a| a.filename).collect()
+    }
+
+    #[test]
+    fn attachment_filename_keeps_its_case() {
+        let raw = mixed_message(&[
+            "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"Report Q3.PDF\"\r\n\r\n%PDF",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["Report Q3.PDF"]);
+    }
+
+    #[test]
+    fn attachment_filename_decodes_rfc2231_encoding() {
+        let raw = mixed_message(&[
+            "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf\r\n\r\n%PDF",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["résumé.pdf"]);
+    }
+
+    #[test]
+    fn attachment_filename_may_contain_a_quoted_semicolon() {
+        let raw = mixed_message(&[
+            "Content-Type: text/csv\r\nContent-Disposition: attachment; filename=\"a;b.csv\"\r\n\r\nx,y",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["a;b.csv"]);
+    }
+
+    /// `(email_id, filename)` is unique, so two unnamed parts both called
+    /// "attachment" collapsed into one stored row.
+    #[test]
+    fn unnamed_attachments_get_distinct_names() {
+        let raw = mixed_message(&[
+            "Content-Type: image/png\r\nContent-Disposition: attachment\r\n\r\nAAAA",
+            "Content-Type: image/png\r\nContent-Disposition: attachment\r\n\r\nBBBB",
+        ]);
+        let names = attachment_names(&raw);
+        assert_eq!(names.len(), 2);
+        assert_ne!(names[0], names[1], "{names:?}");
     }
 
     const NOW: i64 = 1_800_000_000;
