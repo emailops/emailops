@@ -525,8 +525,7 @@ impl Database {
         let mut stmt = conn.prepare("SELECT id, sender_email, subject FROM emails WHERE account_id = ?1")?;
         let rows = stmt
             .query_map(params![account_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 }

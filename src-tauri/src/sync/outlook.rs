@@ -1552,6 +1552,36 @@ mod tests {
     /// different lookup. Graph rejects it, so replying from an Outlook account
     /// hit a resource that does not exist.
     #[tokio::test]
+    async fn attachment_listing_follows_the_next_link_to_the_last_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{ "id": "m1" }],
+                "@odata.nextLink": format!("{}/page-2", server.uri())
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/page-2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{ "id": "m2" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids = EmailProvider::list_message_ids_with_attachments(&client)
+            .await
+            .expect("listing");
+
+        assert_eq!(ids, Some(vec!["m1".to_string(), "m2".to_string()]));
+    }
+
+    #[tokio::test]
     async fn reply_addresses_the_graph_item_id() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

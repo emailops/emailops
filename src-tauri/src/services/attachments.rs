@@ -959,6 +959,26 @@ async fn stored_attachment_infos(
     Ok(Some(infos))
 }
 
+/// Whether every attachment of `email_id` has a local file — the cheap
+/// question [`stored_attachment_infos`] answers by reading them all.
+fn attachments_stored_on_disk(db: &Database, email_id: &str, app_data_dir: &Path) -> Result<bool> {
+    let metas = db.get_email_attachment_metas(email_id)?;
+    if metas.is_empty() {
+        return Ok(false);
+    }
+    for meta in metas {
+        let Some(relative_path) = meta.file_path.as_deref() else {
+            return Ok(false);
+        };
+        match safe_attachment_path(app_data_dir, relative_path) {
+            Ok(_) => {}
+            Err(AppError::NotFound(_)) => return Ok(false),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(true)
+}
+
 pub async fn apply_rule_retroactively(
     db: &Arc<Database>,
     rule_id: &str,
@@ -981,16 +1001,18 @@ pub async fn apply_rule_retroactively(
     // missing locally. An account without usable credentials, or offline,
     // still collects what it already has. `build_provider` dispatches on
     // provider and handles OAuth refresh consistently with the rest of the app.
-    let provider = if rule_needs_provider(db, &rule, account_id, app_data_dir).await? {
+    let plan = plan_for(db, &rule, account_id)?;
+    let provider = if rule_needs_provider(db, &rule, &plan.emails, app_data_dir)? {
         Some(build_provider(&account, app.cloned()).await?)
     } else {
         None
     };
 
-    apply_rule_with_provider(
+    apply_planned(
         db,
         &rule,
         account_id,
+        plan,
         provider.as_deref(),
         app_data_dir,
         app,
@@ -1018,31 +1040,40 @@ fn attachment_record_complete(db: &Database, account_id: &str) -> Result<bool> {
         .is_some())
 }
 
-fn plan_for(db: &Database, rule: &AttachmentRule, account_id: &str) -> Result<(usize, Vec<(String, RetroSource)>)> {
+/// The emails a retroactive apply visits, and how many it looked through.
+struct RetroPlan {
+    scanned: usize,
+    emails: Vec<(String, RetroSource)>,
+}
+
+fn plan_for(db: &Database, rule: &AttachmentRule, account_id: &str) -> Result<RetroPlan> {
     let rows = db.get_emails_matching_rule(account_id)?;
     let recorded = db.get_attachment_filenames_by_email(account_id)?;
     let complete = attachment_record_complete(db, account_id)?;
-    Ok((rows.len(), plan_retroactive_apply(rule, &rows, &recorded, complete)))
+    Ok(RetroPlan {
+        scanned: rows.len(),
+        emails: plan_retroactive_apply(rule, &rows, &recorded, complete),
+    })
 }
 
 /// Whether applying `rule` to the account's existing emails has to ask the
 /// provider: a whole message must be fetched, or a matching recorded
 /// attachment is neither on disk nor carried inline.
-async fn rule_needs_provider(
+fn rule_needs_provider(
     db: &Database,
     rule: &AttachmentRule,
-    account_id: &str,
+    plan: &[(String, RetroSource)],
     app_data_dir: &Path,
 ) -> Result<bool> {
-    for (email_id, source) in plan_for(db, rule, account_id)?.1 {
+    for (email_id, source) in plan {
         match source {
             RetroSource::FetchMessage => return Ok(true),
             RetroSource::RecordedAttachments => {
-                if stored_attachment_infos(db, &email_id, app_data_dir).await?.is_some() {
+                if attachments_stored_on_disk(db, email_id, app_data_dir)? {
                     continue;
                 }
                 let missing_bytes = db
-                    .get_attachment_infos(&email_id)?
+                    .get_attachment_infos(email_id)?
                     .iter()
                     .any(|i| matches_filename(rule, &i.filename) && i.inline_data.is_none());
                 if missing_bytes {
@@ -1074,7 +1105,33 @@ pub async fn apply_rule_with_provider(
     on_progress: &(dyn Fn(RetroProgress) + Send + Sync),
     should_abort: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<u32> {
-    let (scanned, plan) = plan_for(db, rule, account_id)?;
+    let plan = plan_for(db, rule, account_id)?;
+    apply_planned(
+        db,
+        rule,
+        account_id,
+        plan,
+        provider,
+        app_data_dir,
+        app,
+        on_progress,
+        should_abort,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_planned(
+    db: &Arc<Database>,
+    rule: &AttachmentRule,
+    account_id: &str,
+    RetroPlan { scanned, emails: plan }: RetroPlan,
+    provider: Option<&dyn EmailProvider>,
+    app_data_dir: &Path,
+    app: Option<&AppHandle>,
+    on_progress: &(dyn Fn(RetroProgress) + Send + Sync),
+    should_abort: &(dyn Fn() -> bool + Send + Sync),
+) -> Result<u32> {
     let total = plan.len();
     on_progress(RetroProgress {
         processed: 0,
