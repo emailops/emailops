@@ -743,22 +743,14 @@ impl GmailClient {
         let (sender_name, sender_email) = parse_email_address(&from);
 
         // Parse recipients (To and Cc)
-        let recipients: Vec<String> = to
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let recipients = split_address_list(&to);
 
         let cc_header = headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("Cc"))
             .map(|h| h.value.clone())
             .unwrap_or_default();
-        let cc: Vec<String> = cc_header
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let cc = split_address_list(&cc_header);
 
         // Get body content
         let body = self.extract_body(&msg.id, &msg.payload).await;
@@ -2112,6 +2104,46 @@ fn format_gmail_error(status: StatusCode, body: &str) -> String {
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
 }
 
+/// Split an address-list header into its entries, each kept verbatim
+/// (`"Name" <a@b>` or `a@b`, the shape Gmail rows store). Commas inside a
+/// quoted display name, an `<addr>` or a `(comment)` do not split.
+fn split_address_list(raw: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let (mut in_quotes, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
+    for c in raw.chars() {
+        if escaped {
+            escaped = false;
+        } else if in_quotes {
+            match c {
+                '\\' => escaped = true,
+                '"' => in_quotes = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                '"' => in_quotes = true,
+                '<' => angle += 1,
+                '>' => angle = angle.saturating_sub(1),
+                '(' => comment += 1,
+                ')' => comment = comment.saturating_sub(1),
+                ',' if angle == 0 && comment == 0 => {
+                    entries.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        current.push(c);
+    }
+    entries.push(current);
+    entries
+        .into_iter()
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
 fn parse_email_address(from: &str) -> (String, String) {
     // Parse "Name <email@example.com>" or "email@example.com"
     if let Some(start) = from.find('<') {
@@ -3038,6 +3070,24 @@ mod tests {
         let html = "<html>\r\n<head>\r\n<meta http-equiv=\"Content-Type\">";
         let encoded = base64_url_encode(html.as_bytes());
         assert_eq!(base64_url_decode(&encoded).unwrap(), html);
+    }
+
+    /// A quoted display name may contain a comma; splitting the header on
+    /// every ',' cut such a recipient in two.
+    #[test]
+    fn address_list_split_respects_quoted_display_names() {
+        assert_eq!(
+            split_address_list(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            vec![r#""Doe, Jane" <jane@example.com>"#, "bob@example.com"]
+        );
+    }
+
+    #[test]
+    fn address_list_split_keeps_escaped_quotes_and_drops_empties() {
+        assert_eq!(
+            split_address_list(r#""A \"x, y\" B" <a@example.com>, , c@example.com"#),
+            vec![r#""A \"x, y\" B" <a@example.com>"#, "c@example.com"]
+        );
     }
 
     // --- find_body_part tests ---

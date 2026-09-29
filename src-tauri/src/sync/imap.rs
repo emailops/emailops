@@ -802,10 +802,23 @@ fn parse_from_header(raw: &str) -> (String, String) {
     }
 }
 
-/// Parse a comma-separated list of addresses → Vec<email string>.
+/// Parse an address-list header → the bare addresses (groups flattened).
+/// `mailparse::addrparse` respects quoted display names such as
+/// `"Doe, Jane" <jane@…>`; the plain comma split below is only the fallback
+/// for headers it rejects.
 fn parse_address_list(raw: &str) -> Vec<String> {
     if raw.trim().is_empty() {
         return Vec::new();
+    }
+    if let Ok(list) = mailparse::addrparse(raw) {
+        return list
+            .iter()
+            .flat_map(|addr| match addr {
+                mailparse::MailAddr::Single(info) => vec![info.addr.clone()],
+                mailparse::MailAddr::Group(group) => group.addrs.iter().map(|info| info.addr.clone()).collect(),
+            })
+            .filter(|addr| !addr.is_empty())
+            .collect();
     }
     raw.split(',')
         .map(|s| {
@@ -2422,6 +2435,22 @@ mod tests {
                 .contains(r#"<img src="data:image/png;base64,iVBORw=="><img src="cid:logo10">"#),
             "{}",
             email.body
+        );
+    }
+
+    #[test]
+    fn address_list_respects_quoted_display_names() {
+        assert_eq!(
+            parse_address_list(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            vec!["jane@example.com", "bob@example.com"]
+        );
+    }
+
+    #[test]
+    fn address_list_flattens_groups() {
+        assert_eq!(
+            parse_address_list("Team: a@example.com, B <b@example.com>;"),
+            vec!["a@example.com", "b@example.com"]
         );
     }
 
