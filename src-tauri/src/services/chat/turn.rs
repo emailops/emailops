@@ -451,6 +451,23 @@ unless the user asks."
     })
 }
 
+/// The per-turn inputs of [`refuse_tool_call`], carried to every place that
+/// dispatches a tool — the tool loop and the synthesis recovery ladder alike,
+/// so a call salvaged after the loop cannot slip past the gate.
+#[derive(Debug, Clone, Copy)]
+struct ToolGate {
+    /// See [`draft_call_allowed`].
+    draft_allowed: bool,
+    /// The planner said the question is about EmailOps itself.
+    app_help: bool,
+}
+
+impl ToolGate {
+    fn refusal(&self, tool_name: &str) -> Option<ToolRefusal> {
+        refuse_tool_call(tool_name, self.draft_allowed, self.app_help)
+    }
+}
+
 /// Name recorded in the trace for a tool call. A refused call is labelled
 /// with why, so the reasoning panel and the eval harness see "the model
 /// asked, the gate said no" rather than a tool that ran.
@@ -3540,6 +3557,9 @@ async fn synthesize_with_recovery(
     categories: &[String],
     page: Option<&tools::PageState>,
     user_question: &str,
+    // The turn's side-effect / app-help gate: salvaged calls obey it exactly
+    // like the tool loop's own calls.
+    gate: ToolGate,
     synthesis_messages: Vec<AiMessage>,
     conversation_id: &str,
     assistant_message_id: &str,
@@ -3618,19 +3638,36 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
             });
             for tc in &salvaged {
                 let t_tool = std::time::Instant::now();
-                let dispatched = dispatch_tool(
-                    registry,
-                    db,
-                    account_id,
-                    categories,
-                    page,
-                    user_question,
-                    &tc.function.name,
-                    tc.function.arguments.clone(),
-                )
-                .await;
+                let refusal = gate.refusal(&tc.function.name);
+                let dispatched = match &refusal {
+                    Some(r) => {
+                        emit_log(
+                            "info",
+                            &format!("final synthesis: refused salvaged {} — {}", tc.function.name, r.reason),
+                        );
+                        DispatchedTool {
+                            text: r.note.clone(),
+                            email_refs: Vec::new(),
+                            draft_refs: Vec::new(),
+                            corrected_args: None,
+                        }
+                    }
+                    None => {
+                        dispatch_tool(
+                            registry,
+                            db,
+                            account_id,
+                            categories,
+                            page,
+                            user_question,
+                            &tc.function.name,
+                            tc.function.arguments.clone(),
+                        )
+                        .await
+                    }
+                };
                 tool_traces.push(ToolCallTrace {
-                    name: tc.function.name.clone(),
+                    name: traced_tool_name(&tc.function.name, refusal.as_ref()),
                     // Salvaged from the final synthesis stream, after the loop.
                     round: -3,
                     arguments: dispatched
@@ -4424,6 +4461,21 @@ pub async fn run_chat_turn(
         &applied_names,
     );
 
+    // The same gate the tool loop applies to its own calls (it derives it from
+    // these very messages); the synthesis recovery below applies it to the
+    // calls it salvages after the loop.
+    let tool_gate = ToolGate {
+        draft_allowed: draft_call_allowed(
+            &user_question,
+            initial_messages
+                .iter()
+                .rev()
+                .find(|(role, _)| role == "assistant")
+                .map(|(_, content)| content.as_str()),
+        ),
+        app_help,
+    };
+
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     // Set by the research branch below; `None` on an ordinary turn.
@@ -4788,6 +4840,7 @@ pub async fn run_chat_turn(
                         &categories,
                         Some(&page_state),
                         &user_question,
+                        tool_gate,
                         retry_messages,
                         &conversation_id,
                         &assistant_message_id,
@@ -4911,6 +4964,7 @@ pub async fn run_chat_turn(
                     &categories,
                     Some(&page_state),
                     &user_question,
+                    tool_gate,
                     synthesis_messages,
                     &conversation_id,
                     &assistant_message_id,
@@ -6193,6 +6247,10 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
@@ -6277,6 +6335,10 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
@@ -6350,6 +6412,10 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
@@ -6414,6 +6480,10 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
@@ -6453,6 +6523,10 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
@@ -6496,6 +6570,10 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
@@ -8257,5 +8335,128 @@ Preséntalos en una tabla markdown …";
         // structurally a function call after trim.
         let text = "I called search_emails(query=\"foo\") to find it and it worked.";
         assert!(parse_python_call_tool_calls(text, &["search_emails"]).is_empty());
+    }
+
+    /// A scripted tool that counts its executions — for asserting a gated call
+    /// never ran.
+    struct CountingTool {
+        name: &'static str,
+        runs: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl tools::Tool for CountingTool {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn description(&self) -> &'static str {
+            "counting test tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(
+            &self,
+            _ctx: &tools::ToolCtx<'_>,
+            _args: serde_json::Value,
+        ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+            self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(tools::ToolOutput::text(format!("{} ran", self.name)))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_draft_salvaged_from_an_empty_synthesis_is_refused_when_none_was_asked() {
+        // The side-effect gate must hold on the recovery ladder too: a draft
+        // call leaked into the synthesis stream is not a request to save one.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "generate_email_draft",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"generate_email_draft\",\"arguments\":{\"instructions\":\"reply\"}}</tool_call>",
+        );
+        provider.push_chat_response("The email asks for the Q3 figures.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "what does this email ask?",
+            ToolGate {
+                draft_allowed: false,
+                app_help: false,
+            },
+            vec![ai_msg("user", "what does this email ask?")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no draft may be saved"
+        );
+        assert!(
+            tool_traces.iter().any(|t| t.name.contains("refused")),
+            "the refusal is traced: {:?}",
+            tool_traces.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            recovery.result.expect("stream ok").content,
+            "The email asks for the Q3 figures."
+        );
+    }
+
+    #[tokio::test]
+    async fn an_app_help_turn_refuses_calls_salvaged_from_an_empty_synthesis() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"query\":\"lens\"}}</tool_call>",
+        );
+        provider.push_chat_response("Open Lenses and click New.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "how do I create a lens?",
+            ToolGate {
+                draft_allowed: true,
+                app_help: true,
+            },
+            vec![ai_msg("user", "how do I create a lens?")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+        )
+        .await;
+
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(tool_traces.iter().all(|t| t.name.contains("refused")));
     }
 }
