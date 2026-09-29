@@ -260,7 +260,16 @@ pub async fn on_emails_synced(
         };
 
         for email_id in email_ids {
-            if email_matches_scope(&db, &lens, email_id)? {
+            let matches = match email_matches_scope(&db, &lens, email_id) {
+                Ok(m) => m,
+                Err(e) => {
+                    // One broken Lens must not stop incremental extraction for
+                    // the others; skip the rest of its emails this sync.
+                    emit_log(app, "error", format!("Lens '{}': scope check failed: {e}", lens.name));
+                    break;
+                }
+            };
+            if matches {
                 if db.lens_row_exists(&lens.id, email_id).unwrap_or(false) {
                     continue;
                 }
@@ -710,6 +719,58 @@ mod tests {
         assert_eq!(runs[0].status, "complete");
         assert_eq!(runs[0].succeeded, 1);
         assert_eq!(runs[0].failed, 0);
+    }
+
+    /// One Lens whose scope fails to evaluate must not stop incremental
+    /// extraction for the other Lenses on the same sync.
+    #[tokio::test]
+    async fn on_emails_synced_isolates_a_lens_whose_scope_fails() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let acct = "acct1";
+        insert_account(&db, acct, "owner@example.com");
+        let email_id = "e1";
+        insert_invoice_email(
+            &db,
+            email_id,
+            acct,
+            "Vendor",
+            "billing@example.com",
+            "Your invoice",
+            "Invoice INV-1 for 10,00 EUR.",
+            "inbox",
+            "Primary",
+            now_secs() - 60,
+        );
+
+        // Lens A (evaluated first) uses the FTS branch; Lens B does not.
+        let broken = db.create_lens(&invoices_lens_input(acct)).expect("create lens A");
+        let mut plain_input = invoices_lens_input(acct);
+        plain_input.name = "Plain".into();
+        plain_input.scope.query = None;
+        let plain = db.create_lens(&plain_input).expect("create lens B");
+        // Make Lens A's scope evaluation fail at the DB layer.
+        db.connection()
+            .execute_batch("DROP TABLE emails_fts")
+            .expect("drop fts");
+
+        let provider = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Vendor",
+                "amount": { "amount": 10.0, "currency": "EUR" },
+                "status": "unpaid",
+            }),
+        });
+        let total = on_emails_synced(db.clone(), provider, &[email_id.to_string()], None)
+            .await
+            .expect("a failing Lens must not fail the whole hook");
+
+        assert_eq!(total, 1);
+        assert_eq!(db.get_lens_rows(&plain.id, None, 50, 0).expect("rows B").rows.len(), 1);
+        assert!(db
+            .get_lens_rows(&broken.id, None, 50, 0)
+            .expect("rows A")
+            .rows
+            .is_empty());
     }
 
     /// Reproduces the user's mis-configuration: they put a full email address

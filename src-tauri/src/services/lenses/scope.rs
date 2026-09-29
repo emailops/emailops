@@ -137,8 +137,10 @@ pub fn evaluate_with_limit(db: &Database, scope: &LensScope, limit: i64) -> Resu
     // FTS5 keyword query.
     // `query_search_body` defaults to true (search subject + sender + body).
     // When false, restrict the MATCH to the subject column only.
-    let fts_join = if let Some(q) = scope.query.as_ref().filter(|q| !q.trim().is_empty()) {
-        let safe = escape_fts_query(q);
+    // A query with no searchable word left after escaping (e.g. only
+    // punctuation or a lone operator) constrains nothing, like a blank one.
+    let safe_query = scope.query.as_deref().map(escape_fts_query).filter(|q| !q.is_empty());
+    let fts_join = if let Some(safe) = safe_query {
         let fts_target = if scope.query_search_body {
             "emails_fts MATCH"
         } else {
@@ -190,30 +192,35 @@ pub fn evaluate_with_limit(db: &Database, scope: &LensScope, limit: i64) -> Resu
 }
 
 /// FTS5 has its own micro-syntax (`AND`, `OR`, `NEAR`, quoted phrases, etc.).
-/// To keep user-supplied queries safe and predictable in v1 we strip
-/// double-quotes and dangerous punctuation, leaving an AND-joined bag of
-/// terms. Phase 2 can expose advanced operators behind a power-user toggle.
+/// To keep user-supplied queries safe and predictable in v1, quotes, parens,
+/// asterisks and other operator punctuation become separators, and every
+/// remaining word is emitted as a quoted FTS5 string — so `.`, `@` and `-`
+/// inside a word (`acme.com`, `billing@example.com`, `follow-up`) are handed
+/// to the tokenizer as a phrase instead of reaching the query parser as a
+/// syntax error. Upper-case `AND` / `OR` / `NOT` between two words stay
+/// operators; a dangling one is dropped because it is not a valid expression.
 fn escape_fts_query(q: &str) -> String {
-    let mut out = String::with_capacity(q.len());
-    let mut prev_space = true;
-    for c in q.chars() {
-        if c.is_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.' {
-            out.push(c);
-            prev_space = false;
-        } else if c.is_whitespace() {
-            if !prev_space {
-                out.push(' ');
-                prev_space = true;
+    let words: Vec<&str> = q
+        .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.'))
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .collect();
+    let is_operator = |w: &str| matches!(w, "AND" | "OR" | "NOT");
+
+    let mut out: Vec<String> = Vec::with_capacity(words.len());
+    let mut prev_is_term = false;
+    for (i, word) in words.iter().enumerate() {
+        if is_operator(word) {
+            let next_is_term = words.get(i + 1).is_some_and(|w| !is_operator(w));
+            if prev_is_term && next_is_term {
+                out.push((*word).to_string());
+                prev_is_term = false;
             }
         } else {
-            // Drop quotes, parens, asterisks — anything that could become an operator.
-            if !prev_space {
-                out.push(' ');
-                prev_space = true;
-            }
+            out.push(format!("\"{word}\""));
+            prev_is_term = true;
         }
     }
-    out.trim().to_string()
+    out.join(" ")
 }
 
 fn now_secs() -> i64 {
@@ -536,11 +543,62 @@ mod tests {
     fn fts_special_chars_are_neutralised() {
         // Quoted phrase + operator chars must not break the query.
         let cleaned = escape_fts_query(r#"hello "world" OR foo*"#);
-        assert!(!cleaned.contains('"'));
         assert!(!cleaned.contains('*'));
         // Whitespace-separated terms are preserved.
         assert!(cleaned.contains("hello"));
         assert!(cleaned.contains("world"));
+    }
+
+    fn index_subject(db: &Database, id: &str, subject: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails_fts (email_id, subject, sender, body) VALUES (?1, ?2, '', '')",
+                rusqlite::params![id, subject],
+            )
+            .expect("index");
+    }
+
+    /// Punctuation FTS5 rejects in a bareword (`.`, `@`, `-`) must not turn
+    /// a plain domain / address / hyphenated query into a syntax error.
+    #[test]
+    fn keyword_query_with_domain_address_or_hyphen_matches_instead_of_erroring() {
+        let db = Database::new_for_testing().expect("db");
+        insert_email(&db, "dom", "acct1", "inbox", 300);
+        insert_email(&db, "addr", "acct1", "inbox", 200);
+        insert_email(&db, "hyph", "acct1", "inbox", 100);
+        index_subject(&db, "dom", "Renewal for acme.com");
+        index_subject(&db, "addr", "Mail from billing@example.com");
+        index_subject(&db, "hyph", "Ticket follow-up");
+
+        for (query, expected) in [
+            ("acme.com", "dom"),
+            ("billing@example.com", "addr"),
+            ("follow-up", "hyph"),
+        ] {
+            let scope = LensScope {
+                query: Some(query.into()),
+                ..Default::default()
+            };
+            let ids = evaluate(&db, &scope).unwrap_or_else(|e| panic!("query {query:?} errored: {e}"));
+            assert_eq!(ids, vec![expected.to_string()], "query {query:?}");
+        }
+    }
+
+    /// A dangling operator (leading `OR`, trailing `AND`, lone `NOT`) is not a
+    /// valid FTS5 expression; it must be dropped, not sent through.
+    #[test]
+    fn dangling_operators_do_not_break_the_keyword_query() {
+        let db = Database::new_for_testing().expect("db");
+        insert_email(&db, "a", "acct1", "inbox", 100);
+        index_subject(&db, "a", "Need a quote");
+
+        for query in ["OR quote", "quote AND", "NOT", "quote OR OR"] {
+            let scope = LensScope {
+                query: Some(query.into()),
+                ..Default::default()
+            };
+            assert!(evaluate(&db, &scope).is_ok(), "query {query:?} errored");
+        }
     }
 
     /// Scope with only sender_domains set — email whose domain matches must be returned.
