@@ -39,6 +39,10 @@ export interface EmailHtmlFrameProps {
   /** Called when the user clicks a mailto: link in the body. When omitted,
    *  mailto clicks are ignored (they are never sent to the OS handler). */
   onMailtoLink?: (mailto: ParsedMailto) => void;
+  /** Same decision the HTML was sanitized with. When false the frame carries
+   *  its own CSP limiting images to inline sources, which also covers what
+   *  the sanitizer leaves alone (`url()` inside `<style>` blocks). */
+  allowRemoteContent: boolean;
 }
 
 // Defined as a string so we can stamp it into srcDoc. Lives in `<head>` so
@@ -264,9 +268,22 @@ export const FRAME_BASE_CSS = `
   pre { white-space: pre-wrap; word-break: break-word; }
 `;
 
-function buildSrcDoc(sanitizedHtml: string): string {
+/**
+ * Per-frame policy while remote content is blocked. A srcdoc frame inherits
+ * the app CSP, whose `img-src` allows `https:` for the app's own UI; a policy
+ * declared by the frame applies on top of it, so this narrows the frame's
+ * images to inline sources. Only `img-src` is set: scripts stay governed by
+ * the app CSP (the bridge script's hash), and remote fonts, media and
+ * stylesheets are already refused by it.
+ */
+const BLOCK_REMOTE_IMAGES_CSP = 'img-src data: blob: cid:';
+
+function buildSrcDoc(sanitizedHtml: string, allowRemoteContent: boolean): string {
+  const csp = allowRemoteContent
+    ? ''
+    : `<meta http-equiv="Content-Security-Policy" content="${BLOCK_REMOTE_IMAGES_CSP}">\n`;
   return `<!doctype html><html><head>
-<meta charset="utf-8">
+${csp}<meta charset="utf-8">
 <meta name="color-scheme" content="light">
 <base target="_top">
 <style>${FRAME_BASE_CSS}</style>
@@ -281,13 +298,14 @@ export function EmailHtmlFrame({
   onMatchesReported,
   className,
   onMailtoLink,
+  allowRemoteContent,
 }: EmailHtmlFrameProps) {
   const { t } = useTranslation(['common', 'inbox']);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
 
-  const srcDoc = useMemo(() => buildSrcDoc(html), [html]);
+  const srcDoc = useMemo(() => buildSrcDoc(html, allowRemoteContent), [html, allowRemoteContent]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
