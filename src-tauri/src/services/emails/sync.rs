@@ -383,26 +383,6 @@ pub async fn sync_account_with_provider(
     // Load previously failed emails so we can retry them at the end of this sync
     let failed_emails_to_retry = db.get_failed_emails(account_id).unwrap_or_default();
 
-    // Un-flag optimistic sent copies the reconciler never matched (e.g. an
-    // Outlook heuristic miss) so they become normal permanent rows instead
-    // of lingering in reconciliation limbo — after this they also enter the
-    // classification/embedding backlogs like any other email.
-    match db.clear_stale_pending_sent(account_id, crate::services::clock::now_secs() - 24 * 3600) {
-        Ok(0) => {}
-        Ok(n) => emit_account_log(
-            "debug",
-            "sync",
-            &account.email,
-            &format!("Kept {} locally stored sent email(s) the provider never returned", n),
-        ),
-        Err(e) => emit_account_log(
-            "error",
-            "sync",
-            &account.email,
-            &format!("Could not sweep stale pending sent copies: {e}"),
-        ),
-    }
-
     // Inbox watermark MUST be scoped to inbox-only rows. Using the global
     // MAX(timestamp) across all mailboxes lets a locally stored sent email
     // (e.g. a reply the user just composed) push the incremental cursor
@@ -862,46 +842,10 @@ pub async fn sync_account_with_provider(
     }
 
     let new_count = total_new;
-    if new_count == 0 {
-        // Inbox has no new emails — but Sent / Spam / Trash still need
-        // their dedicated pass so a stale inbox doesn't gate sent-mail
-        // recovery. This was the original 2024 → 2025 Sent gap bug:
-        // a near-idle account never reached the extra-mailbox sync.
-        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), Some(&rules_ctx)).await {
-            emit_account_log(
-                "warn",
-                "sync",
-                &account.email,
-                &format!("Extra mailbox sync failed (non-fatal): {}", e),
-            );
-        }
-        pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
-
-        db.upsert_sync_status(account_id, "idle", Some(chrono::Utc::now().timestamp()), None)?;
-        // Terminal progress event clears the UI spinner. No output-panel log
-        // line: an idle sync (nothing new) should stay quiet. `current/total`
-        // are 0 so the frontend skips logging this completion.
-        emit_progress(account_id, "complete", 0, 0, "Inbox up to date");
-
-        if let Some(ref a) = app {
-            enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "no_new").await;
-        }
-        // Last, so a long attachment backfill never holds the spinner.
-        finish_attachment_upkeep(
-            db,
-            account,
-            email_provider.as_ref(),
-            app.as_ref(),
-            &sync_abort_flags,
-            false,
-            Some(&rules_ctx),
-        )
-        .await;
-
-        return Ok(());
-    }
 
     // ── Retry previously failed emails ───────────────────────────────────────────
+    // Runs whether or not this sync found new mail: an idle account would
+    // otherwise keep its failed downloads forever.
     const MAX_RETRY_COUNT: i32 = 3;
 
     let (retryable, exhausted): (Vec<_>, Vec<_>) = failed_emails_to_retry
@@ -943,6 +887,14 @@ pub async fn sync_account_with_provider(
                                 email.account_id = account_id.to_string();
                                 match db.insert_email(&email) {
                                     Ok(_) => {
+                                        // The provider's Sent copy can arrive here
+                                        // after a failed first download.
+                                        super::reconcile::reconcile_pending_sent(
+                                            db,
+                                            account_id,
+                                            &account.email,
+                                            std::slice::from_ref(&email),
+                                        );
                                         if let Err(e) =
                                             db.insert_attachment_infos(&email.id, account_id, &attachment_infos)
                                         {
@@ -1019,6 +971,47 @@ pub async fn sync_account_with_provider(
                 }
             }
         }
+    }
+
+    // Nothing new *and* nothing recovered by the retry above: the quiet path.
+    if new_count == 0 && synced_count == 0 {
+        // Inbox has no new emails — but Sent / Spam / Trash still need
+        // their dedicated pass so a stale inbox doesn't gate sent-mail
+        // recovery. This was the original 2024 → 2025 Sent gap bug:
+        // a near-idle account never reached the extra-mailbox sync.
+        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), Some(&rules_ctx)).await {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Extra mailbox sync failed (non-fatal): {}", e),
+            );
+        }
+        sweep_stale_pending_sent(db, account);
+        pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
+
+        db.upsert_sync_status(account_id, "idle", Some(chrono::Utc::now().timestamp()), None)?;
+        // Terminal progress event clears the UI spinner. No output-panel log
+        // line: an idle sync (nothing new) should stay quiet. `current/total`
+        // are 0 so the frontend skips logging this completion.
+        emit_progress(account_id, "complete", 0, 0, "Inbox up to date");
+
+        if let Some(ref a) = app {
+            enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "no_new").await;
+        }
+        // Last, so a long attachment backfill never holds the spinner.
+        finish_attachment_upkeep(
+            db,
+            account,
+            email_provider.as_ref(),
+            app.as_ref(),
+            &sync_abort_flags,
+            false,
+            Some(&rules_ctx),
+        )
+        .await;
+
+        return Ok(());
     }
 
     emit_progress(
@@ -1102,6 +1095,7 @@ pub async fn sync_account_with_provider(
             &format!("Extra mailbox sync failed (non-fatal): {}", e),
         );
     }
+    sweep_stale_pending_sent(db, account);
     pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
 
     // Classify, extract memory, and generate embeddings on a final pass.
@@ -1137,6 +1131,32 @@ pub async fn sync_account_with_provider(
     }
 
     Ok(())
+}
+
+/// Un-flag optimistic sent copies the reconciler never matched (e.g. an
+/// Outlook heuristic miss) so they become normal permanent rows instead of
+/// lingering in reconciliation limbo — after this they also enter the
+/// classification/embedding backlogs like any other email.
+///
+/// Must run after every ingest pass of the sync, the extra-mailbox pass
+/// included (Outlook and IMAP Sent copies arrive there): sweeping first turned
+/// a row whose provider copy was about to arrive into a permanent duplicate.
+fn sweep_stale_pending_sent(db: &Arc<Database>, account: &Account) {
+    match db.clear_stale_pending_sent(&account.id, crate::services::clock::now_secs() - 24 * 3600) {
+        Ok(0) => {}
+        Ok(n) => emit_account_log(
+            "debug",
+            "sync",
+            &account.email,
+            &format!("Kept {} locally stored sent email(s) the provider never returned", n),
+        ),
+        Err(e) => emit_account_log(
+            "error",
+            "sync",
+            &account.email,
+            &format!("Could not sweep stale pending sent copies: {e}"),
+        ),
+    }
 }
 
 /// Enqueue the AI follow-up tasks (classification, memory extraction +

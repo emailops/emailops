@@ -5376,3 +5376,116 @@ async fn redownload_keeps_mailbox_sent_read_and_triage_state() {
     assert_eq!(after.triage_status.as_deref(), Some("done"));
     assert_eq!(db.get_email_body("msg-rd").unwrap(), "Recovered body");
 }
+
+// ── pending sent rows: stale sweep ordering and the retry path ──────────────
+
+async fn run_fake_sync(db: &Arc<Database>, account: &Account, provider: FakeEmailProvider) {
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        db,
+        account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+}
+
+/// A pending row inserted more than a day before the next sync (the app sat
+/// offline) used to be swept to a permanent row at sync *start*, before the
+/// ingest that brings the provider's copy could reconcile it — leaving the
+/// reply twice in the thread for good.
+#[tokio::test]
+async fn a_day_old_pending_sent_row_is_still_reconciled_by_the_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-stale", "me@example.com")).unwrap();
+    let account = db.get_account("acc-stale").unwrap().unwrap();
+    let sent_at = chrono::Utc::now().timestamp() - 2 * 86_400;
+
+    let mut pending = make_email_with("local-sent-old", "acc-stale", sent_at, "me@example.com", "sent");
+    pending.thread_id = "t-conv".to_string();
+    pending.message_id = Some("<old@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    let mut sent_copy = make_email_with("imap-sent-old", "acc-stale", sent_at + 5, "me@example.com", "sent");
+    sent_copy.thread_id = "t-conv".to_string();
+    sent_copy.message_id = Some("<old@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(
+        db.get_email("local-sent-old").unwrap().is_none(),
+        "the synthetic row must be reconciled away, not kept as a duplicate"
+    );
+    assert_eq!(db.get_thread("acc-stale", "t-conv").unwrap().len(), 1);
+}
+
+/// The provider's Sent copy can first fail to download and arrive through the
+/// failed-download retry instead; that path must reconcile too.
+#[tokio::test]
+async fn a_sent_copy_recovered_by_the_retry_path_reconciles_its_pending_row() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-retry", "me@example.com")).unwrap();
+    let account = db.get_account("acc-retry").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    let mut pending = make_email_with("local-sent-r", "acc-retry", now, "me@example.com", "sent");
+    pending.thread_id = "t-r".to_string();
+    pending.message_id = Some("<r@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    // Only reachable by id (no listing serves it): the retry path is the one
+    // bringing it in.
+    let mut sent_copy = make_email_with("srv-sent-r", "acc-retry", now + 5, "me@example.com", "unlisted");
+    sent_copy.thread_id = "t-r".to_string();
+    sent_copy.message_id = Some("<r@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+    // New inbox mail, so this case does not depend on the retry also running
+    // on a sync that found nothing new.
+    provider.add_message(
+        make_email("inbox-new", "acc-retry", now),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-retry", "srv-sent-r", "earlier failure")
+        .unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("srv-sent-r").unwrap().is_some(), "retried copy stored");
+    assert!(
+        db.get_email("local-sent-r").unwrap().is_none(),
+        "the retry path must reconcile the pending row it matches"
+    );
+}
+
+/// Failed downloads are retried even when the sync finds nothing new — an
+/// idle account used to keep its failures forever.
+#[tokio::test]
+async fn failed_downloads_are_retried_when_nothing_new_arrived() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-idle", "me@example.com")).unwrap();
+    let account = db.get_account("acc-idle").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(
+        make_email_with("lost-1", "acc-idle", 1_700_000_000, "x@example.com", "unlisted"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-idle", "lost-1", "earlier failure").unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("lost-1").unwrap().is_some(), "failed download retried");
+    assert!(db.get_failed_emails("acc-idle").unwrap().is_empty());
+}
