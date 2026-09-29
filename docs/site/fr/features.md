@@ -101,10 +101,12 @@ télécharger ensemble dans votre dossier Téléchargements.
 <!-- claim:feat-attachments-view-8 -->
 EmailOps propose aussi des règles de lui-même. Quand un même expéditeur vous envoie régulièrement
 des documents (PDF, fichiers Office ou factures électroniques) — au moins deux e-mails sur deux mois
-différents —, une section **Règles suggérées** apparaît dans **Gérer les règles**, et un
+différents, dans la boîte de réception ou dans un dossier où vous les classez —, une section **Règles suggérées** apparaît dans **Gérer les règles**, et un
 compteur à côté de **Pièces jointes** dans la barre latérale indique leur nombre. **Examiner**
 ouvre le formulaire de la règle déjà rempli (expéditeur et motif de nom de fichier) ; la
-règle n'est créée que lorsque vous l'enregistrez. **Ignorer** masque la suggestion définitivement.
+règle n'est créée que lorsque vous l'enregistrez. **Ignorer** masque la suggestion définitivement,
+même si l'expéditeur écrit plus tard depuis une autre adresse. Les e-mails de votre propre adresse
+ou de collègues de votre propre entreprise ne sont jamais suggérés.
 
 ## Recherche
 

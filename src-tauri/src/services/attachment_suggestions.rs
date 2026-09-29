@@ -34,8 +34,10 @@ pub struct AttachmentObservation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SuggestionCandidate {
-    /// Stable identity (`sender pattern|filename pattern`, lowercased) so a
-    /// dismissed candidate is not proposed again on the next refresh.
+    /// Stable identity (`sender identity|filename pattern`, lowercased): the
+    /// sender part is the pooled identity (`*@acme.com`, or the address of a
+    /// person), not the proposed pattern, so a second sender address joining
+    /// the group keeps the same key — and the same pending row id.
     pub key: String,
     pub name: String,
     pub sender_email_pattern: String,
@@ -47,6 +49,14 @@ pub struct SuggestionCandidate {
     pub sample_filenames: Vec<String>,
 }
 
+/// A suggestion the user already accepted or dismissed — the planner never
+/// proposes what it covers again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedSuggestion {
+    pub sender_email_pattern: String,
+    pub filename_pattern: Option<String>,
+}
+
 /// Thresholds for what counts as "recurring".
 #[derive(Debug, Clone, Copy)]
 pub struct SuggestionParams {
@@ -55,6 +65,9 @@ pub struct SuggestionParams {
     /// Distinct calendar months those emails span — a burst of attachments
     /// on one day is a conversation, not a recurring document.
     pub min_distinct_months: usize,
+    /// Seconds between the first and the last email: two emails on Jan 31
+    /// and Feb 1 span two months but are one conversation.
+    pub min_spread_secs: i64,
     pub max_suggestions: usize,
 }
 
@@ -65,6 +78,7 @@ impl Default for SuggestionParams {
             // already a pattern worth proposing.
             min_emails: 2,
             min_distinct_months: 2,
+            min_spread_secs: 20 * 86_400,
             max_suggestions: 20,
         }
     }
@@ -92,22 +106,63 @@ const DOCUMENT_MIME_PREFIXES: &[&str] = &[
 /// Keyword → tag. A keyword counts when it appears in the filename or the
 /// subject of at least half of a candidate's documents.
 const KIND_KEYWORDS: &[(&str, &[&str])] = &[
-    ("invoice", &["invoice", "factura", "facture", "rechnung", "fattura"]),
-    ("receipt", &["receipt", "recibo", "quittung", "reçu"]),
+    (
+        "invoice",
+        &[
+            "invoice",
+            "invoices",
+            "factura",
+            "facturas",
+            "facture",
+            "factures",
+            "rechnung",
+            "rechnungen",
+            "fattura",
+            "fatture",
+        ],
+    ),
+    (
+        "receipt",
+        &["receipt", "receipts", "recibo", "recibos", "quittung", "reçu"],
+    ),
     (
         "payroll",
         &[
             "payslip",
             "payroll",
+            "payslips",
             "nomina",
             "nómina",
+            "nominas",
+            "nóminas",
             "lohnabrechnung",
             "fiche de paie",
             "bulletin de paie",
         ],
     ),
-    ("statement", &["statement", "extracto", "kontoauszug", "relevé"]),
-    ("contract", &["contract", "contrato", "vertrag", "contrat"]),
+    (
+        "statement",
+        &[
+            "statement",
+            "statements",
+            "extracto",
+            "extractos",
+            "kontoauszug",
+            "relevé",
+        ],
+    ),
+    (
+        "contract",
+        &[
+            "contract",
+            "contracts",
+            "contrato",
+            "contratos",
+            "vertrag",
+            "contrat",
+            "contrats",
+        ],
+    ),
 ];
 
 const MAX_SAMPLE_FILENAMES: usize = 3;
@@ -228,7 +283,54 @@ fn sender_identity(sender_email: &str) -> String {
 fn is_recurring(group: &[&AttachmentObservation], params: &SuggestionParams) -> bool {
     let emails: HashSet<&str> = group.iter().map(|o| o.email_id.as_str()).collect();
     let months: HashSet<i64> = group.iter().map(|o| month_index(o.timestamp)).collect();
-    emails.len() >= params.min_emails && months.len() >= params.min_distinct_months
+    let first = group.iter().map(|o| o.timestamp).min().unwrap_or_default();
+    let last = group.iter().map(|o| o.timestamp).max().unwrap_or_default();
+    emails.len() >= params.min_emails
+        && months.len() >= params.min_distinct_months
+        && last - first >= params.min_spread_secs
+}
+
+/// Mail the user sends themselves (a scanner, a self-forward) or gets from
+/// colleagues at their own organisation is not a vendor's recurring document.
+/// A personal-provider account (gmail.com…) only excludes its own address.
+fn is_own_mail(sender_email: &str, account_email: &str) -> bool {
+    let sender = sender_email.trim();
+    let account = account_email.trim();
+    if account.is_empty() {
+        return false;
+    }
+    if sender.eq_ignore_ascii_case(account) {
+        return true;
+    }
+    let (Some(sender_domain), Some(own_domain)) = (
+        crate::util::email_addr::extract_domain(sender),
+        crate::util::email_addr::extract_domain(account),
+    ) else {
+        return false;
+    };
+    !crate::util::email_addr::is_personal_email_domain(&own_domain)
+        && (sender_domain == own_domain || sender_domain.ends_with(&format!(".{own_domain}")))
+}
+
+/// A suggestion the user already resolved covers a candidate when it names
+/// the same sender identity and its filename pattern (none = every document)
+/// matches most of the candidate's documents. Keys alone are not enough: the
+/// proposed patterns drift as mail arrives (`billing@acme.com` → `*@acme.com`,
+/// `*.pdf` → `Invoice_*.pdf`) and a dismissal must survive that.
+fn covered_by_resolved(identity: &str, group: &[&AttachmentObservation], resolved: &[ResolvedSuggestion]) -> bool {
+    resolved
+        .iter()
+        .filter(|r| sender_identity(&r.sender_email_pattern) == identity)
+        .any(|r| match r.filename_pattern.as_deref().filter(|p| !p.is_empty()) {
+            None => true,
+            Some(pattern) => {
+                let covered = group
+                    .iter()
+                    .filter(|o| super::attachments::matches_glob(pattern, &o.filename))
+                    .count();
+                covered * 2 > group.len()
+            }
+        })
 }
 
 fn covered_by_existing_rule(group: &[&AttachmentObservation], rules: &[AttachmentRule]) -> bool {
@@ -283,6 +385,16 @@ fn similar_rule_exists(group: &[&AttachmentObservation], rules: &[AttachmentRule
         })
 }
 
+/// `word` occurs in `haystack` with no letter on either side: `contract`
+/// is in `Contract_2026.pdf` but not in `contractor.pdf`.
+fn contains_word(haystack: &str, word: &str) -> bool {
+    haystack.match_indices(word).any(|(start, _)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + word.len()..].chars().next();
+        !before.is_some_and(char::is_alphabetic) && !after.is_some_and(char::is_alphabetic)
+    })
+}
+
 fn kind_tags(group: &[&AttachmentObservation]) -> Vec<String> {
     let haystacks: Vec<String> = group
         .iter()
@@ -291,14 +403,21 @@ fn kind_tags(group: &[&AttachmentObservation]) -> Vec<String> {
     KIND_KEYWORDS
         .iter()
         .filter(|(_, words)| {
-            let hits = haystacks.iter().filter(|h| words.iter().any(|w| h.contains(w))).count();
+            let hits = haystacks
+                .iter()
+                .filter(|h| words.iter().any(|w| contains_word(h, w)))
+                .count();
             hits * 2 >= haystacks.len()
         })
         .map(|(tag, _)| (*tag).to_string())
         .collect()
 }
 
-fn build_candidate(group: &[&AttachmentObservation], filename_pattern: Option<String>) -> SuggestionCandidate {
+fn build_candidate(
+    identity: &str,
+    group: &[&AttachmentObservation],
+    filename_pattern: Option<String>,
+) -> SuggestionCandidate {
     let mut by_recency: Vec<&AttachmentObservation> = group.to_vec();
     by_recency.sort_by_key(|o| std::cmp::Reverse(o.timestamp));
 
@@ -355,7 +474,7 @@ fn build_candidate(group: &[&AttachmentObservation], filename_pattern: Option<St
     }
 
     let email_count = group.iter().map(|o| o.email_id.as_str()).collect::<HashSet<_>>().len() as i64;
-    let key = format!("{}|{}", sender_email_pattern, filename_pattern.as_deref().unwrap_or("")).to_lowercase();
+    let key = format!("{identity}|{}", filename_pattern.as_deref().unwrap_or("")).to_lowercase();
 
     SuggestionCandidate {
         key,
@@ -377,21 +496,23 @@ fn build_candidate(group: &[&AttachmentObservation], filename_pattern: Option<St
 pub fn plan_suggestions(
     observations: &[AttachmentObservation],
     existing_rules: &[AttachmentRule],
-    excluded_keys: &HashSet<String>,
+    resolved: &[ResolvedSuggestion],
+    account_email: &str,
     params: SuggestionParams,
 ) -> Vec<SuggestionCandidate> {
     use std::collections::BTreeMap;
 
     let mut by_identity: BTreeMap<String, Vec<&AttachmentObservation>> = BTreeMap::new();
-    for o in observations
-        .iter()
-        .filter(|o| is_document_attachment(&o.mime_type, &o.filename))
-    {
+    for o in observations.iter().filter(|o| {
+        is_document_attachment(&o.mime_type, &o.filename)
+            && crate::util::email_addr::extract_domain(&o.sender_email).is_some()
+            && !is_own_mail(&o.sender_email, account_email)
+    }) {
         by_identity.entry(sender_identity(&o.sender_email)).or_default().push(o);
     }
 
     let mut candidates = Vec::new();
-    for group in by_identity.values() {
+    for (identity, group) in &by_identity {
         let mut by_family: BTreeMap<String, Vec<&AttachmentObservation>> = BTreeMap::new();
         for o in group {
             by_family
@@ -400,32 +521,45 @@ pub fn plan_suggestions(
                 .push(o);
         }
 
-        let mut recurring: Vec<(&[&AttachmentObservation], Option<String>)> = by_family
+        let mut recurring: Vec<(Vec<&AttachmentObservation>, Option<String>)> = by_family
             .values()
             .filter(|family| is_recurring(family, &params))
             .map(|family| {
                 let newest = family.iter().max_by_key(|o| o.timestamp).map(|o| o.filename.as_str());
-                (family.as_slice(), newest.map(family_pattern))
+                (family.clone(), newest.map(family_pattern))
             })
             .collect();
 
-        if recurring.is_empty() && is_recurring(group, &params) {
-            let exts: HashSet<Option<String>> = group.iter().map(|o| extension(&o.filename)).collect();
-            let pattern = match exts.into_iter().collect::<Vec<_>>().as_slice() {
-                [Some(ext)] => Some(format!("*.{ext}")),
-                _ => None,
-            };
-            recurring.push((group.as_slice(), pattern));
+        // No shared filename shape: fall back to the extension that recurs
+        // most. A pattern-less rule would collect every attachment the sender
+        // mails (logos, invites), so an identity whose documents never share
+        // an extension proposes nothing.
+        if recurring.is_empty() {
+            let mut by_ext: BTreeMap<String, Vec<&AttachmentObservation>> = BTreeMap::new();
+            for o in group {
+                if let Some(ext) = extension(&o.filename) {
+                    by_ext.entry(ext).or_default().push(o);
+                }
+            }
+            let email_count =
+                |members: &[&AttachmentObservation]| members.iter().map(|o| &o.email_id).collect::<HashSet<_>>().len();
+            if let Some((ext, members)) = by_ext
+                .into_iter()
+                .filter(|(_, members)| is_recurring(members, &params))
+                .max_by_key(|(_, members)| email_count(members))
+            {
+                recurring.push((members, Some(format!("*.{ext}"))));
+            }
         }
 
         for (members, pattern) in recurring {
-            if covered_by_existing_rule(members, existing_rules) || similar_rule_exists(members, existing_rules) {
+            if covered_by_existing_rule(&members, existing_rules)
+                || similar_rule_exists(&members, existing_rules)
+                || covered_by_resolved(identity, &members, resolved)
+            {
                 continue;
             }
-            let candidate = build_candidate(members, pattern);
-            if !excluded_keys.contains(&candidate.key) {
-                candidates.push(candidate);
-            }
+            candidates.push(build_candidate(identity, &members, pattern));
         }
     }
 
@@ -489,11 +623,13 @@ pub fn preview_suggestions_at(
 ) -> Result<Vec<SuggestionCandidate>> {
     let observations = db.get_attachment_observations(account_id, now - LOOKBACK_SECS)?;
     let rules = db.get_all_attachment_rules(account_id)?;
-    let resolved = db.get_resolved_attachment_rule_suggestion_keys(account_id)?;
+    let resolved = db.get_resolved_attachment_rule_suggestions(account_id)?;
+    let account_email = db.get_account(account_id)?.map(|a| a.email).unwrap_or_default();
     Ok(plan_suggestions(
         &observations,
         &rules,
         &resolved,
+        &account_email,
         SuggestionParams::default(),
     ))
 }
@@ -542,9 +678,21 @@ mod executor_tests {
     }
 
     fn add_email_with_pdf(db: &Database, id: &str, sender: &str, ts: i64, filename: &str, mailbox: &str) {
+        add_email_with_pdf_for(db, "acc1", id, sender, ts, filename, mailbox);
+    }
+
+    fn add_email_with_pdf_for(
+        db: &Database,
+        account: &str,
+        id: &str,
+        sender: &str,
+        ts: i64,
+        filename: &str,
+        mailbox: &str,
+    ) {
         let email = Email {
             id: id.into(),
-            account_id: "acc1".into(),
+            account_id: account.into(),
             thread_id: id.into(),
             message_id: None,
             references: None,
@@ -566,7 +714,7 @@ mod executor_tests {
         db.insert_email(&email).expect("insert email");
         db.insert_email_attachment_metas_batch(&[(
             id.into(),
-            "acc1".into(),
+            account.into(),
             format!("att-{id}"),
             filename.into(),
             "application/pdf".into(),
@@ -633,7 +781,7 @@ mod executor_tests {
         let preview = preview_suggestions_at(&db, "acc1", NOW).expect("preview");
 
         assert_eq!(preview.len(), 1);
-        assert_eq!(preview[0].key, "billing@acme.com|invoice_*.pdf");
+        assert_eq!(preview[0].key, "*@acme.com|invoice_*.pdf");
         assert!(list_suggestions(&db, "acc1").expect("list").is_empty());
     }
 
@@ -696,6 +844,57 @@ mod executor_tests {
     }
 
     #[test]
+    fn documents_filed_in_custom_folders_are_mined() {
+        let db = setup();
+        add_monthly_invoices(&db, "folder:Facturas");
+
+        assert_eq!(refresh_suggestions_at(&db, "acc1", NOW).expect("refresh").len(), 1);
+    }
+
+    #[test]
+    fn mining_one_account_ignores_another_accounts_documents() {
+        let db = setup();
+        for i in 0..3 {
+            add_email_with_pdf_for(
+                &db,
+                "acc2",
+                &format!("other-{i}"),
+                "billing@acme.com",
+                NOW - (i + 1) * 31 * DAY,
+                &format!("Invoice_{i}.pdf"),
+                "inbox",
+            );
+        }
+
+        assert!(refresh_suggestions_at(&db, "acc1", NOW).expect("refresh").is_empty());
+        assert_eq!(refresh_suggestions_at(&db, "acc2", NOW).expect("refresh").len(), 1);
+    }
+
+    #[test]
+    fn a_dismissal_survives_a_new_sender_address_of_the_company() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+        let id = refresh_suggestions_at(&db, "acc1", NOW).expect("refresh")[0].id.clone();
+        set_suggestion_status(&db, "acc1", &id, AttachmentRuleSuggestionStatus::Dismissed).expect("dismiss");
+
+        add_email_with_pdf(&db, "new", "noreply@acme.com", NOW, "Invoice_999.pdf", "inbox");
+
+        assert!(refresh_suggestions_at(&db, "acc1", NOW).expect("refresh").is_empty());
+    }
+
+    #[test]
+    fn a_corrupt_suggestion_row_is_reported_not_silently_emptied() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+        refresh_suggestions_at(&db, "acc1", NOW).expect("refresh");
+        db.connection()
+            .execute("UPDATE attachment_rule_suggestions SET tags_json = 'not json'", [])
+            .expect("corrupt");
+
+        assert!(list_suggestions(&db, "acc1").is_err());
+    }
+
+    #[test]
     fn status_change_on_another_accounts_suggestion_is_not_found() {
         let db = setup();
         add_monthly_invoices(&db, "inbox");
@@ -716,6 +915,15 @@ mod tests {
     const DAY: i64 = 86_400;
     /// 2026-01-15T00:00:00Z
     const JAN_15: i64 = 1_768_435_200;
+    /// The mailbox being mined — unrelated to every sender below.
+    const ACCOUNT: &str = "me@example.org";
+
+    fn resolved(sender: &str, filename: Option<&str>) -> ResolvedSuggestion {
+        ResolvedSuggestion {
+            sender_email_pattern: sender.into(),
+            filename_pattern: filename.map(Into::into),
+        }
+    }
 
     fn obs(email_id: &str, sender: &str, ts: i64, filename: &str) -> AttachmentObservation {
         AttachmentObservation {
@@ -758,7 +966,7 @@ mod tests {
     }
 
     fn plan(observations: &[AttachmentObservation]) -> Vec<SuggestionCandidate> {
-        plan_suggestions(observations, &[], &HashSet::new(), SuggestionParams::default())
+        plan_suggestions(observations, &[], &[], ACCOUNT, SuggestionParams::default())
     }
 
     #[test]
@@ -858,7 +1066,7 @@ mod tests {
         assert_eq!(c.filename_pattern.as_deref(), Some("Factura_*.pdf"));
         assert_eq!(c.email_count, 3);
         assert_eq!(c.first_seen, JAN_15);
-        assert_eq!(c.key, "billing@acme.com|factura_*.pdf");
+        assert_eq!(c.key, "*@acme.com|factura_*.pdf");
     }
 
     #[test]
@@ -1002,7 +1210,7 @@ mod tests {
     fn existing_rule_covering_the_documents_suppresses_the_candidate() {
         let o = monthly("billing@acme.com", "Factura", 3);
         for r in [rule("billing@acme.com", None), rule("*@acme.com", Some("*.pdf"))] {
-            let out = plan_suggestions(&o, &[r], &HashSet::new(), SuggestionParams::default());
+            let out = plan_suggestions(&o, &[r], &[], ACCOUNT, SuggestionParams::default());
             assert!(out.is_empty());
         }
     }
@@ -1013,7 +1221,8 @@ mod tests {
         let out = plan_suggestions(
             &o,
             &[rule("billing@acme.com", Some("contract*.pdf"))],
-            &HashSet::new(),
+            &[],
+            ACCOUNT,
             SuggestionParams::default(),
         );
         assert!(out.is_empty(), "the user already handles this sender");
@@ -1025,7 +1234,8 @@ mod tests {
         let out = plan_suggestions(
             &o,
             &[rule("invoicing@email.acme.com", None)],
-            &HashSet::new(),
+            &[],
+            ACCOUNT,
             SuggestionParams::default(),
         );
         assert!(out.is_empty());
@@ -1037,7 +1247,8 @@ mod tests {
         let out = plan_suggestions(
             &o,
             &[rule("luis@gmail.com", None)],
-            &HashSet::new(),
+            &[],
+            ACCOUNT,
             SuggestionParams::default(),
         );
         assert_eq!(out.len(), 1);
@@ -1049,7 +1260,8 @@ mod tests {
         let out = plan_suggestions(
             &o,
             &[rule("*@globex.com", None)],
-            &HashSet::new(),
+            &[],
+            ACCOUNT,
             SuggestionParams::default(),
         );
         assert_eq!(out.len(), 1);
@@ -1058,9 +1270,187 @@ mod tests {
     #[test]
     fn excluded_keys_are_not_proposed_again() {
         let o = monthly("billing@acme.com", "Factura", 3);
-        let excluded: HashSet<String> = ["billing@acme.com|factura_*.pdf".to_string()].into();
-        let out = plan_suggestions(&o, &[], &excluded, SuggestionParams::default());
+        let resolved = [resolved("billing@acme.com", Some("Factura_*.pdf"))];
+        let out = plan_suggestions(&o, &[], &resolved, ACCOUNT, SuggestionParams::default());
         assert!(out.is_empty());
+    }
+
+    // --- Dismissals stick while the group drifts ---
+
+    #[test]
+    fn the_key_stays_the_same_when_a_second_sender_of_the_domain_joins() {
+        let alone = plan(&monthly("billing@acme.com", "Factura", 2));
+        let mut o = monthly("billing@acme.com", "Factura", 2);
+        o.push(obs(
+            "n1",
+            "noreply@acme.com",
+            JAN_15 + 70 * DAY,
+            "Factura_2026-03_0099.pdf",
+        ));
+
+        assert_eq!(plan(&o)[0].key, alone[0].key);
+    }
+
+    #[test]
+    fn a_dismissal_survives_a_second_sender_of_the_domain_joining() {
+        let mut o = monthly("billing@acme.com", "Factura", 2);
+        o.push(obs(
+            "n1",
+            "noreply@acme.com",
+            JAN_15 + 70 * DAY,
+            "Factura_2026-03_0099.pdf",
+        ));
+
+        let dismissed = [resolved("billing@acme.com", Some("Factura_*.pdf"))];
+        let out = plan_suggestions(&o, &[], &dismissed, ACCOUNT, SuggestionParams::default());
+
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn a_dismissed_extension_fallback_hides_a_family_that_recurs_later() {
+        let o = monthly("office@acme.com", "Invoice", 3);
+
+        let dismissed = [resolved("office@acme.com", Some("*.pdf"))];
+        let out = plan_suggestions(&o, &[], &dismissed, ACCOUNT, SuggestionParams::default());
+
+        assert!(out.is_empty(), "{out:?}");
+    }
+
+    #[test]
+    fn a_dismissal_does_not_hide_another_document_family_of_the_sender() {
+        let o = monthly("billing@acme.com", "Factura", 3);
+
+        let dismissed = [resolved("billing@acme.com", Some("Contract_*.pdf"))];
+        let out = plan_suggestions(&o, &[], &dismissed, ACCOUNT, SuggestionParams::default());
+
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_dismissal_does_not_hide_another_sender() {
+        let o = monthly("billing@globex.com", "Factura", 3);
+
+        let dismissed = [resolved("billing@acme.com", Some("Factura_*.pdf"))];
+        let out = plan_suggestions(&o, &[], &dismissed, ACCOUNT, SuggestionParams::default());
+
+        assert_eq!(out.len(), 1);
+    }
+
+    // --- Mixed extensions ---
+
+    #[test]
+    fn mixed_extensions_fall_back_to_the_recurring_extension_only() {
+        let o = vec![
+            obs("e1", "office@acme.com", JAN_15, "report.pdf"),
+            obs("e2", "office@acme.com", JAN_15 + 30 * DAY, "notes.docx"),
+            obs("e3", "office@acme.com", JAN_15 + 60 * DAY, "minutes.pdf"),
+        ];
+
+        let out = plan(&o);
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].filename_pattern.as_deref(), Some("*.pdf"));
+        assert_eq!(out[0].email_count, 2);
+    }
+
+    #[test]
+    fn mixed_extensions_without_a_recurring_one_propose_nothing() {
+        let o = vec![
+            obs("e1", "office@acme.com", JAN_15, "report.pdf"),
+            obs("e2", "office@acme.com", JAN_15 + 40 * DAY, "notes.docx"),
+        ];
+
+        assert!(
+            plan(&o).is_empty(),
+            "a rule without a filename pattern would collect every attachment"
+        );
+    }
+
+    // --- The user's own mail ---
+
+    #[test]
+    fn the_users_own_address_is_never_a_candidate() {
+        let o = monthly("Me@Example.org", "Scan", 3);
+
+        assert!(plan(&o).is_empty());
+    }
+
+    #[test]
+    fn colleagues_at_the_users_own_corporate_domain_are_not_candidates() {
+        let mut o = monthly("ana@example.org", "Report", 2);
+        o.extend(monthly("luis@eu.example.org", "Budget", 2));
+
+        assert!(plan(&o).is_empty(), "{:?}", plan(&o));
+    }
+
+    #[test]
+    fn a_personal_provider_account_still_gets_other_peoples_documents() {
+        let o = monthly("ana@gmail.com", "Documento", 2);
+        let out = plan_suggestions(&o, &[], &[], "me@gmail.com", SuggestionParams::default());
+
+        assert_eq!(out.len(), 1);
+    }
+
+    // --- Recurrence ---
+
+    #[test]
+    fn a_burst_across_a_month_boundary_is_not_recurring() {
+        // 2026-01-31 and 2026-02-01: two calendar months, one conversation.
+        let jan_31 = JAN_15 + 16 * DAY;
+        let o = vec![
+            obs("e1", "billing@acme.com", jan_31, "Factura_0001.pdf"),
+            obs("e2", "billing@acme.com", jan_31 + DAY, "Factura_0002.pdf"),
+        ];
+
+        assert!(plan(&o).is_empty());
+    }
+
+    // --- Kind tags ---
+
+    #[test]
+    fn kind_keywords_only_match_whole_words() {
+        let out = plan(&monthly("x@acme.com", "Contractor", 2));
+        assert_eq!(out[0].tags, vec!["acme".to_string()]);
+
+        let out = plan(&monthly("x@acme.com", "Denominacion", 2));
+        assert_eq!(out[0].tags, vec!["acme".to_string()]);
+    }
+
+    #[test]
+    fn kind_keywords_match_next_to_separators_and_digits() {
+        for prefix in ["Invoice", "invoice2026", "Mi-Nomina"] {
+            let out = plan(&monthly("x@acme.com", prefix, 2));
+            assert_ne!(out[0].tags, vec!["acme".to_string()], "{prefix}");
+        }
+    }
+
+    // --- Input hygiene ---
+
+    #[test]
+    fn senders_without_a_domain_are_ignored() {
+        for sender in ["", "undisclosed-recipients"] {
+            assert!(plan(&monthly(sender, "Factura", 3)).is_empty(), "{sender:?}");
+        }
+    }
+
+    #[test]
+    fn german_and_french_personal_providers_are_not_pooled() {
+        for domain in [
+            "web.de",
+            "t-online.de",
+            "orange.fr",
+            "free.fr",
+            "laposte.net",
+            "libero.it",
+        ] {
+            let mut o = monthly(&format!("ana@{domain}"), "Scan", 1);
+            let mut other = monthly(&format!("luis@{domain}"), "Scan", 2);
+            other.drain(..1);
+            o.extend(other);
+
+            assert!(plan(&o).is_empty(), "{domain} pooled two people");
+        }
     }
 
     #[test]
@@ -1073,7 +1463,7 @@ mod tests {
             max_suggestions: 2,
             ..SuggestionParams::default()
         };
-        let out = plan_suggestions(&o, &[], &HashSet::new(), params);
+        let out = plan_suggestions(&o, &[], &[], ACCOUNT, params);
 
         let senders: Vec<_> = out.iter().map(|c| c.sender_email_pattern.as_str()).collect();
         assert_eq!(senders, vec!["b@beta.com", "c@gamma.com"]);

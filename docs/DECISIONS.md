@@ -1767,3 +1767,22 @@ pattern is visible in `email_attachment_meta` without reading bodies.
 sender × filename × cadence pattern); one-click creation without review (a wrong
 glob silently downloads the wrong files); computing only when the modal opens (the
 user would never discover the feature without a proactive signal).
+
+## 2026-09-29 — Attachment rule suggestions: dismissals match by sender identity, not key
+
+**Decision:** A resolved (accepted or dismissed) suggestion hides every later candidate
+from the same sender identity (`*@domain` for a company, the address for a person on a
+personal provider) whose documents its filename pattern mostly matches — a key equality
+check is no longer the test. Candidate keys are `identity|filename pattern`. Mining also
+covers filed folders (everything but sent, spam and trash), skips the user's own address
+and — on a corporate account — their own domain, needs the first and last email ≥20 days
+apart, and falls back to the most recurring extension (`*.pdf`) or to nothing, never to a
+pattern-less rule.
+**Context:** The key embedded the proposed patterns, which drift as mail arrives
+(`billing@acme.com` → `*@acme.com` when a second address sends; `*.pdf` → `Invoice_*.pdf`
+once a family recurs), so dismissed suggestions came back. A pattern-less fallback rule
+collected logos and invites; colleagues' shared PDFs became suggestions named after the
+user's own company.
+**Rejected:** A migration re-keying resolved rows (the stored patterns already carry the
+identity, so coverage is computed from them); matching the resolved row's exact sender
+pattern (a dismissal of `billing@` must also hide `noreply@` of the same company).

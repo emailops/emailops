@@ -98,10 +98,12 @@ Descargas.
 <!-- claim:feat-attachments-view-8 -->
 EmailOps también propone reglas por su cuenta. Cuando un mismo remitente te envía documentos una
 y otra vez (PDF, archivos de Office o facturas electrónicas) — al menos dos correos en dos meses
-distintos —, aparece una sección **Reglas sugeridas** en **Gestionar reglas**, y un contador
+distintos, en la bandeja de entrada o en una carpeta donde los archives —, aparece una sección **Reglas sugeridas** en **Gestionar reglas**, y un contador
 junto a **Adjuntos** en la barra lateral indica cuántas hay. **Revisar** abre el formulario de la
 regla ya relleno (remitente y patrón de nombre de archivo); la regla solo se crea cuando
-la guardas. **Descartar** oculta la sugerencia para siempre.
+la guardas. **Descartar** oculta la sugerencia para siempre, aunque el remitente escriba más
+adelante desde otra dirección. Nunca se sugiere el correo de tu propia dirección ni el de
+compañeros de tu propia empresa.
 
 ## Búsqueda
 

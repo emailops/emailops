@@ -4,7 +4,7 @@ use rusqlite::params;
 
 use crate::models::error::Result;
 use crate::models::{Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus};
-use crate::services::attachment_suggestions::{AttachmentObservation, SuggestionCandidate};
+use crate::services::attachment_suggestions::{AttachmentObservation, ResolvedSuggestion, SuggestionCandidate};
 
 use super::Database;
 
@@ -312,9 +312,9 @@ impl Database {
 
     // --- Attachment rule suggestions ---
 
-    /// Every attachment on the account's received mail (inbox, not deleted)
-    /// since `since` — the input of the suggestion miner. Sent, spam and
-    /// trash mail never make a rule candidate.
+    /// Every attachment on the account's received mail (inbox and filed
+    /// folders, not deleted) since `since` — the input of the suggestion
+    /// miner. Sent, spam and trash mail never make a rule candidate.
     pub fn get_attachment_observations(&self, account_id: &str, since: i64) -> Result<Vec<AttachmentObservation>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
@@ -324,7 +324,7 @@ impl Database {
              WHERE m.account_id = ?1
                AND e.timestamp >= ?2
                AND e.is_deleted = 0
-               AND e.mailbox = 'inbox'
+               AND e.mailbox NOT IN ('sent', 'spam', 'trash')
                AND e.is_sent = 0",
         )?;
         let rows = stmt
@@ -343,17 +343,22 @@ impl Database {
         Ok(rows)
     }
 
-    /// Keys of suggestions the user already accepted or dismissed.
-    pub fn get_resolved_attachment_rule_suggestion_keys(&self, account_id: &str) -> Result<HashSet<String>> {
+    /// Patterns of the suggestions the user already accepted or dismissed.
+    pub fn get_resolved_attachment_rule_suggestions(&self, account_id: &str) -> Result<Vec<ResolvedSuggestion>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
-            "SELECT suggestion_key FROM attachment_rule_suggestions
+            "SELECT sender_email_pattern, filename_pattern FROM attachment_rule_suggestions
              WHERE account_id = ?1 AND status <> 'pending'",
         )?;
-        let keys = stmt
-            .query_map(params![account_id], |row| row.get(0))?
-            .collect::<rusqlite::Result<HashSet<String>>>()?;
-        Ok(keys)
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                Ok(ResolvedSuggestion {
+                    sender_email_pattern: row.get(0)?,
+                    filename_pattern: row.get(1)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Replace the account's pending suggestions with `candidates` in one
@@ -490,22 +495,34 @@ fn row_to_attachment_rule(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRul
 }
 
 fn row_to_attachment_rule_suggestion(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRuleSuggestion> {
-    let tags_json: String = row.get(5)?;
-    let samples_json: String = row.get(9)?;
+    // The columns are only ever written by serde and a CHECK-constrained
+    // status, so anything unreadable is corruption: fail the read instead of
+    // showing a suggestion with silently emptied fields.
+    fn json_column<T: serde::de::DeserializeOwned>(row: &rusqlite::Row, idx: usize) -> rusqlite::Result<T> {
+        let raw: String = row.get(idx)?;
+        serde_json::from_str(&raw)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(idx, rusqlite::types::Type::Text, Box::new(e)))
+    }
     let status: String = row.get(10)?;
+    let status = AttachmentRuleSuggestionStatus::parse(&status).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            10,
+            rusqlite::types::Type::Text,
+            format!("unknown attachment rule suggestion status {status:?}").into(),
+        )
+    })?;
     Ok(AttachmentRuleSuggestion {
         id: row.get(0)?,
         account_id: row.get(1)?,
         name: row.get(2)?,
         sender_email_pattern: row.get(3)?,
         filename_pattern: row.get(4)?,
-        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+        tags: json_column(row, 5)?,
         email_count: row.get(6)?,
         first_seen: row.get(7)?,
         last_seen: row.get(8)?,
-        sample_filenames: serde_json::from_str(&samples_json).unwrap_or_default(),
-        // The CHECK constraint limits the column to the three variants.
-        status: AttachmentRuleSuggestionStatus::parse(&status).unwrap_or(AttachmentRuleSuggestionStatus::Pending),
+        sample_filenames: json_column(row, 9)?,
+        status,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
     })

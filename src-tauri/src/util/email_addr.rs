@@ -88,6 +88,21 @@ pub(crate) const PERSONAL_EMAIL_DOMAINS: &[&str] = &[
     "movistar.es",
     "terra.es",
     "ya.com",
+    // Common DE / FR / IT ISPs and portals that act as personal mail
+    "web.de",
+    "t-online.de",
+    "freenet.de",
+    "arcor.de",
+    "posteo.de",
+    "mailbox.org",
+    "orange.fr",
+    "wanadoo.fr",
+    "free.fr",
+    "sfr.fr",
+    "laposte.net",
+    "libero.it",
+    "virgilio.it",
+    "tiscali.it",
 ];
 
 /// Returns `true` when `domain` is a known free / personal email provider

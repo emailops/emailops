@@ -89,11 +89,13 @@ them together to your Downloads folder.
 
 <!-- claim:feat-attachments-view-8 -->
 EmailOps also proposes rules on its own. When the same sender keeps mailing you documents
-(PDFs, Office files or e-invoices) — at least two emails in two different months — a
+(PDFs, Office files or e-invoices) — at least two emails in two different months, in your inbox
+or a folder you filed them in — a
 **Suggested rules** section appears in **Manage Rules**, and a badge next to **Attachments** in
 the sidebar counts them. **Review** opens the rule form already filled in (sender and filename
 pattern); the rule is only created when you save it. **Dismiss** hides the suggestion for
-good.
+good, even when the sender later mails from another address. Mail from your own address, or
+from colleagues at your own company, is never suggested.
 
 ## Search
 
