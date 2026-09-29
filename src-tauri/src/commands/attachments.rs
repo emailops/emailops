@@ -5,7 +5,9 @@ use tauri::{AppHandle, State};
 
 use crate::db::Database;
 use crate::models::error::AppError;
-use crate::models::{Attachment, AttachmentRule, EmailAttachmentMeta};
+use crate::models::{
+    Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus, EmailAttachmentMeta,
+};
 use crate::services;
 use crate::AppState;
 
@@ -85,6 +87,9 @@ pub async fn update_attachment_rule(
     tags: Vec<String>,
     enabled: bool,
 ) -> Result<AttachmentRule, AppError> {
+    // A scan still collecting for the old patterns would keep files the edit
+    // is about to drop.
+    state.rule_applies.cancel(&rule_id);
     services::attachments::update_rule(
         &state.db,
         &rule_id,
@@ -104,6 +109,7 @@ pub async fn delete_attachment_rule(
     rule_id: String,
     account_id: String,
 ) -> Result<(), AppError> {
+    state.rule_applies.cancel(&rule_id);
     services::attachments::delete_rule(&state.db, &rule_id, &account_id, &state.app_data_dir)
 }
 
@@ -118,6 +124,68 @@ pub async fn list_attachment_rules(
     account_id: String,
 ) -> Result<Vec<AttachmentRule>, AppError> {
     services::attachments::list_rules(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn list_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::list_suggestions(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn refresh_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::refresh_suggestions(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn dismiss_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<(), AppError> {
+    services::attachment_suggestions::set_suggestion_status(
+        &state.db,
+        &account_id,
+        &suggestion_id,
+        AttachmentRuleSuggestionStatus::Dismissed,
+    )
+}
+
+#[tauri::command]
+pub async fn list_dismissed_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::list_dismissed_suggestions(&state.db, &account_id)
+}
+
+/// Undo a dismissal; returns the pending suggestions after re-mining.
+#[tauri::command]
+pub async fn restore_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::restore_suggestion(&state.db, &account_id, &suggestion_id)
+}
+
+#[tauri::command]
+pub async fn accept_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<(), AppError> {
+    services::attachment_suggestions::set_suggestion_status(
+        &state.db,
+        &account_id,
+        &suggestion_id,
+        AttachmentRuleSuggestionStatus::Accepted,
+    )
 }
 
 #[tauri::command]
@@ -260,15 +328,54 @@ pub async fn reveal_in_finder(path: String) -> Result<(), AppError> {
     services::attachments::reveal_in_file_manager(&target)
 }
 
+/// Queue applying a rule to the mail already stored and return at once. The
+/// scan reports `attachment-rule-apply-progress` and, when it ends,
+/// `attachment-rule-apply-finished` — both tagged with the caller's `run_id`.
+/// Starting it cancels the apply of the same rule that is still running.
 #[tauri::command]
 pub async fn apply_rule_retroactively(
     app: AppHandle,
     state: State<'_, AppState>,
     rule_id: String,
     account_id: String,
-) -> Result<u32, AppError> {
-    services::attachments::apply_rule_retroactively(&state.db, &rule_id, &account_id, &state.app_data_dir, Some(&app))
-        .await
+    run_id: String,
+) -> Result<(), AppError> {
+    use crate::services::background_tasks::BackgroundTask;
+    use tauri::Emitter;
+
+    let core = state.core();
+    let ticket = core.rule_applies.begin(&rule_id);
+    let task = BackgroundTask::ApplyAttachmentRule {
+        rule_id: rule_id.clone(),
+        run_id: run_id.clone(),
+    };
+    state
+        .dispatcher
+        .dispatch(
+            task,
+            Box::new(move || {
+                Box::pin(async move {
+                    let emit = |name: &'static str, payload: serde_json::Value| {
+                        if let Err(e) = app.emit(name, payload) {
+                            eprintln!("[attachments] could not emit {name}: {e}");
+                        }
+                    };
+                    services::attachments::run_rule_apply(
+                        &core.db,
+                        &rule_id,
+                        &account_id,
+                        &run_id,
+                        &core.app_data_dir,
+                        Some(&app),
+                        &ticket,
+                        &emit,
+                    )
+                    .await;
+                })
+            }),
+        )
+        .await;
+    Ok(())
 }
 
 #[tauri::command]

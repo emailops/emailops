@@ -318,6 +318,53 @@ pub struct AttachmentRule {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AttachmentRuleSuggestionStatus {
+    Pending,
+    Accepted,
+    Dismissed,
+}
+
+impl AttachmentRuleSuggestionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Dismissed => "dismissed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "accepted" => Some(Self::Accepted),
+            "dismissed" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+}
+
+/// A candidate attachment rule mined from recurring document attachments,
+/// waiting for the user to confirm (create the rule) or dismiss it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentRuleSuggestion {
+    pub id: String,
+    pub account_id: String,
+    pub name: String,
+    pub sender_email_pattern: String,
+    pub filename_pattern: Option<String>,
+    pub tags: Vec<String>,
+    pub email_count: i64,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub sample_filenames: Vec<String>,
+    pub status: AttachmentRuleSuggestionStatus,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {

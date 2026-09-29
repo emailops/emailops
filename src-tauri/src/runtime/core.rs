@@ -68,6 +68,9 @@ pub struct AppCore {
     /// `run_chat_turn` consults it both for the LLM's tool-definitions array
     /// (filtered by Settings feature flags) and for dispatching tool calls.
     pub tool_registry: Arc<services::chat::tools::ToolRegistry>,
+    /// Retroactive attachment-rule applies in flight, one per rule — so a new
+    /// apply, an edit or a delete of the rule cancels the one running.
+    pub rule_applies: Arc<services::attachments::RuleApplies>,
 }
 
 impl AppCore {
@@ -93,6 +96,7 @@ impl AppCore {
             connectivity: services::connectivity::ConnectivityMonitor::stub(),
             dispatcher: Arc::new(services::background_tasks::FakeDispatcher::new()),
             tool_registry: Arc::new(services::chat::tools::default_registry()),
+            rule_applies: Arc::default(),
         }
     }
 

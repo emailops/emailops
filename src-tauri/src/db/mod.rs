@@ -1110,6 +1110,7 @@ mod schema_parity_tests {
             "calendar_sync_state",
             "calendars",
             "help_doc_chunks",
+            "attachment_rule_suggestions",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

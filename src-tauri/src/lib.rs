@@ -249,6 +249,12 @@ macro_rules! app_commands {
             commands::attachments::delete_attachment_rule,
             commands::attachments::list_attachment_rules,
             commands::attachments::count_attachments_for_rule,
+            commands::attachments::list_attachment_rule_suggestions,
+            commands::attachments::refresh_attachment_rule_suggestions,
+            commands::attachments::dismiss_attachment_rule_suggestion,
+            commands::attachments::accept_attachment_rule_suggestion,
+            commands::attachments::list_dismissed_attachment_rule_suggestions,
+            commands::attachments::restore_attachment_rule_suggestion,
             commands::attachments::get_attachments,
             commands::attachments::get_attachments_for_email,
             commands::attachments::count_attachments,
@@ -655,6 +661,7 @@ pub fn run() {
                 connectivity,
                 dispatcher,
                 tool_registry: Arc::new(services::chat::tools::default_registry()),
+                rule_applies: Arc::default(),
             });
             app.manage(AppState::new(core, scheduler));
 

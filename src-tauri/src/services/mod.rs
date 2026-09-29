@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod agent_search;
 pub mod ai;
 pub mod app_handle;
+pub mod attachment_suggestions;
 pub mod attachments;
 pub mod background_tasks;
 pub mod calendar;

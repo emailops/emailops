@@ -74,6 +74,11 @@ pub enum BackgroundTask {
     SyncAccount { account_id: String, request_id: String },
     /// Re-download emails whose body is missing or empty.
     RedownloadEmptyEmails { account_id: String, request_id: String },
+
+    // ── DB / attachments ────────────────────────────────────────────────
+    /// Apply an attachment rule to the mail already stored. `run_id` comes
+    /// from the frontend and tags the progress / finished events.
+    ApplyAttachmentRule { rule_id: String, run_id: String },
 }
 
 /// Which queue a task should be routed to.
@@ -104,6 +109,7 @@ impl BackgroundTask {
             | Self::BackfillTasks { .. }
             | Self::DownloadModel { .. } => QueueKind::AiBackground,
             Self::SyncAccount { .. } | Self::RedownloadEmptyEmails { .. } => QueueKind::Sync,
+            Self::ApplyAttachmentRule { .. } => QueueKind::Db,
         }
     }
 
@@ -129,6 +135,7 @@ impl BackgroundTask {
             Self::RedownloadEmptyEmails { account_id, .. } => {
                 format!("redownload-empty:{account_id}")
             }
+            Self::ApplyAttachmentRule { rule_id, .. } => format!("attachment-rule:{rule_id}"),
         }
     }
 }
@@ -178,19 +185,28 @@ pub struct RealDispatcher {
     pub db_queue: crate::services::task_queue::TaskQueue,
 }
 
+impl RealDispatcher {
+    /// The queue a task of `kind` runs on.
+    pub fn queue_for(&self, kind: QueueKind) -> &crate::services::task_queue::TaskQueue {
+        match kind {
+            QueueKind::AiInteractive => &self.ai_queue,
+            QueueKind::AiBackground => &self.ai_background,
+            // Fast DB work must not wait behind classification / embeddings.
+            QueueKind::Db => &self.db_queue,
+            // Sync tasks must use per-account queues (managed by AppState);
+            // callers that need sync routing should not use RealDispatcher.
+            QueueKind::Sync => &self.ai_background,
+        }
+    }
+}
+
 impl TaskDispatcher for RealDispatcher {
     fn dispatch<'a>(
         &'a self,
         task: BackgroundTask,
         make_fut: Box<dyn FnOnce() -> BoxFuture<'static> + Send + 'a>,
     ) -> BoxFuture<'a> {
-        let queue = match task.queue() {
-            QueueKind::AiInteractive => self.ai_queue.clone(),
-            QueueKind::AiBackground | QueueKind::Db => self.ai_background.clone(),
-            // Sync tasks must use per-account queues (managed by AppState);
-            // callers that need sync routing should not use RealDispatcher.
-            QueueKind::Sync => self.ai_background.clone(),
-        };
+        let queue = self.queue_for(task.queue()).clone();
         let label = task.label();
         Box::pin(async move {
             let fut = make_fut();
@@ -260,6 +276,53 @@ mod tests {
             .queue(),
             QueueKind::Sync
         );
+    }
+
+    #[test]
+    fn applying_an_attachment_rule_runs_on_the_db_queue() {
+        let task = BackgroundTask::ApplyAttachmentRule {
+            rule_id: "rule-7".into(),
+            run_id: "run-1".into(),
+        };
+        assert_eq!(task.queue(), QueueKind::Db);
+        assert!(task.label().contains("rule-7"));
+
+        let dispatcher = RealDispatcher {
+            ai_queue: crate::services::task_queue::TaskQueue::new(1, "ai"),
+            ai_background: crate::services::task_queue::TaskQueue::new(1, "ai_bg"),
+            db_queue: crate::services::task_queue::TaskQueue::new(4, "db"),
+        };
+        // Not behind classification / embeddings on the background AI queue.
+        assert_eq!(dispatcher.queue_for(QueueKind::Db).snapshot().name, "db");
+    }
+
+    #[tokio::test]
+    async fn the_real_dispatcher_runs_a_db_task() {
+        let dispatcher = RealDispatcher {
+            ai_queue: crate::services::task_queue::TaskQueue::new(1, "ai"),
+            ai_background: crate::services::task_queue::TaskQueue::new(1, "ai_bg"),
+            db_queue: crate::services::task_queue::TaskQueue::new(4, "db"),
+        };
+        let (done, ran) = tokio::sync::oneshot::channel();
+
+        dispatcher
+            .dispatch(
+                BackgroundTask::ApplyAttachmentRule {
+                    rule_id: "r1".into(),
+                    run_id: "run-1".into(),
+                },
+                Box::new(move || {
+                    Box::pin(async move {
+                        let _ = done.send(());
+                    })
+                }),
+            )
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), ran)
+            .await
+            .expect("the task ran")
+            .expect("sender kept");
     }
 
     #[test]

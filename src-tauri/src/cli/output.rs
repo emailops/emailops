@@ -414,6 +414,75 @@ pub fn render_drafts(drafts: &[Draft], style: RenderStyle) -> Result<()> {
     Ok(())
 }
 
+pub fn render_attachment_suggestions(
+    candidates: &[crate::services::attachment_suggestions::SuggestionCandidate],
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(candidates);
+    }
+    if candidates.is_empty() {
+        println!("(no suggested attachment rules)");
+        return Ok(());
+    }
+    let color = style.color();
+    for c in candidates {
+        println!(
+            "{} {:<32} {:<24} {}",
+            paint(&format!("{:<32}", truncate(&c.name, 32)), "1", color),
+            truncate(&c.sender_email_pattern, 32),
+            truncate(c.filename_pattern.as_deref().unwrap_or("(any)"), 24),
+            dim(
+                &format!("{} emails · last {}", c.email_count, format_thread_date(c.last_seen)),
+                color
+            ),
+        );
+    }
+    Ok(())
+}
+
+/// Persisted suggestions (`attachment-suggestions list|refresh`), with the id
+/// `dismiss` / `accept` take.
+pub fn render_attachment_rule_suggestions(
+    suggestions: &[crate::models::AttachmentRuleSuggestion],
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(suggestions);
+    }
+    if suggestions.is_empty() {
+        println!("(no pending suggested attachment rules)");
+        return Ok(());
+    }
+    let color = style.color();
+    for s in suggestions {
+        println!(
+            "{}  {} {:<32} {:<24} {}",
+            dim(&s.id, color),
+            paint(&format!("{:<32}", truncate(&s.name, 32)), "1", color),
+            truncate(&s.sender_email_pattern, 32),
+            truncate(s.filename_pattern.as_deref().unwrap_or("(any)"), 24),
+            dim(
+                &format!("{} emails · last {}", s.email_count, format_thread_date(s.last_seen)),
+                color
+            ),
+        );
+    }
+    Ok(())
+}
+
+pub fn render_suggestion_status(
+    id: &str,
+    status: crate::models::AttachmentRuleSuggestionStatus,
+    style: RenderStyle,
+) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(serde_json::json!({ "id": id, "status": status.as_str() }));
+    }
+    println!("Suggestion {id} marked {}.", status.as_str());
+    Ok(())
+}
+
 /// Full single-draft view for the `draft <id>` and `compose` commands: headers
 /// (incl. provider link + attachments) then the body. JSON emits the raw draft.
 pub fn render_draft_detail(draft: &Draft, style: RenderStyle) -> Result<()> {
@@ -931,6 +1000,48 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn suggestion(id: &str) -> crate::models::AttachmentRuleSuggestion {
+        crate::models::AttachmentRuleSuggestion {
+            id: id.into(),
+            account_id: "a1".into(),
+            name: "Acme · invoice".into(),
+            sender_email_pattern: "billing@acme.com".into(),
+            filename_pattern: None,
+            tags: vec![],
+            email_count: 3,
+            first_seen: 0,
+            last_seen: 0,
+            sample_filenames: vec![],
+            status: crate::models::AttachmentRuleSuggestionStatus::Pending,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn attachment_suggestions_render_as_plain_text_and_json() {
+        use crate::services::attachment_suggestions::SuggestionCandidate;
+        let candidate = SuggestionCandidate {
+            key: "k".into(),
+            name: "Acme".into(),
+            sender_email_pattern: "billing@acme.com".into(),
+            filename_pattern: Some("Invoice_*.pdf".into()),
+            tags: vec![],
+            email_count: 3,
+            first_seen: 0,
+            last_seen: 0,
+            sample_filenames: vec![],
+        };
+        for style in [RenderStyle::Plain, RenderStyle::Rich, RenderStyle::Json] {
+            render_attachment_suggestions(&[], style).expect("empty preview");
+            render_attachment_suggestions(std::slice::from_ref(&candidate), style).expect("preview");
+            render_attachment_rule_suggestions(&[], style).expect("empty list");
+            render_attachment_rule_suggestions(&[suggestion("s1")], style).expect("list");
+            render_suggestion_status("s1", crate::models::AttachmentRuleSuggestionStatus::Dismissed, style)
+                .expect("status");
+        }
+    }
 
     #[test]
     fn truncate_leaves_short_strings_untouched() {

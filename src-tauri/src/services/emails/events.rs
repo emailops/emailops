@@ -38,7 +38,7 @@ pub(super) fn emit_log(level: &str, source: &str, message: &str) {
 
 /// Same as `emit_log`, but prepends `[account_email]` to the message so the
 /// output panel makes it obvious which account produced the log line.
-pub(super) fn emit_account_log(level: &str, source: &str, account_email: &str, message: &str) {
+pub(crate) fn emit_account_log(level: &str, source: &str, account_email: &str, message: &str) {
     emit_log(level, source, &format!("[{}] {}", account_email, message));
 }
 

@@ -12,6 +12,7 @@ import type {
   AllQueuesState,
   Attachment,
   AttachmentRule,
+  AttachmentRuleSuggestion,
   BackfillStatus,
   Calendar,
   CalendarEvent,
@@ -742,6 +743,34 @@ export async function countAttachmentsForRule(ruleId: string): Promise<number> {
   return invoke('count_attachments_for_rule', { ruleId });
 }
 
+export async function listAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_attachment_rule_suggestions', { accountId });
+}
+
+export async function refreshAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('refresh_attachment_rule_suggestions', { accountId });
+}
+
+export async function dismissAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
+  return invoke('dismiss_attachment_rule_suggestion', { accountId, suggestionId });
+}
+
+export async function listDismissedAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_dismissed_attachment_rule_suggestions', { accountId });
+}
+
+/** Undo a dismissal; resolves to the pending suggestions after re-mining. */
+export async function restoreAttachmentRuleSuggestion(
+  accountId: string,
+  suggestionId: string,
+): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('restore_attachment_rule_suggestion', { accountId, suggestionId });
+}
+
+export async function acceptAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
+  return invoke('accept_attachment_rule_suggestion', { accountId, suggestionId });
+}
+
 export async function getAttachments(
   accountId: string,
   tag?: string | null,
@@ -779,8 +808,13 @@ export async function bulkDownloadAttachments(accountId: string, attachmentIds: 
   return invoke('bulk_download_attachments', { accountId, attachmentIds });
 }
 
-export async function applyRuleRetroactively(ruleId: string, accountId: string): Promise<number> {
-  return invoke('apply_rule_retroactively', { ruleId, accountId });
+/**
+ * Queue applying a rule to the mail already stored; resolves once queued.
+ * Progress and the outcome arrive as `attachment-rule-apply-progress` /
+ * `attachment-rule-apply-finished` events tagged with `runId`.
+ */
+export async function applyRuleRetroactively(ruleId: string, accountId: string, runId: string): Promise<void> {
+  return invoke('apply_rule_retroactively', { ruleId, accountId, runId });
 }
 
 export async function openAttachmentExternally(accountId: string, attachmentId: string): Promise<void> {

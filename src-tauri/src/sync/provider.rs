@@ -467,6 +467,16 @@ pub trait EmailProvider: Send + Sync {
         Ok(results)
     }
 
+    /// Ids of every message in the mailbox that carries attachments, when the
+    /// provider can answer with a cheap server-side search (Gmail
+    /// `has:attachment`, Graph `hasAttachments eq true`, an IMAP `HEADER
+    /// Content-Type` search per folder). `None` when it cannot.
+    /// Drives the one-time attachment-metadata backfill, which then fetches
+    /// only those messages instead of the whole mailbox.
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+
     // ── Folder management ─────────────────────────────────────────────────
     //
     // IMAP-only in v1: only the IMAP adapter overrides these; callers gate
@@ -663,6 +673,12 @@ pub struct FakeEmailProvider {
     /// When `Some`, every mailbox-state write fails with this message instead
     /// of being recorded — simulates an offline or refusing provider.
     mailbox_write_failure: std::sync::RwLock<Option<String>>,
+    /// Message ids whose `get_message` fails — simulates a message the
+    /// provider cannot return (rate limit, deleted server-side).
+    failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// When set, what `list_message_ids_with_attachments` answers instead of
+    /// the stored messages that have attachments (`None` = no search).
+    attachment_listing: std::sync::RwLock<Option<Option<Vec<String>>>>,
 }
 
 /// A mailbox-state call recorded by [`FakeEmailProvider`].
@@ -727,6 +743,8 @@ impl FakeEmailProvider {
             mailbox_ops: std::sync::RwLock::new(Vec::new()),
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
+            failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
+            attachment_listing: std::sync::RwLock::new(None),
         }
     }
 
@@ -751,6 +769,21 @@ impl FakeEmailProvider {
 
     pub fn mailbox_ops(&self) -> Vec<FakeMailboxOp> {
         self.mailbox_ops.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Fix what `list_message_ids_with_attachments` answers: `None` behaves
+    /// like a provider with no attachment search, `Some(ids)` lists exactly
+    /// those ids (which may disagree with what `get_message` returns).
+    pub fn set_attachment_listing(&self, listing: Option<Vec<String>>) {
+        *self.attachment_listing.write().unwrap_or_else(PoisonError::into_inner) = Some(listing);
+    }
+
+    /// Make `get_message` fail for `message_id` from now on.
+    pub fn fail_message(&self, message_id: impl Into<String>) {
+        self.failing_messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.into());
     }
 
     /// Make every subsequent mailbox-state write fail with `message`.
@@ -903,6 +936,26 @@ impl EmailProvider for FakeEmailProvider {
         Ok((refs, next_page))
     }
 
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        self.record_call("list_message_ids_with_attachments");
+        if let Some(listing) = self
+            .attachment_listing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Ok(listing);
+        }
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Some(
+            guard
+                .iter()
+                .filter(|m| !m.attachments.is_empty())
+                .map(|m| m.email.id.clone())
+                .collect(),
+        ))
+    }
+
     /// Overrides the sequential default purely to record the call, so a test
     /// can assert on the order of listing versus downloading.
     async fn batch_get_messages(
@@ -974,6 +1027,16 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn get_message(&self, message_id: &str) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        if self
+            .failing_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(message_id)
+        {
+            return Err(crate::models::error::AppError::SyncError(format!(
+                "Fake fetch failure: {message_id}"
+            )));
+        }
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         guard
             .iter()

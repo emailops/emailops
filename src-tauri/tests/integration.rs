@@ -4734,9 +4734,10 @@ async fn resync_mailbox_full_recovers_gap_and_returns_delta() {
         vec![],
     );
 
-    let inserted = emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider)
-        .await
-        .expect("resync_mailbox_full");
+    let inserted =
+        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
+            .await
+            .expect("resync_mailbox_full");
 
     assert_eq!(
         inserted, 3,
@@ -4772,9 +4773,10 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
     // Provider has no messages, so resync just resets state and produces 0 inserts.
     let provider = FakeEmailProvider::new("reset@example.com", "Reset");
 
-    let inserted = emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider)
-        .await
-        .expect("resync_mailbox_full");
+    let inserted =
+        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
+            .await
+            .expect("resync_mailbox_full");
 
     assert_eq!(inserted, 0, "no provider messages → 0 inserted");
 
@@ -4838,4 +4840,425 @@ async fn outlook_client_list_messages_against_cassette_mock() {
     assert_eq!(refs[0].thread_id, "AAQkAD-thread-001");
     assert_eq!(refs[1].id, "AAMkAD-msg-002");
     assert!(next_page.is_none(), "cassette response had no @odata.nextLink");
+}
+
+// ── Attachment metadata: retry path + one-time backfill ─────────────────────
+
+fn pdf_attachment(id: &str, filename: &str) -> AttachmentInfo {
+    AttachmentInfo {
+        attachment_id: id.to_string(),
+        filename: filename.to_string(),
+        mime_type: "application/pdf".to_string(),
+        size: 1_000,
+        inline_data: None,
+    }
+}
+
+const ATTACHMENT_BACKFILL_DONE: &str = "attachment_meta_backfill_done:";
+
+/// Regression: a download that failed and was retried on the next sync stored
+/// the email but never its attachment metadata, so the attachment was invisible
+/// to the UI, to rules and to rule suggestions.
+#[tokio::test]
+async fn a_retried_download_records_the_emails_attachments() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rt", "rt@example.com")).unwrap();
+    // Below the floor, so only the retry pass (which fetches by id) reaches it.
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-rt", Some(floor)).unwrap();
+    db.add_failed_email("acc-rt", "retried", "HTTP 500").unwrap();
+    // Keep the one-time backfill out of it: this test is about the retry path.
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-rt"), "1")
+        .unwrap();
+    let account = db.get_account("acc-rt").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("rt@example.com", "Rt");
+    provider.add_message(
+        make_email_with("retried", "acc-rt", floor - 86_400, "billing@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+    // Retries only run on a sync that brought new mail.
+    provider.add_message(
+        make_email_with("new", "acc-rt", floor + 86_400, "someone@x.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert!(
+        db.get_email("retried").unwrap().is_some(),
+        "the retry pass stores the email"
+    );
+    let metas = db.get_email_attachment_metas("retried").unwrap();
+    assert_eq!(metas.len(), 1, "the retried email's attachment must be recorded");
+    assert_eq!(metas[0].filename, "Invoice_0001.pdf");
+}
+
+/// Mail stored before attachment metadata was reliably recorded (a failed
+/// batch insert used to be discarded silently) has none, and incremental sync
+/// never revisits stored mail. The first sync after upgrading fills the gap.
+#[tokio::test]
+async fn the_first_sync_backfills_attachment_metadata_missing_from_stored_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-bf", "bf@example.com")).unwrap();
+    let stored = make_email_with("stored-without-meta", "acc-bf", 1_750_000_000, "billing@x.com", "inbox");
+    db.insert_email(&stored).unwrap();
+    let account = db.get_account("acc-bf").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("bf@example.com", "Bf");
+    provider.add_message(
+        stored,
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert_eq!(db.get_email_attachment_metas("stored-without-meta").unwrap().len(), 1);
+    assert!(
+        db.get_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-bf"))
+            .unwrap()
+            .is_some(),
+        "a completed backfill is remembered"
+    );
+}
+
+#[tokio::test]
+async fn the_attachment_backfill_runs_once_per_account() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-once", "once@example.com"))
+        .unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-once"), "1")
+        .unwrap();
+    let stored = make_email_with(
+        "stored-without-meta",
+        "acc-once",
+        1_750_000_000,
+        "billing@x.com",
+        "inbox",
+    );
+    db.insert_email(&stored).unwrap();
+    let account = db.get_account("acc-once").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("once@example.com", "Once");
+    provider.add_message(
+        stored,
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-1", "Invoice_0001.pdf")],
+    );
+    let calls = provider.call_log();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let calls = calls.read().unwrap().clone();
+    assert!(
+        !calls.iter().any(|c| c == "list_message_ids_with_attachments"),
+        "a finished backfill must not query the provider again, got {calls:?}"
+    );
+    assert!(db.get_email_attachment_metas("stored-without-meta").unwrap().is_empty());
+}
+
+/// A sync that brings new mail re-mines the rule suggestions, so a sender that
+/// just crossed the "recurring" threshold shows up without opening the modal.
+#[tokio::test]
+async fn a_sync_with_new_recurring_documents_proposes_a_rule() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-sg", "sg@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-sg"), "1")
+        .unwrap();
+    let account = db.get_account("acc-sg").unwrap().unwrap();
+
+    let now = chrono::Utc::now().timestamp();
+    let provider = FakeEmailProvider::new("sg@example.com", "Sg");
+    for (i, days_ago) in [95_i64, 64, 33].into_iter().enumerate() {
+        provider.add_message(
+            make_email_with(
+                &format!("inv-{i}"),
+                "acc-sg",
+                now - days_ago * 86_400,
+                "billing@acme-synthetic.com",
+                "inbox",
+            ),
+            EmailCategory::Primary,
+            vec![pdf_attachment(&format!("att-{i}"), &format!("Invoice_000{i}.pdf"))],
+        );
+    }
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let pending = emailops_lib::services::attachment_suggestions::list_suggestions(&db, "acc-sg").unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0].filename_pattern.as_deref(), Some("Invoice_*.pdf"));
+}
+
+/// Attachment rules apply to new mail on every sync — also a headless one
+/// (the CLI, a server), which has no Tauri `AppHandle`.
+#[tokio::test]
+async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-hr", "hr@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-hr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-hr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-hr",
+        "Acme",
+        Some("billing@acme-synthetic.com"),
+        None,
+        Some("*.pdf"),
+        vec!["acme".into()],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("hr@example.com", "Hr");
+    provider.add_message(
+        make_email_with(
+            "inv",
+            "acc-hr",
+            chrono::Utc::now().timestamp() - 86_400,
+            "billing@acme-synthetic.com",
+            "inbox",
+        ),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-inv", "Invoice_0042.pdf")],
+    );
+    provider.set_attachment_bytes("inv", "att-inv", b"%PDF-1.4".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let collected = db.get_attachments_for_rule(&rule.id).unwrap();
+    assert_eq!(collected.len(), 1, "the rule must collect the new invoice");
+    assert!(data_dir.path().join(&collected[0].file_path).is_file());
+}
+
+/// A download that failed and is retried on the next sync goes through the
+/// attachment rules too — the retry path must not skip them.
+#[tokio::test]
+async fn a_retried_download_is_collected_by_attachment_rules() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rr", "rr@example.com")).unwrap();
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-rr", Some(floor)).unwrap();
+    db.add_failed_email("acc-rr", "retried", "HTTP 500").unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-rr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-rr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-rr",
+        "Billing",
+        Some("billing@x-synthetic.com"),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("rr@example.com", "Rr");
+    provider.add_message(
+        make_email_with("retried", "acc-rr", floor - 86_400, "billing@x-synthetic.com", "inbox"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-r", "Invoice_0001.pdf")],
+    );
+    provider.set_attachment_bytes("retried", "att-r", b"%PDF".to_vec());
+    // Retries only run on a sync that brought new mail.
+    provider.add_message(
+        make_email_with("new", "acc-rr", floor + 86_400, "someone@x-synthetic.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
+}
+
+/// Rules collect new mail wherever the user keeps it — inbox, Sent and
+/// filed folders (an IMAP server filter moving invoices into a folder) —
+/// but not what sits in Spam or Trash.
+#[tokio::test]
+async fn a_sync_applies_attachment_rules_in_filed_folders_and_sent_not_spam_or_trash() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-fr", "fr@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-fr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-fr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-fr",
+        "Vendor",
+        Some("billing@vendor-synthetic.com"),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("fr@example.com", "Fr");
+    provider.set_folders(vec![
+        listed_folder("INBOX", &["\\HasChildren"]),
+        listed_folder("INBOX.Facturas", &[]),
+    ]);
+    let now = chrono::Utc::now().timestamp();
+    for (id, mailbox) in [
+        ("in-folder", "folder:INBOX.Facturas"),
+        ("in-sent", "sent"),
+        ("in-spam", "spam"),
+        ("in-trash", "trash"),
+    ] {
+        provider.add_message(
+            make_email_with(id, "acc-fr", now - 86_400, "billing@vendor-synthetic.com", mailbox),
+            EmailCategory::Primary,
+            vec![pdf_attachment(&format!("att-{id}"), &format!("{id}.pdf"))],
+        );
+        provider.set_attachment_bytes(id, format!("att-{id}"), b"%PDF".to_vec());
+    }
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let mut collected: Vec<String> = db
+        .get_attachments_for_rule(&rule.id)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.email_id)
+        .collect();
+    collected.sort();
+    assert_eq!(collected, vec!["in-folder".to_string(), "in-sent".to_string()]);
+}
+
+/// Recovering a mailbox's history by hand (Settings → resync Sent) runs the
+/// attachment rules on what it brings back, like a regular sync does.
+#[tokio::test]
+async fn a_manual_sent_resync_applies_attachment_rules() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rs", "rs@example.com")).unwrap();
+    let account = db.get_account("acc-rs").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-rs",
+        "Issued invoices",
+        Some("rs@example.com"),
+        None,
+        Some("*.pdf"),
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("rs@example.com", "Rs");
+    provider.add_message(
+        make_email_with("sent-1", "acc-rs", 1_750_000_000, "rs@example.com", "sent"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-s1", "fact_0001.pdf")],
+    );
+    provider.set_attachment_bytes("sent-1", "att-s1", b"%PDF".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+    let rules = db.get_attachment_rules("acc-rs").unwrap();
+    let ctx = emailops_lib::services::attachments::RuleSyncCtx {
+        rules: &rules,
+        app_data_dir: data_dir.path(),
+        app: None,
+    };
+
+    emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        emailops_lib::sync::provider::ExtraMailbox::Sent,
+        &provider,
+        Some(&ctx),
+    )
+    .await
+    .expect("resync");
+
+    assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
 }

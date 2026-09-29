@@ -142,6 +142,34 @@ pub struct Cli {
 
 /// One-shot subcommands. The REPL maps its slash-commands onto these same
 /// variants so behavior never diverges between the two front-ends.
+/// `attachment-suggestions` subcommands.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum SuggestionAction {
+    /// What a re-mine would propose now. Read-only (the default).
+    Preview,
+    /// The pending suggestions the app shows.
+    List,
+    /// Re-mine and save the pending suggestions, as a sync does.
+    Refresh,
+    /// Hide a suggestion for good.
+    Dismiss {
+        /// Suggestion id (from `list`).
+        id: String,
+    },
+    /// Mark a suggestion accepted (after creating its rule).
+    Accept {
+        /// Suggestion id (from `list`).
+        id: String,
+    },
+    /// The suggestions dismissed so far, most recent first.
+    Dismissed,
+    /// Undo a dismissal (the suggestion is re-mined).
+    Restore {
+        /// Suggestion id (from `dismissed`).
+        id: String,
+    },
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// List or add accounts. Bare `accounts` lists; `accounts add <provider>`
@@ -352,6 +380,13 @@ pub enum Command {
 
     /// List saved drafts for an account.
     Drafts,
+
+    /// Suggested attachment rules (recurring documents from the same sender).
+    /// Bare: preview what a re-mine would propose, without saving anything.
+    AttachmentSuggestions {
+        #[command(subcommand)]
+        action: Option<SuggestionAction>,
+    },
 
     /// Show a single draft (recipients, subject, body, attachments).
     Draft {
@@ -919,6 +954,34 @@ mod tests {
                 assert!(cases_dir.is_none());
             }
             other => panic!("expected Eval, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_attachment_suggestions_parses_to_preview() {
+        let cli = Cli::parse_from(["emailops-cli", "attachment-suggestions"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::AttachmentSuggestions { action: None })
+        ));
+    }
+
+    #[test]
+    fn attachment_suggestions_subcommands_parse() {
+        for (args, expected) in [
+            (vec!["list"], SuggestionAction::List),
+            (vec!["refresh"], SuggestionAction::Refresh),
+            (vec!["preview"], SuggestionAction::Preview),
+            (vec!["dismiss", "s1"], SuggestionAction::Dismiss { id: "s1".into() }),
+            (vec!["accept", "s1"], SuggestionAction::Accept { id: "s1".into() }),
+            (vec!["dismissed"], SuggestionAction::Dismissed),
+            (vec!["restore", "s1"], SuggestionAction::Restore { id: "s1".into() }),
+        ] {
+            let cli = Cli::parse_from(["emailops-cli", "attachment-suggestions"].into_iter().chain(args));
+            match cli.command {
+                Some(Command::AttachmentSuggestions { action: Some(action) }) => assert_eq!(action, expected),
+                other => panic!("expected {expected:?}, got {other:?}"),
+            }
         }
     }
 

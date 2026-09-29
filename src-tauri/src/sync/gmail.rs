@@ -1465,6 +1465,32 @@ impl EmailProvider for GmailClient {
         Ok((message_refs, token))
     }
 
+    /// `has:attachment` over the whole mailbox, spam and trash included (the
+    /// sync stores those too, and the backfill is marked done after this),
+    /// ids only.
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        let mut ids = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let (refs, next) = self
+                .list_messages_scoped(
+                    500,
+                    token.as_deref(),
+                    None,
+                    None,
+                    Some("has:attachment"),
+                    /* include_spam_trash */ true,
+                    /* include_all_mail */ true,
+                )
+                .await?;
+            ids.extend(refs.into_iter().map(|r| r.id));
+            match next.filter(|t| !t.is_empty()) {
+                Some(t) => token = Some(t),
+                None => return Ok(Some(ids)),
+            }
+        }
+    }
+
     /// Map the message's current labels to its mailbox (`format=minimal`, so
     /// no body is transferred). A Gmail id survives every label change, so the
     /// header is not needed and the id comes back unchanged. A 404 means the
@@ -2539,6 +2565,43 @@ mod tests {
             ""
         );
         assert_eq!(pick_send_as_display_name(&[], "ada@example.com"), "");
+    }
+
+    /// The attachment backfill is only marked done once the listing covers
+    /// every stored mailbox — spam and trash included, since sync stores them.
+    #[tokio::test]
+    async fn attachment_listing_covers_spam_and_trash_across_pages() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages"))
+            .and(query_param("includeSpamTrash", "true"))
+            .and(query_param("q", "has:attachment"))
+            .and(query_param("pageToken", "p2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [{ "id": "m2", "threadId": "t2" }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages"))
+            .and(query_param("includeSpamTrash", "true"))
+            .and(query_param("q", "has:attachment"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [{ "id": "m1", "threadId": "t1" }],
+                "nextPageToken": "p2"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids = EmailProvider::list_message_ids_with_attachments(&client)
+            .await
+            .expect("listing");
+
+        assert_eq!(ids, Some(vec!["m1".to_string(), "m2".to_string()]));
     }
 
     // Regression: the profile endpoint has no name, so Gmail accounts were

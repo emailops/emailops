@@ -294,6 +294,23 @@ export interface AttachmentRule {
   updatedAt: number;
 }
 
+/** A candidate attachment rule mined from recurring document attachments. */
+export interface AttachmentRuleSuggestion {
+  id: string;
+  accountId: string;
+  name: string;
+  senderEmailPattern: string;
+  filenamePattern: string | null;
+  tags: string[];
+  emailCount: number;
+  firstSeen: number;
+  lastSeen: number;
+  sampleFilenames: string[];
+  status: 'pending' | 'accepted' | 'dismissed';
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface Attachment {
   id: string;
   accountId: string;

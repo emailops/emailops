@@ -1,3 +1,4 @@
+mod attachment_backfill;
 mod compose;
 mod drafts;
 mod events;
@@ -17,11 +18,13 @@ use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
+pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
 pub use compose::{
     compose_draft, delete_draft, plan_compose, pull_provider_drafts, refresh_provider_drafts, send_draft, ComposeInput,
     ComposePlan,
 };
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
+pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, rename_folder};
 pub use html_sanitizer::sanitize_outgoing_html;

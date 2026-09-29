@@ -1748,6 +1748,26 @@ is unlikely to run on.
 - *Publishing without the CUDA asset and attaching it later*: it changes when a release
   goes out, not how long the build takes.
 
+## 2026-09-25 — Suggested attachment rules are mined heuristically and always confirmed
+
+**Decision:** EmailOps proposes candidate attachment rules from recurring document
+attachments (PDF, office, XML/ZIP e-invoices — never images, `.ics` or signatures):
+at least 2 emails in 2 different calendar months from one sender (many providers
+send one invoice a month; senders of one corporate domain pooled, personal providers
+never — those are named after the sender's display name), with a filename glob generalised
+from numbers, dates and month names. Mining is a deterministic heuristic, re-run after
+every sync that brought new mail and when the rules modal opens; a badge on the
+sidebar's Attachments entry and the "Manage Rules" button shows the pending count.
+A candidate is never turned into a rule automatically: "Review" opens the regular rule
+form prefilled (apply-to-existing on), and only saving it accepts the suggestion.
+Accepted and dismissed candidates are remembered by key and never proposed again.
+**Context:** Users had to hand-write a rule per invoice sender; the recurring-document
+pattern is visible in `email_attachment_meta` without reading bodies.
+**Rejected:** LLM-based detection (slower, non-deterministic, unnecessary for a
+sender × filename × cadence pattern); one-click creation without review (a wrong
+glob silently downloads the wrong files); computing only when the modal opens (the
+user would never discover the feature without a proactive signal).
+
 ## 2026-09-25 — Windows Vulkan builds without --jobs 1
 
 **Decision:** `scripts/build_platform.sh` no longer forces `--jobs 1` on Windows Vulkan
@@ -1821,3 +1841,50 @@ of mail rather than a missing one.
 - *A prompt rule "a period up to now has no until"*: it fixed those questions but moved
   unrelated plans on the 4B model (a recipient flipped to sender; a document keyword
   replaced by a tag), measured on the planner and chat evals.
+
+## 2026-09-29 — Attachment rule suggestions: dismissals match by sender identity, not key
+
+**Decision:** A resolved (accepted or dismissed) suggestion hides every later candidate
+from the same sender identity (`*@domain` for a company, the address for a person on a
+personal provider) whose documents its filename pattern mostly matches — a key equality
+check is no longer the test. Candidate keys are `identity|filename pattern`. Mining also
+covers filed folders (everything but sent, spam and trash), skips the user's own address
+and — on a corporate account — their own domain, needs the first and last email ≥20 days
+apart, and falls back to the most recurring extension (`*.pdf`) or to nothing, never to a
+pattern-less rule. IMAP accounts join the attachment backfill: with no "has attachment"
+search key, each stored folder is searched for `Content-Type` `multipart/mixed` or
+`application/*`, and a backfill with failed fetches is not marked done.
+**Context:** The key embedded the proposed patterns, which drift as mail arrives
+(`billing@acme.com` → `*@acme.com` when a second address sends; `*.pdf` → `Invoice_*.pdf`
+once a family recurs), so dismissed suggestions came back. A pattern-less fallback rule
+collected logos and invites; colleagues' shared PDFs became suggestions named after the
+user's own company.
+**Rejected:** A migration re-keying resolved rows (the stored patterns already carry the
+identity, so coverage is computed from them); matching the resolved row's exact sender
+pattern (a dismissal of `billing@` must also hide `noreply@` of the same company).
+
+## 2026-09-29 — Suggested attachment rules tag the document kind in the UI language
+
+**Decision:** The kind tag a suggestion proposes (and the name built from it,
+"Acme · factura") is written in the UI language — the `ui_language` preference, else the
+OS locale, else English — while the keywords that detect the kind stay multilingual.
+Pending suggestions are re-mined on every sync and modal open, so they follow a language
+change.
+**Context:** English-only tags ("invoice") next to the user's own Spanish tags
+("factura") split one kind of document across two tags.
+**Rejected:** Canonical English tags (they do not match the vocabulary the user types);
+translating at display time (tags are user data stored on rules and attachments, not UI
+strings).
+
+## 2026-09-29 — Attachment rules reach the inbox, Sent and filed folders, not Spam or Trash
+
+**Decision:** Attachment rules collect mail in the inbox, Sent and the user's own folders
+(IMAP custom folders), both when new mail syncs and when a rule is applied to existing
+mail; Spam, Trash and locally deleted mail are never collected.
+**Context:** Only the inbox pass applied rules at sync time, so an invoice an IMAP server
+filter moved into a folder never reached the attachments view unless the rule was
+re-applied by hand — while that manual apply collected from everywhere, Spam and Trash
+included.
+**Rejected:** Inbox only (misses server-side filing); every mailbox (a sender rule would
+pick up the junked or deleted copy of a message); leaving Sent out (the user wants the
+invoices they send collected too).

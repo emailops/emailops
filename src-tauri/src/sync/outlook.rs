@@ -331,7 +331,15 @@ impl OutlookClient {
         // there really are none.
         let (attachments, inline_images) = match msg.has_attachments {
             Some(false) => (Vec::new(), Vec::new()),
-            _ => self.list_attachments(&msg.id).await.unwrap_or_default(),
+            _ => match self.list_attachments(&msg.id).await {
+                Ok(found) => found,
+                // Non-fatal for the message, but never silent: an error here
+                // stores the email with no attachment rows at all.
+                Err(e) => {
+                    self.log(&format!("Graph: could not list attachments for {}: {e}", msg.id));
+                    (Vec::new(), Vec::new())
+                }
+            },
         };
 
         let (mut email, category) = parse_message(msg);
@@ -789,6 +797,27 @@ impl OutlookClient {
 impl EmailProvider for OutlookClient {
     async fn get_profile(&self) -> Result<(String, String)> {
         self.get_profile().await
+    }
+
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        let mut ids = Vec::new();
+        let mut url = Some(build_attachments_list_url(&self.base_url));
+        while let Some(current) = url {
+            let response = self
+                .send_get_with_retry(&current, "list messages with attachments")
+                .await?;
+            if !response.status().is_success() {
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(AppError::SyncError(format!(
+                    "Failed to list messages with attachments: {error_text}"
+                )));
+            }
+            let list: GraphMessageList = response.json().await?;
+            ids.extend(list.value.into_iter().map(|r| r.id));
+            // `@odata.nextLink` is a complete URL carrying the $skiptoken.
+            url = list.next_link.filter(|link| !link.is_empty());
+        }
+        Ok(Some(ids))
     }
 
     async fn list_messages(
@@ -1307,6 +1336,16 @@ fn build_inbox_list_url(base: &str, top: u32, after_timestamp: Option<i64>, befo
     url
 }
 
+/// Every message with attachments, in any folder, ids only — the backfill
+/// candidates. `hasAttachments` is filterable without an `$orderby`.
+fn build_attachments_list_url(base: &str) -> String {
+    format!(
+        "{}/me/messages?$top=1000&$select=id&$filter={}",
+        base,
+        urlencoding::encode("hasAttachments eq true")
+    )
+}
+
 /// One sub-response of a `$batch`, resolved back to the slot it answers.
 #[derive(Debug)]
 struct GraphBatchSubResponse {
@@ -1512,6 +1551,68 @@ mod tests {
     /// is `internetMessageId` (`<abc@host>`) — a different identifier for a
     /// different lookup. Graph rejects it, so replying from an Outlook account
     /// hit a resource that does not exist.
+    /// A message whose attachments cannot be listed is still stored — with
+    /// no attachment rows, and a log line saying so.
+    #[tokio::test]
+    async fn a_message_whose_attachments_cannot_be_listed_is_still_returned() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/m1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "m1",
+                "subject": "Invoice",
+                "hasAttachments": true,
+                "receivedDateTime": "2026-09-01T10:00:00Z",
+                "from": { "emailAddress": { "address": "billing@acme.com", "name": "Acme" } }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/m1/attachments"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let (email, _, attachments) = EmailProvider::get_message(&client, "m1").await.expect("message");
+
+        assert_eq!(email.id, "m1");
+        assert!(attachments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn attachment_listing_follows_the_next_link_to_the_last_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{ "id": "m1" }],
+                "@odata.nextLink": format!("{}/page-2", server.uri())
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/page-2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [{ "id": "m2" }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids = EmailProvider::list_message_ids_with_attachments(&client)
+            .await
+            .expect("listing");
+
+        assert_eq!(ids, Some(vec!["m1".to_string(), "m2".to_string()]));
+    }
+
     #[tokio::test]
     async fn reply_addresses_the_graph_item_id() {
         use wiremock::matchers::{method, path};
@@ -1692,6 +1793,14 @@ mod tests {
         );
         // The receivedDateTime bound is present (url-encoded space → %20).
         assert!(url.contains("receivedDateTime%20ge"), "got: {url}");
+    }
+
+    #[test]
+    fn attachments_list_url_filters_on_has_attachments_across_folders() {
+        let url = build_attachments_list_url(GRAPH_API_BASE);
+        assert!(url.starts_with(&format!("{GRAPH_API_BASE}/me/messages?")), "{url}");
+        assert!(url.contains("$select=id"), "{url}");
+        assert!(url.contains("$filter=hasAttachments%20eq%20true"), "{url}");
     }
 
     #[test]

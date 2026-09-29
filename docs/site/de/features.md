@@ -87,13 +87,25 @@ verwalten** (oder **Regel erstellen** in der leeren Ansicht) und füllen Sie aus
   (`*apple.com*` erfasst jeden Absender, der „apple.com“ enthält). Leer lassen für jeden Absender. <!-- claim:feat-attachments-view-4 -->
 - **Betreffmuster** und **Dateinamen-Muster** — `*` ist ein Platzhalter; nur passende Dateinamen
   werden gesammelt. <!-- claim:feat-attachments-view-5 -->
-- **Tags** — komma-getrennt; sie erscheinen oben in der Ansicht als Filter-Schaltflächen. <!-- claim:feat-attachments-view-6 -->
+- **Tags** — wählen Sie vorhandene Tags oder tippen Sie, um einen neuen anzulegen; sie erscheinen oben in der Ansicht als Filter-Schaltflächen. <!-- claim:feat-attachments-view-6 -->
 
 <!-- claim:feat-attachments-view-7 -->
 Alle ausgefüllten Muster müssen zutreffen. Regeln greifen bei neuer Post während der
 Synchronisierung; setzen Sie **Nach dem Erstellen auf vorhandene E-Mails anwenden**, um auch aus
-der bereits vorhandenen Post zu sammeln. Markieren Sie Anhänge, um sie gemeinsam in Ihren
+der bereits vorhandenen Post zu sammeln. Regeln erfassen den Posteingang, Gesendete Elemente und
+Ihre eigenen Ordner, nie Spam oder Papierkorb. Markieren Sie Anhänge, um sie gemeinsam in Ihren
 Downloads-Ordner herunterzuladen.
+
+<!-- claim:feat-attachments-view-8 -->
+EmailOps schlägt auch selbst Regeln vor. Wenn Ihnen derselbe Absender immer wieder Dokumente
+schickt (PDFs, Office-Dateien oder E-Rechnungen) — mindestens zwei E-Mails in zwei
+verschiedenen Monaten, im Posteingang oder in einem Ordner, in dem Sie sie ablegen —, erscheint unter **Regeln verwalten** ein Abschnitt **Vorgeschlagene Regeln**, und ein
+Zähler neben **Anhänge** in der Seitenleiste zeigt ihre Anzahl. **Prüfen** öffnet das
+Regelformular bereits ausgefüllt (Absender und Dateinamenmuster); die Regel wird erst angelegt,
+wenn Sie sie speichern. **Verwerfen** blendet den Vorschlag dauerhaft aus, auch wenn der
+Absender später von einer anderen Adresse schreibt; **Rückgängig** oder **Wiederherstellen** unter
+**Verworfene Vorschläge** holt ihn zurück. E-Mails von Ihrer eigenen Adresse oder von
+Kollegen Ihres eigenen Unternehmens werden nie vorgeschlagen.
 
 ## Suche
 

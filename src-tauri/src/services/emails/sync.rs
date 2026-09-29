@@ -273,6 +273,58 @@ fn take_sync_abort(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>
     requested
 }
 
+/// End-of-sync attachment upkeep, non-fatal: the one-time backfill of
+/// attachment metadata lost to an old sync bug (see
+/// `attachment_backfill`), then a re-mine of attachment rule suggestions
+/// when new mail arrived or the backfill recovered attachments.
+async fn finish_attachment_upkeep(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn EmailProvider,
+    app: Option<&AppHandle>,
+    sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    synced_any: bool,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
+) {
+    use super::attachment_backfill::backfill_attachment_meta_with_rules;
+
+    // Peek, don't take: the sync loop that follows still has to see the flag.
+    let abort_requested = || {
+        sync_abort_flags
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&account.id)
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    };
+    let result =
+        backfill_attachment_meta_with_rules(db, provider, &account.id, &account.email, &abort_requested, rules_ctx)
+            .await;
+    let report = super::attachment_backfill::backfill_report(&result);
+    if let Some((level, message)) = &report.log {
+        emit_account_log(level, "sync", &account.email, message);
+    }
+    let recovered = report.recovered;
+
+    if !synced_any && recovered == 0 {
+        return;
+    }
+    match crate::services::attachment_suggestions::refresh_after_sync(db, app, &account.id) {
+        Ok(n) if n > 0 => emit_account_log(
+            "debug",
+            "sync",
+            &account.email,
+            &format!("{n} suggested attachment rules pending review"),
+        ),
+        Ok(_) => {}
+        Err(e) => emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!("Attachment rule suggestions failed (non-fatal): {e}"),
+        ),
+    }
+}
+
 /// Core sync logic with an already-built `EmailProvider`. Accepts
 /// `app: Option<AppHandle>` so integration tests can pass `None` and use a
 /// `FakeEmailProvider` without needing a live Tauri runtime.
@@ -409,6 +461,11 @@ pub async fn sync_account_with_provider(
 
     // Load attachment rules for this account (empty vec if none defined)
     let attachment_rules = db.get_attachment_rules(account_id)?;
+    let rules_ctx = RuleSyncCtx {
+        rules: &attachment_rules,
+        app_data_dir,
+        app: app.as_ref(),
+    };
 
     const BATCH_SIZE: usize = 20;
     let batch_pause = inter_batch_delay(&account.provider);
@@ -670,7 +727,17 @@ pub async fn sync_account_with_provider(
                         })
                         .collect();
                     if !metas.is_empty() {
-                        let _ = db.insert_email_attachment_metas_batch(&metas);
+                        // Never discard this error: before the insert tolerated a
+                        // repeated filename, one such email silently dropped the
+                        // attachments of its whole chunk.
+                        if let Err(e) = db.insert_email_attachment_metas_batch(&metas) {
+                            emit_account_log(
+                                "error",
+                                "sync",
+                                &account.email,
+                                &format!("Could not record attachments of {} emails: {e}", chunk_emails.len()),
+                            );
+                        }
                     }
 
                     let ids_to_remove: Vec<String> = chunk_emails.iter().map(|(e, _)| e.id.clone()).collect();
@@ -720,10 +787,10 @@ pub async fn sync_account_with_provider(
                     }
                 }
 
-                // Phase 3: per-email async attachment processing (needs emails already in DB).
-                // Only runs when we have an AppHandle (skipped in test context where
-                // FakeEmailProvider returns no attachments anyway).
-                if let Some(ref a) = app {
+                // Phase 3: per-email async attachment processing (needs emails
+                // already in DB). Headless syncs (CLI, server) run it too: rules
+                // must not depend on a window being open.
+                {
                     for (email, attachment_infos) in &chunk_emails {
                         let should_auto_download = !attachment_infos.is_empty()
                             && auto_download_attachment_categories.contains(&email.category);
@@ -735,7 +802,6 @@ pub async fn sync_account_with_provider(
                                 email,
                                 attachment_infos,
                                 app_data_dir,
-                                a,
                             )
                             .await
                             {
@@ -756,7 +822,7 @@ pub async fn sync_account_with_provider(
                                 attachment_infos,
                                 &attachment_rules,
                                 app_data_dir,
-                                Some(a),
+                                app.as_ref(),
                             )
                             .await
                             {
@@ -801,7 +867,7 @@ pub async fn sync_account_with_provider(
         // their dedicated pass so a stale inbox doesn't gate sent-mail
         // recovery. This was the original 2024 → 2025 Sent gap bug:
         // a near-idle account never reached the extra-mailbox sync.
-        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref()).await {
+        if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), Some(&rules_ctx)).await {
             emit_account_log(
                 "warn",
                 "sync",
@@ -820,6 +886,17 @@ pub async fn sync_account_with_provider(
         if let Some(ref a) = app {
             enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "no_new").await;
         }
+        // Last, so a long attachment backfill never holds the spinner.
+        finish_attachment_upkeep(
+            db,
+            account,
+            email_provider.as_ref(),
+            app.as_ref(),
+            &sync_abort_flags,
+            false,
+            Some(&rules_ctx),
+        )
+        .await;
 
         return Ok(());
     }
@@ -866,10 +943,20 @@ pub async fn sync_account_with_provider(
                                 email.account_id = account_id.to_string();
                                 match db.insert_email(&email) {
                                     Ok(_) => {
+                                        if let Err(e) =
+                                            db.insert_attachment_infos(&email.id, account_id, &attachment_infos)
+                                        {
+                                            emit_account_log(
+                                                "error",
+                                                "sync",
+                                                &account.email,
+                                                &format!("Could not record attachments of {}: {e}", email.id),
+                                            );
+                                        }
                                         let _ = db.remove_failed_email(account_id, email_id);
                                         synced_count += 1;
                                         all_new_ids.push(email.id.clone());
-                                        if let Some(ref a) = app {
+                                        {
                                             if !attachment_infos.is_empty() && !attachment_rules.is_empty() {
                                                 if let Err(e) =
                                                     crate::services::attachments::process_attachments_for_email(
@@ -879,7 +966,7 @@ pub async fn sync_account_with_provider(
                                                         &attachment_infos,
                                                         &attachment_rules,
                                                         app_data_dir,
-                                                        Some(a),
+                                                        app.as_ref(),
                                                     )
                                                     .await
                                                 {
@@ -1007,7 +1094,7 @@ pub async fn sync_account_with_provider(
     }
 
     // ── Secondary mailboxes: Sent / Spam / Trash ──────────────────────────────
-    if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref()).await {
+    if let Err(e) = sync_extra_mailboxes(db, account, account_id, email_provider.as_ref(), Some(&rules_ctx)).await {
         emit_account_log(
             "warn",
             "sync",
@@ -1025,6 +1112,18 @@ pub async fn sync_account_with_provider(
         // blocks sync, and only when new emails were actually inserted.
         enqueue_lens_incremental(db, a, account_id, &account.email, &ai_background, &all_new_ids).await;
     }
+    // After the AI follow-ups are queued, so a long attachment backfill never
+    // delays classification or embeddings.
+    finish_attachment_upkeep(
+        db,
+        account,
+        email_provider.as_ref(),
+        app.as_ref(),
+        &sync_abort_flags,
+        synced_count > 0,
+        Some(&rules_ctx),
+    )
+    .await;
 
     if synced_count > 0 {
         if let Err(e) = db.checkpoint_wal_truncate() {
@@ -1550,6 +1649,8 @@ fn folder_upserts_from_plan(entries: &[ListedFolder], plan: &FolderPlan) -> Vec<
     upserts
 }
 
+use crate::services::attachments::RuleSyncCtx;
+
 /// Outcome of ingesting a batch of message refs for one mailbox pass.
 #[derive(Debug, Default)]
 struct IngestOutcome {
@@ -1576,6 +1677,7 @@ async fn ingest_mailbox_refs(
     mailbox_name: &str,
     email_provider: &dyn EmailProvider,
     refs: Vec<crate::sync::provider::MessageRef>,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) -> IngestOutcome {
     if refs.is_empty() {
         return IngestOutcome::default();
@@ -1779,6 +1881,22 @@ async fn ingest_mailbox_refs(
             }
         }
 
+        // Rules reach Sent and filed folders too (an IMAP server filter moving
+        // invoices into a folder), never Spam or Trash.
+        if let Some(ctx) = rules_ctx {
+            for (email, infos) in &chunk_emails {
+                crate::services::attachments::apply_rules_to_stored_email(
+                    db,
+                    Some(email_provider),
+                    email,
+                    infos,
+                    ctx,
+                    account_email,
+                )
+                .await;
+            }
+        }
+
         inserted += chunk_emails.len() as u32;
     }
 
@@ -1809,6 +1927,7 @@ async fn sync_extra_mailboxes(
     account: &Account,
     account_id: &str,
     email_provider: &dyn EmailProvider,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) -> Result<()> {
     // ── Folder discovery (IMAP LIST; Gmail/Outlook return empty) ─────────────
     // Non-fatal by design: a LIST hiccup must not break the canonical passes,
@@ -1859,10 +1978,10 @@ async fn sync_extra_mailboxes(
     // ── Canonical mailboxes (Sent/Spam/Trash), per-mailbox backfill budget ───
     for mailbox in ExtraMailbox::all().iter().copied() {
         let target = SyncTarget::Canonical(mailbox);
-        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
+        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider, rules_ctx).await;
 
         let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
-        sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget).await;
+        sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget, rules_ctx).await;
     }
 
     // ── Messages taken out of Spam in the provider's own clients ────────────
@@ -1879,8 +1998,17 @@ async fn sync_extra_mailboxes(
     let mut custom_budget = MAX_CUSTOM_BACKFILL_PAGES_PER_SYNC;
     for server_path in custom_folders {
         let target = SyncTarget::CustomFolder { server_path };
-        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
-        sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut custom_budget).await;
+        sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider, rules_ctx).await;
+        sync_extra_mailbox_backfill(
+            db,
+            account,
+            account_id,
+            &target,
+            email_provider,
+            &mut custom_budget,
+            rules_ctx,
+        )
+        .await;
     }
 
     Ok(())
@@ -2165,6 +2293,7 @@ async fn sync_extra_mailbox_incremental(
     account_id: &str,
     target: &SyncTarget,
     email_provider: &dyn EmailProvider,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) {
     let mailbox_name = target.mailbox_value();
     let mailbox_name = mailbox_name.as_str();
@@ -2207,6 +2336,7 @@ async fn sync_extra_mailbox_incremental(
         mailbox_name,
         email_provider,
         refs,
+        rules_ctx,
     )
     .await;
 
@@ -2273,6 +2403,7 @@ async fn sync_extra_mailbox_backfill(
     target: &SyncTarget,
     email_provider: &dyn EmailProvider,
     budget: &mut u32,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) {
     let mailbox_name = target.mailbox_value();
     let mailbox_name = mailbox_name.as_str();
@@ -2363,6 +2494,7 @@ async fn sync_extra_mailbox_backfill(
             mailbox_name,
             email_provider,
             refs,
+            rules_ctx,
         )
         .await;
         total_inserted += outcome.inserted;
@@ -2423,6 +2555,7 @@ pub async fn resync_mailbox_full(
     account: &Account,
     mailbox: ExtraMailbox,
     email_provider: &dyn EmailProvider,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) -> Result<u32> {
     let account_id = &account.id;
     let mailbox_name = mailbox.as_str();
@@ -2455,10 +2588,10 @@ pub async fn resync_mailbox_full(
     let before_count = db.count_emails_in_mailbox(account_id, mailbox_name).unwrap_or(0);
 
     // Forward pass first to catch anything since the last successful sync.
-    sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider).await;
+    sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider, rules_ctx).await;
 
     let mut budget = u32::MAX;
-    sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget).await;
+    sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget, rules_ctx).await;
 
     let after_count = db
         .count_emails_in_mailbox(account_id, mailbox_name)
@@ -2848,7 +2981,7 @@ mod extra_mailbox_window_tests {
         provider.add_message(sent_email("new", FLOOR + 86_400), EmailCategory::Primary, vec![]);
 
         let target = SyncTarget::Canonical(ExtraMailbox::Sent);
-        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider).await;
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider, None).await;
 
         assert_eq!(
             stored_ids(&db),
@@ -2873,7 +3006,7 @@ mod extra_mailbox_window_tests {
 
         let target = SyncTarget::Canonical(ExtraMailbox::Sent);
         let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
-        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget, None).await;
 
         assert_eq!(
             stored_ids(&db),
@@ -2915,7 +3048,7 @@ mod extra_mailbox_window_tests {
         provider.add_message(sent_email("older", FLOOR + 10), EmailCategory::Primary, vec![]);
 
         let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
-        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget, None).await;
 
         assert_eq!(
             stored_ids(&db),
@@ -3022,7 +3155,7 @@ mod extra_mailbox_window_tests {
         provider.add_message(sent_email("self-alias", FLOOR + 500), EmailCategory::Primary, vec![]);
 
         let target = SyncTarget::Canonical(ExtraMailbox::Sent);
-        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider).await;
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider, None).await;
 
         let repaired = db.get_email_by_id("self-alias").expect("get").expect("row");
         assert!(repaired.is_sent, "the Sent pass must correct the flag in place");
@@ -3043,7 +3176,7 @@ mod extra_mailbox_window_tests {
 
         let target = SyncTarget::Canonical(ExtraMailbox::Sent);
         let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
-        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget).await;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget, None).await;
 
         assert_eq!(
             stored_ids(&db),
@@ -3600,7 +3733,7 @@ mod spam_reconcile_tests {
         let provider = FakeEmailProvider::new("me@example.com", "Me");
         provider.add_message(email_in("m-1", "inbox", received), EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 
@@ -3625,7 +3758,7 @@ mod spam_reconcile_tests {
         moved.message_id = Some("<m-1@example.com>".to_string());
         provider.add_message(moved, EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 
@@ -3651,7 +3784,7 @@ mod spam_reconcile_tests {
         let provider = FakeEmailProvider::new("me@example.com", "Me");
         provider.add_message(fresh, EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 
@@ -3680,7 +3813,7 @@ mod spam_reconcile_tests {
         moved.message_id = Some("<m-1@example.com>".to_string());
         provider.add_message(moved, EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 
@@ -3699,7 +3832,7 @@ mod spam_reconcile_tests {
         let provider = FakeEmailProvider::new("me@example.com", "Me");
         provider.add_message(email_in("m-1", "spam", received), EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 
@@ -3721,7 +3854,7 @@ mod spam_reconcile_tests {
         spam_copy.message_id = Some("<m-1@example.com>".to_string());
         provider.add_message(spam_copy, EmailCategory::Primary, vec![]);
 
-        sync_extra_mailboxes(&db, &account, &account.id, &provider)
+        sync_extra_mailboxes(&db, &account, &account.id, &provider, None)
             .await
             .unwrap();
 

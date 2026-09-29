@@ -539,6 +539,7 @@ pub async fn start_resync_mailbox(
     };
 
     let db = state.db.clone();
+    let app_data_dir = state.app_data_dir.clone();
     let account_id_for_task = account_id.clone();
     let app_for_task = app.clone();
     let app_for_errors = app.clone();
@@ -592,7 +593,28 @@ pub async fn start_resync_mailbox(
                 ),
             );
 
-            match services::emails::resync_mailbox_full(&db, &account, extra, provider.as_ref()).await {
+            // What the resync brings back goes through the attachment rules,
+            // as mail arriving through a regular sync does.
+            let rules = match db.get_attachment_rules(&account.id) {
+                Ok(rules) => rules,
+                Err(e) => {
+                    emit_log(
+                        &app_for_errors,
+                        "error",
+                        "attachments",
+                        &format!("Resync mailbox: could not load attachment rules: {e}"),
+                    );
+                    Vec::new()
+                }
+            };
+            let rules_ctx = services::attachments::RuleSyncCtx {
+                rules: &rules,
+                app_data_dir: &app_data_dir,
+                app: Some(&app_for_task),
+            };
+
+            match services::emails::resync_mailbox_full(&db, &account, extra, provider.as_ref(), Some(&rules_ctx)).await
+            {
                 Ok(inserted) => {
                     emit_log(
                         &app_for_task,
