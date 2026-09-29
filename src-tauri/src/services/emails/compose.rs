@@ -99,7 +99,9 @@ fn guess_mime(filename: &str) -> &'static str {
 /// Pure planner: build the persistable draft request + resolved attachment
 /// records from raw compose inputs. No validation that would reject a partial
 /// draft — drafts are allowed to be incomplete; recipient/subject guards live
-/// in the send path.
+/// in the send path. The HTML body is sanitized here, at the service boundary,
+/// so neither the stored draft nor the copy pushed to the provider carries
+/// markup the compose editor could never have produced.
 pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
     let attachments: Option<Vec<ResolvedAttachment>> = input
         .attachments
@@ -113,7 +115,7 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
         cc_addresses: input.cc.clone(),
         subject: input.subject.clone(),
         body: input.body.clone(),
-        body_html: input.body_html.clone(),
+        body_html: input.body_html.as_deref().map(super::sanitize_outgoing_html),
         // The provider link is preserved on the DB row via COALESCE; never
         // cleared by a plain re-save.
         provider_draft_id: None,
@@ -184,7 +186,7 @@ pub async fn compose_draft(
         if let Some(provider) = provider {
             let current = db.list_draft_attachments(&saved.id)?;
             let email_atts = load_attachments(&current)?;
-            let body = draft_body(&input.body, input.body_html.as_deref());
+            let body = draft_body(&plan.save_req.body, plan.save_req.body_html.as_deref());
             let provider_id = match saved.provider_draft_id.as_deref() {
                 Some(existing) => {
                     provider
@@ -233,8 +235,10 @@ pub async fn send_draft(
 
     let attachments = load_attachments(&draft.attachments)?;
     // Footer-free body; `send_new_email_with_provider` appends the footer once.
+    // Sanitized again here: a draft pulled from the provider's Drafts folder is
+    // stored with the provider's raw HTML, which never went through compose.
     let body = match draft.body_html.as_deref() {
-        Some(html) => EmailBody::with_html(&draft.body, html),
+        Some(html) => EmailBody::with_html(&draft.body, super::sanitize_outgoing_html(html)),
         None => EmailBody::plain(&draft.body),
     };
 
@@ -438,6 +442,68 @@ mod tests {
         assert_eq!(atts[0].mime_type, "application/pdf");
         assert_eq!(atts[1].filename, "custom.bin");
         assert_eq!(atts[1].mime_type, "application/x-thing");
+    }
+
+    const UNSAFE_HTML: &str =
+        "<p>Hi</p><script>alert(1)</script><img src=\"https://example.com/a.png\" onerror=\"alert(2)\">";
+
+    fn assert_html_is_sanitized(html: &str) {
+        assert!(html.contains("<p>Hi</p>"), "safe markup must survive: {html}");
+        assert!(!html.contains("<script"), "script must be stripped: {html}");
+        assert!(!html.contains("onerror"), "event handlers must be stripped: {html}");
+    }
+
+    #[test]
+    fn plan_compose_sanitizes_the_html_body() {
+        let mut inp = input("a1", "Hi", "hello");
+        inp.body_html = Some(UNSAFE_HTML.to_string());
+        let plan = plan_compose(&inp);
+        assert_html_is_sanitized(plan.save_req.body_html.as_deref().expect("html kept"));
+    }
+
+    #[tokio::test]
+    async fn compose_draft_pushes_sanitized_html_to_the_provider() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+
+        let mut inp = input("a1", "Hi", "hello");
+        inp.body_html = Some(UNSAFE_HTML.to_string());
+        let draft = compose_draft(&db, &account, inp, Some(&provider))
+            .await
+            .expect("compose");
+
+        assert_html_is_sanitized(draft.body_html.as_deref().expect("stored html"));
+        let pushed = provider.provider_drafts();
+        assert_html_is_sanitized(pushed[0].body_html.as_deref().expect("pushed html"));
+    }
+
+    /// A draft pulled from the provider's Drafts folder is stored with the
+    /// provider's raw HTML; sending it must not forward that HTML unsanitized.
+    #[tokio::test]
+    async fn send_draft_sanitizes_stored_html_before_sending() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = db
+            .save_draft(&SaveDraftRequest {
+                id: None,
+                email_id: None,
+                account_id: "a1".to_string(),
+                to_addresses: vec!["dest@example.com".to_string()],
+                cc_addresses: Vec::new(),
+                subject: "Pulled".to_string(),
+                body: "hello".to_string(),
+                body_html: Some(UNSAFE_HTML.to_string()),
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .expect("save raw draft");
+
+        send_draft(&db, &account, &draft.id, &provider).await.expect("send");
+
+        let sent = provider.sent();
+        assert_html_is_sanitized(sent[0].body.html.as_deref().expect("html sent"));
     }
 
     #[tokio::test]
