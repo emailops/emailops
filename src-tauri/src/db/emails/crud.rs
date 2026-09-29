@@ -938,7 +938,7 @@ impl Database {
             );
             let mut stmt = conn.prepare(&sql)?;
             let params_dyn: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-            let chunk_min: Option<i64> = stmt.query_row(params_dyn.as_slice(), |row| row.get(0)).unwrap_or(None);
+            let chunk_min: Option<i64> = stmt.query_row(params_dyn.as_slice(), |row| row.get(0))?;
             if let Some(ts) = chunk_min {
                 overall_min = Some(overall_min.map_or(ts, |m| m.min(ts)));
             }
@@ -1080,6 +1080,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(min, Some(1_700_000_000), "the undated row must not set the floor");
+    }
+
+    // A read error (here a corrupt, non-integer timestamp) must surface, not
+    // read as "no dated messages": the backfill treats None as no progress.
+    #[test]
+    fn min_timestamp_propagates_read_errors() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "corrupt", "acc1", "thread-a", 1);
+        db.connection()
+            .execute("UPDATE emails SET timestamp = 'not-a-number' WHERE id = 'corrupt'", [])
+            .unwrap();
+
+        assert!(db.get_min_timestamp_for_ids(&["corrupt".to_string()]).is_err());
     }
 
     #[test]
