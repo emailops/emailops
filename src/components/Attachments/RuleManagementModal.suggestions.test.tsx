@@ -33,6 +33,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { useAttachmentStore } from '@/stores/attachmentStore';
 import { RuleManagementModal } from './RuleManagementModal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -122,6 +123,17 @@ async function click(el: HTMLElement) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued `mockReturnValueOnce` values: reset the mocks a
+  // test may leave unconsumed so no test depends on the order they run in.
+  vi.mocked(api.applyRuleRetroactively).mockReset().mockResolvedValue(3);
+  vi.mocked(api.countAttachmentsForRule).mockReset().mockResolvedValue(0);
+  for (const h of Object.values(handlers)) h.mockReset();
+  handlers.onCreateRule.mockImplementation(async (name: string) => makeRule(name));
+  handlers.onUpdateRule.mockImplementation(async (_id: string, name: string) => makeRule(name));
+  handlers.onDeleteRule.mockResolvedValue(undefined);
+  handlers.onDismissSuggestion.mockResolvedValue(undefined);
+  handlers.onAcceptSuggestion.mockResolvedValue(undefined);
+  useAttachmentStore.setState({ ruleApplies: {} });
   Element.prototype.scrollIntoView = vi.fn();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -295,5 +307,83 @@ describe('RuleManagementModal suggestions', () => {
     await click(button('attachments:rules.applyToExisting'));
 
     expect(container.textContent).toContain('attachments:rules.applyDone{"count":20,"new":0}');
+  });
+
+  it('re-enabling a disabled rule scans the mail that arrived while it was off', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    render([], [{ ...makeRule('Acme'), enabled: false }]);
+
+    await click(button('attachments:rules.enable'));
+
+    expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1');
+  });
+
+  it('disabling a rule does not scan', async () => {
+    handlers.onUpdateRule.mockImplementationOnce(async (_id: string, name: string) => ({
+      ...makeRule(name),
+      enabled: false,
+    }));
+    render([], [makeRule('Acme')]);
+
+    await click(button('attachments:rules.disable'));
+
+    expect(api.applyRuleRetroactively).not.toHaveBeenCalled();
+  });
+
+  it('a failed accept after the rule was created still closes the form and scans', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    handlers.onAcceptSuggestion.mockRejectedValueOnce(new Error('suggestion gone'));
+    render([SUGGESTION]);
+    await click(button('attachments:suggestions.review'));
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(inputValues()).toEqual([]);
+    expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1');
+  });
+
+  it('a failed dismiss is shown in the modal', async () => {
+    handlers.onDismissSuggestion.mockRejectedValueOnce(new Error('db locked'));
+    render([SUGGESTION]);
+
+    await click(button('attachments:suggestions.dismiss'));
+
+    expect(container.textContent).toContain('db locked');
+  });
+
+  it('dismiss is disabled while it is in flight', async () => {
+    handlers.onDismissSuggestion.mockReturnValueOnce(new Promise(() => {}));
+    render([SUGGESTION]);
+
+    await click(button('attachments:suggestions.dismiss'));
+
+    expect(button('attachments:suggestions.dismiss').disabled).toBe(true);
+  });
+
+  it('a scan still running shows its progress when the modal is reopened', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockReturnValueOnce(new Promise(() => {}));
+    render([], [makeRule('Acme')]);
+    await click(button('attachments:rules.applyToExisting'));
+    await emitProgress({ ruleId: 'rule-1', processed: 1, total: 4, saved: 1 });
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    render([], [makeRule('Acme')]);
+
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('25');
+    expect(button('attachments:rules.applyToExisting').disabled).toBe(true);
+  });
+
+  it('a scan cancelled by a newer one is not reported as failed', async () => {
+    vi.mocked(api.applyRuleRetroactively).mockRejectedValueOnce({
+      code: 'cancelled',
+      params: {},
+      message: 'Cancelled by user',
+    });
+    render([], [makeRule('Acme')]);
+
+    await click(button('attachments:rules.applyToExisting'));
+
+    expect(container.textContent).not.toContain('attachments:rules.applyFailed');
   });
 });

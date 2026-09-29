@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AttachmentRuleSuggestion } from '@/types';
 
 interface RuleSuggestionListProps {
   suggestions: AttachmentRuleSuggestion[];
   onReview: (suggestion: AttachmentRuleSuggestion) => void;
-  onDismiss: (suggestionId: string) => void;
+  onDismiss: (suggestionId: string) => Promise<void>;
 }
 
 /**
@@ -14,7 +15,22 @@ interface RuleSuggestionListProps {
  */
 export function RuleSuggestionList({ suggestions, onReview, onDismiss }: RuleSuggestionListProps) {
   const { t, i18n } = useTranslation(['attachments']);
+  // Dismissals in flight: a second click must not send a second request.
+  const [dismissing, setDismissing] = useState<ReadonlySet<string>>(new Set());
   if (suggestions.length === 0) return null;
+
+  const dismiss = async (id: string) => {
+    setDismissing((prev) => new Set(prev).add(id));
+    try {
+      await onDismiss(id);
+    } finally {
+      setDismissing((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
 
   const formatDate = (secs: number) =>
     new Date(secs * 1000).toLocaleDateString(i18n.language, { year: 'numeric', month: 'short' });
@@ -61,8 +77,9 @@ export function RuleSuggestionList({ suggestions, onReview, onDismiss }: RuleSug
                 {t('attachments:suggestions.review')}
               </button>
               <button
-                onClick={() => onDismiss(s.id)}
-                className="px-3 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                onClick={() => void dismiss(s.id)}
+                disabled={dismissing.has(s.id)}
+                className="px-3 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
               >
                 {t('attachments:suggestions.dismiss')}
               </button>

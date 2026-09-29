@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect } from 'react';
+import { errorText } from '@/lib/errors';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
@@ -46,14 +47,25 @@ export function useAttachments() {
     acceptSuggestion,
   } = useAttachmentStore();
 
+  // Suggestion loads run in the background (account switch, post-sync
+  // re-mine, modal open); a failure goes to the output panel.
+  const loadSuggestionsLogged = useCallback(
+    (accountId: string, load: (accountId: string) => Promise<void>) => {
+      load(accountId).catch((err) => {
+        addLog('error', 'attachments', `Failed to load suggested attachment rules: ${errorText(err)}`);
+      });
+    },
+    [addLog],
+  );
+
   // Load rules, tags and rule suggestions when account changes
   useEffect(() => {
     if (activeAccountId) {
       fetchRules(activeAccountId);
       fetchTags(activeAccountId);
-      fetchSuggestions(activeAccountId);
+      loadSuggestionsLogged(activeAccountId, fetchSuggestions);
     }
-  }, [activeAccountId, fetchRules, fetchTags, fetchSuggestions]);
+  }, [activeAccountId, fetchRules, fetchTags, fetchSuggestions, loadSuggestionsLogged]);
 
   // The backend re-mines rule suggestions after every sync that brought new
   // mail; reload them so the badge reflects the new candidates.
@@ -61,12 +73,12 @@ export function useAttachments() {
     if (!activeAccountId) return;
     const unlisten = listen<string>('attachment-rule-suggestions-updated', (event) => {
       if (event.payload && event.payload !== activeAccountId) return;
-      fetchSuggestions(activeAccountId);
+      loadSuggestionsLogged(activeAccountId, fetchSuggestions);
     });
     return () => {
       void unlisten.then((u) => u());
     };
-  }, [activeAccountId, fetchSuggestions]);
+  }, [activeAccountId, fetchSuggestions, loadSuggestionsLogged]);
 
   // Load attachments when account or selected tag changes
   useEffect(() => {
@@ -102,9 +114,11 @@ export function useAttachments() {
       if (!activeAccountId) throw new Error('No active account');
       const rule = await createRule(activeAccountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
       addLog('success', 'attachments', `Created rule: ${name}`);
+      // A suggestion the new rule covers must leave the list.
+      loadSuggestionsLogged(activeAccountId, refreshSuggestions);
       return rule;
     },
-    [activeAccountId, createRule, addLog],
+    [activeAccountId, createRule, addLog, loadSuggestionsLogged, refreshSuggestions],
   );
 
   const handleUpdateRule = useCallback(
@@ -124,10 +138,21 @@ export function useAttachments() {
       if (activeAccountId) {
         fetchAttachments(activeAccountId, selectedTag);
         fetchTags(activeAccountId);
+        // New patterns may now cover — or stop covering — a suggestion.
+        loadSuggestionsLogged(activeAccountId, refreshSuggestions);
       }
       return rule;
     },
-    [updateRule, addLog, activeAccountId, selectedTag, fetchAttachments, fetchTags],
+    [
+      updateRule,
+      addLog,
+      activeAccountId,
+      selectedTag,
+      fetchAttachments,
+      fetchTags,
+      loadSuggestionsLogged,
+      refreshSuggestions,
+    ],
   );
 
   const handleDeleteRule = useCallback(
@@ -139,9 +164,18 @@ export function useAttachments() {
       // suggestions since the deleted rule's documents may be candidates again.
       fetchAttachments(activeAccountId, selectedTag);
       fetchTags(activeAccountId);
-      refreshSuggestions(activeAccountId);
+      loadSuggestionsLogged(activeAccountId, refreshSuggestions);
     },
-    [activeAccountId, deleteRule, fetchAttachments, fetchTags, refreshSuggestions, selectedTag, addLog],
+    [
+      activeAccountId,
+      deleteRule,
+      fetchAttachments,
+      fetchTags,
+      refreshSuggestions,
+      selectedTag,
+      addLog,
+      loadSuggestionsLogged,
+    ],
   );
 
   const handleLoadMore = useCallback(() => {
@@ -165,14 +199,20 @@ export function useAttachments() {
   );
 
   const handleRefreshSuggestions = useCallback(() => {
-    if (activeAccountId) refreshSuggestions(activeAccountId);
-  }, [activeAccountId, refreshSuggestions]);
+    if (activeAccountId) loadSuggestionsLogged(activeAccountId, refreshSuggestions);
+  }, [activeAccountId, refreshSuggestions, loadSuggestionsLogged]);
 
+  // Both rethrow after logging so the rules modal can show the failure inline.
   const handleDismissSuggestion = useCallback(
     async (suggestionId: string) => {
       if (!activeAccountId) return;
-      await dismissSuggestion(activeAccountId, suggestionId);
-      addLog('info', 'attachments', 'Dismissed suggested attachment rule');
+      try {
+        await dismissSuggestion(activeAccountId, suggestionId);
+      } catch (err) {
+        addLog('error', 'attachments', `Failed to dismiss suggested attachment rule: ${errorText(err)}`);
+        throw err;
+      }
+      addLog('success', 'attachments', 'Dismissed suggested attachment rule');
     },
     [activeAccountId, dismissSuggestion, addLog],
   );
@@ -180,9 +220,14 @@ export function useAttachments() {
   const handleAcceptSuggestion = useCallback(
     async (suggestionId: string) => {
       if (!activeAccountId) return;
-      await acceptSuggestion(activeAccountId, suggestionId);
+      try {
+        await acceptSuggestion(activeAccountId, suggestionId);
+      } catch (err) {
+        addLog('error', 'attachments', `Failed to mark suggested attachment rule as accepted: ${errorText(err)}`);
+        throw err;
+      }
     },
-    [activeAccountId, acceptSuggestion],
+    [activeAccountId, acceptSuggestion, addLog],
   );
 
   const refreshAfterRuleApply = useCallback(() => {

@@ -2,7 +2,8 @@ import { listen } from '@tauri-apps/api/event';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
-import { errorText } from '@/lib/errors';
+import { errorText, isAppErrorPayload } from '@/lib/errors';
+import { type RuleApplyState, useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 import { RuleSuggestionList } from './RuleSuggestionList';
@@ -45,17 +46,6 @@ interface RuleManagementModalProps {
   onAcceptSuggestion: (suggestionId: string) => Promise<void>;
   /** Tags already on collected attachments, offered by the tag picker. */
   existingTags: string[];
-}
-
-/** Progress of applying one rule to existing mail, per rule id. */
-interface ApplyState {
-  processed: number;
-  total: number;
-  /** New attachments collected by this run. */
-  saved: number;
-  /** Every attachment the rule holds once the run is done (new + earlier). */
-  collected?: number;
-  status: 'running' | 'done' | 'failed';
 }
 
 function isApplyProgress(p: unknown): p is { ruleId: string; processed: number; total: number; saved: number } {
@@ -130,7 +120,13 @@ export function RuleManagementModal({
   }, [showForm, editingRuleId, reviewingSuggestionId]);
   // Applying a rule to existing mail runs in the background; each rule card
   // shows its own progress, fed by `attachment-rule-apply-progress` events.
-  const [applyStates, setApplyStates] = useState<Record<string, ApplyState>>({});
+  // The state lives in the store so a scan outlives the modal being closed.
+  const applyStates = useAttachmentStore((s) => s.ruleApplies);
+  const beginRuleApply = useAttachmentStore((s) => s.beginRuleApply);
+  const reportRuleApplyProgress = useAttachmentStore((s) => s.reportRuleApplyProgress);
+  const finishRuleApply = useAttachmentStore((s) => s.finishRuleApply);
+  const failRuleApply = useAttachmentStore((s) => s.failRuleApply);
+  const dropRuleApply = useAttachmentStore((s) => s.dropRuleApply);
   const [error, setError] = useState<string | null>(null);
   // Delete-confirm flow: clicking the trash icon opens an inline warning
   // panel showing how many saved files will also be removed. Inline rather
@@ -148,42 +144,37 @@ export function RuleManagementModal({
 
   useEffect(() => {
     const unlisten = listen('attachment-rule-apply-progress', (event) => {
-      if (!isApplyProgress(event.payload)) return;
-      const { ruleId, processed, total, saved } = event.payload;
-      setApplyStates((prev) =>
-        prev[ruleId]?.status === 'running'
-          ? { ...prev, [ruleId]: { processed, total, saved, status: 'running' } }
-          : prev,
-      );
+      if (isApplyProgress(event.payload)) reportRuleApplyProgress(event.payload);
     });
     return () => {
       void unlisten.then((u) => u());
     };
-  }, []);
+  }, [reportRuleApplyProgress]);
 
   const runApply = async (rule: AttachmentRule) => {
-    setApplyStates((prev) => ({ ...prev, [rule.id]: { processed: 0, total: 0, saved: 0, status: 'running' } }));
+    // A newer apply of the same rule cancels this one in the backend.
+    const runId = beginRuleApply(rule.id);
     addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
     try {
       const count = await api.applyRuleRetroactively(rule.id, accountId);
       // `count` is only what this run added; re-applying an edited rule adds
       // nothing new, and "0" read as if the rule had found nothing.
       const collected = await api.countAttachmentsForRule(rule.id).catch((err) => {
-        addLog('error', 'attachments', `Failed to count rule attachments: ${err}`);
+        addLog('error', 'attachments', `Failed to count rule attachments: ${errorText(err)}`);
         return undefined;
       });
-      setApplyStates((prev) => ({
-        ...prev,
-        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0 }), saved: count, collected, status: 'done' },
-      }));
+      finishRuleApply(rule.id, runId, count, collected);
       addLog('success', 'attachments', `Found ${count} attachments from existing emails`);
       onRefreshAfterApply();
     } catch (err) {
-      setApplyStates((prev) => ({
-        ...prev,
-        [rule.id]: { ...(prev[rule.id] ?? { processed: 0, total: 0, saved: 0 }), status: 'failed' },
-      }));
-      addLog('error', 'attachments', `Failed to apply rule retroactively: ${err}`);
+      // Superseded by a newer scan, or the rule was edited / deleted: not a failure.
+      if (isAppErrorPayload(err) && err.code === 'cancelled') {
+        dropRuleApply(rule.id, runId);
+        addLog('debug', 'attachments', `Scan for rule "${rule.name}" was superseded`);
+        return;
+      }
+      failRuleApply(rule.id, runId);
+      addLog('error', 'attachments', `Failed to apply rule retroactively: ${errorText(err)}`);
     }
   };
 
@@ -304,7 +295,11 @@ export function RuleManagementModal({
       } else {
         const newRule = await onCreateRule(trimmedName, sender, subject, filename, tags);
         if (reviewingSuggestionId) {
-          await onAcceptSuggestion(reviewingSuggestionId);
+          // The rule exists now: a failed accept must not keep the form open
+          // (saving again would create a second rule). The rule covers the
+          // suggestion, so the next re-mine drops it anyway; the failure is
+          // logged by the caller.
+          await onAcceptSuggestion(reviewingSuggestionId).catch(() => undefined);
         }
         // Not awaited: the form closes at once and the rule card shows the
         // scan's progress. It used to sit on "Saving..." for the whole scan.
@@ -347,7 +342,7 @@ export function RuleManagementModal({
 
   const handleToggleEnabled = async (rule: AttachmentRule) => {
     try {
-      await onUpdateRule(
+      const updated = await onUpdateRule(
         rule.id,
         rule.name,
         rule.senderEmailPattern,
@@ -356,6 +351,8 @@ export function RuleManagementModal({
         rule.tags,
         !rule.enabled,
       );
+      // Sync skipped the rule while it was off: collect what arrived meanwhile.
+      if (updated.enabled && !rule.enabled) void runApply(updated);
     } catch (err) {
       setError(errorText(err));
     }
@@ -689,7 +686,7 @@ export function RuleManagementModal({
   );
 }
 
-function ApplyProgress({ state }: { state: ApplyState | undefined }) {
+function ApplyProgress({ state }: { state: RuleApplyState | undefined }) {
   const { t } = useTranslation(['attachments']);
   if (!state) return null;
   if (state.status === 'done') {

@@ -5,6 +5,26 @@ import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/typ
 
 const PAGE_SIZE = 50;
 
+/** Progress of applying one rule to existing mail. */
+export interface RuleApplyState {
+  processed: number;
+  total: number;
+  /** New attachments collected by this run. */
+  saved: number;
+  /** Every attachment the rule holds once the run is done (new + earlier). */
+  collected?: number;
+  status: 'running' | 'done' | 'failed';
+  /** Which run this is: a newer apply of the rule supersedes an older one. */
+  runId: number;
+}
+
+export interface RuleApplyProgress {
+  ruleId: string;
+  processed: number;
+  total: number;
+  saved: number;
+}
+
 interface AttachmentStore {
   // Rules
   rules: AttachmentRule[];
@@ -14,6 +34,10 @@ interface AttachmentStore {
   // account in `suggestionsAccountId`.
   suggestions: AttachmentRuleSuggestion[];
   suggestionsAccountId: string | null;
+
+  // Rule applies to existing mail, per rule id. Kept here, not in the rules
+  // modal, so a scan still shows its progress after the modal is reopened.
+  ruleApplies: Record<string, RuleApplyState>;
 
   // Attachments list
   attachments: Attachment[];
@@ -61,6 +85,14 @@ interface AttachmentStore {
   dismissSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
   acceptSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
 
+  // Rule apply actions. `beginRuleApply` returns the run id the other
+  // actions take, so a superseded run can never overwrite the newer one.
+  beginRuleApply: (ruleId: string) => number;
+  reportRuleApplyProgress: (progress: RuleApplyProgress) => void;
+  finishRuleApply: (ruleId: string, runId: number, saved: number, collected: number | undefined) => void;
+  failRuleApply: (ruleId: string, runId: number) => void;
+  dropRuleApply: (ruleId: string, runId: number) => void;
+
   // Attachment actions
   fetchAttachments: (accountId: string, tag?: string | null) => Promise<void>;
   loadMoreAttachments: (accountId: string) => Promise<void>;
@@ -88,18 +120,64 @@ const withoutSuggestion = (suggestions: AttachmentRuleSuggestion[], id: string) 
 // account the user already switched away from never overwrites the list.
 let suggestionsLoadId = 0;
 
+// Suggestions the user accepted or dismissed in this session. A load that was
+// already in flight when they did must not bring them back.
+const resolvedSuggestionIds = new Set<string>();
+
+let ruleApplyRunId = 0;
+
 async function loadSuggestions(
   set: (partial: Partial<AttachmentStore>) => void,
+  get: () => AttachmentStore,
   accountId: string,
   load: (accountId: string) => Promise<AttachmentRuleSuggestion[]>,
 ) {
   const loadId = ++suggestionsLoadId;
+  // Another account's suggestions must not linger (badge, Review) while
+  // this one loads — or after its load fails.
+  if (get().suggestionsAccountId !== accountId) set({ suggestions: [], suggestionsAccountId: accountId });
   try {
     const suggestions = await load(accountId);
-    if (loadId === suggestionsLoadId) set({ suggestions, suggestionsAccountId: accountId });
+    if (loadId === suggestionsLoadId) {
+      set({
+        suggestions: suggestions.filter((s) => !resolvedSuggestionIds.has(s.id)),
+        suggestionsAccountId: accountId,
+      });
+    }
   } catch (error) {
     if (loadId === suggestionsLoadId) set({ error: errorText(error) });
+    throw error;
   }
+}
+
+async function resolveSuggestion(
+  set: (partial: Partial<AttachmentStore> | ((state: AttachmentStore) => Partial<AttachmentStore>)) => void,
+  suggestionId: string,
+  resolve: () => Promise<void>,
+) {
+  try {
+    await resolve();
+  } catch (error) {
+    set({ error: errorText(error) });
+    throw error;
+  }
+  resolvedSuggestionIds.add(suggestionId);
+  set((state) => ({ suggestions: withoutSuggestion(state.suggestions, suggestionId) }));
+}
+
+/** Apply `update` to the rule's apply state only while `runId` is its current run. */
+function forRun(
+  applies: Record<string, RuleApplyState>,
+  ruleId: string,
+  runId: number,
+  update: (current: RuleApplyState) => RuleApplyState | null,
+): Record<string, RuleApplyState> {
+  const current = applies[ruleId];
+  if (current?.runId !== runId) return applies;
+  const next = update(current);
+  if (next) return { ...applies, [ruleId]: next };
+  const { [ruleId]: _dropped, ...rest } = applies;
+  return rest;
 }
 
 export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
@@ -107,6 +185,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   isLoadingRules: false,
   suggestions: [],
   suggestionsAccountId: null,
+  ruleApplies: {},
   attachments: [],
   selectedAttachment: null,
   checkedIds: new Set<string>(),
@@ -165,27 +244,43 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     }));
   },
 
-  fetchSuggestions: (accountId) => loadSuggestions(set, accountId, api.listAttachmentRuleSuggestions),
+  fetchSuggestions: (accountId) => loadSuggestions(set, get, accountId, api.listAttachmentRuleSuggestions),
 
-  refreshSuggestions: (accountId) => loadSuggestions(set, accountId, api.refreshAttachmentRuleSuggestions),
+  refreshSuggestions: (accountId) => loadSuggestions(set, get, accountId, api.refreshAttachmentRuleSuggestions),
 
-  dismissSuggestion: async (accountId, suggestionId) => {
-    try {
-      await api.dismissAttachmentRuleSuggestion(accountId, suggestionId);
-      set((state) => ({ suggestions: withoutSuggestion(state.suggestions, suggestionId) }));
-    } catch (error) {
-      set({ error: errorText(error) });
-    }
+  dismissSuggestion: (accountId, suggestionId) =>
+    resolveSuggestion(set, suggestionId, () => api.dismissAttachmentRuleSuggestion(accountId, suggestionId)),
+
+  acceptSuggestion: (accountId, suggestionId) =>
+    resolveSuggestion(set, suggestionId, () => api.acceptAttachmentRuleSuggestion(accountId, suggestionId)),
+
+  beginRuleApply: (ruleId) => {
+    const runId = ++ruleApplyRunId;
+    set((state) => ({
+      ruleApplies: { ...state.ruleApplies, [ruleId]: { processed: 0, total: 0, saved: 0, status: 'running', runId } },
+    }));
+    return runId;
   },
 
-  acceptSuggestion: async (accountId, suggestionId) => {
-    try {
-      await api.acceptAttachmentRuleSuggestion(accountId, suggestionId);
-      set((state) => ({ suggestions: withoutSuggestion(state.suggestions, suggestionId) }));
-    } catch (error) {
-      set({ error: errorText(error) });
-    }
-  },
+  reportRuleApplyProgress: ({ ruleId, processed, total, saved }) =>
+    set((state) => {
+      const current = state.ruleApplies[ruleId];
+      if (current?.status !== 'running') return {};
+      return { ruleApplies: { ...state.ruleApplies, [ruleId]: { ...current, processed, total, saved } } };
+    }),
+
+  finishRuleApply: (ruleId, runId, saved, collected) =>
+    set((state) => ({
+      ruleApplies: forRun(state.ruleApplies, ruleId, runId, (c) => ({ ...c, saved, collected, status: 'done' })),
+    })),
+
+  failRuleApply: (ruleId, runId) =>
+    set((state) => ({
+      ruleApplies: forRun(state.ruleApplies, ruleId, runId, (c) => ({ ...c, status: 'failed' })),
+    })),
+
+  dropRuleApply: (ruleId, runId) =>
+    set((state) => ({ ruleApplies: forRun(state.ruleApplies, ruleId, runId, () => null) })),
 
   fetchAttachments: async (accountId, tag) => {
     const fetchId = get().currentFetchId + 1;

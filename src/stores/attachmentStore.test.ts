@@ -92,18 +92,117 @@ describe('dismissSuggestion', () => {
     expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['s2']);
   });
 
-  it('keeps the suggestion and surfaces the error when the backend fails', async () => {
+  it('keeps the suggestion and rejects when the backend fails', async () => {
     useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')] });
     vi.mocked(api.dismissAttachmentRuleSuggestion).mockRejectedValueOnce(new Error('db locked'));
 
-    await useAttachmentStore.getState().dismissSuggestion('acc-1', 's1');
+    await expect(useAttachmentStore.getState().dismissSuggestion('acc-1', 's1')).rejects.toThrow('db locked');
 
     expect(useAttachmentStore.getState().suggestions).toHaveLength(1);
     expect(useAttachmentStore.getState().error).toContain('db locked');
   });
+
+  it('is not brought back by a refresh that was already in flight', async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')], suggestionsAccountId: 'acc-1' });
+    const slow = deferred<AttachmentRuleSuggestion[]>();
+    vi.mocked(api.refreshAttachmentRuleSuggestions).mockReturnValueOnce(slow.promise);
+
+    const refresh = useAttachmentStore.getState().refreshSuggestions('acc-1');
+    await useAttachmentStore.getState().dismissSuggestion('acc-1', 's1');
+    slow.resolve([makeSuggestion('s1'), makeSuggestion('s2')]);
+    await refresh;
+
+    expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['s2']);
+  });
+});
+
+describe('switching account', () => {
+  it("drops the previous account's suggestions before the new ones arrive", async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')], suggestionsAccountId: 'acc-1' });
+    const slow = deferred<AttachmentRuleSuggestion[]>();
+    vi.mocked(api.listAttachmentRuleSuggestions).mockReturnValueOnce(slow.promise);
+
+    const load = useAttachmentStore.getState().fetchSuggestions('acc-2');
+
+    expect(useAttachmentStore.getState().suggestions).toEqual([]);
+    slow.resolve([]);
+    await load;
+  });
+
+  it("does not keep the previous account's suggestions when the new load fails", async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')], suggestionsAccountId: 'acc-1' });
+    vi.mocked(api.listAttachmentRuleSuggestions).mockRejectedValueOnce(new Error('offline'));
+
+    await expect(useAttachmentStore.getState().fetchSuggestions('acc-2')).rejects.toThrow('offline');
+
+    expect(useAttachmentStore.getState().suggestions).toEqual([]);
+  });
+});
+
+describe('rule applies', () => {
+  beforeEach(() => {
+    useAttachmentStore.setState({ ruleApplies: {} });
+  });
+
+  it('tracks progress of a running apply', () => {
+    const { beginRuleApply, reportRuleApplyProgress } = useAttachmentStore.getState();
+    beginRuleApply('r1');
+
+    reportRuleApplyProgress({ ruleId: 'r1', processed: 3, total: 10, saved: 1 });
+
+    expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({
+      processed: 3,
+      total: 10,
+      saved: 1,
+      status: 'running',
+    });
+  });
+
+  it('ignores progress for a rule that is not running', () => {
+    useAttachmentStore.getState().reportRuleApplyProgress({ ruleId: 'r1', processed: 3, total: 10, saved: 1 });
+
+    expect(useAttachmentStore.getState().ruleApplies.r1).toBeUndefined();
+  });
+
+  it('a superseded run finishing does not overwrite the newer run', () => {
+    const { beginRuleApply, finishRuleApply } = useAttachmentStore.getState();
+    const older = beginRuleApply('r1');
+    beginRuleApply('r1');
+
+    finishRuleApply('r1', older, 5, 5);
+
+    expect(useAttachmentStore.getState().ruleApplies.r1.status).toBe('running');
+  });
+
+  it('a cancelled run leaves no state behind', () => {
+    const { beginRuleApply, dropRuleApply } = useAttachmentStore.getState();
+    const run = beginRuleApply('r1');
+
+    dropRuleApply('r1', run);
+
+    expect(useAttachmentStore.getState().ruleApplies.r1).toBeUndefined();
+  });
+
+  it('records the outcome of the current run', () => {
+    const { beginRuleApply, finishRuleApply, failRuleApply } = useAttachmentStore.getState();
+    const run = beginRuleApply('r1');
+    finishRuleApply('r1', run, 2, 7);
+    expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({ status: 'done', saved: 2, collected: 7 });
+
+    const again = beginRuleApply('r1');
+    failRuleApply('r1', again);
+    expect(useAttachmentStore.getState().ruleApplies.r1.status).toBe('failed');
+  });
 });
 
 describe('acceptSuggestion', () => {
+  it('rejects when the backend fails', async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')] });
+    vi.mocked(api.acceptAttachmentRuleSuggestion).mockRejectedValueOnce(new Error('gone'));
+
+    await expect(useAttachmentStore.getState().acceptSuggestion('acc-1', 's1')).rejects.toThrow('gone');
+  });
+
   it('marks it accepted and removes it from the pending list', async () => {
     useAttachmentStore.setState({ suggestions: [makeSuggestion('s1')] });
 
