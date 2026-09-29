@@ -347,11 +347,23 @@ fn write_extraction(
         db.upsert_thread_state(&state)?;
     }
 
+    // Tasks this email already produced, in any status: re-extraction must
+    // neither duplicate an open one nor resurrect a done/dismissed one.
+    let mut known: Vec<String> = db
+        .list_task_titles_for_email(&email.id)?
+        .iter()
+        .map(|t| normalize_title(t))
+        .collect();
     for task in &extracted.tasks {
         let title = task.title.trim();
         if title.is_empty() {
             continue;
         }
+        let normalized = normalize_title(title);
+        if known.contains(&normalized) {
+            continue;
+        }
+        known.push(normalized);
         let priority = task
             .priority
             .as_deref()
@@ -380,6 +392,11 @@ fn write_extraction(
         db.insert_pending_task(&row)?;
     }
     Ok(())
+}
+
+/// Case- and whitespace-insensitive form of a task title, for dedupe.
+fn normalize_title(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 fn apply_heuristic_thread_update(db: &Arc<Database>, email: &Email, owner_email: &str) -> Result<()> {
@@ -716,6 +733,31 @@ mod process_tests {
         assert!(process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap());
         assert!(!is_pending(&db, "e1"));
         assert_eq!(open_titles(&db), vec!["Book the room", "Send the budget"]);
+    }
+
+    /// Re-extraction (after "reset task extraction") must not duplicate a
+    /// task the email already produced, nor resurrect one the user closed.
+    #[tokio::test]
+    async fn reextracting_an_email_skips_tasks_it_already_produced_in_any_status() {
+        let (db, fake, ai, cfg) = setup();
+        let cfg = TaskConfig {
+            max_tasks_per_email: 0,
+            ..cfg
+        };
+        fake.push_completion(r#"{"tasks":[{"title":"Send the budget"},{"title":"Book the room"}]}"#);
+        process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap();
+        let tasks = db.list_pending_tasks("acct", Some("open"), None, 50).unwrap();
+        let done = tasks.iter().find(|t| t.title == "Send the budget").unwrap();
+        db.update_pending_task_status(&done.id, "done", Some(1), 1).unwrap();
+
+        db.reset_task_extraction("acct").unwrap();
+        fake.push_completion(
+            r#"{"tasks":[{"title":"send the  budget"},{"title":"Book the room"},{"title":"Share the agenda"}]}"#,
+        );
+        process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap();
+
+        assert_eq!(open_titles(&db), vec!["Book the room", "Share the agenda"]);
+        assert_eq!(db.list_pending_tasks("acct", Some("done"), None, 50).unwrap().len(), 1);
     }
 
     #[tokio::test]
