@@ -234,6 +234,14 @@ impl InferenceActorHandle {
         })
     }
 
+    /// Whether the inference thread is still running. A dead thread (a panic
+    /// that escaped, a context that could not be created) answers nothing
+    /// again, so the runtime spawns a fresh actor instead of reusing it.
+    pub(crate) fn is_alive(&self) -> bool {
+        let guard = self.thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.as_ref().is_some_and(|handle| !handle.is_finished())
+    }
+
     /// A waiter for this actor's thread that outlives the handle itself.
     ///
     /// Shutdown has to drop every `InferenceActorHandle` clone first (that is
@@ -407,24 +415,26 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             grammar,
             reply,
         } = req;
-        let result = generate_with_cache(
-            model,
-            &mut ctx,
-            &mut cached_tokens,
-            &mut cached_system,
-            &mut aux_prefix,
-            &prompt,
-            temperature,
-            max_tokens,
-            cache_prompt,
-            aux_prefix_bytes,
-            stable_prompt_bytes,
-            system_prefix_bytes,
-            on_token.as_mut(),
-            &mut n_ctx_suggested,
-            grammar.as_deref(),
-            &|| reply.is_closed(),
-        );
+        let result = run_catching_panics(|| {
+            generate_with_cache(
+                model,
+                &mut ctx,
+                &mut cached_tokens,
+                &mut cached_system,
+                &mut aux_prefix,
+                &prompt,
+                temperature,
+                max_tokens,
+                cache_prompt,
+                aux_prefix_bytes,
+                stable_prompt_bytes,
+                system_prefix_bytes,
+                on_token.as_mut(),
+                &mut n_ctx_suggested,
+                grammar.as_deref(),
+                &|| reply.is_closed(),
+            )
+        });
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
             // the mirrors never disagree with the real KV contents.
@@ -435,6 +445,27 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
         }
         let _ = reply.send(result);
     }
+}
+
+/// Run one request, turning a panic into that request's error.
+///
+/// A panic that unwound out of the actor loop killed the thread, and the
+/// runtime kept handing out its handle: embedded AI stayed broken until the
+/// app restarted. The caller treats the error like any failed pass and resets
+/// the KV mirrors.
+fn run_catching_panics(
+    request: impl FnOnce() -> std::result::Result<GenOutcome, String>,
+) -> std::result::Result<GenOutcome, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(request)).unwrap_or_else(|payload| {
+        let what = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        let msg = format!("Inference panicked: {what}");
+        crate::services::logger::log("error", "ai", format!("llamacpp: {msg}"));
+        Err(msg)
+    })
 }
 
 /// Copy the whole one-shot prefix sequence onto the generation sequence.
@@ -986,5 +1017,47 @@ mod tests {
         drop(call);
 
         assert!(request.caller_gone());
+    }
+
+    fn handle_on_thread(body: impl FnOnce() + Send + 'static) -> InferenceActorHandle {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        InferenceActorHandle {
+            tx,
+            thread: Arc::new(Mutex::new(Some(std::thread::spawn(body)))),
+            n_ctx: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// A handle whose thread died (a panic that escaped) must not be handed
+    /// out again: every call through it fails until the app restarts.
+    #[test]
+    fn a_handle_whose_thread_exited_is_not_alive() {
+        let handle = handle_on_thread(|| {});
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while handle.is_alive() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!handle.is_alive());
+    }
+
+    #[test]
+    fn a_handle_whose_thread_runs_is_alive() {
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let handle = handle_on_thread(move || {
+            let _ = stop_rx.recv();
+        });
+        assert!(handle.is_alive());
+        drop(stop_tx);
+    }
+
+    /// A panic inside one request becomes that request's error; the thread,
+    /// and with it the loaded model, keeps serving the next one.
+    #[test]
+    fn a_panicking_request_becomes_an_error() {
+        let result = run_catching_panics(|| panic!("decoder blew up"));
+        match result {
+            Err(msg) => assert!(msg.contains("decoder blew up"), "{msg}"),
+            Ok(_) => panic!("a panic must not look like success"),
+        }
     }
 }

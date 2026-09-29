@@ -744,7 +744,15 @@ impl LlamaCppRuntime {
     async fn get_chat_actor(&self) -> Result<InferenceActorHandle> {
         let mut guard = self.chat_actor.lock().await;
         if let Some(actor) = guard.as_ref() {
-            return Ok(actor.clone());
+            if actor.is_alive() {
+                return Ok(actor.clone());
+            }
+            crate::services::logger::log(
+                "warn",
+                "ai",
+                "llamacpp: the inference thread had stopped; starting a new one",
+            );
+            *guard = None;
         }
         let model = self.get_chat_model().await?;
         let n_ctx_override = self.n_ctx_override.load(Ordering::Relaxed);
