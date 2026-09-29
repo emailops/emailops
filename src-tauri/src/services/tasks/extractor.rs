@@ -401,9 +401,22 @@ fn normalize_title(title: &str) -> String {
 
 fn apply_heuristic_thread_update(db: &Arc<Database>, email: &Email, owner_email: &str) -> Result<()> {
     let now = Utc::now().timestamp();
-    let sender_is_owner = email.sender_email.eq_ignore_ascii_case(owner_email);
+    // The provider's Sent flag is authoritative (it covers send-as aliases);
+    // sender == account address is the fallback for rows synced before it.
+    let sender_is_owner = email.is_sent || email.sender_email.eq_ignore_ascii_case(owner_email);
     let current = db.get_thread_state(&email.account_id, &email.thread_id)?;
-    let awaiting = if sender_is_owner { "them" } else { "user" };
+    // Batches run newest first, so an older email can arrive after a newer
+    // one: it may extend participants and timestamps but must not decide who
+    // the thread is waiting on.
+    let latest_known = current
+        .as_ref()
+        .map(|s| s.last_inbound_at.unwrap_or(0).max(s.last_outbound_at.unwrap_or(0)))
+        .unwrap_or(0);
+    let awaiting = match current.as_ref() {
+        Some(state) if email.timestamp < latest_known => state.awaiting.clone(),
+        _ if sender_is_owner => "them".to_string(),
+        _ => "user".to_string(),
+    };
     let mut participants: Vec<String> = current.as_ref().map(|s| s.participants.clone()).unwrap_or_default();
     add_unique(&mut participants, &email.sender_email);
     for r in &email.recipients {
@@ -433,7 +446,7 @@ fn apply_heuristic_thread_update(db: &Arc<Database>, email: &Email, owner_email:
     db.upsert_thread_state(&ThreadState {
         account_id: email.account_id.clone(),
         thread_id: email.thread_id.clone(),
-        awaiting: awaiting.to_string(),
+        awaiting,
         last_inbound_at,
         last_outbound_at,
         last_touched_at: now,
@@ -758,6 +771,53 @@ mod process_tests {
 
         assert_eq!(open_titles(&db), vec!["Book the room", "Share the agenda"]);
         assert_eq!(db.list_pending_tasks("acct", Some("done"), None, 50).unwrap().len(), 1);
+    }
+
+    /// A reply the user sent through an alias (provider Sent flag set, sender
+    /// is not the account address) in the `seed_quoting_thread` thread.
+    fn seed_alias_reply(db: &Database, ts: i64) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, is_sent, created_at)
+                 VALUES ('s1','acct','t1','Re: Portal budget','Me','alias@example.org','example.org',
+                         '[\"ana@example.com\"]','[]','snip',?1,1,'primary','sent',1,0)",
+                rusqlite::params![ts],
+            )
+            .unwrap();
+    }
+
+    fn awaiting(db: &Database) -> String {
+        db.get_thread_state("acct", "t1")
+            .unwrap()
+            .expect("thread state")
+            .awaiting
+    }
+
+    #[test]
+    fn a_reply_sent_through_an_alias_waits_on_them() {
+        let (db, _fake, _ai, _cfg) = setup();
+        seed_alias_reply(&db, 300);
+        let sent = db.get_email_by_id("s1").unwrap().unwrap();
+        apply_heuristic_thread_update(&db, &sent, "me@example.com").unwrap();
+        assert_eq!(awaiting(&db), "them");
+    }
+
+    /// Batches run newest first; an older inbound email processed after the
+    /// user's newer reply must not flip the thread back to "awaiting user".
+    #[test]
+    fn an_older_email_processed_later_does_not_overwrite_awaiting() {
+        let (db, _fake, _ai, _cfg) = setup();
+        seed_alias_reply(&db, 300);
+        let sent = db.get_email_by_id("s1").unwrap().unwrap();
+        let older_inbound = db.get_email_by_id("e1").unwrap().unwrap();
+        apply_heuristic_thread_update(&db, &sent, "me@example.com").unwrap();
+        apply_heuristic_thread_update(&db, &older_inbound, "me@example.com").unwrap();
+        assert_eq!(awaiting(&db), "them");
+        let state = db.get_thread_state("acct", "t1").unwrap().unwrap();
+        assert_eq!(state.last_inbound_at, Some(100));
+        assert_eq!(state.last_outbound_at, Some(300));
     }
 
     #[tokio::test]
