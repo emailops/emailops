@@ -281,17 +281,31 @@ async fn finish_attachment_upkeep(
             recovered,
             failed,
         }) => {
+            let message = if failed == 0 {
+                format!("Attachment check: recovered attachments of {recovered} of {fetched} stored emails")
+            } else {
+                format!(
+                    "Attachment check: recovered attachments of {recovered} of {fetched} stored emails; \
+                     {failed} could not be fetched and will be retried next sync"
+                )
+            };
             emit_account_log(
                 if failed == 0 { "success" } else { "warn" },
                 "sync",
                 &account.email,
-                &format!(
-                    "Attachment check: recovered attachments of {recovered} of {fetched} stored emails                      ({failed} could not be fetched)"
-                ),
+                &message,
             );
             recovered
         }
-        Ok(BackfillOutcome::Aborted { recovered }) => recovered,
+        Ok(BackfillOutcome::Aborted { recovered }) => {
+            emit_account_log(
+                "info",
+                "sync",
+                &account.email,
+                &format!("Attachment check paused after recovering {recovered} emails; it resumes next sync"),
+            );
+            recovered
+        }
         Ok(BackfillOutcome::AlreadyDone | BackfillOutcome::Unsupported) => 0,
         Err(e) => {
             emit_account_log(
@@ -871,15 +885,6 @@ pub async fn sync_account_with_provider(
             );
         }
         pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
-        finish_attachment_upkeep(
-            db,
-            account,
-            email_provider.as_ref(),
-            app.as_ref(),
-            &sync_abort_flags,
-            false,
-        )
-        .await;
 
         db.upsert_sync_status(account_id, "idle", Some(chrono::Utc::now().timestamp()), None)?;
         // Terminal progress event clears the UI spinner. No output-panel log
@@ -890,6 +895,16 @@ pub async fn sync_account_with_provider(
         if let Some(ref a) = app {
             enqueue_ai_followups(db, a, account_id, &account.email, &ai_background, "no_new").await;
         }
+        // Last, so a long attachment backfill never holds the spinner.
+        finish_attachment_upkeep(
+            db,
+            account,
+            email_provider.as_ref(),
+            app.as_ref(),
+            &sync_abort_flags,
+            false,
+        )
+        .await;
 
         return Ok(());
     }
@@ -1096,15 +1111,6 @@ pub async fn sync_account_with_provider(
         );
     }
     pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
-    finish_attachment_upkeep(
-        db,
-        account,
-        email_provider.as_ref(),
-        app.as_ref(),
-        &sync_abort_flags,
-        synced_count > 0,
-    )
-    .await;
 
     // Classify, extract memory, and generate embeddings on a final pass.
     if let Some(ref a) = app {
@@ -1114,6 +1120,17 @@ pub async fn sync_account_with_provider(
         // blocks sync, and only when new emails were actually inserted.
         enqueue_lens_incremental(db, a, account_id, &account.email, &ai_background, &all_new_ids).await;
     }
+    // After the AI follow-ups are queued, so a long attachment backfill never
+    // delays classification or embeddings.
+    finish_attachment_upkeep(
+        db,
+        account,
+        email_provider.as_ref(),
+        app.as_ref(),
+        &sync_abort_flags,
+        synced_count > 0,
+    )
+    .await;
 
     if synced_count > 0 {
         if let Err(e) = db.checkpoint_wal_truncate() {

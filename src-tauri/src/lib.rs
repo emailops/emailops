@@ -418,6 +418,7 @@ pub fn run() {
                 connectivity,
                 dispatcher,
                 tool_registry: Arc::new(services::chat::tools::default_registry()),
+                rule_applies: Arc::default(),
             });
             app.manage(AppState::new(core, scheduler));
 

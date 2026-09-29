@@ -87,6 +87,9 @@ pub async fn update_attachment_rule(
     tags: Vec<String>,
     enabled: bool,
 ) -> Result<AttachmentRule, AppError> {
+    // A scan still collecting for the old patterns would keep files the edit
+    // is about to drop.
+    state.rule_applies.cancel(&rule_id);
     services::attachments::update_rule(
         &state.db,
         &rule_id,
@@ -106,6 +109,7 @@ pub async fn delete_attachment_rule(
     rule_id: String,
     account_id: String,
 ) -> Result<(), AppError> {
+    state.rule_applies.cancel(&rule_id);
     services::attachments::delete_rule(&state.db, &rule_id, &account_id, &state.app_data_dir)
 }
 
@@ -353,6 +357,9 @@ pub async fn apply_rule_retroactively(
             eprintln!("[attachments] could not emit apply progress: {e}");
         }
     };
+    // Starting a new scan of the rule cancels the one already running; the
+    // cancelled call returns `AppError::Cancelled`.
+    let ticket = state.rule_applies.begin(&rule_id);
     services::attachments::apply_rule_retroactively(
         &state.db,
         &rule_id,
@@ -360,6 +367,7 @@ pub async fn apply_rule_retroactively(
         &state.app_data_dir,
         Some(&app),
         &on_progress,
+        &|| ticket.is_cancelled(),
     )
     .await
 }

@@ -525,41 +525,9 @@ pub async fn process_attachments_for_email(
                 }
             };
 
-            // Determine file extension and path
-            let ext = safe_extension(&info.filename);
-            let file_id = uuid::Uuid::new_v4().to_string();
-            let relative_path = format!("attachments/{}/{}.{}", email.account_id, file_id, ext);
-            let absolute_path = app_data_dir.join(&relative_path);
-
-            // Create directory and write file
-            if let Some(parent) = absolute_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| AppError::IoError(format!("Failed to create attachment directory: {}", e)))?;
+            if store_collected_attachment(db, email, info, rule, &bytes, app_data_dir).await? {
+                count += 1;
             }
-            tokio::fs::write(&absolute_path, &bytes)
-                .await
-                .map_err(|e| AppError::IoError(format!("Failed to write attachment file: {}", e)))?;
-
-            let attachment = Attachment {
-                id: uuid::Uuid::new_v4().to_string(),
-                account_id: email.account_id.clone(),
-                email_id: email.id.clone(),
-                rule_id: rule.id.clone(),
-                gmail_attachment_id: info.attachment_id.clone(),
-                filename: info.filename.clone(),
-                mime_type: info.mime_type.clone(),
-                file_size: bytes.len() as i64,
-                file_path: relative_path,
-                tags: rule.tags.clone(),
-                sender_email: email.sender_email.clone(),
-                subject: email.subject.clone(),
-                email_timestamp: email.timestamp,
-                created_at: chrono::Utc::now().timestamp(),
-            };
-
-            db.insert_attachment(&attachment)?;
-            count += 1;
         }
     }
 
@@ -568,11 +536,80 @@ pub async fn process_attachments_for_email(
     // a single event per email (only when something was saved) is enough.
     if count > 0 {
         if let Some(app) = app {
-            let _ = app.emit("attachments-updated", &email.account_id);
+            if let Err(e) = app.emit("attachments-updated", &email.account_id) {
+                eprintln!("[attachments] could not emit attachments-updated: {e}");
+            }
         }
     }
 
     Ok(count)
+}
+
+/// Write one collected attachment to disk and record it. The row is only
+/// inserted while `rule` is still the version the caller planned with (not
+/// edited or deleted since), the email still exists and no concurrent run
+/// stored the same file — otherwise the file just written is removed again.
+/// Returns whether the attachment was stored.
+pub(crate) async fn store_collected_attachment(
+    db: &Database,
+    email: &crate::models::Email,
+    info: &AttachmentInfo,
+    rule: &AttachmentRule,
+    bytes: &[u8],
+    app_data_dir: &Path,
+) -> Result<bool> {
+    let ext = safe_extension(&info.filename);
+    let file_id = uuid::Uuid::new_v4().to_string();
+    let relative_path = format!("attachments/{}/{}.{}", email.account_id, file_id, ext);
+    let absolute_path = app_data_dir.join(&relative_path);
+
+    if let Some(parent) = absolute_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| AppError::IoError(format!("Failed to create attachment directory: {}", e)))?;
+    }
+    tokio::fs::write(&absolute_path, bytes)
+        .await
+        .map_err(|e| AppError::IoError(format!("Failed to write attachment file: {}", e)))?;
+
+    let attachment = Attachment {
+        id: uuid::Uuid::new_v4().to_string(),
+        account_id: email.account_id.clone(),
+        email_id: email.id.clone(),
+        rule_id: rule.id.clone(),
+        gmail_attachment_id: info.attachment_id.clone(),
+        filename: info.filename.clone(),
+        mime_type: info.mime_type.clone(),
+        file_size: bytes.len() as i64,
+        file_path: relative_path,
+        tags: rule.tags.clone(),
+        sender_email: email.sender_email.clone(),
+        subject: email.subject.clone(),
+        email_timestamp: email.timestamp,
+        created_at: chrono::Utc::now().timestamp(),
+    };
+
+    let inserted = match db.insert_attachment_for_rule_version(&attachment, rule.updated_at) {
+        Ok(inserted) => inserted,
+        Err(e) => {
+            remove_attachment_file(&absolute_path);
+            return Err(e);
+        }
+    };
+    if !inserted {
+        remove_attachment_file(&absolute_path);
+    }
+    Ok(inserted)
+}
+
+/// Remove a stored attachment file, logging (not failing on) an error: the
+/// row it belonged to is already gone.
+fn remove_attachment_file(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("[attachments] could not remove {}: {e}", path.display()),
+    }
 }
 
 /// Download all attachments for an email to disk (no rule required).
@@ -748,10 +785,7 @@ pub fn update_rule(
         }
         // No longer matches — delete file and DB row
         if let Some(path) = db.delete_attachment_by_id(&att.id)? {
-            let abs_path = app_data_dir.join(&path);
-            if abs_path.exists() {
-                let _ = std::fs::remove_file(&abs_path);
-            }
+            remove_attachment_file(&app_data_dir.join(&path));
         }
     }
 
@@ -762,15 +796,12 @@ pub fn update_rule(
 }
 
 pub fn delete_rule(db: &Arc<Database>, rule_id: &str, account_id: &str, app_data_dir: &Path) -> Result<()> {
-    // Delete attachment files from disk first
-    let file_paths = db.delete_attachments_for_rule(rule_id)?;
-    for relative_path in &file_paths {
-        let abs_path = app_data_dir.join(relative_path);
-        if abs_path.exists() {
-            let _ = std::fs::remove_file(&abs_path);
-        }
+    // Rows and rule go in one transaction, so an apply storing a file at the
+    // same time either lands before (its file is listed here) or finds the
+    // rule gone and removes the file itself.
+    for relative_path in db.delete_attachment_rule_with_attachments(rule_id, account_id)? {
+        remove_attachment_file(&app_data_dir.join(relative_path));
     }
-    db.delete_attachment_rule(rule_id, account_id)?;
     Ok(())
 }
 
@@ -815,6 +846,78 @@ pub fn list_for_email(
 }
 
 // --- Retroactive rule application ---
+
+/// The retroactive applies running right now, one per rule: starting another
+/// apply of a rule, editing it or deleting it cancels the one in flight, so
+/// two scans never race and none keeps collecting for an outdated pattern.
+#[derive(Default)]
+pub struct RuleApplies {
+    running: std::sync::Mutex<std::collections::HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>,
+    next_generation: std::sync::atomic::AtomicU64,
+}
+
+/// A registered apply. Dropping it unregisters the apply unless a newer one
+/// for the same rule has replaced it.
+pub struct RuleApplyTicket<'a> {
+    applies: &'a RuleApplies,
+    rule_id: String,
+    generation: u64,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RuleApplies {
+    /// Register a new apply of `rule_id`, cancelling the one already running.
+    pub fn begin(&self, rule_id: &str) -> RuleApplyTicket<'_> {
+        use std::sync::atomic::Ordering;
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let previous = self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(rule_id.to_string(), (generation, Arc::clone(&cancelled)));
+        if let Some((_, flag)) = previous {
+            flag.store(true, Ordering::Relaxed);
+        }
+        RuleApplyTicket {
+            applies: self,
+            rule_id: rule_id.to_string(),
+            generation,
+            cancelled,
+        }
+    }
+
+    /// Cancel the apply of `rule_id`, if one is running.
+    pub fn cancel(&self, rule_id: &str) {
+        if let Some((_, flag)) = self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(rule_id)
+        {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+impl RuleApplyTicket<'_> {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Drop for RuleApplyTicket<'_> {
+    fn drop(&mut self) {
+        let mut running = self
+            .applies
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if running.get(&self.rule_id).is_some_and(|(g, _)| *g == self.generation) {
+            running.remove(&self.rule_id);
+        }
+    }
+}
 
 /// Attachments of `email_id` that are already stored on disk (auto-download
 /// or an on-demand save), read back as inline data so a rule can collect them
@@ -863,6 +966,7 @@ pub async fn apply_rule_retroactively(
     app_data_dir: &Path,
     app: Option<&AppHandle>,
     on_progress: &(dyn Fn(RetroProgress) + Send + Sync),
+    should_abort: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<u32> {
     let rule = db
         .get_attachment_rule(rule_id)?
@@ -891,6 +995,7 @@ pub async fn apply_rule_retroactively(
         app_data_dir,
         app,
         on_progress,
+        should_abort,
     )
     .await
 }
@@ -954,7 +1059,11 @@ async fn rule_needs_provider(
 /// `FakeEmailProvider` without a Tauri runtime or live OAuth tokens.
 /// `provider` is `None` when nothing has to be fetched; an email that still
 /// needs a fetch is then skipped with a warning. `on_progress` is called once
-/// before the first email and after each one.
+/// before the first email and after each one. `should_abort` is checked
+/// before each email; once it returns true the apply ends with
+/// [`AppError::Cancelled`]. An email that fails to store is logged and
+/// skipped, so one bad message never ends a scan of thousands.
+#[allow(clippy::too_many_arguments)]
 pub async fn apply_rule_with_provider(
     db: &Arc<Database>,
     rule: &AttachmentRule,
@@ -963,6 +1072,7 @@ pub async fn apply_rule_with_provider(
     app_data_dir: &Path,
     app: Option<&AppHandle>,
     on_progress: &(dyn Fn(RetroProgress) + Send + Sync),
+    should_abort: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<u32> {
     let (scanned, plan) = plan_for(db, rule, account_id)?;
     let total = plan.len();
@@ -980,9 +1090,22 @@ pub async fn apply_rule_with_provider(
 
     let mut total_attachments = 0u32;
     let mut emails_with_filename_match = 0u32;
+    let mut failed_emails = 0u32;
     let rules = std::slice::from_ref(rule);
 
     for (index, (email_id, source)) in plan.iter().enumerate() {
+        if should_abort() {
+            emit_log(
+                app,
+                "info",
+                "attachments",
+                format!(
+                    "Rule '{}': scan stopped after {index} of {total} emails ({total_attachments} attachments saved).",
+                    rule.name
+                ),
+            );
+            return Err(AppError::Cancelled);
+        }
         // Attachments already on disk are collected from there; otherwise
         // recorded attachments are fetched one by one, and only a message
         // with no trustworthy record is fetched whole.
@@ -1031,7 +1154,7 @@ pub async fn apply_rule_with_provider(
             }
             let mut email_with_account = email;
             email_with_account.account_id = account_id.to_string();
-            total_attachments += process_attachments_for_email(
+            match process_attachments_for_email(
                 db,
                 provider,
                 &email_with_account,
@@ -1040,7 +1163,22 @@ pub async fn apply_rule_with_provider(
                 app_data_dir,
                 app,
             )
-            .await?;
+            .await
+            {
+                Ok(saved) => total_attachments += saved,
+                Err(e) => {
+                    failed_emails += 1;
+                    emit_log(
+                        app,
+                        "error",
+                        "attachments",
+                        format!(
+                            "Rule '{}': could not store the attachments of {email_id}: {e}",
+                            rule.name
+                        ),
+                    );
+                }
+            }
         }
 
         on_progress(RetroProgress {
@@ -1050,11 +1188,18 @@ pub async fn apply_rule_with_provider(
         });
     }
 
-    let summary = format!(
+    let mut summary = format!(
         "Rule '{}': {} of {} emails had matching attachments; saved {} new attachments.",
         rule.name, emails_with_filename_match, scanned, total_attachments,
     );
-    let level = if total_attachments > 0 { "success" } else { "warn" };
+    if failed_emails > 0 {
+        summary.push_str(&format!(" {failed_emails} emails could not be stored."));
+    }
+    let level = match (failed_emails, total_attachments) {
+        (0, 0) => "warn",
+        (0, _) => "success",
+        _ => "error",
+    };
     emit_log(app, level, "attachments", summary);
 
     // Zero candidates is almost always a too-strict pattern (e.g. `apple.com`
@@ -1697,9 +1842,11 @@ mod tests {
             )],
         );
 
-        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {})
-            .await
-            .expect("apply_rule_with_provider should succeed");
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {}, &|| {
+            false
+        })
+        .await
+        .expect("apply_rule_with_provider should succeed");
 
         assert_eq!(saved, 1, "exactly one attachment should be persisted");
         let stored = db.get_attachments_for_rule(&rule.id).expect("query attachments");
@@ -1736,9 +1883,11 @@ mod tests {
 
         let fake = FakeEmailProvider::new("me@outlook.example", "Me");
 
-        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {})
-            .await
-            .expect("apply_rule_with_provider must not error when nothing matches");
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {}, &|| {
+            false
+        })
+        .await
+        .expect("apply_rule_with_provider must not error when nothing matches");
 
         assert_eq!(saved, 0);
         assert_eq!(
@@ -1800,9 +1949,11 @@ mod tests {
         .expect("create rule");
 
         let fake = FakeEmailProvider::new("me@example.com", "Me");
-        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {})
-            .await
-            .expect("apply_rule_with_provider should succeed");
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {}, &|| {
+            false
+        })
+        .await
+        .expect("apply_rule_with_provider should succeed");
 
         assert_eq!(saved, 1, "the locally stored attachment should be collected");
         let stored = db.get_attachments_for_rule(&rule.id).expect("query attachments");
@@ -1861,9 +2012,11 @@ mod tests {
 
         let fake = FakeEmailProvider::new("me@example.com", "Me");
         fake.set_attachment_bytes("receipt", "att-github-receipt-1.pdf", b"%PDF-1.4".to_vec());
-        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {})
-            .await
-            .expect("apply");
+        let saved = apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|_| {}, &|| {
+            false
+        })
+        .await
+        .expect("apply");
 
         assert_eq!(saved, 1);
         assert!(
@@ -1895,9 +2048,16 @@ mod tests {
             create_rule(&db, account_id, "Acme", Some("billing@acme.com"), None, None, vec![]).expect("create rule");
 
         let seen = Mutex::new(Vec::new());
-        apply_rule_with_provider(&db, &rule, account_id, Some(&fake), tmp.path(), None, &|p| {
-            seen.lock().expect("lock").push(p)
-        })
+        apply_rule_with_provider(
+            &db,
+            &rule,
+            account_id,
+            Some(&fake),
+            tmp.path(),
+            None,
+            &|p| seen.lock().expect("lock").push(p),
+            &|| false,
+        )
         .await
         .expect("apply");
 
@@ -1950,7 +2110,7 @@ mod tests {
         )
         .expect("create rule");
 
-        let saved = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None, &|_| {})
+        let saved = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None, &|_| {}, &|| false)
             .await
             .expect("stored attachments must not need credentials");
 
@@ -1987,12 +2147,244 @@ mod tests {
         )
         .expect("create rule");
 
-        let result = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None, &|_| {}).await;
+        let result = apply_rule_retroactively(&db, &rule.id, account_id, tmp.path(), None, &|_| {}, &|| false).await;
 
         assert!(
             result.is_err(),
             "a fetch is needed, so missing credentials must surface: {result:?}"
         );
+    }
+
+    // ── One apply per rule, and applies racing edits / deletes ─────────────
+
+    #[test]
+    fn beginning_an_apply_cancels_the_one_already_running_for_the_rule() {
+        let applies = RuleApplies::default();
+        let first = applies.begin("rule-1");
+
+        let second = applies.begin("rule-1");
+
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+    }
+
+    #[test]
+    fn cancelling_a_rule_leaves_other_rules_running() {
+        let applies = RuleApplies::default();
+        let one = applies.begin("rule-1");
+        let two = applies.begin("rule-2");
+
+        applies.cancel("rule-1");
+
+        assert!(one.is_cancelled());
+        assert!(!two.is_cancelled());
+    }
+
+    #[test]
+    fn a_finished_older_apply_does_not_unregister_the_newer_one() {
+        let applies = RuleApplies::default();
+        let first = applies.begin("rule-1");
+        let second = applies.begin("rule-1");
+        drop(first);
+
+        applies.cancel("rule-1");
+
+        assert!(second.is_cancelled());
+    }
+
+    /// One email with a recorded, downloadable PDF from billing@acme.com, and
+    /// a rule collecting it.
+    fn acme_invoice_setup(db: &Arc<Database>, account_id: &str) -> (AttachmentRule, FakeEmailProvider) {
+        make_account(db, account_id, "gmail", "me@example.com");
+        db.set_preference(&crate::services::emails::backfill_done_key(account_id), "1")
+            .expect("backfill done");
+        db.insert_email(&make_email(account_id, "inv-1", "billing@acme.com", "Invoice"))
+            .expect("insert email");
+        recorded_pdf(db, "inv-1", account_id, "invoice-1.pdf");
+        let fake = FakeEmailProvider::new("me@example.com", "Me");
+        fake.set_attachment_bytes("inv-1", "att-invoice-1.pdf", b"%PDF".to_vec());
+        let rule =
+            create_rule(db, account_id, "Acme", Some("billing@acme.com"), None, None, vec![]).expect("create rule");
+        (rule, fake)
+    }
+
+    fn files_under(dir: &Path) -> usize {
+        walkdir_count(dir)
+    }
+
+    fn walkdir_count(dir: &Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+        entries
+            .flatten()
+            .map(|e| {
+                let path = e.path();
+                if path.is_dir() {
+                    walkdir_count(&path)
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_apply_stops_and_reports_cancelled() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-c");
+
+        let result =
+            apply_rule_with_provider(&db, &rule, "acc-c", Some(&fake), tmp.path(), None, &|_| {}, &|| true).await;
+
+        assert!(matches!(result, Err(AppError::Cancelled)), "{result:?}");
+        assert!(db.get_attachments_for_rule(&rule.id).expect("query").is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_apply_of_a_rule_edited_meanwhile_keeps_nothing_it_downloaded() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-e");
+        // The apply planned with this snapshot; the user saved an edit since.
+        let mut stale = rule.clone();
+        stale.updated_at -= 60;
+
+        let saved = apply_rule_with_provider(&db, &stale, "acc-e", Some(&fake), tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+
+        assert_eq!(saved, 0);
+        assert!(db.get_attachments_for_rule(&rule.id).expect("query").is_empty());
+        assert_eq!(
+            files_under(tmp.path()),
+            0,
+            "the downloaded file must not be left behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_apply_of_a_rule_deleted_meanwhile_ends_quietly_without_orphans() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-d");
+        delete_rule(&db, &rule.id, "acc-d", tmp.path()).expect("delete rule");
+
+        let saved = apply_rule_with_provider(&db, &rule, "acc-d", Some(&fake), tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("a deleted rule is not an error");
+
+        assert_eq!(saved, 0);
+        assert_eq!(files_under(tmp.path()), 0);
+    }
+
+    #[tokio::test]
+    async fn an_attachment_stored_by_a_concurrent_run_is_not_counted_twice() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-dup");
+        let email = db.get_email("inv-1").expect("get").expect("email");
+        let infos = db.get_attachment_infos("inv-1").expect("infos");
+        let first = process_attachments_for_email(
+            &db,
+            Some(&fake),
+            &email,
+            &infos,
+            std::slice::from_ref(&rule),
+            tmp.path(),
+            None,
+        )
+        .await
+        .expect("first run");
+
+        // A second run that already passed its dedup check (sync racing the
+        // apply) must neither count nor keep its copy.
+        let again = store_collected_attachment(&db, &email, &infos[0], &rule, b"%PDF", tmp.path())
+            .await
+            .expect("second store");
+
+        assert_eq!(first, 1);
+        assert!(!again);
+        assert_eq!(files_under(tmp.path()), 1);
+    }
+
+    #[tokio::test]
+    async fn one_email_that_fails_to_store_does_not_abort_the_apply() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-f");
+        db.insert_email(&make_email("acc-f", "inv-2", "billing@acme.com", "Invoice"))
+            .expect("insert email");
+        recorded_pdf(&db, "inv-2", "acc-f", "invoice-2.pdf");
+        // inv-1's bytes download; inv-2's do not exist on the provider.
+        let seen = std::sync::Mutex::new(Vec::new());
+
+        let saved = apply_rule_with_provider(
+            &db,
+            &rule,
+            "acc-f",
+            Some(&fake),
+            tmp.path(),
+            None,
+            &|p| seen.lock().expect("lock").push(p),
+            &|| false,
+        )
+        .await
+        .expect("apply");
+
+        assert_eq!(saved, 1);
+        assert_eq!(seen.into_inner().expect("lock").last().map(|p| p.processed), Some(2));
+    }
+
+    #[tokio::test]
+    async fn a_write_failure_is_reported_per_email_and_the_apply_finishes() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-w");
+        // `attachments/acc-w` is a file, so no attachment can be written.
+        std::fs::create_dir_all(tmp.path().join("attachments")).expect("mkdir");
+        std::fs::write(tmp.path().join("attachments/acc-w"), b"not a dir").expect("block");
+
+        let saved = apply_rule_with_provider(&db, &rule, "acc-w", Some(&fake), tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("a per-email failure must not abort the apply");
+
+        assert_eq!(saved, 0);
+    }
+
+    #[test]
+    fn deleting_a_rule_removes_its_rows_and_files_together() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-del", "gmail", "me@example.com");
+        db.insert_email(&make_email("acc-del", "m1", "billing@acme.com", "Invoice"))
+            .expect("insert email");
+        let rule = create_rule(&db, "acc-del", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+        let relative = "attachments/acc-del/f.pdf";
+        std::fs::create_dir_all(tmp.path().join("attachments/acc-del")).expect("mkdir");
+        std::fs::write(tmp.path().join(relative), b"%PDF").expect("write");
+        db.insert_attachment(&Attachment {
+            id: "a1".into(),
+            account_id: "acc-del".into(),
+            email_id: "m1".into(),
+            rule_id: rule.id.clone(),
+            gmail_attachment_id: String::new(),
+            filename: "f.pdf".into(),
+            mime_type: "application/pdf".into(),
+            file_size: 4,
+            file_path: relative.into(),
+            tags: vec![],
+            sender_email: "billing@acme.com".into(),
+            subject: "Invoice".into(),
+            email_timestamp: 0,
+            created_at: 0,
+        })
+        .expect("insert attachment");
+
+        delete_rule(&db, &rule.id, "acc-del", tmp.path()).expect("delete");
+
+        assert!(db.get_attachment_rule(&rule.id).expect("get").is_none());
+        assert_eq!(db.count_attachments_for_rule(&rule.id).expect("count"), 0);
+        assert!(!tmp.path().join(relative).exists());
     }
 
     // --- save_bytes_to_downloads ---

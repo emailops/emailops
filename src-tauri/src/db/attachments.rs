@@ -113,6 +113,27 @@ impl Database {
         Ok(())
     }
 
+    /// Delete a rule and every attachment it collected in one transaction;
+    /// returns the stored file paths for the caller to remove from disk.
+    pub fn delete_attachment_rule_with_attachments(&self, rule_id: &str, account_id: &str) -> Result<Vec<String>> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let paths = {
+            let mut stmt = tx.prepare("SELECT file_path FROM attachments WHERE rule_id = ?1")?;
+            let paths = stmt
+                .query_map(params![rule_id], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            paths
+        };
+        tx.execute("DELETE FROM attachments WHERE rule_id = ?1", params![rule_id])?;
+        tx.execute(
+            "DELETE FROM attachment_rules WHERE id = ?1 AND account_id = ?2",
+            params![rule_id, account_id],
+        )?;
+        tx.commit()?;
+        Ok(paths)
+    }
+
     pub fn get_attachment_rules(&self, account_id: &str) -> Result<Vec<AttachmentRule>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
@@ -182,6 +203,40 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    /// Insert an attachment a rule collected, unless the rule was edited
+    /// (its `updated_at` is no longer `rule_updated_at`) or deleted, the email
+    /// is gone, or the same file is already stored for the rule. Returns
+    /// whether the row was inserted. One statement, so there is no window
+    /// between the check and the insert.
+    pub fn insert_attachment_for_rule_version(&self, attachment: &Attachment, rule_updated_at: i64) -> Result<bool> {
+        let conn = self.connection();
+        let tags_json = serde_json::to_string(&attachment.tags)?;
+        let inserted = conn.execute(
+            "INSERT OR IGNORE INTO attachments (id, account_id, email_id, rule_id, gmail_attachment_id, filename, mime_type, file_size, file_path, tags_json, sender_email, subject, email_timestamp, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+             WHERE EXISTS (SELECT 1 FROM attachment_rules WHERE id = ?4 AND updated_at = ?15)
+               AND EXISTS (SELECT 1 FROM emails WHERE id = ?3)",
+            params![
+                attachment.id,
+                attachment.account_id,
+                attachment.email_id,
+                attachment.rule_id,
+                attachment.gmail_attachment_id,
+                attachment.filename,
+                attachment.mime_type,
+                attachment.file_size,
+                attachment.file_path,
+                tags_json,
+                attachment.sender_email,
+                attachment.subject,
+                attachment.email_timestamp,
+                attachment.created_at,
+                rule_updated_at,
+            ],
+        )?;
+        Ok(inserted > 0)
     }
 
     pub fn attachment_exists(&self, email_id: &str, filename: &str, rule_id: &str) -> Result<bool> {

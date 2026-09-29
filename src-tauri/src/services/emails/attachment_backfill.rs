@@ -9,8 +9,8 @@
 //!
 //! The provider names the messages that carry attachments (a cheap
 //! server-side search); only those that have no rows locally are fetched.
-//! It runs once per account at the end of a sync and is remembered in
-//! `user_preferences`.
+//! It runs at the end of a sync until one pass fetches everything it needs,
+//! which is then remembered in `user_preferences`.
 
 use std::collections::HashSet;
 
@@ -33,6 +33,8 @@ pub enum BackfillOutcome {
     Unsupported,
     /// The sync was cancelled between chunks; the next sync resumes.
     Aborted { recovered: usize },
+    /// Every listed message was visited. Only marked done when `failed` is 0;
+    /// otherwise the next sync retries the messages that still lack rows.
     Completed {
         /// Messages fetched from the provider.
         fetched: usize,
@@ -97,7 +99,12 @@ pub async fn backfill_attachment_meta(
         }
     }
 
-    db.set_preference(&done_key, &super::super::clock::now_secs().to_string())?;
+    // A message the provider failed to return (rate limit, network) stays
+    // without rows; marking the account done would hide it from rules for
+    // good, so the next sync retries — only the still-missing ones.
+    if failed == 0 {
+        db.set_preference(&done_key, &super::super::clock::now_secs().to_string())?;
+    }
     Ok(BackfillOutcome::Completed {
         fetched: targets.len(),
         recovered,
@@ -267,6 +274,49 @@ mod tests {
             "no provider call once done, got {:?}",
             again.calls()
         );
+    }
+
+    #[tokio::test]
+    async fn a_backfill_with_failed_fetches_is_not_marked_done_and_retries_only_those() {
+        let db = setup();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        stored_without_meta(&db, &provider, "m1");
+        stored_without_meta(&db, &provider, "m2");
+        provider.fail_message("m2");
+
+        let outcome = backfill_attachment_meta(&db, &provider, "acc", "me@example.com", &never)
+            .await
+            .expect("backfill");
+
+        assert_eq!(
+            outcome,
+            BackfillOutcome::Completed {
+                fetched: 2,
+                recovered: 1,
+                failed: 1
+            }
+        );
+        assert!(
+            db.get_preference(&backfill_done_key("acc")).expect("pref").is_none(),
+            "a failed fetch must be retried by the next sync"
+        );
+
+        let retry = FakeEmailProvider::new("me@example.com", "Me");
+        stored_without_meta(&db, &retry, "m1");
+        retry.add_message(email("m2"), EmailCategory::Updates, vec![pdf("m2.pdf")]);
+        let outcome = backfill_attachment_meta(&db, &retry, "acc", "me@example.com", &never)
+            .await
+            .expect("retry");
+
+        assert_eq!(
+            outcome,
+            BackfillOutcome::Completed {
+                fetched: 1,
+                recovered: 1,
+                failed: 0
+            }
+        );
+        assert!(db.get_preference(&backfill_done_key("acc")).expect("pref").is_some());
     }
 
     #[tokio::test]

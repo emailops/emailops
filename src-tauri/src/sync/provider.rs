@@ -672,6 +672,9 @@ pub struct FakeEmailProvider {
     /// When `Some`, every mailbox-state write fails with this message instead
     /// of being recorded — simulates an offline or refusing provider.
     mailbox_write_failure: std::sync::RwLock<Option<String>>,
+    /// Message ids whose `get_message` fails — simulates a message the
+    /// provider cannot return (rate limit, deleted server-side).
+    failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 /// A mailbox-state call recorded by [`FakeEmailProvider`].
@@ -736,6 +739,7 @@ impl FakeEmailProvider {
             mailbox_ops: std::sync::RwLock::new(Vec::new()),
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
+            failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -760,6 +764,14 @@ impl FakeEmailProvider {
 
     pub fn mailbox_ops(&self) -> Vec<FakeMailboxOp> {
         self.mailbox_ops.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Make `get_message` fail for `message_id` from now on.
+    pub fn fail_message(&self, message_id: impl Into<String>) {
+        self.failing_messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.into());
     }
 
     /// Make every subsequent mailbox-state write fail with `message`.
@@ -995,6 +1007,16 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn get_message(&self, message_id: &str) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        if self
+            .failing_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(message_id)
+        {
+            return Err(crate::models::error::AppError::SyncError(format!(
+                "Fake fetch failure: {message_id}"
+            )));
+        }
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         guard
             .iter()
