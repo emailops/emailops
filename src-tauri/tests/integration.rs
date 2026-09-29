@@ -5261,6 +5261,7 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
     .expect("resync");
 
     assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
+}
 
 // ── Skills ───────────────────────────────────────────────────────────────
 
