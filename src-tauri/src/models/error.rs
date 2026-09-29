@@ -57,6 +57,13 @@ pub enum AppError {
     #[error("AI features are disabled in Settings")]
     AiDisabled,
 
+    /// OpenRouter has no provider for `model` that meets EmailOps' data policy
+    /// (no training on prompts, plus zero retention when the user asked for
+    /// it). The user has to pick another model; the request is never retried
+    /// under a looser policy.
+    #[error("The model {model} is not available under EmailOps' data policy — choose another model in Settings")]
+    AiDataPolicy { model: String },
+
     #[error("IO error: {0}")]
     IoError(String),
 
@@ -87,6 +94,7 @@ impl AppError {
             AppError::InvalidInput(_) => "invalid_input",
             AppError::AiError(_) => "ai",
             AppError::AiDisabled => "ai_disabled",
+            AppError::AiDataPolicy { .. } => "ai_data_policy",
             AppError::IoError(_) => "io",
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
@@ -123,6 +131,9 @@ impl AppError {
             AppError::NeedsReauth { account_id } | AppError::CalendarPermissionDenied { account_id } => {
                 p.insert("accountId", account_id.clone());
             }
+            AppError::AiDataPolicy { model } => {
+                p.insert("model", model.clone());
+            }
             AppError::AiDisabled | AppError::Cancelled => {}
         }
         p
@@ -155,6 +166,15 @@ pub type Result<T> = std::result::Result<T, AppError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_data_policy_block_carries_the_model() {
+        let e = AppError::AiDataPolicy {
+            model: "vendor/model".into(),
+        };
+        assert_eq!(e.code(), "ai_data_policy");
+        assert_eq!(e.params().get("model").map(String::as_str), Some("vendor/model"));
+    }
 
     #[test]
     fn code_is_stable_per_variant() {

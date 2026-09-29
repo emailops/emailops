@@ -5,6 +5,7 @@ export interface AiConfigState {
   monthlyBudgetUsd: number;
   hasApiKey: boolean;
   thinkingEnabled: boolean;
+  zeroDataRetention: boolean;
 }
 
 export type RoutingMode = 'always_rag' | 'auto' | 'always_tools';

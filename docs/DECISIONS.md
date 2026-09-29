@@ -1888,3 +1888,25 @@ included.
 **Rejected:** Inbox only (misses server-side filing); every mailbox (a sender rule would
 pick up the junked or deleted copy of a message); leaving Sent out (the user wants the
 invoices they send collected too).
+
+## 2026-09-29 — OpenRouter never routes to providers that store or train on prompts
+
+**Decision:** Every OpenRouter request that can carry mail content — chat completions and
+embeddings — sends `provider.data_collection = "deny"`, fixed and not user-configurable.
+Zero data retention (`provider.zdr = true`) is a user toggle in the OpenRouter panel, off
+by default. A model with no provider meeting the policy fails with `AppError::AiDataPolicy`
+naming the model; the request is never retried under a looser policy.
+**Context:** Google's Workspace API user-data policy forbids transferring Gmail data "to
+create, train, or improve a machine learning or artificial intelligence model beyond that
+specific user's personalized model", and user consent does not lift that rule. OpenRouter
+defaults to `data_collection: "allow"`, and a probe on 29/09/2026 showed free models
+answering through training endpoints. `deny` cost 6 of 341 working models, all free tiers;
+adding `zdr` cost 83 in total (including the Qwen API family, OpenAI `o3`/`o4-mini`,
+Cohere), too many to impose.
+**Rejected:**
+- *`data_collection` as a user setting*: a user could switch Gmail data into training,
+  which is what the policy prohibits; the restricted-scope verification needs a flat "no".
+- *ZDR on by default*: cuts roughly a quarter of the usable models for a guarantee the
+  policy does not require.
+- *Silently switching or retrying a blocked model*: sends mail somewhere the user did not
+  choose; a clear error pointing to Settings is better.

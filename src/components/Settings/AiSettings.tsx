@@ -148,6 +148,7 @@ export function AiSettings() {
         monthlyBudgetUsd: cfg.monthlyBudgetUsd,
         hasApiKey: cfg.hasApiKey,
         thinkingEnabled: cfg.thinkingEnabled,
+        zeroDataRetention: cfg.zeroDataRetention,
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
 
@@ -341,6 +342,7 @@ export function AiSettings() {
         key,
         config.monthlyBudgetUsd,
         config.thinkingEnabled,
+        config.zeroDataRetention,
       );
       savedEmbedModelRef.current = config.embeddingModel;
 

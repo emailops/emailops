@@ -214,7 +214,7 @@ pub fn exit_code(err: &AppError) -> u8 {
         | AppError::NeedsReauth { .. }
         | AppError::CalendarPermissionDenied { .. } => 4,
         AppError::HttpError(_) | AppError::SyncError(_) => 5,
-        AppError::AiError(_) | AppError::AiDisabled | AppError::BudgetExceeded(_) => 6,
+        AppError::AiError(_) | AppError::AiDisabled | AppError::AiDataPolicy { .. } | AppError::BudgetExceeded(_) => 6,
         AppError::Cancelled => 130,
         AppError::DbError(_) | AppError::JsonError(_) | AppError::IoError(_) => 1,
     }
@@ -1340,6 +1340,7 @@ mod tests {
         assert_eq!(exit_code(&AppError::AiError("x".into())), 6);
         assert_eq!(exit_code(&AppError::AiDisabled), 6);
         assert_eq!(exit_code(&AppError::BudgetExceeded("x".into())), 6);
+        assert_eq!(exit_code(&AppError::AiDataPolicy { model: "m".into() }), 6);
         // cancelled
         assert_eq!(exit_code(&AppError::Cancelled), 130);
         // catch-all

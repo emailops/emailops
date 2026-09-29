@@ -336,6 +336,7 @@ export interface AiConfig {
   periodStart: number;
   hasApiKey: boolean;
   thinkingEnabled: boolean;
+  zeroDataRetention: boolean;
 }
 
 /** A model entry in the curated llama.cpp download catalog. */

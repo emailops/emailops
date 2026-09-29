@@ -673,6 +673,8 @@ pub struct AiConfig {
     pub monthly_budget_usd: f64,
     pub period_start: i64,
     pub thinking_enabled: bool,
+    /// OpenRouter only: route to providers with a zero-data-retention policy.
+    pub zero_data_retention: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

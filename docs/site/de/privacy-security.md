@@ -62,6 +62,13 @@ Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gela
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
 **Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
 
+<!-- claim:priv-there-no-3 -->
+Wenn Sie ihn aktivieren, weist jede Anfrage OpenRouter an, nur Anbieter zu verwenden, die das
+Empfangene weder speichern noch damit trainieren; ein Modell, das kein solcher Anbieter
+bereitstellt, wird mit einem Fehler abgelehnt und nie trotzdem gesendet. **Nur ohne
+Datenspeicherung** im selben Bereich beschränkt das auf Anbieter, die nach der Antwort nichts
+aufbewahren.
+
 ## Was EmailOps in Ihrem Postfach verändert
 
 <!-- claim:priv-what-emailops-1 -->

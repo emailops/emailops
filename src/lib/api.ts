@@ -892,6 +892,8 @@ export async function setAiConfig(
   apiKey?: string | null,
   monthlyBudgetUsd?: number,
   thinkingEnabled?: boolean,
+  // Omitted keeps the stored choice (the backend treats a missing value as "unchanged").
+  zeroDataRetention?: boolean,
 ): Promise<void> {
   return invoke('set_ai_config', {
     provider,
@@ -900,6 +902,7 @@ export async function setAiConfig(
     apiKey,
     monthlyBudgetUsd: monthlyBudgetUsd ?? 0,
     thinkingEnabled: thinkingEnabled ?? false,
+    zeroDataRetention,
   });
 }
 

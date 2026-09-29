@@ -163,6 +163,9 @@
   },
   "openRouter": {
     "apiKeyPlaceholder": "sk-or-...",
+    "noTrainingNotice": "Providers that store or train on your mail are never used.",
+    "zeroDataRetention": "Zero data retention only",
+    "zeroDataRetentionHelp": "Route only to providers that keep nothing after answering. Fewer models are available.",
     "chatModelPlaceholder": "e.g. google/gemma-3-27b-it"
   },
   "promptEditor": {

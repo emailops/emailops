@@ -14,6 +14,10 @@ interface OpenRouterPanelProps {
  * Cloud OpenRouter panel — API key, free-form chat model id, and an optional
  * monthly USD budget cap. No embedding model field: OpenRouter is chat-only,
  * embeddings always run locally via the configured embedded backend.
+ *
+ * Requests always forbid providers that train on or store prompts (fixed in
+ * the backend, see `ai/openrouter.rs`); zero data retention is the user's call
+ * because it rules out many models.
  */
 export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
@@ -57,6 +61,30 @@ export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRo
       {/* Directly under the cap it reports against, so hitting the budget and
           finding out what you spent are the same screen. */}
       <UsageSummary />
+      <p className="text-xs text-gray-500">{t('settings:openRouter.noTrainingNotice')}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="block text-sm font-medium text-gray-300">
+            {t('settings:openRouter.zeroDataRetention')}
+          </label>
+          <p className="text-xs text-gray-500 mt-0.5">{t('settings:openRouter.zeroDataRetentionHelp')}</p>
+        </div>
+        <button
+          type="button"
+          aria-label={t('settings:openRouter.zeroDataRetention')}
+          aria-pressed={config.zeroDataRetention}
+          onClick={() => setConfig({ ...config, zeroDataRetention: !config.zeroDataRetention })}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+            config.zeroDataRetention ? 'bg-primary-600' : 'bg-gray-600'
+          }`}
+        >
+          <span
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+              config.zeroDataRetention ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
       <ThinkingToggle
         enabled={config.thinkingEnabled}
         onToggle={() => setConfig({ ...config, thinkingEnabled: !config.thinkingEnabled })}

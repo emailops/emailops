@@ -38,6 +38,7 @@ fn ensure_embedded_runtime_supported() -> Result<()> {
 const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
 const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
+const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
 
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
@@ -319,11 +320,11 @@ impl AiService {
             )),
             "openrouter" => {
                 let key = Self::load_openrouter_api_key(db)?;
-                Ok(Arc::new(OpenRouterClient::new(
-                    key,
-                    model.to_string(),
-                    "nomic-embed-text".to_string(),
-                )))
+                let zdr = Self::get_config(db)?.zero_data_retention;
+                Ok(Arc::new(
+                    OpenRouterClient::new(key, model.to_string(), "nomic-embed-text".to_string())
+                        .with_zero_data_retention(zdr),
+                ))
             }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
@@ -401,11 +402,10 @@ impl AiService {
             )),
             "openrouter" => {
                 let key = Self::load_openrouter_api_key(db)?;
-                Ok(Arc::new(OpenRouterClient::new(
-                    key,
-                    config.model,
-                    config.embedding_model,
-                )))
+                Ok(Arc::new(
+                    OpenRouterClient::new(key, config.model, config.embedding_model)
+                        .with_zero_data_retention(config.zero_data_retention),
+                ))
             }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
@@ -523,6 +523,10 @@ impl AiService {
             .get_preference("ai_thinking_enabled")?
             .map(|v| v == "true")
             .unwrap_or(false);
+        let zero_data_retention = db
+            .get_preference(OPENROUTER_ZDR_PREF)?
+            .map(|v| v == "true")
+            .unwrap_or(false);
 
         Ok(AiConfig {
             provider,
@@ -532,6 +536,7 @@ impl AiService {
             monthly_budget_usd: budget,
             period_start,
             thinking_enabled,
+            zero_data_retention,
         })
     }
 
@@ -543,6 +548,7 @@ impl AiService {
         api_key: Option<&str>,
         monthly_budget_usd: f64,
         thinking_enabled: Option<bool>,
+        zero_data_retention: Option<bool>,
     ) -> Result<()> {
         db.set_preference("ai_provider", provider)?;
         db.set_preference("ai_model", model)?;
@@ -552,6 +558,9 @@ impl AiService {
         db.set_preference("ai_monthly_budget", &monthly_budget_usd.to_string())?;
         if let Some(thinking) = thinking_enabled {
             db.set_preference("ai_thinking_enabled", if thinking { "true" } else { "false" })?;
+        }
+        if let Some(zdr) = zero_data_retention {
+            db.set_preference(OPENROUTER_ZDR_PREF, if zdr { "true" } else { "false" })?;
         }
 
         let now = chrono::Utc::now().timestamp();
@@ -859,6 +868,23 @@ mod provider_tests {
                 None => std::env::remove_var("OPENROUTER_API_KEY"),
             }
         }
+    }
+
+    /// Zero data retention is opt-in: off until the user saves it on, and a
+    /// save that doesn't mention it leaves the stored choice alone.
+    #[test]
+    fn zero_data_retention_defaults_off_and_round_trips() {
+        let db = Database::new_for_testing().expect("test db");
+        assert!(!AiService::get_config(&db).unwrap().zero_data_retention);
+
+        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, Some(true)).unwrap();
+        assert!(AiService::get_config(&db).unwrap().zero_data_retention);
+
+        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, None).unwrap();
+        assert!(AiService::get_config(&db).unwrap().zero_data_retention);
+
+        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, Some(false)).unwrap();
+        assert!(!AiService::get_config(&db).unwrap().zero_data_retention);
     }
 
     /// When the user has configured OpenRouter as the AI provider but not yet

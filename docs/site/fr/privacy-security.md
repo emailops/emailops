@@ -61,6 +61,13 @@ La dernière ligne est le seul chemin par lequel votre courrier peut atteindre u
 désactivé par défaut et exige une modification délibérée dans
 **Paramètres → IA : backend et modèles** ainsi que votre propre clé d'API.
 
+<!-- claim:priv-there-no-3 -->
+Si vous l'activez, chaque requête demande à OpenRouter de n'utiliser que des fournisseurs qui ne
+conservent pas ce qu'ils reçoivent et ne s'en servent pas pour l'entraînement ; un modèle
+qu'aucun fournisseur de ce type ne sert est refusé avec une erreur, jamais envoyé malgré tout.
+**Rétention zéro uniquement**, dans le même panneau, restreint cela aux fournisseurs qui ne
+conservent rien après la réponse.
+
 ## Ce qu'EmailOps modifie dans votre boîte
 
 <!-- claim:priv-what-emailops-1 -->

@@ -163,6 +163,9 @@
   },
   "openRouter": {
     "apiKeyPlaceholder": "sk-or-...",
+    "noTrainingNotice": "Les fournisseurs qui conservent vos e-mails ou s'en servent pour l'entraînement ne sont jamais utilisés.",
+    "zeroDataRetention": "Rétention zéro uniquement",
+    "zeroDataRetentionHelp": "N'envoie qu'aux fournisseurs qui ne conservent rien après la réponse. Moins de modèles sont disponibles.",
     "chatModelPlaceholder": "ex. google/gemma-3-27b-it"
   },
   "promptEditor": {
