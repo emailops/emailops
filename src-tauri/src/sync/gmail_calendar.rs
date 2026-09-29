@@ -10,7 +10,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
-use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision};
+use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision, RetryPolicy};
 
 const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const MAX_RETRIES: u32 = 3;
@@ -69,13 +69,10 @@ impl GoogleCalendarClient {
             .await
     }
 
-    async fn send_post_json_with_retry(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-        operation: &str,
-    ) -> Result<Response> {
-        self.send_request_with_retry(operation, |client, token| {
+    /// POST for creates and actions that email attendees (create, cancel,
+    /// RSVP): never re-sent after the server may have acted on it.
+    async fn send_post_json_no_resend(&self, url: &str, body: &serde_json::Value, operation: &str) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
             client.post(url).bearer_auth(token).json(body)
         })
         .await
@@ -85,6 +82,16 @@ impl GoogleCalendarClient {
     /// on 429/5xx and transport errors. The builder closure re-creates the
     /// request each attempt so retried requests carry the refreshed token.
     async fn send_request_with_retry<F>(&self, operation: &str, build: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, build)
+            .await
+    }
+
+    /// The retry loop, under an explicit [`RetryPolicy`]: creates and sends go
+    /// through [`RetryPolicy::NoRetryAfterSend`] so a 5xx never duplicates them.
+    async fn send_request_with_policy<F>(&self, operation: &str, policy: RetryPolicy, build: F) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -104,6 +111,7 @@ impl GoogleCalendarClient {
 
             let outcome = match &response {
                 Ok(resp) => Attempt::Status(resp.status().as_u16()),
+                Err(e) if e.is_connect() => Attempt::ConnectError,
                 Err(_) => Attempt::TransportError,
             };
             match &response {
@@ -111,7 +119,7 @@ impl GoogleCalendarClient {
                 Err(e) => last_cause = e.to_string(),
             }
 
-            match classify_attempt(outcome, attempt, MAX_RETRIES, refreshed) {
+            match classify_attempt(outcome, attempt, MAX_RETRIES, refreshed, policy) {
                 // Only a genuine success reaches the caller. A throttled or 5xx
                 // response must never be handed back as a valid payload.
                 RetryDecision::Return => {
@@ -226,7 +234,7 @@ impl CalendarProvider for GoogleCalendarClient {
     ) -> Result<ProviderCalendarEvent> {
         let (query, body) = build_google_create_request(event)?;
         let url = format!("{}/calendars/primary/events{}", self.base_url, query);
-        let response = self.send_post_json_with_retry(&url, &body, "create event").await?;
+        let response = self.send_post_json_no_resend(&url, &body, "create event").await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
@@ -887,6 +895,31 @@ mod tests {
             recurrence: crate::sync::calendar_provider::EventRecurrence::None,
             request_meet_link: false,
         }
+    }
+
+    /// Creating an event with attendees emails them the invite; a 5xx
+    /// retry could create (and send) it twice.
+    #[tokio::test]
+    async fn a_create_that_fails_with_a_server_error_is_not_resent() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let result = client.create_event(&new_event()).await;
+
+        assert!(result.is_err(), "a failed create must surface");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[test]

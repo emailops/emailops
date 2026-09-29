@@ -9,6 +9,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::models::{AppLogEvent, Email};
+use crate::sync::http_retry::RetryPolicy;
 use crate::sync::provider::{self, EmailBody, EmailProvider, MessageRef};
 
 pub use crate::sync::provider::EmailAttachment;
@@ -493,7 +494,7 @@ impl GmailClient {
         });
         let url = format!("{}/users/me/messages/send", self.base_url);
 
-        let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send reply").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send reply: {}", error_text)));
@@ -528,7 +529,7 @@ impl GmailClient {
         let payload = serde_json::json!({ "raw": raw });
         let url = format!("{}/users/me/messages/send", self.base_url);
 
-        let response = self.send_post_json_with_retry(&url, &payload, "send new email").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send new email").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
@@ -574,7 +575,7 @@ impl GmailClient {
     ) -> Result<String> {
         let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
         let url = format!("{}/users/me/drafts", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let draft: GmailDraftId = response.json().await?;
         Ok(draft.id)
     }
@@ -1208,7 +1209,34 @@ impl GmailClient {
         .await
     }
 
+    /// POST for sends and creates: a 5xx or a dropped connection may have
+    /// been carried out, so it is not re-sent (see [`RetryPolicy`]).
+    async fn send_post_json_no_resend(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        operation: &str,
+    ) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
+            client.post(url).bearer_auth(token).json(payload)
+        })
+        .await
+    }
+
     async fn send_request_with_retry<F>(&self, operation: &str, request_builder: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, request_builder)
+            .await
+    }
+
+    async fn send_request_with_policy<F>(
+        &self,
+        operation: &str,
+        policy: RetryPolicy,
+        request_builder: F,
+    ) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -1262,7 +1290,8 @@ impl GmailClient {
                             format_gmail_error(status, &body)
                         )));
                     }
-                    let should_retry = is_retryable_gmail_error(status, &body);
+                    let should_retry =
+                        is_retryable_gmail_error(status, &body) && policy.may_retry_status(status.as_u16());
 
                     if should_retry && attempt < GMAIL_MAX_RETRIES {
                         match plan_rate_limit_wait(&headers, &body, delay_ms, crate::services::clock::now_secs()) {
@@ -1288,7 +1317,10 @@ impl GmailClient {
                     )));
                 }
                 Err(error) => {
-                    if is_retryable_transport_error(&error) && attempt < GMAIL_MAX_RETRIES {
+                    if is_retryable_transport_error(&error)
+                        && policy.may_retry_transport(error.is_connect())
+                        && attempt < GMAIL_MAX_RETRIES
+                    {
                         self.emit_transport_retry_log(operation, attempt + 1, delay_ms, &error);
                         sleep(Duration::from_millis(delay_ms.min(GMAIL_MAX_BACKOFF_MS))).await;
                         delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
@@ -2734,6 +2766,46 @@ mod tests {
         assert!(
             err.to_string().to_lowercase().contains("rate limit"),
             "unexpected error: {err}"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// A 5xx on `messages.send` does not mean the mail was not sent; the
+    /// retry loop used to send it again.
+    #[tokio::test]
+    async fn a_send_that_fails_with_a_server_error_is_not_resent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m","threadId":"t"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .send_new_email(
+                "me@example.com",
+                None,
+                &["them@example.com".to_string()],
+                &[],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a failed send must surface, not be retried into success"
         );
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }

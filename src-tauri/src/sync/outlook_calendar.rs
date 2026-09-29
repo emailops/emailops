@@ -10,7 +10,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
-use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision};
+use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision, RetryPolicy};
 
 const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
 const MAX_RETRIES: u32 = 3;
@@ -81,13 +81,10 @@ impl OutlookCalendarClient {
         .await
     }
 
-    async fn send_post_json_with_retry(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-        operation: &str,
-    ) -> Result<Response> {
-        self.send_request_with_retry(operation, |client, token| {
+    /// POST for creates and actions that email attendees (create, cancel,
+    /// RSVP): never re-sent after the server may have acted on it.
+    async fn send_post_json_no_resend(&self, url: &str, body: &serde_json::Value, operation: &str) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
             client
                 .post(url)
                 .bearer_auth(token)
@@ -101,6 +98,16 @@ impl OutlookCalendarClient {
     /// on 429/5xx and transport errors. The builder closure re-creates the
     /// request each attempt so retried requests carry the refreshed token.
     async fn send_request_with_retry<F>(&self, operation: &str, build: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, build)
+            .await
+    }
+
+    /// The retry loop, under an explicit [`RetryPolicy`]: creates and sends go
+    /// through [`RetryPolicy::NoRetryAfterSend`] so a 5xx never duplicates them.
+    async fn send_request_with_policy<F>(&self, operation: &str, policy: RetryPolicy, build: F) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -120,6 +127,7 @@ impl OutlookCalendarClient {
 
             let outcome = match &response {
                 Ok(resp) => Attempt::Status(resp.status().as_u16()),
+                Err(e) if e.is_connect() => Attempt::ConnectError,
                 Err(_) => Attempt::TransportError,
             };
             match &response {
@@ -127,7 +135,7 @@ impl OutlookCalendarClient {
                 Err(e) => last_cause = e.to_string(),
             }
 
-            match classify_attempt(outcome, attempt, MAX_RETRIES, refreshed) {
+            match classify_attempt(outcome, attempt, MAX_RETRIES, refreshed, policy) {
                 // Only a genuine success reaches the caller. A throttled or 5xx
                 // response must never be handed back as a valid payload.
                 RetryDecision::Return => {
@@ -232,7 +240,7 @@ impl CalendarProvider for OutlookCalendarClient {
     ) -> Result<ProviderCalendarEvent> {
         let url = format!("{}/me/events", self.base_url);
         let body = build_graph_create_request(event)?;
-        let response = self.send_post_json_with_retry(&url, &body, "create event").await?;
+        let response = self.send_post_json_no_resend(&url, &body, "create event").await?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
@@ -267,7 +275,7 @@ impl CalendarProvider for OutlookCalendarClient {
                 urlencoding::encode(provider_event_id)
             );
             let body = serde_json::json!({ "comment": message });
-            self.send_post_json_with_retry(&url, &body, "cancel event").await?
+            self.send_post_json_no_resend(&url, &body, "cancel event").await?
         } else {
             let url = format!("{}/me/events/{}", self.base_url, urlencoding::encode(provider_event_id));
             self.send_request_with_retry("delete event", |client, token| client.delete(&url).bearer_auth(token))
@@ -386,7 +394,7 @@ impl CalendarProvider for OutlookCalendarClient {
             response.as_graph_action()
         );
         let body = serde_json::json!({ "sendResponse": true });
-        let acted = self.send_post_json_with_retry(&action_url, &body, "rsvp").await?;
+        let acted = self.send_post_json_no_resend(&action_url, &body, "rsvp").await?;
         if !acted.status().is_success() {
             let status = acted.status().as_u16();
             let error_text = acted.text().await.unwrap_or_default();

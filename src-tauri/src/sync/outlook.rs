@@ -33,6 +33,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::models::{AppLogEvent, Email};
+use crate::sync::http_retry::RetryPolicy;
 use crate::sync::provider::{self, AttachmentInfo, EmailBody, EmailCategory, EmailProvider, MessageRef};
 
 pub use crate::sync::provider::EmailAttachment;
@@ -470,7 +471,7 @@ impl OutlookClient {
                 attachments,
             });
         let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(item_id),);
-        let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send reply").await?;
         // /reply returns 202 Accepted with no body on success — Graph reports
         // nothing about the created Sent message, so the meta stays empty and
         // the optimistic local row is reconciled heuristically at sync time.
@@ -500,7 +501,7 @@ impl OutlookClient {
             });
 
         let url = format!("{}/me/sendMail", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "send new email").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send new email").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
@@ -529,7 +530,7 @@ impl OutlookClient {
             });
         // POST to /me/messages creates the message as a draft.
         let url = format!("{}/me/messages", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let msg: GraphMessage = response.json().await?;
         Ok(msg.id)
     }
@@ -665,7 +666,34 @@ impl OutlookClient {
         .await
     }
 
+    /// POST for sends and creates: a 5xx or a dropped connection may have
+    /// been carried out, so it is not re-sent (see [`RetryPolicy`]).
+    async fn send_post_json_no_resend(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        operation: &str,
+    ) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
+            client.post(url).bearer_auth(token).json(payload)
+        })
+        .await
+    }
+
     async fn send_request_with_retry<F>(&self, operation: &str, request_builder: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, request_builder)
+            .await
+    }
+
+    async fn send_request_with_policy<F>(
+        &self,
+        operation: &str,
+        policy: RetryPolicy,
+        request_builder: F,
+    ) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -695,7 +723,7 @@ impl OutlookClient {
 
                     let retry_after = retry_after_ms(response.headers());
                     let body = response.text().await.unwrap_or_default();
-                    let should_retry = is_retryable_graph_status(status);
+                    let should_retry = is_retryable_graph_status(status) && policy.may_retry_status(status.as_u16());
 
                     if should_retry && attempt < MAX_RETRIES {
                         let wait_ms = retry_after.unwrap_or(delay_ms).min(MAX_BACKOFF_MS);
@@ -712,7 +740,10 @@ impl OutlookClient {
                     )));
                 }
                 Err(error) => {
-                    if is_retryable_transport_error(&error) && attempt < MAX_RETRIES {
+                    if is_retryable_transport_error(&error)
+                        && policy.may_retry_transport(error.is_connect())
+                        && attempt < MAX_RETRIES
+                    {
                         self.emit_transport_retry_log(operation, attempt + 1, delay_ms, &error);
                         sleep(Duration::from_millis(delay_ms.min(MAX_BACKOFF_MS))).await;
                         delay_ms = (delay_ms * 2).min(MAX_BACKOFF_MS);
@@ -1611,6 +1642,43 @@ mod tests {
             .expect("listing");
 
         assert_eq!(ids, Some(vec!["m1".to_string(), "m2".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn a_send_mail_that_fails_with_a_server_error_is_not_resent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .send_new_email(
+                "me@example.com",
+                &["them@example.com".to_string()],
+                &[],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a failed send must surface, not be retried into success"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
