@@ -163,6 +163,23 @@ impl OllamaSamplingOptions {
     }
 }
 
+/// `sampling` with the context window [`AIProvider::context_window`] reports,
+/// so Ollama never runs a prompt at its own (smaller) default window. Nothing
+/// else is filled in: a request without options keeps the model's defaults.
+fn with_context_window(sampling: Option<OllamaSamplingOptions>) -> OllamaSamplingOptions {
+    let mut sampling = sampling.unwrap_or(OllamaSamplingOptions {
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        num_ctx: None,
+        num_predict: None,
+    });
+    if sampling.num_ctx.is_none() {
+        sampling.num_ctx = OllamaSamplingOptions::grounded().num_ctx;
+    }
+    sampling
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaChatMessage {
     pub role: String,
@@ -529,7 +546,7 @@ impl OllamaClient {
             model: self.model.clone(),
             prompt: prompt.to_string(),
             stream: false,
-            options: sampling,
+            options: Some(with_context_window(sampling)),
             keep_alive: Some(self.keep_alive.clone()),
             format,
         };
@@ -1835,6 +1852,31 @@ mod stop_reason_tests {
         )
         .unwrap();
         assert!(stopped_at_limit(r.done_reason.as_deref()));
+    }
+}
+
+#[cfg(test)]
+mod context_window_tests {
+    use super::*;
+
+    /// `context_window()` tells the prompt builders they have 8192 tokens.
+    /// A plain `/api/generate` call sent no options, so Ollama ran it at its
+    /// own default window and silently cut the front of longer prompts.
+    #[test]
+    fn a_generate_request_without_options_still_carries_the_window() {
+        let sampling = with_context_window(None);
+        assert_eq!(sampling.num_ctx, OllamaSamplingOptions::grounded().num_ctx);
+        assert_eq!(sampling.temperature, None, "the model's own sampling defaults stay");
+    }
+
+    #[test]
+    fn caller_options_keep_their_values_and_gain_the_window() {
+        let mut given = OllamaSamplingOptions::grounded();
+        given.num_ctx = None;
+        given.temperature = Some(0.0);
+        let sampling = with_context_window(Some(given));
+        assert_eq!(sampling.num_ctx, OllamaSamplingOptions::grounded().num_ctx);
+        assert_eq!(sampling.temperature, Some(0.0));
     }
 }
 
