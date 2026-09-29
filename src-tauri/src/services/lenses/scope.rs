@@ -24,12 +24,28 @@ pub fn evaluate(db: &Database, scope: &LensScope) -> Result<Vec<String>> {
 
 /// Same as [`evaluate`] but with an explicit cap (useful for previews).
 pub fn evaluate_with_limit(db: &Database, scope: &LensScope, limit: i64) -> Result<Vec<String>> {
+    run_scope_query(db, scope, None, limit)
+}
+
+/// Whether one email falls inside the scope. Shares the SQL definition with
+/// [`evaluate`] (plus an `e.id = ?` predicate), so the sync hook and the
+/// backfill can never disagree about which emails a Lens covers.
+pub fn email_matches(db: &Database, scope: &LensScope, email_id: &str) -> Result<bool> {
+    Ok(!run_scope_query(db, scope, Some(email_id), 1)?.is_empty())
+}
+
+fn run_scope_query(db: &Database, scope: &LensScope, email_id: Option<&str>, limit: i64) -> Result<Vec<String>> {
     let conn = db.reader();
 
     // SAFETY: every fragment below either uses a literal SQL constant or a
     // parameter binding. We never interpolate user-supplied strings into SQL.
     let mut where_parts: Vec<String> = vec!["e.is_deleted = 0".to_string()];
     let mut binds: Vec<rusqlite::types::Value> = Vec::new();
+
+    if let Some(id) = email_id {
+        where_parts.push("e.id = ?1".to_string());
+        binds.push(id.to_string().into());
+    }
 
     // Accounts.
     if let Some(account_ids) = scope.account_ids.as_ref() {

@@ -21,6 +21,7 @@ AI-extracted, schema-typed tabular views over a user's mailbox — "Lenses".
 
 - `scope::evaluate(db, scope) -> Result<Vec<String>>`
 - `scope::evaluate_with_limit(db, scope, limit) -> Result<Vec<String>>`
+- `scope::email_matches(db, scope, email_id) -> Result<bool>` — same SQL as `evaluate`, restricted to one id (used by the sync hook)
 - `runner::run(db, lens_id, run_id, ai, abort) -> Result<()>`
 - `templates::list_templates() -> Vec<LensTemplate>`
 
