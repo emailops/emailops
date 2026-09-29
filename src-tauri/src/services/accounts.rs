@@ -162,6 +162,28 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
         );
     }
 
+    // Per-account preferences have no FK to `accounts`, so the cascade above
+    // leaves them behind.
+    let (exact_keys, prefixes) = account_pref_keys(account_id);
+    for key in &exact_keys {
+        if let Err(e) = db.delete_preference(key) {
+            logger::log(
+                "error",
+                "account",
+                format!("Account removed, but deleting its preference {key} failed: {e}"),
+            );
+        }
+    }
+    for prefix in &prefixes {
+        if let Err(e) = db.delete_preferences_with_prefix(prefix) {
+            logger::log(
+                "error",
+                "account",
+                format!("Account removed, but deleting its preferences {prefix}* failed: {e}"),
+            );
+        }
+    }
+
     // Delete attachment files from disk
     let att_dir = app_data_dir.join("attachments").join(account_id);
     if att_dir.exists() {
@@ -178,6 +200,31 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
     }
 
     Ok(())
+}
+
+/// Every `user_preferences` key the app scopes to one account, as
+/// `(exact keys, key prefixes)`. Exact keys are deleted one by one rather than
+/// by prefix so `acc-1` never takes `acc-10`'s settings with it; the prefixes
+/// end in `:` for the same reason. Keep in sync with the key builders that
+/// embed an account id (`grep 'format!("...:{account_id}'`).
+fn account_pref_keys(account_id: &str) -> (Vec<String>, Vec<String>) {
+    let exact = vec![
+        format!("account_settings:{account_id}"),
+        crate::db::calendar::calendar_enabled_pref_key(account_id),
+        format!("send_as_name_checked:{account_id}"),
+        format!("embeddings_categories:{account_id}"),
+        format!("extra_mailbox_backfill_reset_pending:{account_id}"),
+        format!("spam_reconcile_last:{account_id}"),
+        format!("spam_reconcile_gone:{account_id}"),
+        crate::services::emails::backfill_done_key(account_id),
+        crate::services::dashboard::server_total_pref_key(account_id),
+    ];
+    let prefixes = vec![
+        format!("extra_mailbox_sync:{account_id}:"),
+        format!("extra_mailbox_backfill:{account_id}:"),
+        format!("extra_mailbox_backfill_cursor:{account_id}:"),
+    ];
+    (exact, prefixes)
 }
 
 /// The token to revoke at the provider when an account is removed. Only
@@ -492,6 +539,20 @@ pub fn get_tokens(account_id: &str) -> Result<OAuthTokens> {
 }
 
 pub fn store_tokens(account_id: &str, tokens: &OAuthTokens) -> Result<()> {
+    // A token refresh still in flight when its account is removed would
+    // otherwise re-create the credential right after `remove_account` cleared
+    // it, leaving a live secret for an account that no longer exists.
+    {
+        let db_ref = TOKEN_DB.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(db) = db_ref.as_ref() {
+            if db.get_account(account_id)?.is_none() {
+                return Err(AppError::NotFound(format!(
+                    "Account {account_id} no longer exists; not storing its tokens"
+                )));
+            }
+        }
+    }
+
     let json = serde_json::to_string(tokens)?;
 
     if use_dev_tokens() {
@@ -1662,6 +1723,97 @@ mod tests {
         assert!(
             logs.iter().any(|e| e.level == "error" && e.source == "account"),
             "IMAP credential teardown failure must be logged, got: {logs:?}"
+        );
+    }
+
+    /// Every per-account preference family the app writes, keyed for `id`.
+    fn per_account_pref_keys(id: &str) -> Vec<String> {
+        vec![
+            format!("account_settings:{id}"),
+            format!("calendar.enabled:{id}"),
+            format!("send_as_name_checked:{id}"),
+            format!("embeddings_categories:{id}"),
+            format!("extra_mailbox_sync:{id}:sent"),
+            format!("extra_mailbox_backfill:{id}:folder:Team"),
+            format!("extra_mailbox_backfill_cursor:{id}:spam"),
+            format!("extra_mailbox_backfill_reset_pending:{id}"),
+            format!("spam_reconcile_last:{id}"),
+            format!("spam_reconcile_gone:{id}"),
+            format!("attachment_meta_backfill_done:{id}"),
+            format!("dashboard.server_total.{id}"),
+        ]
+    }
+
+    // Removing an account left every per-account preference behind, so a
+    // re-added account with a recycled id (or any code listing prefs) saw stale
+    // settings, sync watermarks and calendar opt-ins of the deleted one.
+    #[test]
+    fn remove_account_deletes_its_per_account_preferences() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+        db.insert_account(&imap_account("acc-1", "one@example.com"))
+            .expect("insert account");
+        // `acc-10` shares `acc-1` as a string prefix: exact keys must not be
+        // prefix-deleted into a neighbour's settings.
+        for id in ["acc-1", "acc-10"] {
+            for key in per_account_pref_keys(id) {
+                db.set_preference(&key, "1").expect("seed pref");
+            }
+        }
+
+        remove_account(&db, "acc-1", std::path::Path::new("/nonexistent")).expect("remove");
+
+        for key in per_account_pref_keys("acc-1") {
+            assert_eq!(db.get_preference(&key).expect("read"), None, "{key} must be deleted");
+        }
+        for key in per_account_pref_keys("acc-10") {
+            assert_eq!(
+                db.get_preference(&key).expect("read"),
+                Some("1".to_string()),
+                "{key} belongs to another account and must survive"
+            );
+        }
+    }
+
+    // An in-flight token refresh that finishes after the account was removed
+    // re-created its vault entry, leaking a live credential for an account that
+    // no longer exists.
+    #[test]
+    fn store_tokens_refuses_an_account_that_no_longer_exists() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let result = store_tokens("removed-acct", &tokens(Some("refresh-1")));
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
+        assert!(
+            db.get_dev_tokens("removed-acct").expect("get_dev_tokens").is_none(),
+            "no credential row may be created for a removed account"
+        );
+    }
+
+    #[test]
+    fn store_tokens_refuses_to_recreate_a_vault_entry_for_a_removed_account() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+        keychain::install(Arc::new(keychain::InMemoryKeychain::new()));
+        secrets_vault::reset_for_testing();
+        force_keychain_creds_for_testing(true);
+
+        let result = store_tokens("removed-acct", &tokens(Some("refresh-1")));
+        let stored = secrets_vault::get(KEYRING_SERVICE, "removed-acct");
+
+        force_keychain_creds_for_testing(false);
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
+        assert!(
+            matches!(stored, Ok(None)),
+            "no vault entry may be created for a removed account, got {stored:?}"
         );
     }
 
