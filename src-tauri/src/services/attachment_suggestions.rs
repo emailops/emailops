@@ -638,6 +638,37 @@ pub fn list_suggestions(db: &crate::db::Database, account_id: &str) -> Result<Ve
     db.get_pending_attachment_rule_suggestions(account_id)
 }
 
+/// Suggestions the user dismissed, most recent first — so a misclick can be
+/// undone.
+pub fn list_dismissed_suggestions(db: &crate::db::Database, account_id: &str) -> Result<Vec<AttachmentRuleSuggestion>> {
+    db.get_dismissed_attachment_rule_suggestions(account_id)
+}
+
+/// Undo a dismissal: the suggestion goes back to pending and the account is
+/// re-mined, so it stays only while the documents still recur. Returns the
+/// pending list.
+pub fn restore_suggestion(
+    db: &crate::db::Database,
+    account_id: &str,
+    suggestion_id: &str,
+) -> Result<Vec<AttachmentRuleSuggestion>> {
+    restore_suggestion_at(db, account_id, suggestion_id, super::clock::now_secs())
+}
+
+pub fn restore_suggestion_at(
+    db: &crate::db::Database,
+    account_id: &str,
+    suggestion_id: &str,
+    now: i64,
+) -> Result<Vec<AttachmentRuleSuggestion>> {
+    if !db.restore_dismissed_attachment_rule_suggestion(account_id, suggestion_id, now)? {
+        return Err(AppError::NotFound(format!(
+            "Dismissed attachment rule suggestion {suggestion_id} not found"
+        )));
+    }
+    refresh_suggestions_at(db, account_id, now)
+}
+
 pub fn set_suggestion_status(
     db: &crate::db::Database,
     account_id: &str,
@@ -892,6 +923,48 @@ mod executor_tests {
             .expect("corrupt");
 
         assert!(list_suggestions(&db, "acc1").is_err());
+    }
+
+    #[test]
+    fn dismissed_suggestions_are_listed_for_restoring() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+        let id = refresh_suggestions_at(&db, "acc1", NOW).expect("refresh")[0].id.clone();
+        set_suggestion_status(&db, "acc1", &id, AttachmentRuleSuggestionStatus::Dismissed).expect("dismiss");
+
+        let dismissed = list_dismissed_suggestions(&db, "acc1").expect("dismissed");
+
+        assert_eq!(dismissed.len(), 1);
+        assert_eq!(dismissed[0].id, id);
+    }
+
+    #[test]
+    fn a_restored_suggestion_is_proposed_again_under_the_same_id() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+        let id = refresh_suggestions_at(&db, "acc1", NOW).expect("refresh")[0].id.clone();
+        set_suggestion_status(&db, "acc1", &id, AttachmentRuleSuggestionStatus::Dismissed).expect("dismiss");
+
+        let pending = restore_suggestion_at(&db, "acc1", &id, NOW).expect("restore");
+
+        assert_eq!(
+            pending.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec![id.as_str()]
+        );
+        assert!(list_dismissed_suggestions(&db, "acc1").expect("dismissed").is_empty());
+    }
+
+    #[test]
+    fn only_a_dismissed_suggestion_can_be_restored() {
+        let db = setup();
+        add_monthly_invoices(&db, "inbox");
+        let id = refresh_suggestions_at(&db, "acc1", NOW).expect("refresh")[0].id.clone();
+        set_suggestion_status(&db, "acc1", &id, AttachmentRuleSuggestionStatus::Accepted).expect("accept");
+
+        for target in [id.as_str(), "ghost"] {
+            let err = restore_suggestion_at(&db, "acc1", target, NOW).expect_err("not dismissed");
+            assert!(matches!(err, AppError::NotFound(_)), "{target}: {err:?}");
+        }
     }
 
     #[test]

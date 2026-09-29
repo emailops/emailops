@@ -502,6 +502,39 @@ impl Database {
         Ok(rows)
     }
 
+    /// Dismissed suggestions, most recently dismissed first.
+    pub fn get_dismissed_attachment_rule_suggestions(&self, account_id: &str) -> Result<Vec<AttachmentRuleSuggestion>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, account_id, name, sender_email_pattern, filename_pattern, tags_json, email_count,
+                    first_seen, last_seen, sample_filenames_json, status, created_at, updated_at
+             FROM attachment_rule_suggestions
+             WHERE account_id = ?1 AND status = 'dismissed'
+             ORDER BY updated_at DESC, id",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id], row_to_attachment_rule_suggestion)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Put a dismissed suggestion back to pending. Returns `false` when the
+    /// account has no dismissed suggestion with that id.
+    pub fn restore_dismissed_attachment_rule_suggestion(
+        &self,
+        account_id: &str,
+        suggestion_id: &str,
+        now: i64,
+    ) -> Result<bool> {
+        let conn = self.connection();
+        let changed = conn.execute(
+            "UPDATE attachment_rule_suggestions SET status = 'pending', updated_at = ?1
+             WHERE id = ?2 AND account_id = ?3 AND status = 'dismissed'",
+            params![now, suggestion_id, account_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Returns `false` when no suggestion with that id belongs to the account.
     pub fn set_attachment_rule_suggestion_status(
         &self,

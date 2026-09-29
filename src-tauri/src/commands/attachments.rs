@@ -157,6 +157,24 @@ pub async fn dismiss_attachment_rule_suggestion(
 }
 
 #[tauri::command]
+pub async fn list_dismissed_attachment_rule_suggestions(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::list_dismissed_suggestions(&state.db, &account_id)
+}
+
+/// Undo a dismissal; returns the pending suggestions after re-mining.
+#[tauri::command]
+pub async fn restore_attachment_rule_suggestion(
+    state: State<'_, AppState>,
+    account_id: String,
+    suggestion_id: String,
+) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
+    services::attachment_suggestions::restore_suggestion(&state.db, &account_id, &suggestion_id)
+}
+
+#[tauri::command]
 pub async fn accept_attachment_rule_suggestion(
     state: State<'_, AppState>,
     account_id: String,

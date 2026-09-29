@@ -584,6 +584,8 @@ pub fn run() {
             commands::attachments::refresh_attachment_rule_suggestions,
             commands::attachments::dismiss_attachment_rule_suggestion,
             commands::attachments::accept_attachment_rule_suggestion,
+            commands::attachments::list_dismissed_attachment_rule_suggestions,
+            commands::attachments::restore_attachment_rule_suggestion,
             commands::attachments::get_attachments,
             commands::attachments::get_attachments_for_email,
             commands::attachments::count_attachments,

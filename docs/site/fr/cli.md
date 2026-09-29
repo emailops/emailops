@@ -62,7 +62,7 @@ de chat (les jetons arrivent en direct) et les autres correspondent aux sous-com
 | `classify [--all]` | Classe les e-mails nouveaux — ou tous |
 | `embed [--batch N]` | Génère les embeddings de recherche |
 | `doctor` | Rapport d'état en lecture seule (base, comptes, configuration IA) |
-| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>]` | Règles de pièces jointes suggérées : aperçu de ce qui serait suggéré (lecture seule, par défaut), liste ou recalcul des suggestions enregistrées, en ignorer ou en accepter une |
+| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>\|dismissed\|restore <id>]` | Règles de pièces jointes suggérées : aperçu de ce qui serait suggéré (lecture seule, par défaut), liste ou recalcul des suggestions enregistrées, en ignorer ou en accepter une, lister les suggestions ignorées ou en restaurer une |
 
 <!-- claim:cli-commands-2 -->
 Les options globales fonctionnent avant ou après la sous-commande : `--json`, `--quiet`,

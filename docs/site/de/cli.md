@@ -61,7 +61,7 @@ In der REPL ist jede Aktion ein Befehl mit `/` am Anfang: `/chat <Frage>` ist ei
 | `classify [--all]` | Neue — oder alle — E-Mails klassifizieren |
 | `embed [--batch N]` | Such-Embeddings erzeugen |
 | `doctor` | Schreibgeschützter Statusbericht (Datenbank, Konten, KI-Konfiguration) |
-| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>]` | Vorgeschlagene Anhangsregeln: Vorschau des Vorschlags (nur Lesen, Standard), gespeicherte auflisten oder neu berechnen, einen verwerfen oder annehmen |
+| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>\|dismissed\|restore <id>]` | Vorgeschlagene Anhangsregeln: Vorschau des Vorschlags (nur Lesen, Standard), gespeicherte auflisten oder neu berechnen, einen verwerfen oder annehmen, verworfene auflisten oder einen wiederherstellen |
 
 <!-- claim:cli-commands-2 -->
 Globale Optionen funktionieren vor oder nach dem Unterbefehl: `--json`, `--quiet`,

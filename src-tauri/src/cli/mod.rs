@@ -161,6 +161,13 @@ pub enum SuggestionAction {
         /// Suggestion id (from `list`).
         id: String,
     },
+    /// The suggestions dismissed so far, most recent first.
+    Dismissed,
+    /// Undo a dismissal (the suggestion is re-mined).
+    Restore {
+        /// Suggestion id (from `dismissed`).
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -967,6 +974,8 @@ mod tests {
             (vec!["preview"], SuggestionAction::Preview),
             (vec!["dismiss", "s1"], SuggestionAction::Dismiss { id: "s1".into() }),
             (vec!["accept", "s1"], SuggestionAction::Accept { id: "s1".into() }),
+            (vec!["dismissed"], SuggestionAction::Dismissed),
+            (vec!["restore", "s1"], SuggestionAction::Restore { id: "s1".into() }),
         ] {
             let cli = Cli::parse_from(["emailops-cli", "attachment-suggestions"].into_iter().chain(args));
             match cli.command {

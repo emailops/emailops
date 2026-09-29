@@ -411,6 +411,14 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                     )?;
                     output::render_suggestion_status(&id, AttachmentRuleSuggestionStatus::Dismissed, session.style)
                 }
+                SuggestionAction::Dismissed => output::render_attachment_rule_suggestions(
+                    &suggestions::list_dismissed_suggestions(&session.db, &account)?,
+                    session.style,
+                ),
+                SuggestionAction::Restore { id } => output::render_attachment_rule_suggestions(
+                    &suggestions::restore_suggestion(&session.db, &account, &id)?,
+                    session.style,
+                ),
                 SuggestionAction::Accept { id } => {
                     suggestions::set_suggestion_status(
                         &session.db,
@@ -1100,6 +1108,35 @@ mod tests {
 
         assert!(db
             .get_pending_attachment_rule_suggestions("a1")
+            .expect("list")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_restore_brings_a_dismissed_suggestion_back() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        let id = seed_suggestion(&db, "a1");
+        db.set_attachment_rule_suggestion_status(
+            "a1",
+            &id,
+            crate::models::AttachmentRuleSuggestionStatus::Dismissed,
+            0,
+        )
+        .expect("dismiss");
+        let mut session = test_session(Arc::clone(&db), Some("a1"));
+
+        dispatch(
+            &mut session,
+            Command::AttachmentSuggestions {
+                action: Some(SuggestionAction::Restore { id }),
+            },
+        )
+        .await
+        .expect("restore");
+
+        assert!(db
+            .get_dismissed_attachment_rule_suggestions("a1")
             .expect("list")
             .is_empty());
     }

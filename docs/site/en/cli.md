@@ -61,7 +61,7 @@ stream live), and the rest map onto the subcommands — `/search`, `/account`, `
 | `classify [--all]` | Classify new — or all — emails |
 | `embed [--batch N]` | Generate search embeddings |
 | `doctor` | Read-only readiness report (database, accounts, AI config) |
-| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>]` | Suggested attachment rules: preview what would be suggested (read-only, the default), list or re-mine the saved ones, dismiss or accept one |
+| `attachment-suggestions [preview\|list\|refresh\|dismiss <id>\|accept <id>\|dismissed\|restore <id>]` | Suggested attachment rules: preview what would be suggested (read-only, the default), list or re-mine the saved ones, dismiss or accept one, list the dismissed ones or restore one |
 
 <!-- claim:cli-commands-2 -->
 Global flags work before or after the subcommand: `--json`, `--quiet`,
