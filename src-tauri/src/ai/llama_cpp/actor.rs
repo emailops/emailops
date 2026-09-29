@@ -60,16 +60,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-// `Special` and `token_to_str` are deprecated in llama-cpp-2 — the new
-// `token_to_piece` API is more flexible but not yet migrated here.
-#[allow(deprecated)]
-use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::{params::LlamaContextParams, LlamaContext},
     llama_batch::LlamaBatch,
     model::{AddBos, LlamaModel},
     sampling::LlamaSampler,
     token::LlamaToken,
+    TokenToStringError,
 };
 
 use super::planner::{
@@ -78,6 +75,7 @@ use super::planner::{
     plan_stable_boundary, AuxPrefixPlan, OneshotEvict, PrefixPlan,
 };
 use super::runtime::backend;
+use crate::ai::utf8_stream::Utf8Stream;
 
 /// Physical batch size. llama.cpp splits submitted batches into ubatch-sized
 /// chunks internally; sizing this to n_ctx makes Metal allocate huge per-graph
@@ -433,6 +431,23 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
 fn copy_aux_into_generation(ctx: &mut LlamaContext) -> std::result::Result<(), String> {
     ctx.copy_kv_cache_seq(AUX_SEQ, 1, None, None)
         .map_err(|e| format!("KV aux-seq→generation copy failed: {}", e))
+}
+
+/// The raw bytes of `token`'s text, special tokens rendered. A piece can be
+/// part of a multi-byte character, so it is decoded by the caller's
+/// [`Utf8Stream`], never on its own.
+fn token_bytes(model: &LlamaModel, token: LlamaToken) -> std::result::Result<Vec<u8>, String> {
+    match model.token_to_piece_bytes(token, 8, true, None) {
+        Ok(bytes) => Ok(bytes),
+        // The piece is longer than the first buffer: llama.cpp reports the
+        // size it needs as a negative number.
+        Err(TokenToStringError::InsufficientBufferSpace(needed)) => model
+            .token_to_piece_bytes(token, needed.unsigned_abs() as usize, true, None)
+            .map_err(|e| format!("Token decode failed: {e}")),
+        // llama.cpp writes nothing for this token (size 0): an empty piece.
+        Err(TokenToStringError::UnknownTokenType) => Ok(Vec::new()),
+        Err(e) => Err(format!("Token decode failed: {e}")),
+    }
 }
 
 /// One generation pass against the persistent context.
@@ -853,6 +868,9 @@ fn generate_with_cache(
     let mut sampler = LlamaSampler::chain_simple(chain);
 
     let mut output = String::new();
+    // One decoder for the whole reply: a character split across tokens is
+    // emitted once its last byte arrives.
+    let mut utf8 = Utf8Stream::new();
     let mut n_gen = 0u32;
     // Set when the model ends the reply itself or the caller stops it.
     let mut ended = false;
@@ -869,10 +887,7 @@ fn generate_with_cache(
             break;
         }
 
-        let piece = {
-            #[allow(deprecated)]
-            model.token_to_str(token, Special::Tokenize).unwrap_or_default()
-        };
+        let piece = utf8.push(&token_bytes(model, token)?);
 
         n_gen += 1;
         output.push_str(&piece);
@@ -891,6 +906,14 @@ fn generate_with_cache(
             .map_err(|e| super::runtime::decode_failure("Decode failed during generation", e))?;
         batch.clear();
         // Sampled tokens land only in seq 1 — `cached` stays prompt-only.
+    }
+    // A character the reply never completed.
+    let unfinished = utf8.finish();
+    if !unfinished.is_empty() {
+        output.push_str(&unfinished);
+        if let Some(ref mut cb) = on_token {
+            cb(unfinished);
+        }
     }
 
     Ok(GenOutcome {

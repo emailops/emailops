@@ -12,6 +12,7 @@ pub mod stream_gate;
 pub mod think_priming;
 pub mod thinking_filter;
 pub mod tracing;
+pub mod utf8_stream;
 
 #[cfg(feature = "llamacpp")]
 pub mod llama_cpp;
