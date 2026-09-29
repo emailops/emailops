@@ -5327,3 +5327,39 @@ fn skill_lifecycle_through_the_service() {
         .join("weekly-email-summary")
         .is_dir());
 }
+
+// ── redownload keeps local state ────────────────────────────────────────────
+
+/// Re-downloading a message replaces its content, not what the app knows about
+/// it: the provider's parse carries a default mailbox ("inbox" for Outlook),
+/// no sent flag, no triage and an unread state, and upserting it verbatim moved
+/// a Sent message into the inbox and wiped the user's triage.
+#[tokio::test]
+async fn redownload_keeps_mailbox_sent_read_and_triage_state() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-rd", "me@example.com")).unwrap();
+
+    let mut stored = make_email("msg-rd", "acc-rd", 1_700_000_000);
+    stored.mailbox = "sent".to_string();
+    stored.is_sent = true;
+    stored.is_read = true;
+    stored.body = String::new();
+    db.insert_email(&stored).unwrap();
+    db.update_triage_status("msg-rd", "done").unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    let mut fresh = make_email("msg-rd", "", 1_700_000_000);
+    fresh.body = "Recovered body".to_string();
+    provider.add_message(fresh, EmailCategory::Primary, vec![]);
+
+    emailops_lib::services::emails::redownload_email_with_provider(&db, "msg-rd", &provider)
+        .await
+        .expect("redownload");
+
+    let after = db.get_email("msg-rd").unwrap().expect("row kept");
+    assert_eq!(after.mailbox, "sent");
+    assert!(after.is_sent, "sent flag must survive");
+    assert!(after.is_read, "read state must survive");
+    assert_eq!(after.triage_status.as_deref(), Some("done"));
+    assert_eq!(db.get_email_body("msg-rd").unwrap(), "Recovered body");
+}

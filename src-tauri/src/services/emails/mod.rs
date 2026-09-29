@@ -30,7 +30,7 @@ pub use folders::{create_folder, delete_folder, move_email, rename_folder};
 pub use html_sanitizer::sanitize_outgoing_html;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
-pub use redownload::{redownload_email, redownload_empty_emails};
+pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
 pub use sync::{
     request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
