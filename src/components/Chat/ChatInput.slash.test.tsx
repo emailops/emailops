@@ -18,6 +18,7 @@ import { ChatInput } from './ChatInput';
 let container: HTMLDivElement;
 let root: Root;
 const onSend = vi.fn();
+const onClear = vi.fn();
 
 beforeEach(() => {
   container = document.createElement('div');
@@ -45,7 +46,7 @@ afterEach(() => {
 
 async function renderInput() {
   await act(async () => {
-    root.render(<ChatInput onSend={onSend} disabled={false} />);
+    root.render(<ChatInput onSend={onSend} onClear={onClear} disabled={false} />);
   });
   const textarea = container.querySelector('textarea');
   if (!textarea) throw new Error('textarea not rendered');
@@ -103,5 +104,14 @@ describe('ChatInput slash suggestions', () => {
     await typeInto(textarea, '/wee');
     expect(options()).toHaveLength(0);
     expect(listSkills).not.toHaveBeenCalled();
+  });
+
+  it('still lets /clear start a new conversation when no skill matches it', async () => {
+    const textarea = await renderInput();
+    await typeInto(textarea, '/clear');
+    expect(options()).toHaveLength(0);
+    await key(textarea, 'Enter');
+    expect(onClear).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 });
