@@ -691,6 +691,12 @@ impl LlamaCppRuntime {
         self.chat_model_path.as_ref().is_some_and(|p| p.exists())
     }
 
+    /// Returns `true` when an embedding model file is configured and present
+    /// on disk.
+    pub fn is_embed_ready(&self) -> bool {
+        self.embed_model_path.as_ref().is_some_and(|p| p.exists())
+    }
+
     // ── Lazy model loading ────────────────────────────────────────────────────
 
     async fn get_chat_model(&self) -> Result<Arc<LlamaModel>> {
@@ -1680,6 +1686,22 @@ fn render_gemma4_chat_template(messages: &[AiMessage], add_generation_prompt: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Embeddings run on their own GGUF. Checking the chat model instead
+    /// skipped every embedding run when only the chat model was missing, and
+    /// let one start when the embedding model was.
+    #[tokio::test]
+    async fn embedding_readiness_follows_the_embedding_model_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let embed = dir.path().join("embed.gguf");
+        std::fs::write(&embed, b"gguf").unwrap();
+        let missing = dir.path().join("missing.gguf");
+
+        let rt = LlamaCppRuntime::new(Some(missing.clone()), Some(embed.clone()));
+        assert!(rt.is_embed_ready());
+        let rt = LlamaCppRuntime::new(Some(embed), Some(missing));
+        assert!(!rt.is_embed_ready());
+    }
 
     /// A generation longer than the keep-alive used to be evicted mid-reply:
     /// `last_used` was only stamped when it started. A request in flight pins

@@ -68,6 +68,10 @@ impl AIProvider for LlamaCppBackend {
         self.runtime.is_ready()
     }
 
+    async fn is_embedding_available(&self) -> bool {
+        self.runtime.is_embed_ready()
+    }
+
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         // For llama.cpp the "available models" are the local GGUFs on disk.
         // Delegated to the model manager; here we return just the currently

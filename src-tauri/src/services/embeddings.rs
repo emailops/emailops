@@ -326,7 +326,7 @@ async fn generate_embeddings_inner(
     let embedding_model = get_embedding_model(db)?;
     let ai_service = AiService::new(db.clone())?;
 
-    if !ai_service.is_available().await {
+    if !ai_service.is_embedding_available().await {
         emit_log(
             &app,
             "warn",

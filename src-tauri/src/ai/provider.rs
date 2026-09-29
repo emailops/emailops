@@ -202,6 +202,12 @@ pub trait AIProvider: Send + Sync {
     fn embedding_model_name(&self) -> &str;
 
     async fn is_available(&self) -> bool;
+    /// Whether `embed` can run. The same as [`is_available`](Self::is_available)
+    /// for a server backend; the embedded runtime embeds with its own model
+    /// file, separate from the chat model.
+    async fn is_embedding_available(&self) -> bool {
+        self.is_available().await
+    }
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
     /// List models suitable for embedding generation.
     async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>>;

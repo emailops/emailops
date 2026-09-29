@@ -787,6 +787,10 @@ impl AiService {
         self.provider.is_available().await
     }
 
+    pub async fn is_embedding_available(&self) -> bool {
+        self.provider.is_embedding_available().await
+    }
+
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         self.provider.list_models().await
     }
