@@ -123,7 +123,9 @@ export function AttachmentToolbar({
               className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500 text-white"
               title={t('attachments:suggestions.badgeTitle', { count: suggestionCount })}
             >
-              {suggestionCount}
+              {/* The bare number means nothing to a screen reader. */}
+              <span aria-hidden="true">{suggestionCount}</span>
+              <span className="sr-only">{t('attachments:suggestions.badgeTitle', { count: suggestionCount })}</span>
             </span>
           )}
         </button>

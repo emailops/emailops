@@ -75,10 +75,13 @@
     "removeTag": "Remove tag {{tag}}",
     "applyStarting": "Looking for matching attachments…",
     "applyProgress": "Checked {{processed}} of {{total}} emails · {{saved}} attachments collected",
-    "applyDone_one": "Done: {{count}} attachment in this rule · {{new}} new",
-    "applyDone_other": "Done: {{count}} attachments in this rule · {{new}} new",
+    "applyDone_one": "Done: {{count}} attachment in this rule",
+    "applyDone_other": "Done: {{count}} attachments in this rule",
     "applyFailed": "Could not apply the rule to existing emails. See the Output panel.",
-    "applyDone_many": "Done: {{count}} attachments in this rule · {{new}} new"
+    "applyDone_many": "Done: {{count}} attachments in this rule",
+    "applyDoneNew_one": "{{count}} new",
+    "applyDoneNew_other": "{{count}} new",
+    "applyDoneNew_many": "{{count}} new"
   },
   "suggestions": {
     "title": "Suggested rules",
@@ -91,7 +94,14 @@
     "dismiss": "Dismiss",
     "badgeTitle_one": "{{count}} suggested attachment rule",
     "badgeTitle_other": "{{count}} suggested attachment rules",
-    "badgeTitle_many": "{{count}} suggested attachment rules"
+    "badgeTitle_many": "{{count}} suggested attachment rules",
+    "searching": "Looking for documents that keep arriving…",
+    "dismissedNotice": "“{{name}}” dismissed.",
+    "undo": "Undo",
+    "showDismissed_one": "Dismissed suggestions ({{count}})",
+    "showDismissed_other": "Dismissed suggestions ({{count}})",
+    "showDismissed_many": "Dismissed suggestions ({{count}})",
+    "restore": "Restore"
   },
   "download": {
     "savedTo": "Saved \"{{filename}}\" to Downloads",

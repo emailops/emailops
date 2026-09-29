@@ -755,6 +755,18 @@ export async function dismissAttachmentRuleSuggestion(accountId: string, suggest
   return invoke('dismiss_attachment_rule_suggestion', { accountId, suggestionId });
 }
 
+export async function listDismissedAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_dismissed_attachment_rule_suggestions', { accountId });
+}
+
+/** Undo a dismissal; resolves to the pending suggestions after re-mining. */
+export async function restoreAttachmentRuleSuggestion(
+  accountId: string,
+  suggestionId: string,
+): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('restore_attachment_rule_suggestion', { accountId, suggestionId });
+}
+
 export async function acceptAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
   return invoke('accept_attachment_rule_suggestion', { accountId, suggestionId });
 }

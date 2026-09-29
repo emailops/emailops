@@ -105,7 +105,8 @@ différents, dans la boîte de réception ou dans un dossier où vous les classe
 compteur à côté de **Pièces jointes** dans la barre latérale indique leur nombre. **Examiner**
 ouvre le formulaire de la règle déjà rempli (expéditeur et motif de nom de fichier) ; la
 règle n'est créée que lorsque vous l'enregistrez. **Ignorer** masque la suggestion définitivement,
-même si l'expéditeur écrit plus tard depuis une autre adresse. Les e-mails de votre propre adresse
+même si l'expéditeur écrit plus tard depuis une autre adresse ; **Annuler**, ou **Restaurer** dans
+**Suggestions ignorées**, la fait revenir. Les e-mails de votre propre adresse
 ou de collègues de votre propre entreprise ne sont jamais suggérés.
 
 ## Recherche

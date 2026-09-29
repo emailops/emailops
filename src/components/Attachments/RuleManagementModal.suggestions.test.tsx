@@ -80,15 +80,22 @@ const handlers = {
   onRefreshSuggestions: vi.fn(),
   onDismissSuggestion: vi.fn(async () => {}),
   onAcceptSuggestion: vi.fn(async () => {}),
+  onRestoreSuggestion: vi.fn(async () => {}),
 };
 
-function render(suggestions: AttachmentRuleSuggestion[], rules: AttachmentRule[] = []) {
+function render(
+  suggestions: AttachmentRuleSuggestion[],
+  rules: AttachmentRule[] = [],
+  extra: { dismissed?: AttachmentRuleSuggestion[]; loading?: boolean } = {},
+) {
   act(() => {
     root.render(
       <RuleManagementModal
         rules={rules}
         accountId="acc-1"
         suggestions={suggestions}
+        suggestionsLoading={extra.loading ?? false}
+        dismissedSuggestions={extra.dismissed ?? []}
         existingTags={['invoice']}
         {...handlers}
       />,
@@ -135,6 +142,7 @@ beforeEach(() => {
   handlers.onDeleteRule.mockResolvedValue(undefined);
   handlers.onDismissSuggestion.mockResolvedValue(undefined);
   handlers.onAcceptSuggestion.mockResolvedValue(undefined);
+  handlers.onRestoreSuggestion.mockResolvedValue(undefined);
   useAttachmentStore.setState({ ruleApplies: {} });
   Element.prototype.scrollIntoView = vi.fn();
   container = document.createElement('div');
@@ -271,7 +279,8 @@ describe('RuleManagementModal suggestions', () => {
     });
 
     expect(container.querySelector('[role="progressbar"]')).toBeNull();
-    expect(container.textContent).toContain('attachments:rules.applyDone{"count":20,"new":0}');
+    expect(container.textContent).toContain('attachments:rules.applyDone{"count":20}');
+    expect(container.textContent).toContain('attachments:rules.applyDoneNew{"count":0}');
   });
 
   it('a scan that cannot be queued is shown as failed', async () => {
@@ -370,5 +379,80 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('25');
     expect(button('attachments:rules.applyToExisting').disabled).toBe(true);
+  });
+
+  // --- Undo and dismissed suggestions ---
+
+  it('dismissing a suggestion offers to undo it', async () => {
+    render([SUGGESTION]);
+
+    await click(button('attachments:suggestions.dismiss'));
+    await click(button('attachments:suggestions.undo'));
+
+    expect(handlers.onRestoreSuggestion).toHaveBeenCalledWith('sug-1');
+  });
+
+  it('dismissed suggestions can be listed and restored', async () => {
+    const dismissed = { ...SUGGESTION, id: 'sug-9', name: 'Globex · receipt', status: 'dismissed' as const };
+    render([], [], { dismissed: [dismissed] });
+
+    await click(button('attachments:suggestions.showDismissed'));
+    expect(container.textContent).toContain('Globex · receipt');
+    await click(button('attachments:suggestions.restore'));
+
+    expect(handlers.onRestoreSuggestion).toHaveBeenCalledWith('sug-9');
+  });
+
+  it('says it is looking for suggestions while the re-mine runs', () => {
+    render([], [], { loading: true });
+
+    expect(container.textContent).toContain('attachments:suggestions.searching');
+  });
+
+  // --- Accessibility ---
+
+  it('is a modal dialog named by its title', () => {
+    render([]);
+
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute('aria-modal')).toBe('true');
+    const titleId = dialog?.getAttribute('aria-labelledby');
+    expect(titleId && document.getElementById(titleId)?.textContent).toBe('attachments:rules.modalTitle');
+  });
+
+  it('moves focus into the dialog when it opens', () => {
+    render([]);
+
+    expect(container.querySelector('[role="dialog"]')?.contains(document.activeElement)).toBe(true);
+  });
+
+  it('Escape closes the dialog', async () => {
+    render([]);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+
+    expect(handlers.onClose).toHaveBeenCalled();
+  });
+
+  it('icon-only buttons have accessible names', () => {
+    render([], [makeRule('Acme')]);
+
+    const unnamed = Array.from(container.querySelectorAll('button')).filter(
+      (b) => !b.textContent?.trim() && !b.getAttribute('aria-label'),
+    );
+    expect(unnamed).toEqual([]);
+  });
+
+  it('every rule form field is labelled', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+
+    const fields = Array.from(container.querySelectorAll('input'));
+    for (const field of fields) {
+      const labelled = (field.id && container.querySelector(`label[for="${field.id}"]`)) || field.closest('label');
+      expect(labelled, field.outerHTML).toBeTruthy();
+    }
   });
 });

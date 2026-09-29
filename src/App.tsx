@@ -444,6 +444,9 @@ function AppInner() {
     clearChecked,
     setSelectedTag,
     suggestions: attachmentRuleSuggestions,
+    suggestionsLoading: attachmentSuggestionsLoading,
+    dismissedSuggestions: dismissedAttachmentRuleSuggestions,
+    restoreSuggestion: restoreAttachmentRuleSuggestion,
     refreshSuggestions: refreshAttachmentRuleSuggestions,
     dismissSuggestion: dismissAttachmentRuleSuggestion,
     acceptSuggestion: acceptAttachmentRuleSuggestion,
@@ -1773,6 +1776,9 @@ function AppInner() {
           onUpdateRule={updateAttachmentRule}
           onDeleteRule={deleteAttachmentRule}
           suggestions={attachmentRuleSuggestions}
+          suggestionsLoading={attachmentSuggestionsLoading}
+          dismissedSuggestions={dismissedAttachmentRuleSuggestions}
+          onRestoreSuggestion={restoreAttachmentRuleSuggestion}
           onRefreshSuggestions={refreshAttachmentRuleSuggestions}
           onDismissSuggestion={dismissAttachmentRuleSuggestion}
           onAcceptSuggestion={acceptAttachmentRuleSuggestion}

@@ -75,10 +75,13 @@
     "removeTag": "Quitar etiqueta {{tag}}",
     "applyStarting": "Buscando adjuntos que coincidan…",
     "applyProgress": "Revisados {{processed}} de {{total}} correos · {{saved}} adjuntos recopilados",
-    "applyDone_one": "Listo: {{count}} adjunto en esta regla · {{new}} nuevos",
-    "applyDone_other": "Listo: {{count}} adjuntos en esta regla · {{new}} nuevos",
+    "applyDone_one": "Listo: {{count}} adjunto en esta regla",
+    "applyDone_other": "Listo: {{count}} adjuntos en esta regla",
     "applyFailed": "No se pudo aplicar la regla a los correos existentes. Consulta el panel de salida.",
-    "applyDone_many": "Listo: {{count}} adjuntos en esta regla · {{new}} nuevos"
+    "applyDone_many": "Listo: {{count}} adjuntos en esta regla",
+    "applyDoneNew_one": "{{count}} nuevo",
+    "applyDoneNew_other": "{{count}} nuevos",
+    "applyDoneNew_many": "{{count}} nuevos"
   },
   "suggestions": {
     "title": "Reglas sugeridas",
@@ -91,7 +94,14 @@
     "dismiss": "Descartar",
     "badgeTitle_one": "{{count}} regla de adjuntos sugerida",
     "badgeTitle_other": "{{count}} reglas de adjuntos sugeridas",
-    "badgeTitle_many": "{{count}} reglas de adjuntos sugeridas"
+    "badgeTitle_many": "{{count}} reglas de adjuntos sugeridas",
+    "searching": "Buscando documentos que llegan una y otra vez…",
+    "dismissedNotice": "«{{name}}» descartada.",
+    "undo": "Deshacer",
+    "showDismissed_one": "Sugerencias descartadas ({{count}})",
+    "showDismissed_other": "Sugerencias descartadas ({{count}})",
+    "showDismissed_many": "Sugerencias descartadas ({{count}})",
+    "restore": "Restaurar"
   },
   "download": {
     "savedTo": "Se guardó \"{{filename}}\" en Descargas",

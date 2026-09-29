@@ -124,6 +124,51 @@ describe('TagPicker', () => {
     expect(latest).toEqual(['nomina']);
   });
 
+  async function key(k: string) {
+    await act(async () => {
+      input().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+    });
+  }
+
+  it('Enter does not add a tag containing a comma', async () => {
+    render([], []);
+    await focus();
+    await type('a, b');
+    await key('Enter');
+    expect(latest).toEqual([]);
+  });
+
+  it('arrow keys move through the options and Enter picks the highlighted one', async () => {
+    render([], ['receipt', 'payroll']);
+    await focus();
+
+    await key('ArrowDown');
+    await key('ArrowDown');
+    await key('ArrowUp');
+    const active = input().getAttribute('aria-activedescendant');
+    expect(active && container.querySelector(`#${CSS.escape(active)}`)?.textContent).toBe('receipt');
+
+    await key('Enter');
+    expect(latest).toEqual(['receipt']);
+  });
+
+  it('Escape closes the list', async () => {
+    render([], ['receipt']);
+    await focus();
+    await key('Escape');
+    expect(options()).toEqual([]);
+    expect(input().getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('the input is a combobox that controls the list', async () => {
+    render([], ['receipt']);
+    await focus();
+    expect(input().getAttribute('role')).toBe('combobox');
+    expect(input().getAttribute('aria-expanded')).toBe('true');
+    const listId = input().getAttribute('aria-controls');
+    expect(listId && container.querySelector(`#${CSS.escape(listId)}`)?.getAttribute('role')).toBe('listbox');
+  });
+
   it('removes a selected tag', async () => {
     render(['invoice', 'acme'], []);
     const remove = container.querySelector<HTMLButtonElement>('button[aria-label="attachments:rules.removeTag:acme"]');

@@ -46,6 +46,10 @@ export function useAttachments() {
     refreshSuggestions,
     dismissSuggestion,
     acceptSuggestion,
+    suggestionsLoading,
+    dismissedSuggestions,
+    fetchDismissedSuggestions,
+    restoreSuggestion,
   } = useAttachmentStore();
 
   // Suggestion loads run in the background (account switch, post-sync
@@ -199,9 +203,26 @@ export function useAttachments() {
     [setSelectedTag],
   );
 
+  // The rules modal re-mines on open and loads the dismissed list for undo.
   const handleRefreshSuggestions = useCallback(() => {
-    if (activeAccountId) loadSuggestionsLogged(activeAccountId, refreshSuggestions);
-  }, [activeAccountId, refreshSuggestions, loadSuggestionsLogged]);
+    if (!activeAccountId) return;
+    loadSuggestionsLogged(activeAccountId, refreshSuggestions);
+    loadSuggestionsLogged(activeAccountId, fetchDismissedSuggestions);
+  }, [activeAccountId, refreshSuggestions, fetchDismissedSuggestions, loadSuggestionsLogged]);
+
+  const handleRestoreSuggestion = useCallback(
+    async (suggestionId: string) => {
+      if (!activeAccountId) return;
+      try {
+        await restoreSuggestion(activeAccountId, suggestionId);
+      } catch (err) {
+        addLog('error', 'attachments', `Failed to restore suggested attachment rule: ${errorText(err)}`);
+        throw err;
+      }
+      addLog('success', 'attachments', 'Restored suggested attachment rule');
+    },
+    [activeAccountId, restoreSuggestion, addLog],
+  );
 
   // Both rethrow after logging so the rules modal can show the failure inline.
   const handleDismissSuggestion = useCallback(
@@ -267,6 +288,9 @@ export function useAttachments() {
     clearError,
     reset,
     suggestions,
+    suggestionsLoading,
+    dismissedSuggestions,
+    restoreSuggestion: handleRestoreSuggestion,
     refreshSuggestions: handleRefreshSuggestions,
     dismissSuggestion: handleDismissSuggestion,
     acceptSuggestion: handleAcceptSuggestion,

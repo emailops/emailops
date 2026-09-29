@@ -102,7 +102,8 @@ distintos, en la bandeja de entrada o en una carpeta donde los archives —, apa
 junto a **Adjuntos** en la barra lateral indica cuántas hay. **Revisar** abre el formulario de la
 regla ya relleno (remitente y patrón de nombre de archivo); la regla solo se crea cuando
 la guardas. **Descartar** oculta la sugerencia para siempre, aunque el remitente escriba más
-adelante desde otra dirección. Nunca se sugiere el correo de tu propia dirección ni el de
+adelante desde otra dirección; **Deshacer**, o **Restaurar** en **Sugerencias descartadas**, la
+recupera. Nunca se sugiere el correo de tu propia dirección ni el de
 compañeros de tu propia empresa.
 
 ## Búsqueda

@@ -102,7 +102,8 @@ verschiedenen Monaten, im Posteingang oder in einem Ordner, in dem Sie sie ableg
 Zähler neben **Anhänge** in der Seitenleiste zeigt ihre Anzahl. **Prüfen** öffnet das
 Regelformular bereits ausgefüllt (Absender und Dateinamenmuster); die Regel wird erst angelegt,
 wenn Sie sie speichern. **Verwerfen** blendet den Vorschlag dauerhaft aus, auch wenn der
-Absender später von einer anderen Adresse schreibt. E-Mails von Ihrer eigenen Adresse oder von
+Absender später von einer anderen Adresse schreibt; **Rückgängig** oder **Wiederherstellen** unter
+**Verworfene Vorschläge** holt ihn zurück. E-Mails von Ihrer eigenen Adresse oder von
 Kollegen Ihres eigenen Unternehmens werden nie vorgeschlagen.
 
 ## Suche

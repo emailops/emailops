@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
@@ -38,6 +38,11 @@ interface RuleManagementModalProps {
   onDeleteRule: (ruleId: string) => Promise<void>;
   /** Pending candidate rules mined from recurring document attachments. */
   suggestions: AttachmentRuleSuggestion[];
+  /** A re-mine is running. */
+  suggestionsLoading: boolean;
+  /** Suggestions dismissed earlier, for undo. */
+  dismissedSuggestions: AttachmentRuleSuggestion[];
+  onRestoreSuggestion: (suggestionId: string) => Promise<void>;
   /** Re-mine on open, so rules created or deleted since the last sync count. */
   onRefreshSuggestions: () => void;
   onDismissSuggestion: (suggestionId: string) => Promise<void>;
@@ -73,12 +78,41 @@ export function RuleManagementModal({
   onUpdateRule,
   onDeleteRule,
   suggestions,
+  suggestionsLoading,
+  dismissedSuggestions,
+  onRestoreSuggestion,
   onRefreshSuggestions,
   onDismissSuggestion,
   onAcceptSuggestion,
   existingTags,
 }: RuleManagementModalProps) {
   const { t } = useTranslation(['common', 'attachments']);
+  const ids = {
+    title: useId(),
+    name: useId(),
+    sender: useId(),
+    subject: useId(),
+    filename: useId(),
+    tags: useId(),
+  };
+
+  // Dialog behaviour: focus moves in on open and back to where it was on
+  // close; Escape closes. A ref keeps the listener on the latest onClose.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, []);
   const hasPrefill = !!prefill;
   const [showForm, setShowForm] = useState(hasPrefill);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -197,8 +231,20 @@ export function RuleManagementModal({
   const handleDismissSuggestion = async (suggestionId: string) => {
     try {
       await onDismissSuggestion(suggestionId);
+      return true;
     } catch (err) {
       setError(errorText(err));
+      return false;
+    }
+  };
+
+  const handleRestoreSuggestion = async (suggestionId: string) => {
+    try {
+      await onRestoreSuggestion(suggestionId);
+      return true;
+    } catch (err) {
+      setError(errorText(err));
+      return false;
     }
   };
 
@@ -324,11 +370,24 @@ export function RuleManagementModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={ids.title}
+        tabIndex={-1}
+        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col focus:outline-none"
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">{t('attachments:rules.modalTitle')}</h2>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
+          <h2 id={ids.title} className="text-lg font-semibold text-gray-900">
+            {t('attachments:rules.modalTitle')}
+          </h2>
+          <button
+            onClick={onClose}
+            aria-label={t('common:actions.close')}
+            className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
+          >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -350,10 +409,11 @@ export function RuleManagementModal({
               </h3>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label htmlFor={ids.name} className="block text-xs font-medium text-gray-700 mb-1">
                   {t('attachments:rules.ruleName')}
                 </label>
                 <input
+                  id={ids.name}
                   type="text"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -363,10 +423,11 @@ export function RuleManagementModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label htmlFor={ids.sender} className="block text-xs font-medium text-gray-700 mb-1">
                   {t('attachments:rules.senderPattern')}
                 </label>
                 <input
+                  id={ids.sender}
                   type="text"
                   value={form.senderEmailPattern}
                   onChange={(e) => setForm({ ...form, senderEmailPattern: e.target.value })}
@@ -377,10 +438,11 @@ export function RuleManagementModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label htmlFor={ids.subject} className="block text-xs font-medium text-gray-700 mb-1">
                   {t('attachments:rules.subjectPattern')}
                 </label>
                 <input
+                  id={ids.subject}
                   type="text"
                   value={form.subjectPattern}
                   onChange={(e) => setForm({ ...form, subjectPattern: e.target.value })}
@@ -391,10 +453,11 @@ export function RuleManagementModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
+                <label htmlFor={ids.filename} className="block text-xs font-medium text-gray-700 mb-1">
                   {t('attachments:rules.filenamePattern')}
                 </label>
                 <input
+                  id={ids.filename}
                   type="text"
                   value={form.filenamePattern}
                   onChange={(e) => setForm({ ...form, filenamePattern: e.target.value })}
@@ -405,8 +468,15 @@ export function RuleManagementModal({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">{t('attachments:rules.tags')}</label>
-                <TagPicker value={form.tags} onChange={(tags) => setForm({ ...form, tags })} existingTags={allTags} />
+                <label htmlFor={ids.tags} className="block text-xs font-medium text-gray-700 mb-1">
+                  {t('attachments:rules.tags')}
+                </label>
+                <TagPicker
+                  inputId={ids.tags}
+                  value={form.tags}
+                  onChange={(tags) => setForm({ ...form, tags })}
+                  existingTags={allTags}
+                />
                 <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.tagsHelp')}</p>
               </div>
 
@@ -469,8 +539,11 @@ export function RuleManagementModal({
           {!showForm && (
             <RuleSuggestionList
               suggestions={suggestions}
+              loading={suggestionsLoading}
+              dismissed={dismissedSuggestions}
               onReview={startReviewing}
               onDismiss={handleDismissSuggestion}
+              onRestore={handleRestoreSuggestion}
             />
           )}
 
@@ -496,6 +569,7 @@ export function RuleManagementModal({
                         disabled={applyStates[rule.id]?.status === 'running'}
                         className="p-1.5 text-gray-400 hover:text-primary-600 rounded hover:bg-gray-100 disabled:opacity-50"
                         title={t('attachments:rules.applyToExisting')}
+                        aria-label={t('attachments:rules.applyToExisting')}
                       >
                         {applyStates[rule.id]?.status === 'running' ? (
                           <div className="w-4 h-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
@@ -514,6 +588,7 @@ export function RuleManagementModal({
                         onClick={() => handleToggleEnabled(rule)}
                         className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
                         title={rule.enabled ? t('attachments:rules.disable') : t('attachments:rules.enable')}
+                        aria-label={rule.enabled ? t('attachments:rules.disable') : t('attachments:rules.enable')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           {rule.enabled ? (
@@ -537,6 +612,7 @@ export function RuleManagementModal({
                         onClick={() => startEditing(rule)}
                         className="p-1.5 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
                         title={t('common:actions.edit')}
+                        aria-label={t('common:actions.edit')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
@@ -552,6 +628,7 @@ export function RuleManagementModal({
                         disabled={pendingDeleteId === rule.id}
                         className="p-1.5 text-gray-400 hover:text-red-600 rounded hover:bg-gray-100 disabled:opacity-40"
                         title={t('common:actions.delete')}
+                        aria-label={t('common:actions.delete')}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
@@ -651,7 +728,8 @@ function ApplyProgress({ state }: { state: RuleApplyState | undefined }) {
   if (state.status === 'done') {
     return (
       <p className="mb-2 text-xs text-green-700">
-        {t('attachments:rules.applyDone', { count: state.collected ?? state.saved, new: state.saved })}
+        {t('attachments:rules.applyDone', { count: state.collected ?? state.saved })} ·{' '}
+        {t('attachments:rules.applyDoneNew', { count: state.saved })}
       </p>
     );
   }

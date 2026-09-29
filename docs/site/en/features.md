@@ -94,7 +94,8 @@ or a folder you filed them in — a
 **Suggested rules** section appears in **Manage Rules**, and a badge next to **Attachments** in
 the sidebar counts them. **Review** opens the rule form already filled in (sender and filename
 pattern); the rule is only created when you save it. **Dismiss** hides the suggestion for
-good, even when the sender later mails from another address. Mail from your own address, or
+good, even when the sender later mails from another address; **Undo**, or **Restore** under
+**Dismissed suggestions**, brings it back. Mail from your own address, or
 from colleagues at your own company, is never suggested.
 
 ## Search

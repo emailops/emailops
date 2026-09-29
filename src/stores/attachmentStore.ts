@@ -35,6 +35,10 @@ interface AttachmentStore {
   // account in `suggestionsAccountId`.
   suggestions: AttachmentRuleSuggestion[];
   suggestionsAccountId: string | null;
+  /** A re-mine is running (the modal says it is looking). */
+  suggestionsLoading: boolean;
+  /** Dismissed suggestions of that account, most recent first, for undo. */
+  dismissedSuggestions: AttachmentRuleSuggestion[];
 
   // Rule applies to existing mail, per rule id. Kept here, not in the rules
   // modal, so a scan still shows its progress after the modal is reopened.
@@ -85,6 +89,8 @@ interface AttachmentStore {
   refreshSuggestions: (accountId: string) => Promise<void>;
   dismissSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
   acceptSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
+  fetchDismissedSuggestions: (accountId: string) => Promise<void>;
+  restoreSuggestion: (accountId: string, suggestionId: string) => Promise<void>;
 
   // Rule apply actions. `beginRuleApply` returns the run id the other
   // actions take, so a superseded run can never overwrite the newer one.
@@ -136,7 +142,10 @@ async function loadSuggestions(
   const loadId = ++suggestionsLoadId;
   // Another account's suggestions must not linger (badge, Review) while
   // this one loads — or after its load fails.
-  if (get().suggestionsAccountId !== accountId) set({ suggestions: [], suggestionsAccountId: accountId });
+  if (get().suggestionsAccountId !== accountId) {
+    set({ suggestions: [], dismissedSuggestions: [], suggestionsAccountId: accountId });
+  }
+  set({ suggestionsLoading: true });
   try {
     const suggestions = await load(accountId);
     if (loadId === suggestionsLoadId) {
@@ -148,6 +157,8 @@ async function loadSuggestions(
   } catch (error) {
     if (loadId === suggestionsLoadId) set({ error: errorText(error) });
     throw error;
+  } finally {
+    if (loadId === suggestionsLoadId) set({ suggestionsLoading: false });
   }
 }
 
@@ -186,6 +197,8 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   isLoadingRules: false,
   suggestions: [],
   suggestionsAccountId: null,
+  suggestionsLoading: false,
+  dismissedSuggestions: [],
   ruleApplies: {},
   attachments: [],
   selectedAttachment: null,
@@ -249,8 +262,49 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
 
   refreshSuggestions: (accountId) => loadSuggestions(set, get, accountId, api.refreshAttachmentRuleSuggestions),
 
-  dismissSuggestion: (accountId, suggestionId) =>
-    resolveSuggestion(set, suggestionId, () => api.dismissAttachmentRuleSuggestion(accountId, suggestionId)),
+  dismissSuggestion: async (accountId, suggestionId) => {
+    const dismissed = get().suggestions.find((s) => s.id === suggestionId);
+    await resolveSuggestion(set, suggestionId, () => api.dismissAttachmentRuleSuggestion(accountId, suggestionId));
+    if (dismissed) {
+      set((state) => ({
+        dismissedSuggestions: [
+          { ...dismissed, status: 'dismissed' },
+          ...withoutSuggestion(state.dismissedSuggestions, suggestionId),
+        ],
+      }));
+    }
+  },
+
+  fetchDismissedSuggestions: async (accountId) => {
+    try {
+      const dismissed = await api.listDismissedAttachmentRuleSuggestions(accountId);
+      if (get().suggestionsAccountId === accountId || get().suggestionsAccountId === null) {
+        set({ dismissedSuggestions: dismissed });
+      }
+    } catch (error) {
+      set({ error: errorText(error) });
+      throw error;
+    }
+  },
+
+  restoreSuggestion: async (accountId, suggestionId) => {
+    let pending: AttachmentRuleSuggestion[];
+    try {
+      pending = await api.restoreAttachmentRuleSuggestion(accountId, suggestionId);
+    } catch (error) {
+      set({ error: errorText(error) });
+      throw error;
+    }
+    resolvedSuggestionIds.delete(suggestionId);
+    // The restore re-mined: this list is newer than any load in flight.
+    suggestionsLoadId++;
+    set((state) => ({
+      suggestions: pending.filter((s) => !resolvedSuggestionIds.has(s.id)),
+      suggestionsAccountId: accountId,
+      suggestionsLoading: false,
+      dismissedSuggestions: withoutSuggestion(state.dismissedSuggestions, suggestionId),
+    }));
+  },
 
   acceptSuggestion: (accountId, suggestionId) =>
     resolveSuggestion(set, suggestionId, () => api.acceptAttachmentRuleSuggestion(accountId, suggestionId)),

@@ -481,7 +481,10 @@ export function Sidebar({
                       className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500 text-white"
                       title={t('attachments:suggestions.badgeTitle', { count: attachmentSuggestionCount })}
                     >
-                      {attachmentSuggestionCount}
+                      <span aria-hidden="true">{attachmentSuggestionCount}</span>
+                      <span className="sr-only">
+                        {t('attachments:suggestions.badgeTitle', { count: attachmentSuggestionCount })}
+                      </span>
                     </span>
                   )}
                 </button>

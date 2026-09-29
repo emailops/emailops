@@ -7,6 +7,8 @@ import type { AttachmentRuleSuggestion } from '@/types';
 import { selectSuggestionCount, useAttachmentStore } from './attachmentStore';
 
 vi.mock('@/lib/api', () => ({
+  listDismissedAttachmentRuleSuggestions: vi.fn(async () => []),
+  restoreAttachmentRuleSuggestion: vi.fn(async () => []),
   listAttachmentRuleSuggestions: vi.fn(async () => []),
   refreshAttachmentRuleSuggestions: vi.fn(async () => []),
   dismissAttachmentRuleSuggestion: vi.fn(async () => {}),
@@ -44,7 +46,13 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useAttachmentStore.setState({ suggestions: [], suggestionsAccountId: null, error: null });
+  useAttachmentStore.setState({
+    suggestions: [],
+    suggestionsAccountId: null,
+    dismissedSuggestions: [],
+    suggestionsLoading: false,
+    error: null,
+  });
 });
 
 describe('fetchSuggestions', () => {
@@ -113,6 +121,50 @@ describe('dismissSuggestion', () => {
     await refresh;
 
     expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['s2']);
+  });
+});
+
+describe('dismissed suggestions', () => {
+  it('a dismissal moves the suggestion to the dismissed list', async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('d1')], suggestionsAccountId: 'acc-1' });
+
+    await useAttachmentStore.getState().dismissSuggestion('acc-1', 'd1');
+
+    expect(useAttachmentStore.getState().dismissedSuggestions.map((s) => s.id)).toEqual(['d1']);
+  });
+
+  it('loads the dismissed suggestions of the account', async () => {
+    vi.mocked(api.listDismissedAttachmentRuleSuggestions).mockResolvedValueOnce([makeSuggestion('d2')]);
+
+    await useAttachmentStore.getState().fetchDismissedSuggestions('acc-1');
+
+    expect(useAttachmentStore.getState().dismissedSuggestions.map((s) => s.id)).toEqual(['d2']);
+  });
+
+  it('restoring puts the suggestion back in the pending list', async () => {
+    useAttachmentStore.setState({ suggestions: [makeSuggestion('d3')], suggestionsAccountId: 'acc-1' });
+    await useAttachmentStore.getState().dismissSuggestion('acc-1', 'd3');
+    vi.mocked(api.restoreAttachmentRuleSuggestion).mockResolvedValueOnce([makeSuggestion('d3')]);
+
+    await useAttachmentStore.getState().restoreSuggestion('acc-1', 'd3');
+
+    expect(api.restoreAttachmentRuleSuggestion).toHaveBeenCalledWith('acc-1', 'd3');
+    expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['d3']);
+    expect(useAttachmentStore.getState().dismissedSuggestions).toEqual([]);
+  });
+});
+
+describe('suggestionsLoading', () => {
+  it('is set while a re-mine runs', async () => {
+    const slow = deferred<AttachmentRuleSuggestion[]>();
+    vi.mocked(api.refreshAttachmentRuleSuggestions).mockReturnValueOnce(slow.promise);
+
+    const refresh = useAttachmentStore.getState().refreshSuggestions('acc-1');
+    expect(useAttachmentStore.getState().suggestionsLoading).toBe(true);
+    slow.resolve([]);
+    await refresh;
+
+    expect(useAttachmentStore.getState().suggestionsLoading).toBe(false);
   });
 });
 
