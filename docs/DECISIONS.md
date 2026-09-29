@@ -1910,3 +1910,85 @@ Cohere), too many to impose.
   policy does not require.
 - *Silently switching or retrying a blocked model*: sends mail somewhere the user did not
   choose; a clear error pointing to Settings is better.
+
+## 2026-09-27 — Chat skills are Agent Skills folders on disk, loaded on demand
+
+**Decision:** The chat supports user *skills* in the Agent Skills shape, modelled on
+Hermes Agent: a folder per skill under `<data dir>/skills/` holding a `SKILL.md` (YAML
+frontmatter with `name` and `description`, then Markdown instructions) and optional
+`.md`/`.txt` reference files. Progressive disclosure in three levels: a skills index (the
+one-line catalog plus "load a matching skill FIRST") in the system prompt, the body when
+the model calls `load_skill(name)`, a reference file when it calls
+`load_skill(name, file)`. `/name` at the start of a message applies a skill directly
+(stackable: `/a /b request`), riding in the final user message. Skills are instructions
+only — nothing in a skill folder is executed.
+Settings → AI Skills lists them, shows why one failed to load, opens the folder and holds
+the `skills_enabled` toggle (default on). `emailops-cli skills` lists them too.
+**Context:** The developer asked for skills "like Anthropic's" and chose a folder on disk
+over an in-app editor, so skills can be written in any editor and shared as files. The
+chat runs on an 8192-token window on the smallest supported machine and relies on a
+byte-stable system prefix for the llama.cpp KV cache, so bodies cannot sit in the system
+prompt, and per-turn content must stay out of it.
+**Rejected:**
+- *Skills stored in SQLite and edited in Settings*: the developer preferred files.
+- *Putting every skill body in the system prompt*: eats the context window and grows
+  with every skill.
+- *Slash commands only (the model never picks a skill)*: loses the main value — the chat
+  applying the right procedure without being told.
+- *Running scripts bundled in a skill*: a local email client executing arbitrary code
+  from a folder is a security surface this feature does not need.
+
+## 2026-09-29 — Skills are experimental and off by default; the planner can pick one; they are edited in a Skills view
+
+**Decision:** Chat skills ship as an **experimental** feature, **off by default**
+(`skills_enabled` defaults to false; the Settings tab carries the Experimental badge).
+When on, a **Skills view** in the sidebar lists every skill with its own on/off switch
+(`skills_disabled` preference, a JSON array of names — a disabled skill leaves the prompt
+but stays listed) and edits the selected `SKILL.md` in an editor on the right; **New**
+creates one from a template. Saving validates the text with the same parser the catalog
+uses and writes nothing if it would not load. The files on disk remain the source of truth.
+The **query planner** may also name a skill (`"skill": "<name>"`) next to any verdict,
+before retrieval; the turn then applies it exactly like `/name`, and `load_skill` stays as
+the fallback. The trace records how each skill arrived (`applied_skills`, `via: slash |
+planner`), and eval cases assert on the skill (`expected_skill` / `expected_no_skill`)
+rather than on the `load_skill` call.
+**Context:** The developer asked for skills to be opt-in and experimental, and for a
+Hermes-style view with per-skill switches and an in-app editor, replacing the 27/09
+choice of "files only, Settings just lists them". A 15-case skills eval showed the common
+miss was selection: when the RAG sources already held the answer, the model answered
+without loading the skill, on every model. Letting the planner choose before retrieval,
+measured on the demo DB with an LLM judge (qwen3.6-35b): cases passed 4B 9→10,
+9B 8→10, 35B 12→12 (one case lost to a GPU out-of-memory during the run); correct skill
+on the 6 selection cases 4→5, 2→4, 4→6; zero skills applied where none fits on every
+model. With no skills the planner prompt is byte-identical: `query_plan_eval` 35/39
+before and after (same four failures) and the chat smoke tier 38/41 in both.
+**Rejected:**
+- *A fifth planner verdict (`{"skill": …}` instead of search/defer)*: a skill usually
+  still needs its search, so the field rides alongside the verdict.
+- *Wording the planner rule as "add the skill to whatever you output (a filter, …)"*:
+  it pushed the 9B to swap `defer` for invented search filters (4 cases); the rule now
+  says a skill never changes the verdict (2 cases, one of them noise).
+- *Thinking on round 0 of the tool loop*: not needed once the planner selects; not tried.
+- *Keeping skills on by default*: the developer wants them opt-in while experimental.
+
+## 2026-09-29 — Skill turns replay as a one-line note; a saved SKILL.md's name wins
+
+**Decision:** Later turns of a conversation replay a skill turn with a one-line
+`[skill X was applied to this request]` note, not the skill's body. Saving a `SKILL.md`
+whose `name:` differs from its folder renames the skill to that name (folder and on/off
+switch), refusing when the name is taken; a save is also refused when the file changed on
+disk since the editor opened it. A bare `/name` asks the skill's description instead of a
+made-up "Apply the skill" sentence.
+**Context:** A review of the skills feature found that replaying the body cost up to ~2k
+tokens per past skill turn (a large share of the 8192-token floor), kept applying an old
+procedure to unrelated follow-ups and froze a copy the user may have edited since. Pasting
+a skill written elsewhere into a skill created under another name failed to save, and the
+synthetic "Apply the skill" question steered routing, retrieval and titles (a bare
+`/weekly-digest` was answered from the app guides).
+**Rejected:**
+- *Replaying the body byte-identically (the 27/09 design)*: better KV-prefix reuse on the
+  next turn, but the costs above hit every later turn.
+- *A "use the folder's name" fix-up button*: keeps the folder authoritative, but the user
+  just pasted the name they want.
+- *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
+  against 9–14 s turns) — no measured problem, so no cache.

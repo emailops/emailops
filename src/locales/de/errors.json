@@ -55,6 +55,20 @@
     "ai_data_policy": "Das Modell {{model}} ist mit der Datenrichtlinie von EmailOps nicht verfügbar. Wähle in den Einstellungen → KI ein anderes Modell.",
     "io": "Dateifehler: {{detail}}",
     "budget_exceeded": "KI-Budget überschritten: {{detail}}",
-    "cancelled": "Abgebrochen."
+    "cancelled": "Abgebrochen.",
+    "skill_no_frontmatter": "SKILL.md muss mit einem ---Block beginnen, der name und description enthält.",
+    "skill_unclosed_frontmatter": "Der Frontmatter-Block wird nie mit --- geschlossen.",
+    "skill_fence_not_on_own_line": "Das schließende --- des Frontmatters muss in einer eigenen Zeile stehen.",
+    "skill_invalid_frontmatter": "Das Frontmatter ist kein gültiges YAML: {{detail}}",
+    "skill_no_name": "Das Frontmatter hat kein name.",
+    "skill_empty_name": "Ein Skill braucht einen Namen.",
+    "skill_invalid_name": "„{{name}}“ ist kein gültiger Skill-Name: Verwende Kleinbuchstaben, Ziffern und einzelne Bindestriche.",
+    "skill_name_mismatch": "name: {{name}} muss dem Ordnernamen {{folder}} entsprechen.",
+    "skill_no_description": "Das Frontmatter hat keine description – beschreibe, was der Skill tut und wann er genutzt wird.",
+    "skill_description_too_long": "Die Beschreibung ist länger als {{max}} Zeichen.",
+    "skill_no_body": "Der Skill hat nach dem Frontmatter keine Anweisungen.",
+    "skill_body_too_long": "Die Anweisungen sind länger als {{max}} Zeichen; kürze sie, damit sie in den Kontext des Modells passen.",
+    "skill_changed_on_disk": "{{name}}/SKILL.md wurde seit dem Öffnen auf der Festplatte geändert. Lade die Datei neu, bevor du speicherst.",
+    "skill_already_exists": "Ein Skill namens {{name}} existiert bereits. Wähle einen anderen Namen."
   }
 }

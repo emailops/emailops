@@ -129,7 +129,10 @@ pub async fn estimate_research(
         .db
         .get_chat_conversation_account(&conversation_id)?
         .ok_or_else(|| AppError::NotFound(format!("conversation {}", conversation_id)))?;
-    let question = chat::research::research_question(&state.db, &conversation_id, question, correction.as_ref());
+    // Keyed on the question the turn will run: a leading `/name` is a skill
+    // invocation, not part of what is researched.
+    let question = crate::services::skills::question_of(question, &crate::services::skills::catalog_for(&state.db));
+    let question = chat::research::research_question(&state.db, &conversation_id, &question, correction.as_ref());
     chat::research::estimate_for_account(&state.db, &account_id, &categories, &question).await
 }
 

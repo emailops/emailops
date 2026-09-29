@@ -55,6 +55,20 @@
     "ai_data_policy": "Le modèle {{model}} n'est pas disponible avec la politique de données d'EmailOps. Choisissez un autre modèle dans Paramètres → IA.",
     "io": "Erreur de fichier : {{detail}}",
     "budget_exceeded": "Budget d'IA dépassé : {{detail}}",
-    "cancelled": "Annulé."
+    "cancelled": "Annulé.",
+    "skill_no_frontmatter": "SKILL.md doit commencer par un bloc --- contenant name et description.",
+    "skill_unclosed_frontmatter": "Le bloc d'en-tête n'est jamais fermé par ---.",
+    "skill_fence_not_on_own_line": "Le --- qui ferme l'en-tête doit être sur sa propre ligne.",
+    "skill_invalid_frontmatter": "L'en-tête n'est pas du YAML valide : {{detail}}",
+    "skill_no_name": "L'en-tête n'a pas de name.",
+    "skill_empty_name": "Un skill a besoin d'un nom.",
+    "skill_invalid_name": "« {{name}} » n'est pas un nom de skill valide : utilisez des minuscules, des chiffres et des tirets simples.",
+    "skill_name_mismatch": "name: {{name}} doit correspondre au nom de son dossier {{folder}}.",
+    "skill_no_description": "L'en-tête n'a pas de description : dites ce que fait le skill et quand l'utiliser.",
+    "skill_description_too_long": "La description dépasse {{max}} caractères.",
+    "skill_no_body": "Le skill n'a pas d'instructions après l'en-tête.",
+    "skill_body_too_long": "Les instructions dépassent {{max}} caractères ; raccourcissez-les pour qu'elles tiennent dans le contexte du modèle.",
+    "skill_changed_on_disk": "{{name}}/SKILL.md a changé sur le disque depuis son ouverture. Rechargez-le avant d'enregistrer.",
+    "skill_already_exists": "Un skill nommé {{name}} existe déjà. Choisissez un autre nom."
   }
 }

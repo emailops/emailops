@@ -13,8 +13,9 @@ use crate::ai::provider::{AIProvider, AiMessage};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
-    ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent, ChatTrace,
-    ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, ToolCallTrace,
+    AppliedSkill, ChatMessage, ChatMessageSource, ChatPhase, ChatRenamedEvent, ChatSourcesEvent, ChatStreamEvent,
+    ChatTrace, ChatTraceEvent, HelpTrace, LlmCallTrace, RetrievalTrace, RouteDecision, RouteMode, SkillVia,
+    ToolCallTrace,
 };
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
@@ -356,6 +357,18 @@ fn prepend_to_final_user_message(messages: &mut [(String, String)], block: &str)
     }
 }
 
+/// Insert a block right before the question at the end of the final user
+/// message, after the Sources list. Falls back to prepending if the message
+/// does not end with the question.
+fn insert_before_question(messages: &mut [(String, String)], question: &str, block: &str) {
+    if let Some((_, content)) = messages.last_mut() {
+        match content.strip_suffix(question) {
+            Some(head) => *content = format!("{head}{block}\n\n{question}"),
+            None => *content = format!("{block}\n\n{content}"),
+        }
+    }
+}
+
 /// Persist the final user-message bytes (memory header + sources + question)
 /// onto the user row so future turns replay them byte-identically — see
 /// `ChatMessage::prompt_content`. Failure degrades to a debug log: a turn
@@ -458,14 +471,37 @@ fn last_assistant_content(messages: &[AiMessage]) -> Option<&str> {
         .map(|m| m.content.as_str())
 }
 
-fn persist_prompted_tail(db: &Database, user_message_id: &str, messages: &[(String, String)]) {
+/// The final user message as later turns replay it: a skill's body is
+/// replaced by a one-line note. Replaying the body kept applying an old
+/// procedure to unrelated follow-ups, cost context on every later turn and
+/// froze a copy the user may since have edited. The price is one partial
+/// re-prefill of the history on the next turn.
+fn history_form(content: &str, skill_block: Option<&str>, skills: &[String]) -> String {
+    match skill_block {
+        Some(block) if !block.is_empty() => content.replacen(
+            block,
+            &format!("[skill {} was applied to this request]", skills.join(", ")),
+            1,
+        ),
+        _ => content.to_string(),
+    }
+}
+
+fn persist_prompted_tail(
+    db: &Database,
+    user_message_id: &str,
+    messages: &[(String, String)],
+    skill_block: Option<&str>,
+    skills: &[String],
+) {
     let Some((role, content)) = messages.last() else {
         return;
     };
     if role != "user" {
         return;
     }
-    if let Err(e) = db.update_chat_message_prompt_content(user_message_id, content) {
+    let content = history_form(content, skill_block, skills);
+    if let Err(e) = db.update_chat_message_prompt_content(user_message_id, &content) {
         emit_log("debug", &format!("prompt_content persist skipped: {e}"));
     }
 }
@@ -2958,6 +2994,36 @@ email written, simply invite them to ask you to draft a reply.",
     system
 }
 
+/// The skill a `/name` message invokes, if any — logged so the output panel
+/// shows it, and so a skill that failed to load does not vanish silently.
+fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skills::SkillTurn> {
+    if !message.trim_start().starts_with('/') {
+        return None;
+    }
+    let catalog = crate::services::skills::catalog_for(db);
+    for err in &catalog.errors {
+        emit_log(
+            "warn",
+            &format!("skill not loaded ({}): {}", err.path.display(), err.message),
+        );
+    }
+    let Some(turn) = crate::services::skills::plan_skill_turn(message, &catalog) else {
+        let disabled = crate::services::skills::disabled_skills(db);
+        if let Some(name) = crate::services::skills::invoked_disabled_skill(message, &disabled) {
+            emit_log(
+                "warn",
+                &format!("skill {name} is switched off in the Skills view, so /{name} was sent as plain text"),
+            );
+        }
+        return None;
+    };
+    emit_log(
+        "info",
+        &format!("skill(s) applied to this turn: {}", turn.skills.join(", ")),
+    );
+    Some(turn)
+}
+
 /// Run one chat turn for a "thread-bound" conversation — one that was seeded
 /// with the cleaned content of an email thread (see
 /// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
@@ -2974,6 +3040,8 @@ async fn run_thread_bound_turn(
     assistant_message_id: String,
     account_id: String,
     user_question: String,
+    skill_block: Option<String>,
+    applied_skills: Vec<AppliedSkill>,
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
@@ -3064,7 +3132,11 @@ async fn run_thread_bound_turn(
             initial_messages.push((msg.role.clone(), msg.content.clone()));
         }
     }
-    initial_messages.push(("user".to_string(), user_question.clone()));
+    let final_user = match skill_block.as_deref() {
+        Some(block) => format!("{block}\n\n{user_question}"),
+        None => user_question.clone(),
+    };
+    initial_messages.push(("user".to_string(), final_user));
 
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
@@ -3275,6 +3347,7 @@ async fn run_thread_bound_turn(
                 llm_calls: llm_calls.clone(),
                 help: None,
                 research: None,
+                applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -3653,6 +3726,26 @@ pub async fn run_chat_turn(
     let turn_guard = super::cancel::register_turn(&assistant_message_id);
     let turn_start = std::time::Instant::now();
 
+    // A message that starts with `/name` invokes one of the user's skills. The
+    // rest of the message is what the turn asks (retrieval, the planner and the
+    // title read it); the skill's instructions ride in the final user message,
+    // never the cached system prefix. The folder is only read when the message
+    // could be an invocation.
+    let (user_question, mut skill_block, mut applied_skills) = match plan_turn_skill(&db, &user_question) {
+        Some(turn) => {
+            let applied = turn
+                .skills
+                .iter()
+                .map(|name| AppliedSkill {
+                    name: name.clone(),
+                    via: SkillVia::Slash,
+                })
+                .collect();
+            (turn.question, Some(turn.block), applied)
+        }
+        None => (user_question, None, Vec::new()),
+    };
+
     // Destructured back into locals so the body below reads unchanged.
     // A research question is about the mailbox, not the email on screen, so
     // the open thread is not offered as context on a research turn.
@@ -3768,6 +3861,8 @@ pub async fn run_chat_turn(
             assistant_message_id,
             account_id,
             user_question,
+            skill_block,
+            applied_skills,
             history,
             system_messages,
             turn_start,
@@ -3930,6 +4025,13 @@ pub async fn run_chat_turn(
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
+        // The planner may name a skill only when the user did not invoke one.
+        let skill_catalog = if skill_block.is_none() {
+            crate::services::skills::catalog_for(&db)
+        } else {
+            crate::services::skills::SkillCatalog::default()
+        };
+        let skill_rule = crate::services::skills::render_planner_rule(&skill_catalog.skills);
         let run = super::planner::plan_search(
             provider.as_ref(),
             &template,
@@ -3941,6 +4043,7 @@ pub async fn run_chat_turn(
             // Only forms whose feature is switched on: routing to a disabled
             // one would spend a turn opening a view the user cannot reach.
             &crate::services::forms::registry::catalog(&db),
+            &skill_rule,
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -3951,8 +4054,25 @@ pub async fn run_chat_turn(
             prefill_ms: plan_prefill_ms,
             cached_prompt_tokens: plan_cached_tokens,
             aux_plan: plan_aux,
-            ..
+            skill: planner_skill,
         } = run;
+        // A skill the planner matched rides in the final user message exactly
+        // like a `/name` one — decided before retrieval, so the sources can no
+        // longer tempt the model into answering without it. An unknown name is
+        // dropped; the model can still call `load_skill` itself.
+        if let Some(name) = planner_skill {
+            match skill_catalog.get(&name) {
+                Some(skill) => {
+                    emit_log("info", &format!("planner: skill {} applies to this turn", skill.name));
+                    skill_block = Some(crate::services::skills::render_skill_block(skill));
+                    applied_skills.push(AppliedSkill {
+                        name: skill.name.clone(),
+                        via: SkillVia::Planner,
+                    });
+                }
+                None => emit_log("debug", &format!("planner: named unknown skill {name}, ignored")),
+            }
+        }
         let plan_telemetry = PlannerTelemetry {
             prompt_tokens: plan_prompt_tokens,
             prefill_ms: plan_prefill_ms,
@@ -4217,6 +4337,13 @@ pub async fn run_chat_turn(
         ambient_context.as_deref(),
     );
 
+    // The invoked skill sits right before the question, after the Sources: it
+    // is what decides how this turn is answered, and ahead of the Sources the
+    // model followed their "cite each fact" line instead of the skill's steps.
+    if let Some(block) = skill_block.as_deref() {
+        insert_before_question(&mut initial_messages, &user_question, block);
+    }
+
     // What the user has on screen, so "esto" / "aquí" resolve. Same placement
     // rule as everything else in this block: per-turn content goes in the final
     // user message, never the system message, or the KV prefix is invalidated
@@ -4288,7 +4415,14 @@ pub async fn run_chat_turn(
 
     // The final user-message bytes are now fixed — persist them so the next
     // turn's history replay extends this prompt instead of diverging from it.
-    persist_prompted_tail(&db, &user_message_id, &initial_messages);
+    let applied_names: Vec<String> = applied_skills.iter().map(|s| s.name.clone()).collect();
+    persist_prompted_tail(
+        &db,
+        &user_message_id,
+        &initial_messages,
+        skill_block.as_deref(),
+        &applied_names,
+    );
 
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
@@ -4420,6 +4554,7 @@ pub async fn run_chat_turn(
                 map_template: &map_template,
                 condense_template: &condense_template,
                 reduce_template: &reduce_template,
+                skill: skill_block.as_deref(),
                 stop: &guard.flag,
             },
             &on_progress,
@@ -5092,6 +5227,7 @@ pub async fn run_chat_turn(
                 llm_calls: llm_calls.clone(),
                 help: help_trace.clone(),
                 research: research_trace.clone(),
+                applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
@@ -6634,7 +6770,7 @@ mod tests {
             ("system".to_string(), "SYS".to_string()),
             ("user".to_string(), "HEADER\n\nSources …\n\nraw question".to_string()),
         ];
-        persist_prompted_tail(&db, &user.id, &messages);
+        persist_prompted_tail(&db, &user.id, &messages, None, &[]);
 
         let msgs = db.get_chat_messages(&conv.id).expect("msgs");
         assert_eq!(msgs[0].content, "raw question", "display content untouched");
@@ -6660,7 +6796,7 @@ mod tests {
             .expect("user msg");
 
         let messages = vec![("assistant".to_string(), "answer".to_string())];
-        persist_prompted_tail(&db, &user.id, &messages);
+        persist_prompted_tail(&db, &user.id, &messages, None, &[]);
 
         let msgs = db.get_chat_messages(&conv.id).expect("msgs");
         assert_eq!(msgs[0].prompt_content, None);
@@ -6757,6 +6893,37 @@ mod tests {
         let last = &msgs.last().unwrap().1;
         assert!(last.starts_with("<memory>user likes tables</memory>"));
         assert!(last.trim_end().ends_with("anything?"));
+    }
+
+    #[test]
+    fn history_keeps_a_one_line_note_instead_of_the_skill_body() {
+        // Replaying the whole body in every later turn cost context, applied an
+        // old procedure to unrelated follow-ups, and froze a stale copy.
+        let block = "<skill name=\"weekly-report\">\nlong steps\n</skill>";
+        let prompted = format!("Sources: …\n\n{block}\n\nhazme un reporte semanal");
+        let replay = history_form(&prompted, Some(block), &["weekly-report".to_string()]);
+        assert!(!replay.contains("long steps"), "{replay}");
+        assert!(
+            replay.contains("[skill weekly-report was applied to this request]"),
+            "{replay}"
+        );
+        assert!(replay.ends_with("hazme un reporte semanal"), "{replay}");
+        assert_eq!(history_form(&prompted, None, &[]), prompted);
+    }
+
+    #[test]
+    fn skill_block_sits_between_sources_and_question() {
+        // The skill decides how this turn is answered, so it is the last thing
+        // the model reads before the question — after the Sources list, whose
+        // "cite each fact" line otherwise wins over the skill's own steps.
+        let mut msgs = build_prompt(&[], &[], "my purifier broke", "en", "", tpl(), "");
+        insert_before_question(&mut msgs, "my purifier broke", "<skill name=\"x\">steps</skill>");
+        assert!(!msgs[0].1.contains("<skill"), "skill leaked into system");
+        let last = &msgs.last().unwrap().1;
+        let sources_at = last.find("Sources:").unwrap();
+        let skill_at = last.find("<skill").unwrap();
+        assert!(sources_at < skill_at, "{last}");
+        assert!(last.ends_with("</skill>\n\nmy purifier broke"), "{last}");
     }
 
     #[test]

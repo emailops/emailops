@@ -1,9 +1,13 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
+import { listSkills, type SkillInfo } from '@/lib/api';
 import { researchFilterParts } from '@/lib/researchFilter';
 import { formatDuration } from '@/lib/researchTime';
+import { applySuggestion, matchSkills, slashQuery } from '@/lib/slashSkills';
 import { useChatStore } from '@/stores/chatStore';
+import { useSkillsEnabledStore } from '@/stores/featureToggleStore';
+import { useLogStore } from '@/stores/logStore';
 import { CategoryFilterDropdown } from './CategoryFilterDropdown';
 
 /** Arms research mode for the next message: the backend reads many more
@@ -164,6 +168,34 @@ function ResearchHint() {
   return <span className="text-xs text-gray-500">{t('chat:research.hint')}</span>;
 }
 
+/** The user's skills while they type a `/name` invocation: `null` until
+ *  the first `/` is typed with the feature on, so a chat that never uses
+ *  skills never asks for them. Fetched afresh for each invocation, so a skill
+ *  created in the Skills view shows up the next time the user types `/`. */
+function useSlashSkills(value: string): SkillInfo[] | null {
+  const skillsEnabled = useSkillsEnabledStore((s) => s.enabled);
+  const addLog = useLogStore((s) => s.addLog);
+  const [skills, setSkills] = useState<SkillInfo[] | null>(null);
+  const typingSlash = skillsEnabled && slashQuery(value) !== null;
+  useEffect(() => {
+    if (!typingSlash) {
+      if (skills !== null) setSkills(null);
+      return;
+    }
+    if (skills !== null) return;
+    let cancelled = false;
+    listSkills()
+      .then((o) => {
+        if (!cancelled) setSkills(o.skills);
+      })
+      .catch((err) => addLog('error', 'ai', `Failed to list skills for / suggestions: ${String(err)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [typingSlash, skills, addLog]);
+  return skillsEnabled ? skills : null;
+}
+
 export function ChatInput({
   onSend,
   onClear,
@@ -176,6 +208,13 @@ export function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // `/name` completion: the list shows while the first token is being typed
+  // and the user has not dismissed it with Escape.
+  const skills = useSlashSkills(value);
+  const [highlight, setHighlight] = useState(0);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const query = slashQuery(value);
+  const suggestions = skills && query !== null && dismissed !== value ? matchSkills(skills, query) : [];
   // A research question waits for its estimate to be confirmed: no new send
   // until the user starts or cancels it.
   const researchPending = useChatStore((s) => s.pendingResearch !== null);
@@ -218,7 +257,31 @@ export function ChatInput({
     setValue('');
   };
 
+  const pick = (name: string) => {
+    setValue(applySuggestion(name));
+    setHighlight(0);
+    textareaRef.current?.focus();
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (suggestions.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setHighlight((h) => (h + step + suggestions.length) % suggestions.length);
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+        e.preventDefault();
+        pick(suggestions[Math.min(highlight, suggestions.length - 1)].name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissed(value);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -229,6 +292,29 @@ export function ChatInput({
     <div className={`border-t border-gray-200 bg-white ${compact ? 'px-3 py-3' : 'px-6 py-4'}`}>
       {contextSlot}
       <ResearchConfirm />
+      {suggestions.length > 0 && (
+        <ul
+          data-testid="slash-suggestions"
+          className="mb-2 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-sm"
+        >
+          {suggestions.map((s, i) => (
+            <li key={s.name}>
+              <button
+                type="button"
+                data-testid={`slash-option-${s.name}`}
+                aria-current={i === highlight}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(s.name)}
+                onMouseEnter={() => setHighlight(i)}
+                className={`block w-full px-3 py-1.5 text-left ${i === highlight ? 'bg-primary-50' : 'hover:bg-gray-50'}`}
+              >
+                <span className="font-mono text-primary-700">/{s.name}</span>
+                <span className="ml-2 text-xs text-gray-500">{s.description}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className={`flex items-end ${compact ? 'gap-2' : 'gap-3'}`}>
         <textarea
           ref={textareaRef}

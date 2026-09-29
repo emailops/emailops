@@ -244,6 +244,20 @@ pub struct EvalCase {
     /// See [`AsOf`] for the YAML shapes.
     #[serde(default)]
     pub as_of: Option<AsOf>,
+
+    /// Skills installed in the data dir for this case only (see
+    /// `evals::skill_fixtures`), so a case can exercise `load_skill` and `/name`.
+    #[serde(default)]
+    pub skills: Vec<crate::evals::skill_fixtures::SkillFixture>,
+
+    /// The skill this turn must follow, however it got there: `/name`, the
+    /// query planner, or the model's own `load_skill` call.
+    #[serde(default)]
+    pub expected_skill: Option<String>,
+
+    /// No skill may reach this turn by any path.
+    #[serde(default)]
+    pub expected_no_skill: bool,
 }
 
 fn default_category() -> String {
@@ -296,6 +310,24 @@ mod tests {
     fn parse_case(yaml: &str) -> EvalCase {
         let cases: Vec<EvalCase> = serde_yaml::from_str(yaml).expect("parse yaml");
         cases.into_iter().next().expect("at least one case")
+    }
+
+    #[test]
+    fn skills_default_to_none_and_parse_when_given() {
+        assert!(parse_case("- id: t\n  question: q\n").skills.is_empty());
+        let c = parse_case(
+            r#"
+- id: t
+  question: "q"
+  skills:
+    - name: vendor-support
+      description: "Find support contacts."
+      body: "Step one."
+"#,
+        );
+        assert_eq!(c.skills.len(), 1);
+        assert_eq!(c.skills[0].name, "vendor-support");
+        assert_eq!(c.skills[0].body, "Step one.");
     }
 
     #[test]

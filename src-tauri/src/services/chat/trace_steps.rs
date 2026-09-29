@@ -44,6 +44,11 @@ pub fn plan_steps(trace: &ChatTrace) -> Vec<TraceStep> {
             steps.push(llm_step(i));
         }
     }
+    // A skill is applied once the planner has spoken (or straight away for a
+    // `/name` turn) and before retrieval, so it shows right here.
+    if !trace.applied_skills.is_empty() {
+        steps.push(TraceStep::Skill);
+    }
     if trace.retrieval.is_some() {
         steps.push(TraceStep::Retrieval);
     }
@@ -209,6 +214,7 @@ pub fn step_detail(trace: &ChatTrace, step: &TraceStep) -> String {
                 format!("{mode} · {}", trace.route.reason)
             }
         }
+        TraceStep::Skill => "instructions added before retrieval".into(),
         TraceStep::Research => match &trace.research {
             Some(r) => {
                 let mut d = format!(
@@ -304,6 +310,22 @@ pub fn step_label(trace: &ChatTrace, step: &TraceStep) -> String {
             None => "research".into(),
         },
         TraceStep::Retrieval => "RAG retrieval".into(),
+        TraceStep::Skill => format!(
+            "skill: {}",
+            trace
+                .applied_skills
+                .iter()
+                .map(|s| format!(
+                    "{} ({})",
+                    s.name,
+                    match s.via {
+                        crate::models::SkillVia::Slash => "/",
+                        crate::models::SkillVia::Planner => "planner",
+                    }
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TraceStep::Help => match &trace.help {
             Some(h) => format!("guides ({} of {} sections)", h.included, h.candidates),
             None => "guides".into(),
@@ -377,6 +399,7 @@ mod tests {
             llm_calls,
             help: None,
             research: None,
+            applied_skills: Vec::new(),
             steps: vec![],
         }
     }
@@ -399,6 +422,7 @@ mod tests {
                 TraceStep::Research => "research".into(),
                 TraceStep::Retrieval => "rag".into(),
                 TraceStep::Help => "help".into(),
+                TraceStep::Skill => "skill".into(),
                 TraceStep::Llm { index, .. } => {
                     let c = &t.llm_calls[*index];
                     format!("llm:{}/{}", c.kind, c.round)
@@ -500,6 +524,40 @@ mod tests {
             vec![tool("search_emails", -1)],
         );
         assert_eq!(tags(&t), ["route", "tool:search_emails", "llm:tool_round/0"]);
+    }
+
+    fn applied(name: &str, via: crate::models::SkillVia) -> crate::models::AppliedSkill {
+        crate::models::AppliedSkill { name: name.into(), via }
+    }
+
+    #[test]
+    fn an_applied_skill_shows_right_after_the_planner_that_picked_it() {
+        let mut t = trace("planner", vec![llm("planner", -2, 0), llm("tool_round", 0, 0)], vec![]);
+        t.retrieval = Some(retrieval());
+        t.applied_skills = vec![applied("weekly-report", crate::models::SkillVia::Planner)];
+        assert_eq!(
+            tags(&t),
+            ["route", "llm:planner/-2", "skill", "rag", "llm:tool_round/0"]
+        );
+        assert_eq!(step_label(&t, &TraceStep::Skill), "skill: weekly-report (planner)");
+    }
+
+    #[test]
+    fn a_turn_without_skills_has_no_skill_step() {
+        let t = trace("planner", vec![llm("planner", -2, 0)], vec![]);
+        assert!(!tags(&t).contains(&"skill".to_string()));
+    }
+
+    #[test]
+    fn stacked_slash_skills_are_listed_in_order() {
+        use crate::models::SkillVia::Slash;
+        let mut t = trace("heuristic", vec![llm("tool_round", 0, 0)], vec![]);
+        t.applied_skills = vec![applied("client-status", Slash), applied("formal-tone", Slash)];
+        assert_eq!(tags(&t), ["route", "skill", "llm:tool_round/0"]);
+        assert_eq!(
+            step_label(&t, &TraceStep::Skill),
+            "skill: client-status (/), formal-tone (/)"
+        );
     }
 
     #[test]

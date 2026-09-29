@@ -22,6 +22,7 @@ pub const SETTINGS_TABS: &[&str] = &[
     "aidrafts",
     "aitranslation",
     "aisearch",
+    "skills",
     "privacy",
 ];
 

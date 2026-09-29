@@ -155,6 +155,15 @@ pub(crate) fn split_reduce_prompt(
     split_at_marker(template, REDUCE_MARKER, &vars)
 }
 
+/// The report's per-turn tail with the turn's skill in front of it, so the
+/// report follows the skill's format while the cached head stays untouched.
+pub(crate) fn with_skill(tail: String, skill: Option<&str>) -> String {
+    match skill {
+        Some(block) if !block.is_empty() => format!("{block}\n\n{tail}"),
+        _ => tail,
+    }
+}
+
 /// The coverage line the report ends on.
 /// `planned` is how many were gathered: fewer read means the user stopped it.
 pub(crate) fn coverage_line(
@@ -218,6 +227,14 @@ pub(crate) fn split_condense_prompt(template: &str, question: &str, notes: &str)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_skill_leads_the_report_tail_and_never_the_cached_head() {
+        let tail = with_skill("QUESTION: q".to_string(), Some("<skill name=\"x\">steps</skill>"));
+        assert!(tail.starts_with("<skill name=\"x\">steps</skill>\n\n"), "{tail}");
+        assert!(tail.ends_with("QUESTION: q"));
+        assert_eq!(with_skill("QUESTION: q".to_string(), None), "QUESTION: q");
+    }
+
     use super::*;
 
     // ── map prompt / notes ──

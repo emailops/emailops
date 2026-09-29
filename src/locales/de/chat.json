@@ -161,6 +161,7 @@
         "planner": "Planer (LLM)",
         "retrieval": "RAG-Retrieval",
         "help": "EmailOps-Hilfe",
+        "skill": "Skill",
         "tool": "tool_call:",
         "llmRound": "LLM-Runde {{n}}",
         "answer": "Antwort (LLM)",

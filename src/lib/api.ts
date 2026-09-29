@@ -979,6 +979,63 @@ export interface PromptInfo {
   variables: PromptVariableInfo[];
 }
 
+/** One skill in `<data dir>/skills/` (mirrors `services::skills::SkillInfo`). */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  /** False when the user switched this skill off in the Skills view. */
+  enabled: boolean;
+}
+
+/** Mirrors `services::skills::SkillsOverview`. */
+export interface SkillsOverview {
+  enabled: boolean;
+  dir: string | null;
+  skills: SkillInfo[];
+  /** Skills that failed to load. `code`/`params` translate like an `AppError`. */
+  errors: { path: string; message: string; code: string; params: Record<string, string> }[];
+}
+
+export async function listSkills(): Promise<SkillsOverview> {
+  return invoke('list_skills');
+}
+
+/** Create the skills folder if needed and open it in the OS file manager. */
+export async function openSkillsFolder(): Promise<void> {
+  return invoke('open_skills_folder');
+}
+
+/** Switch one skill on or off for the chat. */
+export async function setSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke('set_skill_enabled', { name, enabled });
+}
+
+/** The raw `SKILL.md` text of one skill, for the editor. */
+export async function readSkill(name: string): Promise<string> {
+  return invoke('read_skill', { name });
+}
+
+/**
+ * Save an edited `SKILL.md` and get the skill's name back: the file wins on
+ * the name, so a save that declares another `name:` renames the skill.
+ * Rejected, with nothing written, if the text would not load or the file
+ * changed on disk since `base` (the text the editor opened) was read.
+ */
+export async function saveSkill(name: string, content: string, base: string): Promise<string> {
+  return invoke('save_skill', { name, content, base });
+}
+
+/** Delete a skill: its folder moves to `skills/.deleted/`, restorable by hand. */
+export async function deleteSkill(name: string): Promise<void> {
+  return invoke('delete_skill', { name });
+}
+
+/** Create a new skill from the template. */
+export async function createSkill(name: string): Promise<void> {
+  return invoke('create_skill', { name });
+}
+
 export async function listPrompts(): Promise<PromptInfo[]> {
   return invoke('list_prompts');
 }

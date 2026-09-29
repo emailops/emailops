@@ -293,6 +293,35 @@ Seitenleiste an und führen Sie sie aus. Deaktivieren Sie sie unter **Einstellun
 Eine Linse lässt sich auf ausgewählte **Ordner** eines Kontos beschränken, eigene IMAP-Ordner
 eingeschlossen.
 
+## Skills {#skills}
+
+<!-- claim:ai-skills-1 -->
+*Experimentell.* Ein Skill ist eine gespeicherte Vorgehensweise, der der Chat bei einer Art von
+Anfrage folgt – wie Ihre Wochenzusammenfassung aussehen soll, wie einem Lieferanten zu antworten
+ist. Jeder Skill ist ein Ordner im Datenordner der App, `skills/<name>/SKILL.md`: ein kurzer Kopf
+mit `name` (dem Ordnernamen) und einer `description`, was er tut und wann er gilt, danach die
+Anweisungen in Markdown. Im Prompt des Chats stehen nur Name und Beschreibung; die Anweisungen
+werden in den Runden gelesen, die den Skill nutzen. Nichts in einem Skill-Ordner wird je
+ausgeführt.
+
+<!-- claim:ai-skills-2 -->
+Skills sind standardmäßig aus. Schalten Sie sie unter **Einstellungen → KI-Skills** mit
+**Skills aktivieren** ein; danach erscheint **Skills** in der Seitenleiste.
+
+<!-- claim:ai-skills-3 -->
+Die Ansicht **Skills** listet jeden Skill mit eigenem Schalter und öffnet die `SKILL.md` des
+gewählten in einem Editor. **Neu** legt einen Skill aus einer Vorlage an. **Speichern** schreibt
+ihn zurück und lehnt Text ab, den der Chat nicht laden könnte, oder eine Datei, die ein anderer
+Editor seit dem Öffnen geändert hat; wer `name` in der Datei ändert, benennt den Skill um.
+**Löschen** verschiebt ihn nach `skills/.deleted`, von wo er sich von Hand wiederherstellen lässt.
+
+<!-- claim:ai-skills-4 -->
+Der Chat wendet einen Skill auf drei Arten an: Er wählt einen, dessen Beschreibung zu Ihrer Frage
+passt, der Assistent lädt einen beim Antworten, oder Sie beginnen die Nachricht mit `/` und dem
+Namen des Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Wer `/` tippt, sieht
+seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine Runde folgte, und wer ihn
+gewählt hat.
+
 ## Alles abschalten {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

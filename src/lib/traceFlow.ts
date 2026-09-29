@@ -9,7 +9,16 @@ import type { ChatTrace, LlmCallTrace, TraceStep } from '@/types';
 /** Research-mode phase a step belongs to; `null` on an ordinary turn. */
 export type FlowPhase = 'gather' | 'map' | 'condense' | 'reduce';
 
-export type FlowKind = 'router' | 'planner' | 'retrieval' | 'help' | 'tool' | 'llmRound' | 'answer' | 'llmCall';
+export type FlowKind =
+  | 'router'
+  | 'planner'
+  | 'retrieval'
+  | 'help'
+  | 'skill'
+  | 'tool'
+  | 'llmRound'
+  | 'answer'
+  | 'llmCall';
 
 /** Label ids of the numbers in a step's details section (translated by the panel). */
 export type FlowDetailLabel =
@@ -160,6 +169,15 @@ export function buildFlow(trace: ChatTrace): FlowStep[] {
           kind: 'help',
           summary: h ? `${h.included}/${h.candidates}` : null,
           details: h ? [{ label: 'latency', value: formatLatency(h.elapsedMs) }] : [],
+        });
+        return;
+      }
+      case 'skill': {
+        const skills = trace.appliedSkills ?? [];
+        flow.push({
+          ...base(step, key),
+          kind: 'skill',
+          summary: skills.map((s) => `${s.name} (${s.via === 'slash' ? '/' : 'planner'})`).join(', ') || null,
         });
         return;
       }

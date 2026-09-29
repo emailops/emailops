@@ -278,6 +278,10 @@ const CHAT_QUERY_PLAN_VARS: &[VariableDef] = &[
         name: "open_form",
         description: "Names the form you currently have open on screen, so \"add a column for VAT\" is recognised as editing it. Empty when no form is open.",
     },
+    VariableDef {
+        name: "skill_rule",
+        description: "Your enabled skills — `name: description` — and how to name the one a question matches. Empty when skills are off or you have none.",
+    },
 ];
 
 const FORMS_FILL_VARS: &[VariableDef] = &[

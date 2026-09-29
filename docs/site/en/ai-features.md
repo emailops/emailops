@@ -279,6 +279,33 @@ sidebar. Turn them off in **Settings → AI Lenses**.
 <!-- claim:ai-lenses-3 -->
 A Lens can be limited to chosen **Folders** of an account, custom IMAP folders included.
 
+## Skills {#skills}
+
+<!-- claim:ai-skills-1 -->
+*Experimental.* A skill is a saved procedure the chat follows for one kind of request — how
+you want a weekly summary laid out, how to answer a supplier. Each skill is a folder in the app's
+data folder, `skills/<name>/SKILL.md`: a short header with a `name` (the folder's name) and a
+`description` of what it does and when to use it, then the instructions in Markdown. Only the
+name and description stay in the chat's prompt; the instructions are read on the turns that use
+the skill. Nothing in a skill folder is ever run.
+
+<!-- claim:ai-skills-2 -->
+Skills are off by default. Turn them on in **Settings → AI Skills** with **Enable skills**; a
+**Skills** entry then appears in the sidebar.
+
+<!-- claim:ai-skills-3 -->
+The **Skills** view lists every skill with its own switch and opens the selected one's
+`SKILL.md` in an editor. **New** creates a skill from a template. **Save** writes it back, and
+refuses text the chat could not load or a file another editor changed since you opened it;
+changing the `name` in the file renames the skill. **Delete** moves it to `skills/.deleted`,
+where it can be restored by hand.
+
+<!-- claim:ai-skills-4 -->
+The chat applies a skill in three ways: it picks one whose description matches your question,
+the assistant loads one while answering, or you start the message with `/` and the skill's name
+(`/weekly-report last week`; `/a /b` applies both). Typing `/` lists your enabled skills. The
+reasoning trace names the skill a turn followed and who chose it.
+
 ## Turning it all off {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

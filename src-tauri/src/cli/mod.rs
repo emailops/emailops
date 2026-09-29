@@ -348,6 +348,10 @@ pub enum Command {
     /// counts, and classified / embeddings / memory / tasks coverage.
     Stats,
 
+    /// List the skills in `<data dir>/skills/` (each a folder with a
+    /// `SKILL.md`) and any that failed to load. Read-only; loads no model.
+    Skills,
+
     /// Compose an email. Saves it as a draft by default (and pushes it to the
     /// provider's Drafts folder when supported); pass `--send` to deliver now.
     Compose {
@@ -909,6 +913,12 @@ mod tests {
     #[test]
     fn chat_requires_at_least_one_question() {
         assert!(Cli::try_parse_from(["emailops-cli", "chat"]).is_err());
+    }
+
+    #[test]
+    fn skills_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "skills"]);
+        assert!(matches!(cli.command, Some(Command::Skills)));
     }
 
     #[test]

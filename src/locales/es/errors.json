@@ -55,6 +55,20 @@
     "ai_data_policy": "El modelo {{model}} no está disponible con la política de datos de EmailOps. Elige otro modelo en Ajustes → IA.",
     "io": "Error de archivo: {{detail}}",
     "budget_exceeded": "Presupuesto de IA superado: {{detail}}",
-    "cancelled": "Cancelado."
+    "cancelled": "Cancelado.",
+    "skill_no_frontmatter": "SKILL.md debe empezar con un bloque --- que contenga name y description.",
+    "skill_unclosed_frontmatter": "El bloque de cabecera no se cierra con ---.",
+    "skill_fence_not_on_own_line": "El --- que cierra la cabecera debe ir en su propia línea.",
+    "skill_invalid_frontmatter": "La cabecera no es YAML válido: {{detail}}",
+    "skill_no_name": "La cabecera no tiene name.",
+    "skill_empty_name": "Una skill necesita un nombre.",
+    "skill_invalid_name": "\"{{name}}\" no es un nombre de skill válido: usa minúsculas, dígitos y guiones sueltos.",
+    "skill_name_mismatch": "name: {{name}} debe coincidir con el nombre de su carpeta {{folder}}.",
+    "skill_no_description": "La cabecera no tiene description: di qué hace la skill y cuándo usarla.",
+    "skill_description_too_long": "La descripción tiene más de {{max}} caracteres.",
+    "skill_no_body": "La skill no tiene instrucciones después de la cabecera.",
+    "skill_body_too_long": "Las instrucciones tienen más de {{max}} caracteres; acórtalas para que quepan en el contexto del modelo.",
+    "skill_changed_on_disk": "{{name}}/SKILL.md ha cambiado en disco desde que lo abriste. Recárgalo antes de guardar.",
+    "skill_already_exists": "Ya existe una skill llamada {{name}}. Elige otro nombre."
   }
 }

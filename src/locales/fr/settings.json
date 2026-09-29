@@ -21,6 +21,8 @@
     "aitranslationDesc": "Traduire e-mails et brouillons",
     "aisearch": "Recherche IA",
     "aisearchDesc": "Embeddings et recherche sémantique",
+    "skills": "Skills IA",
+    "skillsDesc": "Instructions que le chat charge à la demande",
     "privacy": "Confidentialité et sécurité",
     "privacyDesc": "Mot de passe, contenu distant",
     "junk": "Indésirables",
@@ -498,5 +500,34 @@
     "backfill": "Analyser {{count}} anciens messages",
     "backfillStarted": "Analyse des anciens messages en arrière-plan",
     "backfillRunning": "Analyse… {{count}} restants"
+  },
+  "skills": {
+    "enable": "Activer les skills",
+    "enableDesc": "Expérimental. Permet au chat d'utiliser vos skills : il en applique une quand la demande correspond à sa description, et vous pouvez l'invoquer directement en commençant le message par /nom. Une fois activé, la vue Skills apparaît dans la barre latérale pour activer, désactiver et modifier les skills.",
+    "folderTitle": "Dossier des skills",
+    "folderDesc": "Chaque skill est un dossier ici contenant un fichier SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions en Markdown. Seuls le nom et la description restent dans le prompt du chat ; les instructions sont lues quand la skill est utilisée.",
+    "openFolder": "Ouvrir le dossier",
+    "reload": "Recharger",
+    "listTitle": "Skills disponibles",
+    "empty": "Aucune skill pour l'instant. Ouvrez le dossier et ajoutez-en une.",
+    "errorsTitle": "Non chargées",
+    "view": {
+      "title": "Skills",
+      "new": "Nouveau",
+      "newPlaceholder": "nom-du-skill (minuscules, tirets)",
+      "create": "Créer",
+      "empty": "Aucun skill pour le moment. Créez-en un avec Nouveau.",
+      "toggle": "Utiliser {{name}} dans le chat",
+      "save": "Enregistrer",
+      "saved": "Enregistré",
+      "unsaved": "Modifications non enregistrées",
+      "pick": "Choisissez un skill pour le modifier.",
+      "hint": "SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions. Les modifications s'appliquent au prochain message du chat.",
+      "reloadFromDisk": "Recharger depuis le disque",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer ce skill ? Il est déplacé vers skills/.deleted.",
+      "deleteYes": "Supprimer",
+      "deleteNo": "Annuler"
+    }
   }
 }

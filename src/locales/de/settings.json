@@ -21,6 +21,8 @@
     "aitranslationDesc": "E-Mails und Entwürfe übersetzen",
     "aisearch": "KI-Suche",
     "aisearchDesc": "Embeddings und semantische Suche",
+    "skills": "KI-Skills",
+    "skillsDesc": "Anweisungen, die der Chat bei Bedarf lädt",
     "privacy": "Datenschutz & Sicherheit",
     "privacyDesc": "Passwort, externe Inhalte",
     "junk": "Spam",
@@ -498,5 +500,34 @@
     "backfill": "{{count}} ältere Nachrichten bewerten",
     "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet",
     "backfillRunning": "Wird bewertet… noch {{count}}"
+  },
+  "skills": {
+    "enable": "Skills aktivieren",
+    "enableDesc": "Experimentell. Lässt den Chat deine Skills nutzen: Er wendet einen an, wenn die Anfrage zu seiner Beschreibung passt, und du kannst einen direkt aufrufen, indem du die Nachricht mit /name beginnst. Wenn aktiviert, erscheint die Ansicht Skills in der Seitenleiste, um Skills ein- und auszuschalten und zu bearbeiten.",
+    "folderTitle": "Skills-Ordner",
+    "folderDesc": "Jeder Skill ist hier ein Ordner mit einer Datei SKILL.md: ein Kopfblock mit name (dem Ordnernamen) und description, danach die Anweisungen in Markdown. Nur Name und Beschreibung bleiben im Prompt des Chats; die Anweisungen werden gelesen, wenn der Skill genutzt wird.",
+    "openFolder": "Ordner öffnen",
+    "reload": "Neu laden",
+    "listTitle": "Verfügbare Skills",
+    "empty": "Noch keine Skills. Öffne den Ordner und füge einen hinzu.",
+    "errorsTitle": "Nicht geladen",
+    "view": {
+      "title": "Skills",
+      "new": "Neu",
+      "newPlaceholder": "skill-name (Kleinbuchstaben, Bindestriche)",
+      "create": "Erstellen",
+      "empty": "Noch keine Skills. Erstelle einen mit Neu.",
+      "toggle": "{{name}} im Chat verwenden",
+      "save": "Speichern",
+      "saved": "Gespeichert",
+      "unsaved": "Ungespeicherte Änderungen",
+      "pick": "Wähle einen Skill zum Bearbeiten.",
+      "hint": "SKILL.md: ein Frontmatter-Block mit name (dem Ordnernamen) und description, danach die Anweisungen. Änderungen gelten ab der nächsten Chat-Nachricht.",
+      "reloadFromDisk": "Von der Festplatte neu laden",
+      "delete": "Löschen",
+      "deleteConfirm": "Diesen Skill löschen? Er wird nach skills/.deleted verschoben.",
+      "deleteYes": "Löschen",
+      "deleteNo": "Abbrechen"
+    }
   }
 }

@@ -32,6 +32,7 @@ pub mod research_mode;
 pub mod runner;
 pub mod shared;
 pub mod shortcuts;
+pub mod skill_fixtures;
 pub mod tag_classification;
 pub mod translation;
 

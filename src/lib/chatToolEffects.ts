@@ -17,6 +17,7 @@ export const NAVIGABLE_SETTINGS_TABS: readonly SettingsTab[] = [
   'aidrafts',
   'aitranslation',
   'aisearch',
+  'skills',
   'privacy',
 ];
 

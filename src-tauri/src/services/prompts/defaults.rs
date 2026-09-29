@@ -291,7 +291,7 @@ Rules:
 {{guide_pages}}
 - If the question is NOT a single email search (it asks to write/draft/summarize/reply,
   needs multiple steps, or is not about finding mail), output exactly {"defer": true} and nothing else.
-
+{{skill_rule}}
 Example: "primer correo que envié a acme" -> {"to": "acme", "order": "oldest", "limit": 1}
 Example: "latest emails from potential clients" -> {"intent": "introduction", "limit": 5}
 Example: "qué peticiones de contacto he recibido" -> {"to": "{{user_email}}", "intent": "introduction"}

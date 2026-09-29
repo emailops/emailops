@@ -265,6 +265,8 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     //    `SystemClock` on drop, so a panic or early-return inside the chat
     //    turn cannot leave the global registry pointing at a stale clock.
     let _clock_guard = resolve_as_of(&db, account_id, &categories, case.as_of.as_ref())?.map(ClockGuard::install);
+    // The case's own skills, removed again when the case ends.
+    let _skills_guard = crate::evals::skill_fixtures::SkillFixtureGuard::install(&db, &case.skills)?;
 
     // 1. Fresh conversation. Thread-bound cases seed it with the cleaned
     //    thread (role='system' message) so `run_chat_turn` takes the

@@ -237,6 +237,39 @@ await step('Ajustes', 'cerrar', 'el botón Close settings cierra el diálogo', a
   await sleep(1000); return ok(!(await exists('aria/Close settings')), 'cerrado', 'el diálogo sigue abierto');
 });
 
+// ---------- Skills (experimental, apagado por defecto) ----------
+// Enciende el interruptor si hacía falta, comprueba la entrada y la vista, y lo
+// deja como estaba: la BD demo es compartida con el resto de capas.
+const skillsSwitch = (action) => js((act) => {
+  const sw = [...document.querySelectorAll('[role=switch]')].filter((e) => e.offsetParent).find((e) => {
+    let r = e.parentElement; for (let i = 0; i < 4 && r && !/Enable skills/.test(r.innerText); i++) r = r.parentElement;
+    return /Enable skills/.test(r?.innerText || '');
+  });
+  if (!sw) return null;
+  if (act === 'click') sw.click();
+  return sw.getAttribute('aria-checked');
+}, action);
+const openSkillsTab = async () => {
+  await click('aria/Application settings'); await sleep(1200);
+  await js(() => { const t = [...document.querySelectorAll('button')].filter((x) => x.textContent.includes('AI Skills')).pop(); t?.click(); });
+  await sleep(1000);
+};
+let skillsWasOn = null;
+await step('Skills', 'activar', 'con «Enable skills» encendido aparece Skills en la barra lateral', async () => {
+  await openSkillsTab();
+  skillsWasOn = (await skillsSwitch('read')) === 'true';
+  if (skillsWasOn === null) return 'FAIL: no hay interruptor «Enable skills» en Ajustes → AI Skills';
+  if (!skillsWasOn) await skillsSwitch('click');
+  await sleep(800); await click('aria/Close settings'); await sleep(1000);
+  return ok(await exists('[data-testid="sidebar-skills"]'), 'entrada Skills visible', 'no aparece Skills en la barra lateral');
+});
+await step('Skills', 'vista', 'la vista Skills abre con la lista y el botón New', async () => {
+  if (!(await exists('[data-testid="sidebar-skills"]'))) return 'FAIL: no hay entrada Skills';
+  await click('[data-testid="sidebar-skills"]'); await sleep(1500);
+  return ok(await exists('[data-testid="skill-new"]'), 'lista y New visibles', 'la vista no muestra New');
+});
+if (skillsWasOn === false) { await openSkillsTab(); await skillsSwitch('click'); await sleep(800); await click('aria/Close settings'); await sleep(800); }
+
 // ---------- Chat (último: carga el modelo) ----------
 await click('button=Inbox'); await sleep(1000);
 await step('Chat', 'panel visible', 'el panel de chat está acoplado con su cuadro de texto y Send', async () => {

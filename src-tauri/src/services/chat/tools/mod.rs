@@ -32,6 +32,7 @@ pub mod list_drafts;
 pub mod list_lenses;
 pub mod list_open_threads;
 pub mod list_pending_tasks;
+pub mod load_skill;
 pub mod memory_search;
 pub mod next_page;
 pub mod recall_entity;
@@ -400,6 +401,18 @@ impl ToolRegistry {
             out.push('\n');
         }
 
+        // The skills index, while `load_skill` is on the menu. It depends only
+        // on the skills folder, so the cached system prefix stays stable.
+        if self.get("load_skill", db).is_some() {
+            if let Some(index) =
+                crate::services::skills::render_skills_index(&crate::services::skills::catalog_for(db).skills)
+            {
+                out.push('\n');
+                out.push_str(&index);
+                out.push('\n');
+            }
+        }
+
         // Qwen 3 expects the tool catalogue as a structured `<tools>…</tools>`
         // JSON block. Before the llama-cpp-2 0.1.147 migration this was
         // injected by the Jinja template's `tools=` parameter; the plain
@@ -567,6 +580,7 @@ pub fn default_registry() -> ToolRegistry {
         Arc::new(list_lenses::ListLensesTool),
         Arc::new(get_lens_data::GetLensDataTool),
         Arc::new(next_page::NextPageTool),
+        Arc::new(load_skill::LoadSkillTool),
     ])
 }
 
@@ -838,6 +852,39 @@ mod tests {
         assert!(
             structured.contains("full long description"),
             "structured tools block missing description: {structured}"
+        );
+    }
+
+    #[test]
+    fn the_skills_index_follows_the_tool_list_while_load_skill_is_available() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db = Database::new(tmp.path().to_path_buf()).expect("db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
+        // No skills yet: load_skill is hidden and so is the index.
+        assert!(!registry.render_system_prompt_section(&db).contains("Skills ("));
+
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
+            .expect("pref");
+        let dir = tmp
+            .path()
+            .join(crate::services::skills::SKILLS_DIR)
+            .join("vendor-reply");
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(
+            dir.join(crate::services::skills::SKILL_FILE),
+            "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
+        )
+        .expect("write");
+        let section = registry.render_system_prompt_section(&db);
+        let list = section.find("  - load_skill(").expect("tool line");
+        let index = section
+            .find("- vendor-reply: Reply to vendor quotes.")
+            .expect("index rendered");
+        let tools_block = section.find("<tools>").expect("tools block");
+        assert!(list < index && index < tools_block, "{section}");
+        assert!(
+            !section.contains("Be brief."),
+            "a body leaked into the prefix: {section}"
         );
     }
 

@@ -250,6 +250,8 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
         &glossary,
         None,
         &catalog,
+        // Research gathers mail; it does not follow user skills.
+        "",
     )
     .await;
     let latency = t.elapsed().as_millis() as i64;
@@ -620,6 +622,8 @@ pub(crate) struct ResearchInput<'a> {
     pub map_template: &'a str,
     pub condense_template: &'a str,
     pub reduce_template: &'a str,
+    /// The `/name` skill block the report must follow, if the user invoked one.
+    pub skill: Option<&'a str>,
     /// Raised by the chat's Cancel button: the run ends without a report.
     pub stop: &'a AtomicBool,
 }
@@ -1062,6 +1066,7 @@ pub(crate) async fn run_research(
         &notes_block,
         direction,
     );
+    let suffix = prompts::with_skill(suffix, input.skill);
     // The report may use what its actual prompt leaves free in the window.
     let report_tokens = plan::plan_report_tokens(&budget, prefix.chars().count() + suffix.chars().count());
     let t_reduce = std::time::Instant::now();
@@ -1216,6 +1221,7 @@ mod tests {
             map_template: d::CHAT_RESEARCH_MAP,
             condense_template: d::CHAT_RESEARCH_CONDENSE,
             reduce_template: d::CHAT_RESEARCH_REDUCE,
+            skill: None,
             stop,
         }
     }

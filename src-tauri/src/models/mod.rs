@@ -1182,6 +1182,29 @@ pub struct ChatTrace {
     /// finishes and again when an older trace is read back without it.
     #[serde(default)]
     pub steps: Vec<TraceStep>,
+    /// User skills whose instructions rode in this turn's prompt, and how they
+    /// got there. A skill the model loaded itself shows up in `tool_calls` as
+    /// a `load_skill` call instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applied_skills: Vec<AppliedSkill>,
+}
+
+/// A user skill applied to a turn before the model saw it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppliedSkill {
+    pub name: String,
+    pub via: SkillVia,
+}
+
+/// Who chose a skill for the turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillVia {
+    /// The user typed `/name`.
+    Slash,
+    /// The query planner matched the question to the skill's description.
+    Planner,
 }
 
 /// One step of a turn, in execution order. `Llm` and `Tool` point into
@@ -1194,6 +1217,8 @@ pub enum TraceStep {
     Research,
     Retrieval,
     Help,
+    /// The user skills applied before the model ran (`ChatTrace::applied_skills`).
+    Skill,
     #[serde(rename_all = "camelCase")]
     Llm {
         index: usize,
