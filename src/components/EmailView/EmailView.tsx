@@ -5,6 +5,7 @@ import { TagChips } from '@/components/common/TagChips';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
 import * as api from '@/lib/api';
+import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
@@ -136,7 +137,7 @@ export function EmailView({
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) can match incoming events without re-binding
   // every time a draft is requested.
-  const draftRequestIdRef = useRef<string | null>(null);
+  const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [draftSources, setDraftSources] = useState<DraftSource[]>([]);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
@@ -148,29 +149,36 @@ export function EmailView({
       .catch(() => setAiDraftsEnabled(true));
   }, []);
 
-  // Subscribe once to draft-generated / draft-failed. Filter on the current
-  // request id so an event from a previous click that landed after the user
-  // dismissed the compose doesn't mutate the textarea unexpectedly.
+  const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
+  applyDraftOutcomeRef.current = (outcome) => {
+    setIsGeneratingDraft(false);
+    if (outcome.kind === 'failed') {
+      setDraftSources([]);
+      addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
+      return;
+    }
+    const { body, sources } = outcome.event;
+    setDraftSources(sources ?? []);
+    // Prepend the AI body above anything the user has already typed,
+    // so the suggested reply sits at the top of the textbox.
+    setReplyBody((existing) => prependDraftBody(body, existing));
+    addLog('success', 'ai', `AI draft ready (${sources?.length ?? 0} sources)`);
+  };
+
+  // Subscribe once to draft-generated / draft-failed. The tracker matches them
+  // to the current request, so an event from a previous click that landed
+  // after the user dismissed the compose doesn't mutate the textarea.
   useEffect(() => {
     let unlistenGen: UnlistenFn | undefined;
     let unlistenFail: UnlistenFn | undefined;
     void (async () => {
       unlistenGen = await listen<DraftGeneratedEvent>('draft-generated', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        setDraftSources(event.payload.sources ?? []);
-        // Prepend the AI body above anything the user has already typed,
-        // so the suggested reply sits at the top of the textbox.
-        setReplyBody((existing) => prependDraftBody(event.payload.body, existing));
-        addLog('success', 'ai', `AI draft ready (${event.payload.sources?.length ?? 0} sources)`);
+        const outcome = draftTrackerRef.current.accept({ kind: 'generated', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
       unlistenFail = await listen<DraftFailedEvent>('draft-failed', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        setDraftSources([]);
-        addLog('error', 'ai', `AI draft failed: ${event.payload.error}`);
+        const outcome = draftTrackerRef.current.accept({ kind: 'failed', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
     })();
     return () => {
@@ -191,12 +199,14 @@ export function EmailView({
     setIsReplyOpen(true);
     setIsGeneratingDraft(true);
     addLog('info', 'ai', instructions ? 'Requesting AI draft with instructions…' : 'Requesting AI draft…');
+    draftTrackerRef.current.begin();
     try {
       const requestId = await api.generateDraft(target.id, instructions || null);
-      draftRequestIdRef.current = requestId;
+      const early = draftTrackerRef.current.resolve(requestId);
+      if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
-      draftRequestIdRef.current = null;
+      draftTrackerRef.current.cancel();
       addLog('error', 'ai', `Failed to start AI draft: ${err}`);
     }
   };
@@ -297,7 +307,7 @@ export function EmailView({
       setReplyBody('');
       setDraftSources([]);
       setIsGeneratingDraft(false);
-      draftRequestIdRef.current = null;
+      draftTrackerRef.current.cancel();
       return;
     }
 
@@ -306,7 +316,7 @@ export function EmailView({
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
-    draftRequestIdRef.current = null;
+    draftTrackerRef.current.cancel();
     setThreadSearchOpen(false);
     setThreadSearchQuery('');
     setThreadMatchIdx(0);
@@ -334,7 +344,7 @@ export function EmailView({
     setIsReplyOpen(true);
     setDraftSources([]);
     setIsGeneratingDraft(false);
-    draftRequestIdRef.current = null;
+    draftTrackerRef.current.cancel();
     consumePendingChatDraft();
   }, [pendingChatDraft, threadEmails, consumePendingChatDraft]);
 
@@ -651,7 +661,7 @@ export function EmailView({
                 setReplyBody('');
                 setDraftSources([]);
                 setIsGeneratingDraft(false);
-                draftRequestIdRef.current = null;
+                draftTrackerRef.current.cancel();
               }}
               onSend={async ({
                 fromAccountId,

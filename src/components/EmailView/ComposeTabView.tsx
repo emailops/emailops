@@ -20,6 +20,7 @@ import {
 } from '@/lib/composeDraft';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
+import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -68,7 +69,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   // AI draft state. Request id in a ref so the once-registered listener below
   // matches the right response without re-binding per request — same contract
   // as ComposeModal, which this view replaces when the user maximizes.
-  const draftRequestIdRef = useRef<string | null>(null);
+  const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
@@ -218,24 +219,30 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       .catch(() => setAiDraftsEnabled(true));
   }, []);
 
-  // Subscribe once to draft-generated / draft-failed, filtering on this
-  // composer's request id so a reply-side AI Draft can't overwrite this body.
+  const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
+  applyDraftOutcomeRef.current = (outcome) => {
+    setIsGeneratingDraft(false);
+    if (outcome.kind === 'failed') {
+      addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
+      return;
+    }
+    setBodyHtml(plainTextToHtml(outcome.event.body));
+    addLog('success', 'ai', 'AI draft ready');
+  };
+
+  // Subscribe once to draft-generated / draft-failed; the tracker matches them
+  // to this composer's request so a reply-side AI Draft can't overwrite this body.
   useEffect(() => {
     let unlistenGen: UnlistenFn | undefined;
     let unlistenFail: UnlistenFn | undefined;
     void (async () => {
       unlistenGen = await listen<DraftGeneratedEvent>('draft-generated', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        setBodyHtml(plainTextToHtml(event.payload.body));
-        addLog('success', 'ai', 'AI draft ready');
+        const outcome = draftTrackerRef.current.accept({ kind: 'generated', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
       unlistenFail = await listen<DraftFailedEvent>('draft-failed', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        addLog('error', 'ai', `AI draft failed: ${event.payload.error}`);
+        const outcome = draftTrackerRef.current.accept({ kind: 'failed', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
     })();
     return () => {
@@ -253,12 +260,14 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
+    draftTrackerRef.current.begin();
     try {
       const requestId = await api.generateNewDraft(fromAccountId, to, subject.trim(), brief || null);
-      draftRequestIdRef.current = requestId;
+      const early = draftTrackerRef.current.resolve(requestId);
+      if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
-      draftRequestIdRef.current = null;
+      draftTrackerRef.current.cancel();
       addLog('error', 'ai', `Failed to start AI draft: ${errorText(err)}`);
     }
   };

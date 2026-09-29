@@ -17,6 +17,7 @@ import {
 } from '@/lib/composeDraft';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
+import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
@@ -116,7 +117,7 @@ export function ComposeModal({
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) matches the right response without re-binding
   // each time a draft is requested — same pattern as EmailView's AI Draft.
-  const draftRequestIdRef = useRef<string | null>(null);
+  const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
 
@@ -127,28 +128,34 @@ export function ComposeModal({
       .catch(() => setAiDraftsEnabled(true));
   }, []);
 
-  // Subscribe once to draft-generated / draft-failed. Filter on the current
-  // request id so a stale event (or one meant for the reply-side AI Draft)
-  // doesn't overwrite this composer's body.
+  const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
+  applyDraftOutcomeRef.current = (outcome) => {
+    setIsGeneratingDraft(false);
+    if (outcome.kind === 'failed') {
+      addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
+      return;
+    }
+    // Replace the body with the generated draft (the typed text was the
+    // brief, sent as instructions). Convert plain text → HTML so the
+    // rich-text editor renders line breaks correctly.
+    setBodyHtml(plainTextToHtml(outcome.event.body));
+    addLog('success', 'ai', 'AI draft ready');
+  };
+
+  // Subscribe once to draft-generated / draft-failed. The tracker matches
+  // them to this composer's request, so a stale event (or one meant for the
+  // reply-side AI Draft) doesn't overwrite this composer's body.
   useEffect(() => {
     let unlistenGen: UnlistenFn | undefined;
     let unlistenFail: UnlistenFn | undefined;
     void (async () => {
       unlistenGen = await listen<DraftGeneratedEvent>('draft-generated', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        // Replace the body with the generated draft (the typed text was the
-        // brief, sent as instructions). Convert plain text → HTML so the
-        // rich-text editor renders line breaks correctly.
-        setBodyHtml(plainTextToHtml(event.payload.body));
-        addLog('success', 'ai', 'AI draft ready');
+        const outcome = draftTrackerRef.current.accept({ kind: 'generated', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
       unlistenFail = await listen<DraftFailedEvent>('draft-failed', (event) => {
-        if (event.payload.requestId !== draftRequestIdRef.current) return;
-        draftRequestIdRef.current = null;
-        setIsGeneratingDraft(false);
-        addLog('error', 'ai', `AI draft failed: ${event.payload.error}`);
+        const outcome = draftTrackerRef.current.accept({ kind: 'failed', event: event.payload });
+        if (outcome) applyDraftOutcomeRef.current(outcome);
       });
     })();
     return () => {
@@ -385,12 +392,14 @@ export function ComposeModal({
     const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
+    draftTrackerRef.current.begin();
     try {
       const requestId = await api.generateNewDraft(fromAccountId, to, subject.trim(), brief || null);
-      draftRequestIdRef.current = requestId;
+      const early = draftTrackerRef.current.resolve(requestId);
+      if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
-      draftRequestIdRef.current = null;
+      draftTrackerRef.current.cancel();
       addLog('error', 'ai', `Failed to start AI draft: ${errorText(err)}`);
     }
   };

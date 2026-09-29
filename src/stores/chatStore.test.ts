@@ -921,3 +921,48 @@ describe('a send that resolves after the conversation changed', () => {
     expect(useChatStore.getState().isSending).toBe(false);
   });
 });
+
+describe('tokens that arrive before the send returns the message ids', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      streamingPhase: null,
+      messages: [],
+      isSending: false,
+      error: null,
+      backgroundTurns: {},
+      selectedCategories: ['primary'],
+    });
+  });
+
+  function sendEmitting(...events: ChatStreamEvent[]) {
+    vi.mocked(api.sendChatMessage).mockImplementation(async () => {
+      for (const e of events) useChatStore.getState().handleStreamToken(e);
+      return {
+        userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'hi' },
+        assistantMessage: assistantMessage('msg-1'),
+      };
+    });
+  }
+
+  it('keeps the streamed text', async () => {
+    sendEmitting(streamEvent({ token: 'Hel' }), streamEvent({ token: 'lo' }));
+    await useChatStore.getState().sendMessage('hi');
+
+    const s = useChatStore.getState();
+    expect(s.messages.find((m) => m.id === 'msg-1')?.content).toBe('Hello');
+    expect(s.streamingMessageId).toBe('msg-1');
+  });
+
+  it('ends the turn when it already finished (e.g. a fast error)', async () => {
+    sendEmitting(streamEvent({ token: '', error: 'No model loaded', done: true }));
+    await useChatStore.getState().sendMessage('hi');
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.messages.find((m) => m.id === 'msg-1')?.content).toBe('No model loaded');
+    expect(s.error).toBe('No model loaded');
+  });
+});
