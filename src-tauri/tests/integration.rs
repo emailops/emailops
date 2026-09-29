@@ -5489,3 +5489,44 @@ async fn failed_downloads_are_retried_when_nothing_new_arrived() {
     assert!(db.get_email("lost-1").unwrap().is_some(), "failed download retried");
     assert!(db.get_failed_emails("acc-idle").unwrap().is_empty());
 }
+
+/// A burst bigger than the per-sync incremental cap: the listing is
+/// newest-first and capped, and the next sync's floor used to be the newest
+/// stored message — so the older part of the burst was never fetched.
+#[tokio::test]
+async fn an_inbox_burst_larger_than_the_incremental_cap_is_completed_by_later_syncs() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-burst", "me@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-burst").unwrap().unwrap();
+    let base = 1_700_000_000;
+    db.insert_email(&make_email("already-here", "acc-burst", base)).unwrap();
+
+    let burst = || {
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(
+            make_email("already-here", "acc-burst", base),
+            EmailCategory::Primary,
+            vec![],
+        );
+        for i in 1..=800 {
+            provider.add_message(
+                make_email(&format!("burst-{i}"), "acc-burst", base + i),
+                EmailCategory::Primary,
+                vec![],
+            );
+        }
+        provider
+    };
+
+    run_fake_sync(&db, &account, burst()).await;
+    run_fake_sync(&db, &account, burst()).await;
+
+    let missing: Vec<String> = (1..=800)
+        .map(|i| format!("burst-{i}"))
+        .filter(|id| db.get_email(id).unwrap().is_none())
+        .collect();
+    assert!(missing.is_empty(), "{} burst messages never fetched", missing.len());
+}

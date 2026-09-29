@@ -473,6 +473,8 @@ pub async fn sync_account_with_provider(
     // has by definition not finished sweeping.
     let mut saw_new_backfill = false;
     let mut total_new: u32 = 0;
+    // Whether the incremental pass stopped at its cap with mail left to list.
+    let mut incremental_truncated = false;
 
     loop {
         let mut all_message_refs = Vec::new();
@@ -513,43 +515,72 @@ pub async fn sync_account_with_provider(
             }
         } else if !incremental_done {
             // ── Incremental pass ──────────────────────────────────────────────
-            // Runs once, after the backfill window is exhausted. Already bounded
-            // by MAX_INCREMENTAL_EMAILS_PER_SYNC, so it needs no slicing.
+            // Runs once, after the backfill window is exhausted. Bounded by
+            // MAX_INCREMENTAL_EMAILS_PER_SYNC *new* messages, so it needs no
+            // slicing. A burst larger than that is finished by later syncs:
+            // the window's floor is kept as a resume floor until a pass lists
+            // it to the end (see `incremental_after_with_resume`).
             incremental_done = true;
-            if incremental_after_timestamp.is_some() {
+            if let Some(after) = incremental_after_timestamp {
                 let mut next_page_token: Option<String> = None;
+                let mut incremental_new: u32 = 0;
                 loop {
-                    let remaining = MAX_INCREMENTAL_EMAILS_PER_SYNC
-                        .saturating_sub(all_message_refs.len().saturating_sub(backfill_ref_ids.len()) as u32);
-                    if remaining == 0 {
-                        break;
-                    }
-                    let page_size = PAGE_SIZE.min(remaining);
                     let (message_refs, next_page) = email_provider
                         .list_messages(
-                            page_size,
+                            PAGE_SIZE,
                             next_page_token.as_deref(),
                             incremental_after_timestamp,
                             None,
                             label_filter_for_list.as_deref(),
                         )
                         .await?;
-                    all_message_refs.extend(message_refs);
-                    let has_more = next_page.is_some()
-                        && all_message_refs.len().saturating_sub(backfill_ref_ids.len())
-                            < MAX_INCREMENTAL_EMAILS_PER_SYNC as usize;
-                    if has_more {
-                        emit_account_log(
-                            "debug",
-                            "sync",
-                            &account.email,
-                            &format!("Found {} message IDs so far, fetching more...", all_message_refs.len()),
-                        );
+                    // Count only what is not stored yet: a resumed window
+                    // re-lists the part a previous sync already fetched.
+                    let page_ids: Vec<String> = message_refs.iter().map(|r| r.id.clone()).collect();
+                    let known = db.emails_exist_batch(&page_ids)?;
+                    for msg_ref in message_refs {
+                        if known.contains(&msg_ref.id) {
+                            continue;
+                        }
+                        if incremental_new >= MAX_INCREMENTAL_EMAILS_PER_SYNC {
+                            incremental_truncated = true;
+                            break;
+                        }
+                        incremental_new += 1;
+                        all_message_refs.push(msg_ref);
                     }
-                    if !has_more {
+                    if incremental_truncated {
                         break;
                     }
-                    next_page_token = next_page;
+                    match next_page {
+                        Some(_) if incremental_new >= MAX_INCREMENTAL_EMAILS_PER_SYNC => {
+                            incremental_truncated = true;
+                            break;
+                        }
+                        Some(token) => {
+                            emit_account_log(
+                                "debug",
+                                "sync",
+                                &account.email,
+                                &format!("Found {} new message IDs so far, fetching more...", incremental_new),
+                            );
+                            next_page_token = Some(token);
+                        }
+                        None => break,
+                    }
+                }
+                // Recorded before downloading, so a run that stops half-way
+                // (abort, network error) resumes from the same floor instead
+                // of from the newest message it managed to store.
+                if incremental_new > 0 {
+                    if let Err(e) = db.set_preference(&inbox_incremental_resume_key(account_id), &after.to_string()) {
+                        emit_account_log(
+                            "warn",
+                            "sync",
+                            &account.email,
+                            &format!("Failed to record where the inbox sync resumes: {e}"),
+                        );
+                    }
                 }
             }
         }
@@ -821,6 +852,20 @@ pub async fn sync_account_with_provider(
 
         if backfill_exhausted && incremental_done {
             break;
+        }
+    }
+
+    // The incremental window was listed to its end and every chunk of it went
+    // through the download loop: the next sync can start from the newest
+    // stored message again.
+    if incremental_after_timestamp.is_some() && !incremental_truncated {
+        if let Err(e) = db.delete_preference(&inbox_incremental_resume_key(account_id)) {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Failed to clear the inbox sync resume point: {e}"),
+            );
         }
     }
 
@@ -1626,10 +1671,11 @@ fn apply_pending_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &s
 }
 
 /// All watermark preference keys of one custom folder (forward, backfill-done,
-/// backfill-cursor). The folder-management ops use this to carry watermarks
-/// across a rename and to clean up after a delete — going through the same
-/// derivation functions the sync passes use keeps the formats in lockstep.
-pub(super) fn custom_folder_pref_keys(account_id: &str, server_path: &str) -> [String; 3] {
+/// backfill-cursor, forward catch-up window). The folder-management ops use
+/// this to carry watermarks across a rename and to clean up after a delete —
+/// going through the same derivation functions the sync passes use keeps the
+/// formats in lockstep.
+pub(super) fn custom_folder_pref_keys(account_id: &str, server_path: &str) -> [String; 4] {
     let target = SyncTarget::CustomFolder {
         server_path: server_path.to_string(),
     };
@@ -1637,6 +1683,7 @@ pub(super) fn custom_folder_pref_keys(account_id: &str, server_path: &str) -> [S
         extra_mailbox_forward_key(account_id, &target),
         extra_mailbox_backfill_key(account_id, &target),
         extra_mailbox_backfill_cursor_key(account_id, &target),
+        extra_mailbox_forward_gap_key(account_id, &target),
     ]
 }
 
@@ -1682,6 +1729,11 @@ struct IngestOutcome {
     /// Lowest timestamp among inserted emails (used to advance the backfill
     /// watermark backward).
     min_timestamp: Option<i64>,
+    /// New refs that could not be stored (download or insert failed). The
+    /// passes keep their watermark or cursor where the next run lists these
+    /// again: the shared failed-download retry cannot file them, because a
+    /// provider's own parse may not know the mailbox (Outlook reports "inbox").
+    failed: u32,
 }
 
 /// Fetch full messages for the given refs, force their mailbox/account, and
@@ -1779,6 +1831,7 @@ async fn ingest_mailbox_refs(
     let mut max_timestamp: i64 = 0;
     let mut min_timestamp: Option<i64> = None;
     let mut inserted: u32 = 0;
+    let mut failed: u32 = 0;
     let mut first_batch = true;
 
     let batch_pause = inter_batch_delay(provider);
@@ -1798,6 +1851,7 @@ async fn ingest_mailbox_refs(
                     account_email,
                     &format!("Batch fetch failed for {}: {}", mailbox_name, e),
                 );
+                failed += chunk.len() as u32;
                 continue;
             }
         };
@@ -1820,8 +1874,9 @@ async fn ingest_mailbox_refs(
                     chunk_emails.push((email, attachment_infos));
                 }
                 Err(e) => {
+                    failed += 1;
                     emit_account_log(
-                        "debug",
+                        "warn",
                         "sync",
                         account_email,
                         &format!("Failed to download {} message {}: {}", mailbox_name, msg_ref.id, e),
@@ -1842,6 +1897,7 @@ async fn ingest_mailbox_refs(
                 account_email,
                 &format!("Failed to insert {} batch: {}", mailbox_name, e),
             );
+            failed += chunk_emails.len() as u32;
             continue;
         }
         // Replace optimistic locally-stored sent copies now that the
@@ -1924,6 +1980,7 @@ async fn ingest_mailbox_refs(
         inserted,
         max_timestamp,
         min_timestamp,
+        failed,
     }
 }
 
@@ -2304,32 +2361,49 @@ async fn pull_drafts_if_supported(
     }
 }
 
-/// Forward incremental pass for one extra mailbox. Fetches at most
-/// [`MAX_EXTRA_MAILBOX_EMAILS`] messages newer than the persisted watermark
-/// and advances the watermark to the newest ingested timestamp.
-async fn sync_extra_mailbox_incremental(
+/// A window of one extra mailbox the forward pass could not list in one go,
+/// persisted as `"<ceiling>:<high>"`: the part between the watermark and
+/// `ceiling` is still to be listed, and `high` is the newest message the
+/// truncated listing reached — the watermark once the window is closed.
+fn extra_mailbox_forward_gap_key(account_id: &str, target: &SyncTarget) -> String {
+    format!("extra_mailbox_forward_gap:{}:{}", account_id, target.mailbox_value())
+}
+
+fn parse_forward_gap(raw: &str) -> Option<(i64, i64)> {
+    let (ceiling, high) = raw.split_once(':')?;
+    Some((ceiling.parse().ok()?, high.parse().ok()?))
+}
+
+/// One listing of the forward pass, ingested.
+struct ForwardWindow {
+    outcome: IngestOutcome,
+    /// The listing came back full, so older messages may remain in the range.
+    truncated: bool,
+    /// Oldest stored message among the listed ones (new or already known).
+    oldest: Option<i64>,
+}
+
+/// List `(after, before)` newest-first, capped at [`MAX_EXTRA_MAILBOX_EMAILS`],
+/// and ingest it. `None` when the listing itself failed (already logged).
+#[allow(clippy::too_many_arguments)]
+async fn ingest_forward_window(
     db: &Arc<Database>,
     account: &Account,
     account_id: &str,
     target: &SyncTarget,
     email_provider: &dyn EmailProvider,
     rules_ctx: Option<&RuleSyncCtx<'_>>,
-) {
+    after_timestamp: Option<i64>,
+    before_timestamp: Option<i64>,
+) -> Option<ForwardWindow> {
     let mailbox_name = target.mailbox_value();
-    let mailbox_name = mailbox_name.as_str();
-    let pref_key = extra_mailbox_forward_key(account_id, target);
-    let watermark = db
-        .get_preference(&pref_key)
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<i64>().ok());
-    // On a mailbox's first pass there is no watermark, so the account's
-    // configured sync date is the only thing keeping this from pulling the
-    // newest MAX_EXTRA_MAILBOX_EMAILS messages of all time.
-    let after_timestamp = extra_mailbox_after_timestamp(account.sync_from_timestamp, watermark);
-
     let refs = match target
-        .list_messages(email_provider, MAX_EXTRA_MAILBOX_EMAILS, after_timestamp, None)
+        .list_messages(
+            email_provider,
+            MAX_EXTRA_MAILBOX_EMAILS,
+            after_timestamp,
+            before_timestamp,
+        )
         .await
     {
         Ok(refs) => refs,
@@ -2340,26 +2414,22 @@ async fn sync_extra_mailbox_incremental(
                 &account.email,
                 &format!("Failed to list {} mailbox: {}", mailbox_name, e),
             );
-            return;
+            return None;
         }
     };
-
-    if refs.is_empty() {
-        return;
-    }
-
+    let truncated = refs.len() >= MAX_EXTRA_MAILBOX_EMAILS as usize;
+    let ref_ids: Vec<String> = refs.iter().map(|r| r.id.clone()).collect();
     let outcome = ingest_mailbox_refs(
         db,
         &account.email,
         account_id,
         &account.provider,
-        mailbox_name,
+        &mailbox_name,
         email_provider,
         refs,
         rules_ctx,
     )
     .await;
-
     if outcome.inserted > 0 {
         emit_account_log(
             "success",
@@ -2367,22 +2437,170 @@ async fn sync_extra_mailbox_incremental(
             &account.email,
             &format!("Synced {} new {} email(s)", outcome.inserted, mailbox_name),
         );
-
-        // Advance the forward watermark to the newest ingested timestamp.
-        let new_watermark = match after_timestamp {
-            Some(prev) => prev.max(outcome.max_timestamp),
-            None => outcome.max_timestamp,
-        };
-        if new_watermark > 0 {
-            if let Err(e) = db.set_preference(&pref_key, &new_watermark.to_string()) {
+    }
+    let oldest = if truncated {
+        match db.get_min_timestamp_for_ids(&ref_ids) {
+            Ok(oldest) => oldest,
+            Err(e) => {
                 emit_account_log(
                     "warn",
                     "sync",
                     &account.email,
-                    &format!("Failed to persist {} watermark: {}", mailbox_name, e),
+                    &format!("Could not read how far the {} listing reached: {}", mailbox_name, e),
                 );
+                None
             }
         }
+    } else {
+        None
+    };
+    Some(ForwardWindow {
+        outcome,
+        truncated,
+        oldest,
+    })
+}
+
+/// Persist `value` under `key`, logging a failure (the pass then simply
+/// repeats work on its next run).
+fn set_sync_preference(db: &Database, account: &Account, key: &str, value: &str) {
+    if let Err(e) = db.set_preference(key, value) {
+        emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!("Failed to persist sync position {key}: {e}"),
+        );
+    }
+}
+
+/// Forward incremental pass for one extra mailbox: fetches the messages newer
+/// than the persisted watermark and advances the watermark to the newest one.
+///
+/// A listing is capped at [`MAX_EXTRA_MAILBOX_EMAILS`] newest-first, so a
+/// burst larger than that cannot be taken in one go. Moving the watermark to
+/// the newest message then stranded the rest of the burst below it; instead
+/// the pass records the unlisted part as a gap (see
+/// [`extra_mailbox_forward_gap_key`]) and works it off on the following runs
+/// before listing forward again. A window with a failed download keeps the
+/// watermark, so the next run lists that message again.
+async fn sync_extra_mailbox_incremental(
+    db: &Arc<Database>,
+    account: &Account,
+    account_id: &str,
+    target: &SyncTarget,
+    email_provider: &dyn EmailProvider,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
+) {
+    let pref_key = extra_mailbox_forward_key(account_id, target);
+    let gap_key = extra_mailbox_forward_gap_key(account_id, target);
+    let mut watermark = db
+        .get_preference(&pref_key)
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<i64>().ok());
+
+    // ── Finish a window a previous run could not list in one go ─────────────
+    if let Some((ceiling, high)) = db
+        .get_preference(&gap_key)
+        .ok()
+        .flatten()
+        .as_deref()
+        .and_then(parse_forward_gap)
+    {
+        let after_timestamp = extra_mailbox_after_timestamp(account.sync_from_timestamp, watermark);
+        let Some(window) = ingest_forward_window(
+            db,
+            account,
+            account_id,
+            target,
+            email_provider,
+            rules_ctx,
+            after_timestamp,
+            Some(ceiling),
+        )
+        .await
+        else {
+            return;
+        };
+        if window.truncated {
+            match window.oldest {
+                Some(oldest) if oldest < ceiling => {
+                    set_sync_preference(db, account, &gap_key, &format!("{oldest}:{high}"));
+                    return;
+                }
+                // Defensive: a full page that does not reach below the ceiling
+                // cannot make progress. Close the window rather than loop on it.
+                _ => emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!(
+                        "Could not finish the {} catch-up window; moving on",
+                        target.mailbox_value()
+                    ),
+                ),
+            }
+        }
+        if window.outcome.failed > 0 {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!(
+                    "{} {} message(s) could not be downloaded while catching up",
+                    window.outcome.failed,
+                    target.mailbox_value()
+                ),
+            );
+        }
+        let closed = watermark.map_or(high, |mark| mark.max(high));
+        watermark = Some(closed);
+        set_sync_preference(db, account, &pref_key, &closed.to_string());
+        if let Err(e) = db.delete_preference(&gap_key) {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Failed to clear the {} catch-up window: {e}", target.mailbox_value()),
+            );
+        }
+    }
+
+    // ── Forward listing ──────────────────────────────────────────────────────
+    // On a mailbox's first pass there is no watermark, so the account's
+    // configured sync date is the only thing keeping this from pulling the
+    // newest MAX_EXTRA_MAILBOX_EMAILS messages of all time.
+    let after_timestamp = extra_mailbox_after_timestamp(account.sync_from_timestamp, watermark);
+    let Some(window) = ingest_forward_window(
+        db,
+        account,
+        account_id,
+        target,
+        email_provider,
+        rules_ctx,
+        after_timestamp,
+        None,
+    )
+    .await
+    else {
+        return;
+    };
+
+    let newest = after_timestamp.unwrap_or(0).max(window.outcome.max_timestamp);
+    if window.truncated {
+        // The watermark stays; the unlisted, older part becomes the gap.
+        if let Some(oldest) = window.oldest {
+            set_sync_preference(db, account, &gap_key, &format!("{oldest}:{newest}"));
+        }
+        return;
+    }
+    if window.outcome.failed > 0 {
+        // Keep the watermark so the next run lists the failed message again.
+        return;
+    }
+    if window.outcome.inserted > 0 && newest > 0 {
+        set_sync_preference(db, account, &pref_key, &newest.to_string());
     }
 }
 
@@ -2541,12 +2759,26 @@ async fn sync_extra_mailbox_backfill(
                     );
                 }
             }
+            None if outcome.failed > 0 => {
+                // Nothing on the page could be stored, so the cursor cannot
+                // move — but the history below it is not swept. Stop for this
+                // run and list the page again on the next one.
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!(
+                        "Backfill of {} paused: {} message(s) could not be downloaded",
+                        mailbox_name, outcome.failed
+                    ),
+                );
+                break;
+            }
             _ => {
                 // Cannot advance with the same cursor — provider returned
-                // a non-empty page where every ref is either unknown
-                // (download failed) or at/above the cursor. Mark done so
-                // we don't infinite-loop. This is defensive; normal
-                // operation should always have a candidate_min < cursor.
+                // a non-empty page where every ref is at/above the cursor.
+                // Mark done so we don't infinite-loop. This is defensive;
+                // normal operation should always have a candidate_min < cursor.
                 let _ = db.set_preference(&done_key, "1");
                 break;
             }
@@ -2838,12 +3070,44 @@ pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &s
     let oldest_timestamp = db.get_oldest_email_timestamp_for_mailbox(account_id, "inbox")?;
     let backfill_swept_from = db.get_account_backfill_swept_from(account_id)?;
     let effective_sync_from = effective_sync_from(account);
-    Ok(plan_sync_passes(
+    let resume = db
+        .get_preference(&inbox_incremental_resume_key(account_id))?
+        .and_then(|raw| raw.parse::<i64>().ok());
+    let mut plan = plan_sync_passes(
         effective_sync_from,
         latest_timestamp,
         oldest_timestamp,
         backfill_swept_from,
-    ))
+    );
+    plan.incremental_after_timestamp =
+        incremental_after_with_resume(plan.incremental_after_timestamp, resume, effective_sync_from);
+    Ok(plan)
+}
+
+/// Preference holding the floor of an inbox incremental window that a sync
+/// could not finish (more new mail than `MAX_INCREMENTAL_EMAILS_PER_SYNC`).
+fn inbox_incremental_resume_key(account_id: &str) -> String {
+    format!("inbox_incremental_resume:{account_id}")
+}
+
+/// Floor of the capped incremental pass, given the resume floor a truncated
+/// window left behind.
+///
+/// The listing is newest-first and capped, while the planned floor is the
+/// newest stored inbox message — so on its own, the older part of a burst
+/// larger than the cap sat below the next floor and was never fetched. The
+/// resume floor holds the window open until a pass lists it to the end; the
+/// account's own floor still wins, so a narrowed sync range is honoured.
+pub(super) fn incremental_after_with_resume(
+    planned: Option<i64>,
+    resume: Option<i64>,
+    floor: Option<i64>,
+) -> Option<i64> {
+    let planned = planned?;
+    Some(match resume {
+        Some(resume) => planned.min(floor.map_or(resume, |floor| resume.max(floor))),
+        None => planned,
+    })
 }
 
 /// The account's history floor with the provider default applied: every
@@ -3006,6 +3270,99 @@ mod extra_mailbox_window_tests {
         // "Sync everything" accounts keep their unbounded behaviour.
         assert_eq!(extra_mailbox_after_timestamp(None, None), None);
         assert_eq!(extra_mailbox_after_timestamp(None, Some(42)), Some(42));
+    }
+
+    /// A Sent burst larger than one listing: the pass lists newest-first capped
+    /// at `MAX_EXTRA_MAILBOX_EMAILS`, and used to move its watermark to the
+    /// newest message — so the older part of the burst was never fetched.
+    #[tokio::test]
+    async fn incremental_pass_completes_a_burst_larger_than_one_listing() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        // IMAP paces its batches the least, which keeps this 800-message test short.
+        let mut account = account_synced_from(Some(FLOOR));
+        account.provider = "imap".to_string();
+        seed_account_row(&db, &account);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        for i in 1..=800 {
+            provider.add_message(sent_email(&format!("s{i}"), FLOOR + i), EmailCategory::Primary, vec![]);
+        }
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider, None).await;
+        // Mail keeps arriving while the burst is being worked off.
+        provider.add_message(sent_email("late", FLOOR + 900), EmailCategory::Primary, vec![]);
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &provider, None).await;
+
+        assert_eq!(
+            stored_ids(&db).len(),
+            801,
+            "every message of the burst, and the late one"
+        );
+    }
+
+    /// A message whose download failed must be fetched again by a later pass;
+    /// the watermark used to move past it, so it was never listed again.
+    #[tokio::test]
+    async fn incremental_pass_retries_a_failed_download_on_the_next_sync() {
+        for target in [
+            SyncTarget::Canonical(ExtraMailbox::Sent),
+            SyncTarget::CustomFolder {
+                server_path: "Projects".to_string(),
+            },
+        ] {
+            let db = Arc::new(Database::new_for_testing().expect("db"));
+            let account = account_synced_from(Some(FLOOR));
+            seed_account_row(&db, &account);
+            let messages = |provider: &FakeEmailProvider| {
+                for (id, ts) in [("m1", FLOOR + 10), ("m2", FLOOR + 20), ("m3", FLOOR + 30)] {
+                    let mut email = sent_email(id, ts);
+                    email.mailbox = target.mailbox_value();
+                    provider.add_message(email, EmailCategory::Primary, vec![]);
+                }
+            };
+
+            let flaky = FakeEmailProvider::new("me@example.com", "Me");
+            messages(&flaky);
+            flaky.fail_message("m2");
+            sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &flaky, None).await;
+            assert_eq!(stored_ids(&db), vec!["m1".to_string(), "m3".to_string()]);
+
+            let healthy = FakeEmailProvider::new("me@example.com", "Me");
+            messages(&healthy);
+            sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &healthy, None).await;
+            assert_eq!(
+                stored_ids(&db),
+                vec!["m1".to_string(), "m2".to_string(), "m3".to_string()],
+                "{target:?}: the failed message must be retried"
+            );
+        }
+    }
+
+    /// A backfill page whose downloads all failed cannot move the cursor, and
+    /// used to latch the mailbox as fully swept — hiding its history for good.
+    #[tokio::test]
+    async fn backfill_does_not_latch_done_when_every_download_failed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+
+        let flaky = FakeEmailProvider::new("me@example.com", "Me");
+        flaky.add_message(sent_email("b1", FLOOR + 10), EmailCategory::Primary, vec![]);
+        flaky.fail_message("b1");
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &flaky, &mut budget, None).await;
+        assert!(stored_ids(&db).is_empty());
+
+        let healthy = FakeEmailProvider::new("me@example.com", "Me");
+        healthy.add_message(sent_email("b1", FLOOR + 10), EmailCategory::Primary, vec![]);
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &healthy, &mut budget, None).await;
+        assert_eq!(
+            stored_ids(&db),
+            vec!["b1".to_string()],
+            "the backfill must retry the page"
+        );
     }
 
     /// The manual full resync used to run beside a scheduler sync of the same
@@ -3347,6 +3704,28 @@ mod plan_sync_passes_tests {
                 incremental_after_timestamp: None,
             }
         );
+    }
+
+    /// A truncated incremental window leaves a resume floor behind; the next
+    /// sync lists from the lower of it and the inbox watermark, never below
+    /// the account's own floor.
+    #[test]
+    fn incremental_floor_resumes_a_truncated_window() {
+        let cases = [
+            // (planned floor, resume floor, account floor) → effective floor
+            (Some(5_000), None, Some(0), Some(5_000)),
+            (Some(5_000), Some(3_000), Some(0), Some(3_000)),
+            (Some(5_000), Some(3_000), Some(4_000), Some(4_000)),
+            (Some(5_000), Some(6_000), Some(0), Some(5_000)),
+            (None, Some(3_000), Some(0), None),
+        ];
+        for (planned, resume, floor, expected) in cases {
+            assert_eq!(
+                incremental_after_with_resume(planned, resume, floor),
+                expected,
+                "planned={planned:?} resume={resume:?} floor={floor:?}"
+            );
+        }
     }
 
     #[test]
