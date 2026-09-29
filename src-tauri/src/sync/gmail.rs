@@ -412,7 +412,7 @@ impl GmailClient {
         }
 
         if let Some(token) = page_token {
-            url.push_str(&format!("&pageToken={}", token));
+            url.push_str(&format!("&pageToken={}", urlencoding::encode(token)));
         }
 
         let mut query_parts = Vec::new();
@@ -953,12 +953,22 @@ impl GmailClient {
         // If no inline data, try fetching body via attachment ID
         if html.is_empty() {
             if let Some(att_id) = Self::find_body_attachment_id(payload, "text/html") {
-                if let Ok(data) = self.fetch_attachment(message_id, &att_id).await {
-                    html = data;
+                match self.fetch_attachment(message_id, &att_id).await {
+                    Ok(data) => html = data,
+                    Err(e) => crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("Gmail: could not fetch the HTML body of {message_id}: {e}"),
+                    ),
                 }
             } else if let Some(att_id) = Self::find_body_attachment_id(payload, "text/plain") {
-                if let Ok(data) = self.fetch_attachment(message_id, &att_id).await {
-                    html = plain_text_to_html(&data);
+                match self.fetch_attachment(message_id, &att_id).await {
+                    Ok(data) => html = plain_text_to_html(&data),
+                    Err(e) => crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("Gmail: could not fetch the text body of {message_id}: {e}"),
+                    ),
                 }
             }
         }
@@ -2808,6 +2818,28 @@ mod tests {
             "a failed send must surface, not be retried into success"
         );
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// Page tokens are opaque and may contain `+`, `/` or `=`; sent raw, a
+    /// `+` arrives as a space and the next page request is rejected.
+    #[tokio::test]
+    async fn list_messages_url_encodes_the_page_token() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages"))
+            .and(query_param("pageToken", "a+b/c="))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"messages":[]}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client
+            .list_messages(10, Some("a+b/c="), None, None, None)
+            .await
+            .expect("the mock only matches the decoded token");
     }
 
     #[test]
