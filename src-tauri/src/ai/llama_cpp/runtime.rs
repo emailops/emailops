@@ -1090,12 +1090,7 @@ impl LlamaCppRuntime {
             Box::new(move |piece: String| {
                 let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
                 let (gate, cb) = &mut *guard;
-                let out = gate.push(&piece);
-                if out.is_empty() {
-                    true
-                } else {
-                    cb(out)
-                }
+                forward_answer_piece(gate, cb, &piece)
             })
         };
 
@@ -1243,20 +1238,7 @@ impl LlamaCppRuntime {
             Box::new(move |piece: String| {
                 let mut guard = gate_state.lock().unwrap_or_else(PoisonError::into_inner);
                 let (think_gate, gate, cb, raw) = &mut *guard;
-                raw.push_str(&piece);
-                if super::tool_parser::ends_with_repeated_tool_call(raw) {
-                    return false;
-                }
-                let dereasoned = think_gate.push(&piece);
-                if dereasoned.is_empty() {
-                    return true;
-                }
-                let out = gate.push(&dereasoned);
-                if out.is_empty() {
-                    true
-                } else {
-                    cb(out)
-                }
+                forward_tool_round_piece(think_gate, gate, cb, raw, &piece)
             })
         };
 
@@ -1453,6 +1435,40 @@ impl LlamaCppRuntime {
     }
 }
 
+/// Pass one generated piece of a plain answer through the reasoning gate to
+/// the caller's callback, and return whether generation should go on.
+///
+/// The caller is asked on EVERY piece — with `""` when the gate holds the
+/// piece back — because its answer is also how a Cancel reaches the actor.
+/// Skipping it while a reasoning span is suppressed ignored a Stop until the
+/// span ended. Callers already ignore empty pieces.
+fn forward_answer_piece(gate: &mut ThinkingGate, cb: &mut dyn FnMut(String) -> bool, piece: &str) -> bool {
+    cb(gate.push(piece))
+}
+
+/// [`forward_answer_piece`] for a tool round: the reasoning gate, then the
+/// tool-call gate, and the round ends early when the model repeats a tool
+/// call it already emitted (`raw` is everything generated so far).
+fn forward_tool_round_piece(
+    think_gate: &mut ThinkingGate,
+    gate: &mut StreamGate,
+    cb: &mut dyn FnMut(String) -> bool,
+    raw: &mut String,
+    piece: &str,
+) -> bool {
+    raw.push_str(piece);
+    if super::tool_parser::ends_with_repeated_tool_call(raw) {
+        return false;
+    }
+    let dereasoned = think_gate.push(piece);
+    let out = if dereasoned.is_empty() {
+        String::new()
+    } else {
+        gate.push(&dereasoned)
+    };
+    cb(out)
+}
+
 /// Unix-seconds timestamp. Saturates to 0 if the system clock is pre-epoch
 /// (shouldn't happen but avoids an ugly unwrap).
 fn now_secs() -> i64 {
@@ -1616,6 +1632,56 @@ fn render_gemma4_chat_template(messages: &[AiMessage], add_generation_prompt: bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caller that answers "stop" to every piece, recording what it saw.
+    fn stopping_caller(seen: &mut Vec<String>) -> impl FnMut(String) -> bool + '_ {
+        move |piece| {
+            seen.push(piece);
+            false
+        }
+    }
+
+    /// Cancel is the caller's callback answering `false`. While the model is
+    /// inside a reasoning span nothing reaches the caller, and the Stop used
+    /// to be ignored until the span ended — minutes, on a long think.
+    #[test]
+    fn a_stop_is_honoured_while_reasoning_is_suppressed() {
+        let mut gate = ThinkingGate::new();
+        let mut seen = Vec::new();
+        let mut cb = stopping_caller(&mut seen);
+        assert!(!forward_answer_piece(&mut gate, &mut cb, "<think>weighing options"));
+        drop(cb);
+        assert_eq!(seen, vec![String::new()], "held-back pieces reach the caller as \"\"");
+    }
+
+    #[test]
+    fn a_stop_is_honoured_while_tool_call_syntax_is_suppressed() {
+        let (mut think, mut gate, mut raw) = (ThinkingGate::new(), StreamGate::new(), String::new());
+        let mut seen = Vec::new();
+        let mut cb = stopping_caller(&mut seen);
+        assert!(!forward_tool_round_piece(
+            &mut think,
+            &mut gate,
+            &mut cb,
+            &mut raw,
+            "<tool_call>{\"name\":"
+        ));
+        drop(cb);
+        assert_eq!(seen, vec![String::new()]);
+    }
+
+    #[test]
+    fn prose_still_reaches_the_caller() {
+        let mut gate = ThinkingGate::new();
+        let mut seen = Vec::new();
+        let mut cb = |piece: String| {
+            seen.push(piece);
+            true
+        };
+        assert!(forward_answer_piece(&mut gate, &mut cb, "Hello"));
+        drop(cb);
+        assert_eq!(seen.concat(), "Hello");
+    }
 
     // `shutdown` runs on the quit path, where a panic or a hang is worse than
     // the crash it prevents. The interesting case — a loaded model releasing
