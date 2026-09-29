@@ -2698,6 +2698,15 @@ async fn run_tool_loop(
         messages.push(response);
 
         for tc in &tool_calls {
+            // Cancel pressed while an earlier call of this round ran: run
+            // nothing else it asked for (the round loop then stops too).
+            if is_cancelled() {
+                emit_log(
+                    "info",
+                    "tool_loop: cancelled by the user — skipping the remaining tool calls",
+                );
+                break;
+            }
             executed_tool_keys.insert(tool_call_key(tc));
             let name = &tc.function.name;
             let args = &tc.function.arguments;
@@ -3062,9 +3071,11 @@ async fn run_thread_bound_turn(
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
+    // The flag `run_chat_turn` registered for this turn. Not registered again
+    // here: a second registration under the same id would replace the flag a
+    // Cancel may already have raised.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
-    // Registered for the whole turn: the chat's Cancel button finds it here.
-    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     /// Bounded so a stuck local model can't leave the UI thinking forever.
     /// Matches the existing final-stream timeout in `run_chat_turn`.
     const STREAM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -3179,7 +3190,7 @@ async fn run_thread_bound_turn(
         false,
         &mut tool_traces,
         &mut llm_calls,
-        Arc::clone(&turn_guard.flag),
+        Arc::clone(&cancel),
     )
     .await;
     let tool_loop_ms = t_tool_loop.elapsed().as_millis() as i64;
@@ -3271,6 +3282,7 @@ async fn run_thread_bound_turn(
         let gate_for_token = gate.clone();
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
+        let cancel_flag = Arc::clone(&cancel);
         let stream_fut = provider.chat_stream(
             ai_messages,
             Box::new(move |token| {
@@ -3290,7 +3302,7 @@ async fn run_thread_bound_turn(
                         },
                     );
                 }
-                true
+                !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             }),
         );
         let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
@@ -3318,7 +3330,14 @@ async fn run_thread_bound_turn(
                 );
             }
         }
-        res
+        // Cancelled while it streamed: keep what was shown, then the note.
+        finish_cancelled_stream(
+            res,
+            cancel.load(std::sync::atomic::Ordering::Relaxed),
+            language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        )
     };
 
     let latency_ms = turn_start.elapsed().as_millis() as i64;
@@ -3454,11 +3473,15 @@ async fn run_gated_synthesis_stream(
     conversation_id: &str,
     assistant_message_id: &str,
     stream_timeout: std::time::Duration,
+    // Raised by the chat's Cancel button: the callback's `false` stops the
+    // generation mid-reply.
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<crate::ai::provider::ChatStreamResult> {
     let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
     let gate_for_token = gate.clone();
     let conv_for_token = conversation_id.to_string();
     let msg_for_token = assistant_message_id.to_string();
+    let cancel_flag = Arc::clone(cancel);
     let stream_fut = provider.chat_stream(
         messages,
         Box::new(move |token| {
@@ -3481,7 +3504,7 @@ async fn run_gated_synthesis_stream(
                     },
                 );
             }
-            true
+            !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
         }),
     );
     let res = match timeout(stream_timeout, stream_fut).await {
@@ -3512,6 +3535,41 @@ async fn run_gated_synthesis_stream(
         }
     }
     res
+}
+
+/// A synthesis stream the user cancelled keeps the text it had shown and
+/// ends with the cancellation note, streamed now since no model call follows.
+/// Any other result passes through unchanged.
+fn finish_cancelled_stream(
+    result: Result<crate::ai::provider::ChatStreamResult>,
+    cancelled: bool,
+    language_code: &str,
+    conversation_id: &str,
+    message_id: &str,
+) -> Result<crate::ai::provider::ChatStreamResult> {
+    if !cancelled {
+        return result;
+    }
+    let mut result = result?;
+    let shown = strip_tool_call_markup(&result.content);
+    let content = super::cancel::cancelled_answer(&shown, language_code);
+    let note = content.get(shown.trim_end().len()..).unwrap_or(&content).to_string();
+    emit_log("info", "turn cancelled by the user during the answer");
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token: note,
+            done: false,
+            error: None,
+            token_count: None,
+            latency_ms: None,
+            replace: None,
+        },
+    );
+    result.content = content;
+    Ok(result)
 }
 
 /// Cap on tool calls salvaged from one empty synthesis attempt (a model that
@@ -3566,6 +3624,7 @@ async fn synthesize_with_recovery(
     stream_timeout: std::time::Duration,
     llm_calls: &mut Vec<LlmCallTrace>,
     tool_traces: &mut Vec<ToolCallTrace>,
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> SynthesisRecovery {
     let mut prompt_messages = synthesis_messages;
     let mut email_refs: Vec<String> = Vec::new();
@@ -3583,8 +3642,19 @@ async fn synthesize_with_recovery(
             conversation_id,
             assistant_message_id,
             stream_timeout,
+            cancel,
         )
         .await;
+
+        // A cancelled turn makes no further model call and runs no tool:
+        // whatever this attempt produced is what the user keeps.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return SynthesisRecovery {
+                result: attempt,
+                email_refs,
+                draft_refs,
+            };
+        }
 
         let empty_result = match attempt {
             Ok(r) if strip_tool_call_markup(&r.content).trim().is_empty() => r,
@@ -3903,6 +3973,7 @@ pub async fn run_chat_turn(
             history,
             system_messages,
             turn_start,
+            Arc::clone(&turn_guard.flag),
         )
         .await;
     }
@@ -4847,6 +4918,7 @@ pub async fn run_chat_turn(
                         STREAM_TIMEOUT,
                         &mut llm_calls,
                         &mut tool_traces,
+                        &turn_guard.flag,
                     )
                     .await;
                     for id in recovery.email_refs {
@@ -4971,6 +5043,7 @@ pub async fn run_chat_turn(
                     STREAM_TIMEOUT,
                     &mut llm_calls,
                     &mut tool_traces,
+                    &turn_guard.flag,
                 )
                 .await;
                 // Salvaged tool calls can contribute email/draft refs the
@@ -4990,6 +5063,16 @@ pub async fn run_chat_turn(
         }
     };
 
+    // A Cancel pressed while the final answer streamed: the stream stopped
+    // mid-reply; keep what was shown and say so. (A research run writes its
+    // own note; a turn cancelled before this point never streamed.)
+    let stream_result = finish_cancelled_stream(
+        stream_result,
+        streaming_happened && !research_active && turn_guard.is_cancelled(),
+        ai_language.as_code(),
+        &conversation_id,
+        &assistant_message_id,
+    );
     let streaming_ms = t_stream.elapsed().as_millis() as i64;
     let latency_ms = turn_start.elapsed().as_millis() as i64;
 
@@ -6257,6 +6340,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6345,6 +6429,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6422,6 +6507,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6490,6 +6576,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6533,6 +6620,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6580,6 +6668,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -8400,6 +8489,7 @@ Preséntalos en una tabla markdown …";
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -8453,10 +8543,281 @@ Preséntalos en una tabla markdown …";
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
         assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(tool_traces.iter().all(|t| t.name.contains("refused")));
+    }
+
+    /// A provider that records whether a stream callback asked it to stop —
+    /// the FakeAiProvider ignores the callback's answer.
+    struct StopAwareProvider {
+        inner: crate::ai::provider::FakeAiProvider,
+        told_to_stop: std::sync::atomic::AtomicBool,
+    }
+
+    impl StopAwareProvider {
+        fn new() -> Self {
+            Self {
+                inner: crate::ai::provider::FakeAiProvider::new(),
+                told_to_stop: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AIProvider for StopAwareProvider {
+        fn provider_type(&self) -> crate::ai::provider::ProviderType {
+            self.inner.provider_type()
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn embedding_model_name(&self) -> &str {
+            self.inner.embedding_model_name()
+        }
+        async fn is_available(&self) -> bool {
+            self.inner.is_available().await
+        }
+        async fn list_models(&self) -> Result<Vec<crate::ai::provider::ModelInfo>> {
+            self.inner.list_models().await
+        }
+        async fn list_embedding_models(&self) -> Result<Vec<crate::ai::provider::ModelInfo>> {
+            self.inner.list_embedding_models().await
+        }
+        async fn complete(
+            &self,
+            prompt: &str,
+            options: crate::ai::provider::CompletionOptions,
+        ) -> Result<crate::ai::provider::CompletionResult> {
+            self.inner.complete(prompt, options).await
+        }
+        async fn complete_with_prefix(
+            &self,
+            prefix: &str,
+            suffix: &str,
+            options: crate::ai::provider::CompletionOptions,
+        ) -> Result<crate::ai::provider::CompletionResult> {
+            self.inner.complete_with_prefix(prefix, suffix, options).await
+        }
+        async fn embed(&self, text: &str) -> Result<crate::ai::provider::EmbeddingResult> {
+            self.inner.embed(text).await
+        }
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<crate::ai::provider::EmbeddingResult>> {
+            self.inner.embed_batch(texts).await
+        }
+        async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+            self.inner.chat_with_tools(messages, tools).await
+        }
+        async fn chat_stream(
+            &self,
+            messages: Vec<AiMessage>,
+            mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+        ) -> Result<crate::ai::provider::ChatStreamResult> {
+            let resp = self.inner.chat_with_tools(&messages, &[]).await?;
+            if !on_token(resp.content.clone()) {
+                self.told_to_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(crate::ai::provider::ChatStreamResult {
+                content: resp.content,
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_the_synthesis_stream_mid_reply() {
+        let provider = StopAwareProvider::new();
+        provider.inner.push_chat_response("Half an answer");
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        run_gated_synthesis_stream(
+            &provider,
+            vec![ai_msg("user", "q")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &cancel,
+        )
+        .await
+        .expect("stream ok");
+        assert!(
+            provider.told_to_stop.load(std::sync::atomic::Ordering::SeqCst),
+            "the token callback must tell the provider to stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_synthesis_makes_no_recovery_call() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        for _ in 0..4 {
+            provider.push_chat_response(
+                "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"query\":\"x\"}}</tool_call>",
+            );
+        }
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "q",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
+            vec![ai_msg("user", "q")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+            &cancel,
+        )
+        .await;
+        assert_eq!(
+            provider.chat_calls().len(),
+            1,
+            "no salvage or corrective retry after a cancel"
+        );
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no salvaged tool runs"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_a_tool_batch_skips_the_remaining_tools() {
+        // The first tool of a two-call round raises the cancel (standing in for
+        // the user pressing Cancel while it runs); the second must not run.
+        struct CancellingTool {
+            cancel: Arc<std::sync::atomic::AtomicBool>,
+        }
+        #[async_trait::async_trait]
+        impl tools::Tool for CancellingTool {
+            fn name(&self) -> &'static str {
+                "get_email_body"
+            }
+            fn description(&self) -> &'static str {
+                "raises the cancel flag"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(tools::ToolOutput::text("body".to_string()))
+            }
+        }
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(CancellingTool {
+                cancel: Arc::clone(&cancel),
+            }) as Arc<dyn tools::Tool>,
+            Arc::new(CountingTool {
+                name: "search_emails",
+                runs: Arc::clone(&runs),
+            }) as Arc<dyn tools::Tool>,
+        ]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let mut body = ai_tool_call("get_email_body");
+        body.function.arguments = serde_json::json!({"email_id": "e1"});
+        let mut search = ai_tool_call("search_emails");
+        search.function.arguments = serde_json::json!({"query": "x"});
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![body, search]),
+        });
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            Arc::clone(&cancel),
+        )
+        .await;
+        assert!(outcome.cancelled);
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the second tool must not run"
+        );
+        assert_eq!(provider.chat_calls().len(), 1, "no model round after the cancel");
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_turn_honours_a_cancel_raised_before_it_started() {
+        // run_chat_turn registers the turn and then hands over to the
+        // thread-bound path: a Cancel pressed in between must still count.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        provider.push_chat_response("An answer nobody wants any more.");
+        let guard = super::super::cancel::register_turn("msg-thread-cancel");
+        assert!(super::super::cancel::request_cancel("msg-thread-cancel"));
+        let result = run_thread_bound_turn(
+            Arc::clone(&db),
+            provider.clone() as Arc<dyn AIProvider>,
+            "conv-1".to_string(),
+            "msg-thread-cancel".to_string(),
+            "acct-1".to_string(),
+            "summarise this thread".to_string(),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::time::Instant::now(),
+            Arc::clone(&guard.flag),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(provider.chat_calls().is_empty(), "no model call after the cancel");
+    }
+
+    #[test]
+    fn a_synthesis_cut_by_a_cancel_keeps_its_text_and_says_so() {
+        let result = crate::ai::provider::ChatStreamResult {
+            content: "Half an ans".to_string(),
+            ..Default::default()
+        };
+        let out = finish_cancelled_stream(Ok(result), true, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "Half an ans\n\n_Cancelled by the user._");
+        let untouched = crate::ai::provider::ChatStreamResult {
+            content: "Full answer.".to_string(),
+            ..Default::default()
+        };
+        let out = finish_cancelled_stream(Ok(untouched), false, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "Full answer.");
     }
 }
