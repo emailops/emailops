@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { EmailAttachment, MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { normalizeMimeType } from '@/lib/mimeType';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
@@ -381,11 +382,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       return;
     }
 
+    // Sender-declared: normalized before it picks the viewer (and its
+    // sandbox) or is interpolated into the data: URL.
+    const mimeType = normalizeMimeType(meta.mimeType);
     const newTab: AttachmentViewTab = {
       type: 'attachment',
       id: meta.id,
       filename: meta.filename,
-      mimeType: meta.mimeType,
+      mimeType,
       dataUrl: '',
       isLoading: true,
     };
@@ -393,7 +397,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
     try {
       const base64 = await api.fetchEmailAttachmentBytes(meta.accountId, meta.emailId, meta.providerAttachmentId);
-      const dataUrl = `data:${meta.mimeType};base64,${base64}`;
+      const dataUrl = `data:${mimeType};base64,${base64}`;
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.type === 'attachment' && t.id === meta.id ? { ...t, dataUrl, isLoading: false } : t,

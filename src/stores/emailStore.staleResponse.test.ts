@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
   getEmailById: vi.fn(),
   getEmailInboxPosition: vi.fn(async () => 0),
   markAsRead: vi.fn(async () => undefined),
+  fetchEmailAttachmentBytes: vi.fn(),
 }));
 
 import * as api from '@/lib/api';
@@ -192,5 +193,28 @@ describe('selectEmail without marking read', () => {
   it('marks an unread email read by default', async () => {
     await useEmailStore.getState().selectEmail({ ...a, isRead: false });
     expect(api.markAsRead).toHaveBeenCalledWith('a');
+  });
+});
+
+describe('openAttachmentTab with a sender-declared MIME type', () => {
+  beforeEach(() => {
+    useEmailStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it('normalizes the type used for the tab and its data URL', async () => {
+    vi.mocked(api.fetchEmailAttachmentBytes).mockResolvedValue('aGk=');
+    await useEmailStore.getState().openAttachmentTab({
+      id: 'att-1',
+      accountId: 'acc',
+      emailId: 'a',
+      providerAttachmentId: 'p1',
+      filename: 'page.html',
+      mimeType: 'Text/HTML; charset=utf-8',
+    } as never);
+
+    const tab = useEmailStore.getState().tabs[0];
+    expect(tab.type === 'attachment' && tab.mimeType).toBe('text/html');
+    expect(tab.type === 'attachment' && tab.dataUrl).toBe('data:text/html;base64,aGk=');
   });
 });
