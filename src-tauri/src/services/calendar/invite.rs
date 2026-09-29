@@ -178,7 +178,7 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
 }
 
 /// Whether an attachment looks like a calendar invite part.
-fn is_invite_attachment(meta: &crate::models::EmailAttachmentMeta) -> bool {
+pub(crate) fn is_invite_attachment(meta: &crate::models::EmailAttachmentMeta) -> bool {
     meta.mime_type.to_ascii_lowercase().contains("calendar") || meta.filename.to_ascii_lowercase().ends_with(".ics")
 }
 

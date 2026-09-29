@@ -471,14 +471,40 @@ fn add_unique(list: &mut Vec<String>, email: &str) {
     }
 }
 
+/// Invites are recognised structurally — a calendar part attached to the
+/// email, iCalendar content in the body, a calendar-notifier sender or an
+/// invite subject prefix — never by a meeting link, which ordinary mail
+/// carries in signatures.
 fn looks_like_calendar_invite(db: &Arc<Database>, email: &Email) -> bool {
     if subject_looks_like_invite(&email.subject) || sender_is_calendar_notifier(&email.sender_email) {
         return true;
     }
-    if let Ok(body) = db.get_email_body(&email.id) {
-        return body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body));
+    match db.get_email_attachment_metas(&email.id) {
+        Ok(metas)
+            if metas
+                .iter()
+                .any(crate::services::calendar::invite::is_invite_attachment) =>
+        {
+            return true
+        }
+        Ok(_) => {}
+        Err(e) => crate::services::logger::log(
+            "warn",
+            "tasks",
+            format!("invite check: attachment lookup failed for {}: {e}", email.id),
+        ),
     }
-    false
+    match db.get_email_body(&email.id) {
+        Ok(body) => body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body)),
+        Err(e) => {
+            crate::services::logger::log(
+                "warn",
+                "tasks",
+                format!("invite check: body lookup failed for {}: {e}", email.id),
+            );
+            false
+        }
+    }
 }
 
 fn subject_looks_like_invite(subject: &str) -> bool {
@@ -518,29 +544,13 @@ fn sender_is_calendar_notifier(sender_email: &str) -> bool {
         || s.starts_with("noreply-calendar@")
 }
 
+/// iCalendar content or MIME markers inlined in the body text.
 fn body_looks_like_invite(body: &str) -> bool {
-    if body.contains("BEGIN:VCALENDAR")
+    body.contains("BEGIN:VCALENDAR")
         || body.contains("text/calendar")
         || body.contains("METHOD:REQUEST")
         || body.contains("METHOD:CANCEL")
         || body.contains("METHOD:REPLY")
-    {
-        return true;
-    }
-    let lower = body.to_ascii_lowercase();
-    const NEEDLES: &[&str] = &[
-        "method=request",
-        "microsoft teams meeting",
-        "teams.microsoft.com/l/meetup-join",
-        "teams.live.com/meet",
-        "outlook.office.com/owa/calendar",
-        "outlook.office365.com/owa/calendar",
-        "meet.google.com/",
-        "zoom.us/j/",
-        "zoomgov.com/j/",
-        "join microsoft teams meeting",
-    ];
-    NEEDLES.iter().any(|n| lower.contains(n))
 }
 
 pub(super) fn derive_company_tag(recipients: &[String], cc: &[String], owner_email: &str) -> Option<String> {
@@ -692,6 +702,42 @@ mod thread_tests {
         let email = db.get_email_by_id("e2").unwrap().expect("e2");
         let prompt = build_prompt(&db, &email, &TaskConfig::default(), &[]).unwrap();
         assert!(prompt.contains("Date: 2023-11-14"), "{prompt}");
+    }
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    fn seeded() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        db
+    }
+
+    /// A meeting link in a signature is not an invitation: the email must
+    /// still be read for facts/tasks.
+    #[test]
+    fn a_meeting_link_in_the_body_is_not_an_invite() {
+        let db = seeded();
+        db.connection()
+            .execute(
+                "UPDATE email_bodies SET body = 'Please send the budget by Friday.\n--\nMy room: https://zoom.us/j/123456 | https://meet.google.com/abc-defg-hij' WHERE email_id = 'e1'",
+                [],
+            )
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(!looks_like_calendar_invite(&db, &email));
+    }
+
+    #[test]
+    fn a_calendar_attachment_marks_an_invite() {
+        let db = seeded();
+        db.insert_email_attachment_meta("e1", "acct", "att-1", "invite.ics", "text/calendar", 512)
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(looks_like_calendar_invite(&db, &email));
     }
 }
 
