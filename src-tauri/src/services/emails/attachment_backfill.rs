@@ -45,6 +45,58 @@ pub enum BackfillOutcome {
     },
 }
 
+/// What a backfill run tells the output panel, and how many emails it
+/// recovered (which decides whether suggestions are re-mined).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackfillReport {
+    pub recovered: usize,
+    /// `(level, message)`, or nothing for a run that did no work.
+    pub log: Option<(&'static str, String)>,
+}
+
+/// Pure: the report for a backfill result.
+pub fn backfill_report(result: &Result<BackfillOutcome>) -> BackfillReport {
+    match result {
+        Ok(BackfillOutcome::Completed {
+            fetched,
+            recovered,
+            failed,
+        }) => {
+            let base = format!("Attachment check: recovered attachments of {recovered} of {fetched} stored emails");
+            let log = if *failed == 0 {
+                ("success", base)
+            } else {
+                (
+                    "warn",
+                    format!("{base}; {failed} could not be fetched and will be retried next sync"),
+                )
+            };
+            BackfillReport {
+                recovered: *recovered,
+                log: Some(log),
+            }
+        }
+        Ok(BackfillOutcome::Aborted { recovered }) => BackfillReport {
+            recovered: *recovered,
+            log: Some((
+                "info",
+                format!("Attachment check paused after recovering {recovered} emails; it resumes next sync"),
+            )),
+        },
+        Ok(BackfillOutcome::AlreadyDone | BackfillOutcome::Unsupported) => BackfillReport {
+            recovered: 0,
+            log: None,
+        },
+        Err(e) => BackfillReport {
+            recovered: 0,
+            log: Some((
+                "warn",
+                format!("Attachment check failed (non-fatal, retried next sync): {e}"),
+            )),
+        },
+    }
+}
+
 /// Pure planner: the provider's messages-with-attachments that are stored
 /// locally without a single attachment row, deduplicated, in provider order.
 pub fn plan_backfill_targets(with_attachments: &[String], missing_meta: &HashSet<String>) -> Vec<String> {
@@ -176,6 +228,55 @@ mod tests {
 
     fn never() -> bool {
         false
+    }
+
+    #[test]
+    fn a_backfill_is_reported_by_how_it_ended() {
+        use crate::models::error::AppError;
+        let cases: Vec<(Result<BackfillOutcome>, usize, Option<&str>, &str)> = vec![
+            (
+                Ok(BackfillOutcome::Completed {
+                    fetched: 4,
+                    recovered: 3,
+                    failed: 0,
+                }),
+                3,
+                Some("success"),
+                "recovered attachments of 3 of 4",
+            ),
+            (
+                Ok(BackfillOutcome::Completed {
+                    fetched: 4,
+                    recovered: 2,
+                    failed: 2,
+                }),
+                2,
+                Some("warn"),
+                "2 could not be fetched and will be retried next sync",
+            ),
+            (
+                Ok(BackfillOutcome::Aborted { recovered: 5 }),
+                5,
+                Some("info"),
+                "resumes next sync",
+            ),
+            (Ok(BackfillOutcome::AlreadyDone), 0, None, ""),
+            (Ok(BackfillOutcome::Unsupported), 0, None, ""),
+            (
+                Err(AppError::SyncError("rate limited".into())),
+                0,
+                Some("warn"),
+                "rate limited",
+            ),
+        ];
+        for (result, recovered, level, fragment) in cases {
+            let report = backfill_report(&result);
+            assert_eq!(report.recovered, recovered, "{result:?}");
+            assert_eq!(report.log.as_ref().map(|(l, _)| *l), level, "{result:?}");
+            if let Some((_, message)) = &report.log {
+                assert!(message.contains(fragment), "{result:?}: {message}");
+            }
+        }
     }
 
     #[test]

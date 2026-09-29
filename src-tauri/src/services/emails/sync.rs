@@ -265,7 +265,7 @@ async fn finish_attachment_upkeep(
     sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     synced_any: bool,
 ) {
-    use super::attachment_backfill::{backfill_attachment_meta, BackfillOutcome};
+    use super::attachment_backfill::backfill_attachment_meta;
 
     // Peek, don't take: the sync loop that follows still has to see the flag.
     let abort_requested = || {
@@ -275,48 +275,12 @@ async fn finish_attachment_upkeep(
             .get(&account.id)
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
     };
-    let recovered = match backfill_attachment_meta(db, provider, &account.id, &account.email, &abort_requested).await {
-        Ok(BackfillOutcome::Completed {
-            fetched,
-            recovered,
-            failed,
-        }) => {
-            let message = if failed == 0 {
-                format!("Attachment check: recovered attachments of {recovered} of {fetched} stored emails")
-            } else {
-                format!(
-                    "Attachment check: recovered attachments of {recovered} of {fetched} stored emails; \
-                     {failed} could not be fetched and will be retried next sync"
-                )
-            };
-            emit_account_log(
-                if failed == 0 { "success" } else { "warn" },
-                "sync",
-                &account.email,
-                &message,
-            );
-            recovered
-        }
-        Ok(BackfillOutcome::Aborted { recovered }) => {
-            emit_account_log(
-                "info",
-                "sync",
-                &account.email,
-                &format!("Attachment check paused after recovering {recovered} emails; it resumes next sync"),
-            );
-            recovered
-        }
-        Ok(BackfillOutcome::AlreadyDone | BackfillOutcome::Unsupported) => 0,
-        Err(e) => {
-            emit_account_log(
-                "warn",
-                "sync",
-                &account.email,
-                &format!("Attachment check failed (non-fatal, retried next sync): {e}"),
-            );
-            0
-        }
-    };
+    let result = backfill_attachment_meta(db, provider, &account.id, &account.email, &abort_requested).await;
+    let report = super::attachment_backfill::backfill_report(&result);
+    if let Some((level, message)) = &report.log {
+        emit_account_log(level, "sync", &account.email, message);
+    }
+    let recovered = report.recovered;
 
     if !synced_any && recovered == 0 {
         return;

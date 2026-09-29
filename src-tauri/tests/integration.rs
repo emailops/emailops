@@ -5092,3 +5092,58 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
     assert_eq!(collected.len(), 1, "the rule must collect the new invoice");
     assert!(data_dir.path().join(&collected[0].file_path).is_file());
 }
+
+/// A download that failed and is retried on the next sync goes through the
+/// attachment rules too — the retry path must not skip them.
+#[tokio::test]
+async fn a_retried_download_is_collected_by_attachment_rules() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rr", "rr@example.com")).unwrap();
+    let floor = 1_700_000_000;
+    db.update_account_sync_from("acc-rr", Some(floor)).unwrap();
+    db.add_failed_email("acc-rr", "retried", "HTTP 500").unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-rr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-rr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-rr",
+        "Billing",
+        Some("billing@x-synthetic.com"),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("rr@example.com", "Rr");
+    provider.add_message(
+        make_email_with("retried", "acc-rr", floor - 86_400, "billing@x-synthetic.com", "inbox"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-r", "Invoice_0001.pdf")],
+    );
+    provider.set_attachment_bytes("retried", "att-r", b"%PDF".to_vec());
+    // Retries only run on a sync that brought new mail.
+    provider.add_message(
+        make_email_with("new", "acc-rr", floor + 86_400, "someone@x-synthetic.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
+}
