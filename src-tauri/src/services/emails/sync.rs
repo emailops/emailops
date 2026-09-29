@@ -2793,7 +2793,12 @@ pub(super) fn gmail_label_filter(selected: &[String]) -> Option<String> {
 /// cursor past unsynced received mail, and at the bottom it would raise the
 /// backfill floor above genuinely older inbox messages.
 pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &str) -> Result<SyncPlan> {
-    let latest_timestamp = db.get_latest_email_timestamp_for_mailbox(account_id, "inbox")?;
+    // Clamped to now: a stored row dated in the future (sender clock skew)
+    // would otherwise ask the provider for mail newer than that future
+    // instant on every sync, i.e. nothing, freezing the inbox.
+    let latest_timestamp = db
+        .get_latest_email_timestamp_for_mailbox(account_id, "inbox")?
+        .map(|latest| latest.min(chrono::Utc::now().timestamp()));
     let oldest_timestamp = db.get_oldest_email_timestamp_for_mailbox(account_id, "inbox")?;
     let backfill_swept_from = db.get_account_backfill_swept_from(account_id)?;
     let effective_sync_from = effective_sync_from(account);
@@ -3477,6 +3482,28 @@ mod sync_anchor_tests {
             plan.backfill_after_timestamp,
             Some(0),
             "an 'All mail' account must still backfill from the beginning"
+        );
+    }
+
+    #[test]
+    fn a_future_dated_inbox_row_cannot_push_the_incremental_cursor_past_now() {
+        // The cursor is MAX(timestamp) of inbox rows. One stored message
+        // stamped years ahead (a sender with a broken clock) used to make every
+        // later sync ask the provider for mail newer than that future instant —
+        // i.e. nothing — freezing the inbox.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = gmail_account_all_mail();
+        seed_account_row(&db, &account);
+        let now = chrono::Utc::now().timestamp();
+        db.insert_email(&email_in("inbox", "from-the-future", now + 10 * 365 * 86_400))
+            .expect("seed future row");
+
+        let plan = resolve_sync_plan(&db, &account, &account.id).expect("plan");
+
+        let after = plan.incremental_after_timestamp.expect("incremental runs");
+        assert!(
+            after <= chrono::Utc::now().timestamp(),
+            "cursor {after} is in the future"
         );
     }
 

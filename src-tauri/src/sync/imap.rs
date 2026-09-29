@@ -626,8 +626,9 @@ impl ImapClient {
 
     // ── Parse raw RFC 5322 bytes ──────────────────────────────────────────────
 
-    fn parse_message(uid: u32, raw: &[u8]) -> Result<(Email, Vec<AttachmentInfo>)> {
-        let parsed = parse_mail(raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
+    fn parse_message(uid: u32, fetched: &imap_search::FetchedMessage) -> Result<(Email, Vec<AttachmentInfo>)> {
+        let parsed =
+            parse_mail(&fetched.raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
 
         let hdrs = &parsed.headers;
 
@@ -641,10 +642,11 @@ impl ImapClient {
 
         let cc = parse_address_list(&hdrs.get_first_value("Cc").unwrap_or_default());
 
-        let timestamp = hdrs
-            .get_first_value("Date")
-            .and_then(|d| mailparse::dateparse(&d).ok())
-            .unwrap_or_else(|| chrono::Utc::now().timestamp());
+        let timestamp = message_timestamp(
+            fetched.internal_date,
+            hdrs.get_first_value("Date").and_then(|d| mailparse::dateparse(&d).ok()),
+            chrono::Utc::now().timestamp(),
+        );
 
         let message_id = hdrs.get_first_value("Message-ID").map(|s| s.trim().to_string());
 
@@ -697,6 +699,15 @@ impl ImapClient {
 
         Ok((email, attachments))
     }
+}
+
+/// The timestamp stored for a message. The server's INTERNALDATE (arrival
+/// time) wins: the `Date:` header is whatever the sender's clock said, and the
+/// inbox cursor is MAX(timestamp), so one message dated in the future would
+/// stop every later incremental sync from finding new mail. Without an
+/// INTERNALDATE the header is used, clamped to `now`.
+fn message_timestamp(internal_date: Option<i64>, date_header: Option<i64>, now: i64) -> i64 {
+    internal_date.unwrap_or_else(|| date_header.map_or(now, |d| d.min(now)))
 }
 
 // ── Thread ID derivation ──────────────────────────────────────────────────────
@@ -1042,7 +1053,7 @@ impl EmailProvider for ImapClient {
                         Ok(bodies) => {
                             for (index, uid) in items {
                                 let parsed = match bodies.get(uid) {
-                                    Some(raw) => Self::parse_message(*uid, raw),
+                                    Some(fetched) => Self::parse_message(*uid, fetched),
                                     None => Err(AppError::NotFound(format!("IMAP UID {uid}: body not found"))),
                                 };
                                 out.push((*index, parsed));
@@ -1119,10 +1130,10 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let raw = imap_search::uid_fetch_body(&mut session, uid)?;
+            let fetched = imap_search::uid_fetch_body(&mut session, uid)?;
 
             let _ = session.logout();
-            Self::parse_message(uid, &raw)
+            Self::parse_message(uid, &fetched)
         })
         .await
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
@@ -2138,6 +2149,45 @@ mod tests {
         assert_eq!(folder, ImapFolder::Inbox);
         let (folder, _) = client.parse_message_ref("acc-1::FOLDER::noseparator");
         assert_eq!(folder, ImapFolder::Inbox);
+    }
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn fetched(raw: &str, internal_date: Option<i64>) -> imap_search::FetchedMessage {
+        imap_search::FetchedMessage {
+            raw: raw.as_bytes().to_vec(),
+            internal_date,
+        }
+    }
+
+    /// A sender whose clock (or malice) stamps `Date:` in 2099 must not set
+    /// the stored timestamp: the inbox cursor is MAX(timestamp), so one such
+    /// row froze INBOX sync until 2099.
+    #[test]
+    fn stored_timestamp_is_the_servers_internaldate_not_the_date_header() {
+        let raw = "From: a@example.com\r\nDate: Thu, 01 Jan 2099 00:00:00 +0000\r\nSubject: s\r\n\r\nbody";
+        let (email, _) = ImapClient::parse_message(1, &fetched(raw, Some(NOW - 60))).unwrap();
+        assert_eq!(email.timestamp, NOW - 60);
+    }
+
+    #[test]
+    fn message_timestamp_prefers_internaldate() {
+        assert_eq!(message_timestamp(Some(100), Some(200), NOW), 100);
+    }
+
+    #[test]
+    fn message_timestamp_clamps_a_future_date_header_to_now() {
+        assert_eq!(message_timestamp(None, Some(NOW + 86_400 * 365), NOW), NOW);
+    }
+
+    #[test]
+    fn message_timestamp_keeps_a_past_date_header_without_internaldate() {
+        assert_eq!(message_timestamp(None, Some(NOW - 10), NOW), NOW - 10);
+    }
+
+    #[test]
+    fn message_timestamp_falls_back_to_now_when_nothing_is_known() {
+        assert_eq!(message_timestamp(None, None, NOW), NOW);
     }
 
     #[test]
