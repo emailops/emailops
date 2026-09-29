@@ -420,7 +420,10 @@ export function EmailView({
   return (
     <div className="flex-1 bg-white flex flex-col overflow-hidden">
       {lightboxMeta && <AttachmentLightbox meta={lightboxMeta} onClose={() => setLightboxMeta(null)} />}
-      <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
+      {/* Capped at 60% so a tall reply (an AI draft plus its RAG sources) can
+          never take the whole pane: the compose scrolls inside the header and
+          the thread below keeps room to scroll. */}
+      <header className="px-4 py-2 border-b border-gray-200 flex-shrink-0 flex flex-col max-h-[60%]">
         {/* Row 1: subject + inline tags on the left, window controls on the right.
             `flex-wrap` on both the row and the control cluster is load-bearing:
             with the chat panel docked the email pane can narrow to ~180px, and
@@ -631,71 +634,73 @@ export function EmailView({
           </div>
         </div>
         {isReplyOpen && (
-          <ReplyCompose
-            email={latestEmail}
-            threadEmails={threadEmails}
-            accounts={accounts}
-            defaultAccountId={activeAccountId || latestEmail.accountId}
-            mode={replyMode}
-            initialBody={replyBody}
-            initialAttachments={forwardAttachments}
-            isLoadingDraft={isGeneratingDraft}
-            draftSources={draftSources}
-            onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
-            onCancel={() => {
-              setIsReplyOpen(false);
-              setReplyBody('');
-              setDraftSources([]);
-              setIsGeneratingDraft(false);
-              draftRequestIdRef.current = null;
-            }}
-            onSend={async ({
-              fromAccountId,
-              toEmails,
-              ccEmails,
-              body: replyText,
-              bodyHtml,
-              inlineImages,
-              attachments,
-            }) => {
-              const isForward = replyMode === 'forward';
-              addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
-              if (isForward) {
-                // A forward is a NEW message, not a reply: it must not carry
-                // In-Reply-To/References, or the recipient's client files it
-                // into a conversation they were never part of.
-                await api.sendNewEmail(
-                  fromAccountId,
-                  toEmails,
-                  ccEmails,
-                  forwardSubject(latestEmail.subject),
-                  replyText,
-                  attachments,
-                  bodyHtml,
-                  inlineImages,
-                );
-              } else {
-                await api.sendReply(
-                  latestEmail.id,
-                  replyText,
-                  fromAccountId,
-                  toEmails,
-                  ccEmails,
-                  bodyHtml,
-                  inlineImages,
-                  attachments,
-                );
-              }
-              // The backend inserted the optimistic Sent row before the send
-              // command returned (and already enqueued the follow-up account
-              // sync) — refetching the thread shows the reply instantly.
-              await refreshThread(latestEmail.accountId, latestEmail.threadId);
-              bumpSentRefresh();
-              addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
-              setForwardAttachments(EMPTY_ATTACHMENTS);
-              setIsReplyOpen(false);
-            }}
-          />
+          <div className="min-h-0 overflow-y-auto">
+            <ReplyCompose
+              email={latestEmail}
+              threadEmails={threadEmails}
+              accounts={accounts}
+              defaultAccountId={activeAccountId || latestEmail.accountId}
+              mode={replyMode}
+              initialBody={replyBody}
+              initialAttachments={forwardAttachments}
+              isLoadingDraft={isGeneratingDraft}
+              draftSources={draftSources}
+              onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
+              onCancel={() => {
+                setIsReplyOpen(false);
+                setReplyBody('');
+                setDraftSources([]);
+                setIsGeneratingDraft(false);
+                draftRequestIdRef.current = null;
+              }}
+              onSend={async ({
+                fromAccountId,
+                toEmails,
+                ccEmails,
+                body: replyText,
+                bodyHtml,
+                inlineImages,
+                attachments,
+              }) => {
+                const isForward = replyMode === 'forward';
+                addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
+                if (isForward) {
+                  // A forward is a NEW message, not a reply: it must not carry
+                  // In-Reply-To/References, or the recipient's client files it
+                  // into a conversation they were never part of.
+                  await api.sendNewEmail(
+                    fromAccountId,
+                    toEmails,
+                    ccEmails,
+                    forwardSubject(latestEmail.subject),
+                    replyText,
+                    attachments,
+                    bodyHtml,
+                    inlineImages,
+                  );
+                } else {
+                  await api.sendReply(
+                    latestEmail.id,
+                    replyText,
+                    fromAccountId,
+                    toEmails,
+                    ccEmails,
+                    bodyHtml,
+                    inlineImages,
+                    attachments,
+                  );
+                }
+                // The backend inserted the optimistic Sent row before the send
+                // command returned (and already enqueued the follow-up account
+                // sync) — refetching the thread shows the reply instantly.
+                await refreshThread(latestEmail.accountId, latestEmail.threadId);
+                bumpSentRefresh();
+                addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
+                setForwardAttachments(EMPTY_ATTACHMENTS);
+                setIsReplyOpen(false);
+              }}
+            />
+          </div>
         )}
       </header>
 
