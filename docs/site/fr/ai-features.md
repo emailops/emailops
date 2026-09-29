@@ -302,6 +302,35 @@ Les filtres dynamiques sont activés par défaut : créez et exécutez chaque vu
 Un filtre dynamique peut être limité à certains **Dossiers** d'un compte, dossiers IMAP personnalisés
 compris.
 
+## Skills {#skills}
+
+<!-- claim:ai-skills-1 -->
+*Expérimental.* Un skill est une procédure enregistrée que le chat suit pour un type de
+demande : la présentation de votre résumé hebdomadaire, la façon de répondre à un fournisseur.
+Chaque skill est un dossier dans le dossier de données de l'app, `skills/<nom>/SKILL.md` : un
+court en-tête avec un `name` (le nom du dossier) et une `description` de ce qu'il fait et quand
+l'utiliser, puis les instructions en Markdown. Seuls le nom et la description restent dans le
+prompt du chat ; les instructions sont lues lors des tours qui utilisent le skill. Rien de ce que
+contient le dossier d'un skill n'est jamais exécuté.
+
+<!-- claim:ai-skills-2 -->
+Les skills sont désactivés par défaut. Activez-les dans **Paramètres → Skills IA** avec
+**Activer les skills** ; une entrée **Skills** apparaît alors dans la barre latérale.
+
+<!-- claim:ai-skills-3 -->
+La vue **Skills** liste chaque skill avec son propre interrupteur et ouvre le `SKILL.md` du skill
+sélectionné dans un éditeur. **Nouveau** crée un skill à partir d'un modèle. **Enregistrer**
+l'écrit, et refuse un texte que le chat ne pourrait pas charger ou un fichier qu'un autre éditeur
+a modifié depuis son ouverture ; changer le `name` dans le fichier renomme le skill.
+**Supprimer** le déplace vers `skills/.deleted`, d'où il peut être restauré à la main.
+
+<!-- claim:ai-skills-4 -->
+Le chat applique un skill de trois façons : il en choisit un dont la description correspond à
+votre question, l'assistant en charge un pendant sa réponse, ou vous commencez le message par `/`
+suivi du nom du skill (`/weekly-report la semaine dernière` ; `/a /b` applique les deux). Taper
+`/` liste vos skills actifs. La trace de raisonnement indique le skill suivi par le tour et qui
+l'a choisi.
+
 ## Tout désactiver {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

@@ -473,6 +473,102 @@ export default (h) => async function demoCases() {
     await flipLenses();
     await closeSettings();
   }
+  // ── skills (experimental, off by default) ─────────────────────────────
+  // Everything below is put back: the switch as it was, and the one skill the
+  // cases create is deleted again (it lands in skills/.deleted of the demo dir).
+  const skillsSwitch = () => js(() => [...document.querySelectorAll('[role=switch]')].filter((e) => e.offsetParent).find((e) => {
+    let r = e.parentElement; for (let i = 0; i < 4 && r && !/Enable skills/.test(r.innerText); i++) r = r.parentElement;
+    return /Enable skills/.test(r?.innerText || '');
+  })?.getAttribute('aria-checked'));
+  const flipSkills = async () => {
+    await js(() => [...document.querySelectorAll('[role=switch]')].filter((e) => e.offsetParent).find((e) => {
+      let r = e.parentElement; for (let i = 0; i < 4 && r && !/Enable skills/.test(r.innerText); i++) r = r.parentElement;
+      return /Enable skills/.test(r?.innerText || '');
+    })?.click());
+    await sleep(1500);
+  };
+  const byTestId = (id) => js((t) => { const e = document.querySelector(`[data-testid="${t}"]`); if (e) e.click(); return !!e; }, id);
+  await tab('AI Skills');
+  const skillsWasOn = (await skillsSwitch()) === 'true';
+  await closeSettings();
+  const skillsInSideBefore = (await buttons()).some((x) => x === 'Skills');
+  if (!skillsWasOn) {
+    await tab('AI Skills');
+    await flipSkills();
+    await closeSettings();
+  }
+  const skillsInSideAfter = (await buttons()).some((x) => x === 'Skills');
+  await claim('ai-skills-2', 'activar', {
+    covers: ['Turn them on in Settings → AI Skills with Enable skills; a Skills entry then appears in the sidebar.'],
+    how: 'Abre Ajustes → AI Skills, enciende «Enable skills» si estaba apagado y comprueba que la barra lateral pasa a tener «Skills» (y que no lo tenía con el interruptor apagado).',
+  }, async ({ doc }) => {
+    const label = doc.bold().find((x) => /^Enable/.test(x)) || 'Enable skills';
+    return ok(skillsInSideAfter && (skillsWasOn || !skillsInSideBefore),
+      `con «${label}» encendido aparece Skills en la barra lateral${skillsWasOn ? '' : ', y no estaba antes'}`,
+      `barra lateral antes: ${skillsInSideBefore}, después: ${skillsInSideAfter}`);
+  });
+  await view('Skills');
+  await byTestId('skill-new');
+  await sleep(500);
+  await js(() => {
+    const i = document.querySelector('[data-testid="skill-new-name"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, 'docs-check');
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await byTestId('skill-create');
+  await sleep(1500);
+  const editorText = await js(() => document.querySelector('[data-testid="skill-editor"]')?.value || '');
+  const rowSwitch = await js(() => !!document.querySelector('[data-testid="skill-toggle-docs-check"]'));
+  await claim('ai-skills-3', 'crear', {
+    covers: ['lists every skill with its own switch and opens the selected one\'s SKILL.md in an editor', 'New creates a skill from a template.'],
+    how: 'En la vista Skills pulsa «New», crea «docs-check» y comprueba que su fila tiene interruptor y que el editor abre un SKILL.md de plantilla con name y description.',
+  }, async ({ doc }) => {
+    doc.match(/creates a skill from a template/);
+    return ok(rowSwitch && /name: docs-check/.test(editorText) && /description:/.test(editorText),
+      'la skill nueva tiene su interruptor y el editor muestra la plantilla', `interruptor: ${rowSwitch}; editor: ${editorText.slice(0, 60)}`);
+  });
+  if (!(await js(() => !!document.querySelector('textarea[placeholder^="Ask about your emails"]')))) {
+    await js(() => document.querySelector('[aria-label="Open chat panel"]')?.click());
+    await sleep(1200);
+  }
+  const typeChat = (v) => js((t) => {
+    const i = document.querySelector('textarea[placeholder^="Ask about your emails"]');
+    if (!i) return false;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(i, t);
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }, v);
+  const chatFound = await typeChat('/');
+  await sleep(1500);
+  const suggested = await js(() => !!document.querySelector('[data-testid="slash-option-docs-check"]'));
+  await typeChat('');
+  await claim('ai-skills-4', 'sugerencias', {
+    covers: ['Typing / lists your enabled skills.'],
+    how: 'Escribe «/» en el chat con la skill «docs-check» creada y activa: debe aparecer en la lista de sugerencias. Luego vacía el campo.',
+  }, async ({ doc }) => {
+    doc.match(/Typing \/ lists your enabled skills/);
+    return ok(chatFound && suggested, '«/» sugiere /docs-check', chatFound ? 'no aparece la sugerencia' : 'no se encontró el campo del chat');
+  });
+  await view('Skills');
+  await js(() => document.querySelector('[data-testid="skill-row-docs-check"]')?.click());
+  await sleep(800);
+  await byTestId('skill-delete');
+  await sleep(300);
+  await byTestId('skill-delete-confirm');
+  await sleep(1500);
+  const stillListed = await js(() => !!document.querySelector('[data-testid="skill-row-docs-check"]'));
+  await claim('ai-skills-3', 'borrar', {
+    covers: ['Delete moves it to skills/.deleted'], partial: 'que el fichero quede en skills/.deleted lo prueba un test; aquí solo se ve que sale de la lista',
+    how: 'Selecciona «docs-check», pulsa «Delete» y confirma: la skill debe desaparecer de la lista.',
+  }, async ({ doc }) => {
+    doc.match(/moves it to skills\/\.deleted/);
+    return ok(!stillListed, 'tras confirmar, la skill sale de la lista', 'sigue en la lista');
+  });
+  if (!skillsWasOn) {
+    await tab('AI Skills');
+    await flipSkills();
+    await closeSettings();
+  }
   await tab('Calendar');
   const calSettings = await screen();
   await claim('feat-calendar-1', 'ajustes', {

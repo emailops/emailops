@@ -891,6 +891,38 @@ checks = [
   { manual = 'The demo mailbox has no custom IMAP folders to pick, so the folder scope is not driven by the docs check.' },
 ]
 
+[ai-skills-1]
+checks = [
+  { tests = ['services::skills::tests::parses_name_description_and_body', 'services::skills::tests::rejects_a_name_that_does_not_match_its_folder'], covers = ["a short header with a name (the folder's name) and a description of what it does and when to use it, then the instructions in Markdown"] },
+  { tests = ['services::chat::tools::tests::the_skills_index_follows_the_tool_list_while_load_skill_is_available'], covers = ["Only the name and description stay in the chat's prompt; the instructions are read on the turns that use the skill."] },
+  { manual = 'That nothing in a skill folder runs is a property of the code (only .md/.txt files are ever read); no check can observe an absence.', covers = ['Nothing in a skill folder is ever run.'] },
+  { none = "What a skill is for, in the reader's terms.", covers = ['A skill is a saved procedure the chat follows for one kind of request — how you want a weekly summary laid out, how to answer a supplier.'] },
+]
+
+[ai-skills-2]
+checks = [
+  { app = true },
+  { tests = ['services::skills::tests::catalog_for_is_empty_when_the_feature_is_off_or_there_is_no_data_dir'], covers = ['Skills are off by default.'] },
+]
+
+[ai-skills-3]
+checks = [
+  { app = true },
+  { tests = ['services::skills::tests::save_validates_before_writing', 'services::skills::tests::save_refuses_to_overwrite_an_edit_made_outside_the_app'], covers = ['refuses text the chat could not load or a file another editor changed since you opened it'] },
+  { tests = ['services::skills::tests::saving_a_different_name_renames_the_skill_and_keeps_its_switch'], covers = ['changing the name in the file renames the skill'] },
+  { tests = ['services::skills::tests::delete_moves_the_skill_aside_and_forgets_its_switch'], covers = ['where it can be restored by hand'] },
+]
+
+[ai-skills-4]
+checks = [
+  { app = true },
+  { tests = ['services::skills::tests::a_stacked_turn_carries_every_block_in_order', 'services::skills::tests::a_skill_turn_asks_the_rest_and_carries_the_block'], covers = ["you start the message with / and the skill's name (/weekly-report last week; /a /b applies both)"] },
+  { tests = ['services::chat::planner::tests::a_skill_rides_alongside_any_verdict'], covers = ['it picks one whose description matches your question'] },
+  { tests = ['services::chat::tools::load_skill::tests::returns_the_skill_body_for_a_known_name'], covers = ['the assistant loads one while answering'] },
+  { tests = ['services::chat::trace_steps::tests::an_applied_skill_shows_right_after_the_planner_that_picked_it'], covers = ['The reasoning trace names the skill a turn followed and who chose it.'] },
+  { none = 'Lead-in to the three ways listed after it.', covers = ['The chat applies a skill in three ways:'] },
+]
+
 [ai-turning-off-1]
 checks = [
   { app = true },

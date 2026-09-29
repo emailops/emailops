@@ -292,6 +292,34 @@ de la barra lateral. Desactívalas en **Ajustes → Lentes de IA**.
 Una lente se puede limitar a unas **Carpetas** concretas de una cuenta, incluidas las carpetas
 IMAP personalizadas.
 
+## Skills {#skills}
+
+<!-- claim:ai-skills-1 -->
+*Experimental.* Una skill es un procedimiento guardado que el chat sigue para un tipo de
+petición: cómo quieres el resumen semanal, cómo contestar a un proveedor. Cada skill es una
+carpeta en la carpeta de datos de la app, `skills/<nombre>/SKILL.md`: una cabecera corta con un
+`name` (el nombre de la carpeta) y una `description` de lo que hace y cuándo usarla, y después
+las instrucciones en Markdown. En el prompt del chat solo quedan el nombre y la descripción; las
+instrucciones se leen en los turnos que usan la skill. Nada de lo que hay en la carpeta de una
+skill se ejecuta nunca.
+
+<!-- claim:ai-skills-2 -->
+Las skills vienen apagadas. Actívalas en **Ajustes → Skills de IA** con **Activar skills**; entonces
+aparece **Skills** en la barra lateral.
+
+<!-- claim:ai-skills-3 -->
+La vista **Skills** lista todas las skills, cada una con su interruptor, y abre el `SKILL.md` de la
+seleccionada en un editor. **Nueva** crea una skill a partir de una plantilla. **Guardar** la
+escribe, y rechaza un texto que el chat no podría cargar o un fichero que otro editor cambió desde
+que lo abriste; cambiar el `name` del fichero renombra la skill. **Borrar** la mueve a
+`skills/.deleted`, de donde se puede recuperar a mano.
+
+<!-- claim:ai-skills-4 -->
+El chat aplica una skill de tres formas: elige una cuya descripción encaja con tu pregunta, el
+asistente carga una mientras responde, o empiezas el mensaje con `/` y el nombre de la skill
+(`/weekly-report semana pasada`; `/a /b` aplica las dos). Al escribir `/` se listan tus skills
+activas. La traza de razonamiento indica qué skill siguió el turno y quién la eligió.
+
 ## Apagarlo todo {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
