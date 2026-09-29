@@ -202,7 +202,8 @@ impl Database {
     /// `pending_sync = 1` are deleted — a stale or buggy reconciliation plan
     /// can never remove a real synced email. FK cascades drop the body /
     /// tags / attachment metas and the `emails_fts_delete` trigger removes
-    /// the FTS row.
+    /// the FTS row. `drafts.email_id` has no cascade, so drafts pointing at a
+    /// deleted row are detached first (as `hard_delete_email` does).
     pub fn delete_pending_sent_emails(&self, ids: &[String]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
@@ -210,6 +211,11 @@ impl Database {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
         for id in ids {
+            tx.execute(
+                "UPDATE drafts SET email_id = NULL
+                 WHERE email_id = ?1 AND EXISTS (SELECT 1 FROM emails WHERE id = ?1 AND pending_sync = 1)",
+                params![id],
+            )?;
             tx.execute("DELETE FROM emails WHERE id = ?1 AND pending_sync = 1", params![id])?;
         }
         tx.commit()?;
@@ -1585,6 +1591,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fts_count, 0, "FTS row must be removed by the delete trigger");
+    }
+
+    // Regression: a draft pointing at the optimistic row made the hard delete
+    // violate drafts.email_id's FK, rolling back the whole reconciliation batch.
+    #[test]
+    fn delete_pending_sent_emails_detaches_drafts_that_reference_the_row() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+        db.insert_sent_email_local(&local_sent_email("pending-1", "acc1", "t1", 100), true)
+            .unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, subject, body, created_at, updated_at)
+                 VALUES ('d1', 'pending-1', 'acc1', '[]', 's', 'b', 0, 0)",
+                [],
+            )
+            .unwrap();
+
+        db.delete_pending_sent_emails(&["pending-1".to_string()]).unwrap();
+
+        assert!(db.get_email("pending-1").unwrap().is_none(), "row must be hard-deleted");
+        let draft_email_id: Option<String> = db
+            .reader()
+            .query_row("SELECT email_id FROM drafts WHERE id = 'd1'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(draft_email_id, None, "the draft survives, detached from the row");
     }
 
     #[test]
