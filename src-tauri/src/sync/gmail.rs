@@ -936,9 +936,16 @@ impl GmailClient {
 
     async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> String {
         // Try to get HTML body first, fall back to plain text (inline data)
+        // A proper (unnamed, inline) body part always wins; only when none
+        // exists does a named text part count, since some mailers put a
+        // filename on the only body they send.
         let mut html = if let Some(body) = self.find_body_part(payload, "text/html") {
             body
         } else if let Some(body) = self.find_body_part(payload, "text/plain") {
+            plain_text_to_html(&body)
+        } else if let Some(body) = Self::find_body_part_in(payload, "text/html", true) {
+            body
+        } else if let Some(body) = Self::find_body_part_in(payload, "text/plain", true) {
             plain_text_to_html(&body)
         } else if let Some(ref body) = payload.body {
             if let Some(ref data) = body.data {
@@ -952,7 +959,13 @@ impl GmailClient {
 
         // If no inline data, try fetching body via attachment ID
         if html.is_empty() {
-            if let Some(att_id) = Self::find_body_attachment_id(payload, "text/html") {
+            let html_att = Self::find_body_attachment_id(payload, "text/html")
+                .or_else(|| Self::find_body_attachment_id_in(payload, "text/html", true));
+            let plain_att = || {
+                Self::find_body_attachment_id(payload, "text/plain")
+                    .or_else(|| Self::find_body_attachment_id_in(payload, "text/plain", true))
+            };
+            if let Some(att_id) = html_att {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = data,
                     Err(e) => crate::services::logger::log(
@@ -961,7 +974,7 @@ impl GmailClient {
                         format!("Gmail: could not fetch the HTML body of {message_id}: {e}"),
                     ),
                 }
-            } else if let Some(att_id) = Self::find_body_attachment_id(payload, "text/plain") {
+            } else if let Some(att_id) = plain_att() {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = plain_text_to_html(&data),
                     Err(e) => crate::services::logger::log(
@@ -1063,11 +1076,13 @@ fn collect_inline_image_refs_recursive(parts: &[GmailPart], out: &mut Vec<Inline
 /// A named or attachment-disposed part is a file the sender attached, and a
 /// `message/rfc822` part is a forwarded message with a body of its own —
 /// picking the first `text/html` at any depth used to render those instead.
-fn is_body_candidate(part: &GmailPart) -> bool {
+/// `allow_named` is the fallback pass for messages whose only body carries a
+/// filename; attachment-disposed and forwarded parts stay excluded.
+fn is_body_candidate(part: &GmailPart, allow_named: bool) -> bool {
     if part.mime_type.eq_ignore_ascii_case("message/rfc822") {
         return false;
     }
-    if part.filename.as_deref().is_some_and(|f| !f.trim().is_empty()) {
+    if !allow_named && part.filename.as_deref().is_some_and(|f| !f.trim().is_empty()) {
         return false;
     }
     let disposed_as_attachment = part.headers.as_ref().is_some_and(|headers| {
@@ -1081,6 +1096,10 @@ fn is_body_candidate(part: &GmailPart) -> bool {
 
 impl GmailClient {
     fn find_body_part(&self, payload: &GmailPayload, mime_type: &str) -> Option<String> {
+        Self::find_body_part_in(payload, mime_type, false)
+    }
+
+    fn find_body_part_in(payload: &GmailPayload, mime_type: &str, allow_named: bool) -> Option<String> {
         let mut log = Vec::new();
 
         // Check direct body
@@ -1097,7 +1116,7 @@ impl GmailClient {
         // Recurse into parts at arbitrary depth
         if let Some(ref parts) = payload.parts {
             for part in parts {
-                if let Some(decoded) = Self::find_body_part_recursive(part, mime_type, &mut log) {
+                if let Some(decoded) = Self::find_body_part_recursive(part, mime_type, allow_named, &mut log) {
                     return Some(decoded);
                 }
             }
@@ -1106,8 +1125,13 @@ impl GmailClient {
         None
     }
 
-    fn find_body_part_recursive(part: &GmailPart, mime_type: &str, log: &mut Vec<String>) -> Option<String> {
-        if !is_body_candidate(part) {
+    fn find_body_part_recursive(
+        part: &GmailPart,
+        mime_type: &str,
+        allow_named: bool,
+        log: &mut Vec<String>,
+    ) -> Option<String> {
+        if !is_body_candidate(part, allow_named) {
             return None;
         }
         if part.mime_type == mime_type {
@@ -1141,7 +1165,7 @@ impl GmailClient {
 
         if let Some(ref nested) = part.parts {
             for nested_part in nested {
-                if let Some(decoded) = Self::find_body_part_recursive(nested_part, mime_type, log) {
+                if let Some(decoded) = Self::find_body_part_recursive(nested_part, mime_type, allow_named, log) {
                     return Some(decoded);
                 }
             }
@@ -1151,9 +1175,13 @@ impl GmailClient {
     }
 
     fn find_body_attachment_id(payload: &GmailPayload, mime_type: &str) -> Option<String> {
+        Self::find_body_attachment_id_in(payload, mime_type, false)
+    }
+
+    fn find_body_attachment_id_in(payload: &GmailPayload, mime_type: &str, allow_named: bool) -> Option<String> {
         if let Some(ref parts) = payload.parts {
             for part in parts {
-                if let Some(id) = Self::find_attachment_id_recursive(part, mime_type) {
+                if let Some(id) = Self::find_attachment_id_recursive(part, mime_type, allow_named) {
                     return Some(id);
                 }
             }
@@ -1161,8 +1189,8 @@ impl GmailClient {
         None
     }
 
-    fn find_attachment_id_recursive(part: &GmailPart, mime_type: &str) -> Option<String> {
-        if !is_body_candidate(part) {
+    fn find_attachment_id_recursive(part: &GmailPart, mime_type: &str, allow_named: bool) -> Option<String> {
+        if !is_body_candidate(part, allow_named) {
             return None;
         }
         if part.mime_type == mime_type {
@@ -1174,7 +1202,7 @@ impl GmailClient {
         }
         if let Some(ref nested) = part.parts {
             for nested_part in nested {
-                if let Some(id) = Self::find_attachment_id_recursive(nested_part, mime_type) {
+                if let Some(id) = Self::find_attachment_id_recursive(nested_part, mime_type, allow_named) {
                     return Some(id);
                 }
             }
@@ -3215,6 +3243,42 @@ mod tests {
             client.find_body_part(&payload, "text/html").unwrap(),
             "<p>real body</p>"
         );
+    }
+
+    /// Some mailers put a name on the ONLY html part. Skipping named parts
+    /// must not leave such a message with an empty body.
+    #[tokio::test]
+    async fn a_named_html_part_is_the_body_when_no_other_body_exists() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>only body</p>")), None);
+        named.filename = Some("body.html".to_string());
+        let payload = make_payload("multipart/mixed", None, Some(vec![named]));
+        assert_eq!(client.extract_body("m-1", &payload).await, "<p>only body</p>");
+    }
+
+    #[tokio::test]
+    async fn an_unnamed_plain_body_still_wins_over_a_named_html_part() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>attached page</p>")), None);
+        named.filename = Some("page.html".to_string());
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![named, make_part("text/plain", Some(&encode("real body")), None)]),
+        );
+        let body = client.extract_body("m-1", &payload).await;
+        assert!(body.contains("real body"), "{body}");
+        assert!(!body.contains("attached page"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_named_fallback_never_reads_a_forwarded_message() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>forwarded</p>")), None);
+        named.filename = Some("body.html".to_string());
+        let forwarded = make_part("message/rfc822", None, Some(vec![named]));
+        let payload = make_payload("multipart/mixed", None, Some(vec![forwarded]));
+        assert_eq!(client.extract_body("m-1", &payload).await, "");
     }
 
     #[test]

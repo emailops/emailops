@@ -836,7 +836,13 @@ fn parse_address_list(raw: &str) -> Vec<String> {
 // ── Body extraction ───────────────────────────────────────────────────────────
 
 fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
-    let (html, plain) = collect_body_parts(msg);
+    // A proper (unnamed, inline) body part always wins; only when none exists
+    // does a named text part count, since some mailers put a filename on the
+    // only body they send.
+    let (html, plain) = match collect_body_parts(msg, false) {
+        (None, None) => collect_body_parts(msg, true),
+        found => found,
+    };
 
     let body = if let Some(h) = html {
         h
@@ -858,13 +864,13 @@ fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
     (body, snippet)
 }
 
-fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<String>) {
+fn collect_body_parts(msg: &mailparse::ParsedMail, allow_named: bool) -> (Option<String>, Option<String>) {
     let ct = &msg.ctype;
     let mime = ct.mimetype.as_str();
 
     // An attached file (`.html`, `.txt`) is not the body even when it is the
     // first text part; neither is a forwarded `message/rfc822`.
-    if mime == "message/rfc822" || is_attached_file(msg) {
+    if mime == "message/rfc822" || is_attached_file(msg, allow_named) {
         return (None, None);
     }
 
@@ -881,7 +887,7 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     let mut plain: Option<String> = None;
 
     for sub in &msg.subparts {
-        let (sh, sp) = collect_body_parts(sub);
+        let (sh, sp) = collect_body_parts(sub, allow_named);
         if html.is_none() {
             html = sh;
         }
@@ -920,11 +926,11 @@ fn inline_cid_images(msg: &mailparse::ParsedMail, mut html: String) -> String {
 }
 
 /// A part the sender attached as a file: disposed as `attachment`, or named.
-fn is_attached_file(part: &mailparse::ParsedMail) -> bool {
+/// `allow_named` (the fallback pass) only excludes explicit attachments.
+fn is_attached_file(part: &mailparse::ParsedMail, allow_named: bool) -> bool {
     let disposition = part.get_content_disposition();
-    disposition.disposition == mailparse::DispositionType::Attachment
-        || disposition.params.contains_key("filename")
-        || part.ctype.params.contains_key("name")
+    let named = disposition.params.contains_key("filename") || part.ctype.params.contains_key("name");
+    disposition.disposition == mailparse::DispositionType::Attachment || (named && !allow_named)
 }
 
 fn strip_html_tags_owned(html: &str) -> String {
@@ -2405,6 +2411,22 @@ mod tests {
         let body = body_of(raw);
         assert!(body.contains("real body"), "{body}");
         assert!(!body.contains("attached page"), "{body}");
+    }
+
+    /// Some mailers put a name on the ONLY html part; it is still the body.
+    #[test]
+    fn a_named_html_part_is_the_body_when_no_other_body_exists() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html; name=\"body.html\"\r\n\r\n<p>only body</p>\r\n--XX--\r\n";
+        assert!(body_of(raw).contains("<p>only body</p>"), "{}", body_of(raw));
+    }
+
+    #[test]
+    fn a_single_part_named_html_message_keeps_its_body() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: text/html; name=\"body.html\"\r\n\r\n<p>only body</p>\r\n";
+        assert!(body_of(raw).contains("<p>only body</p>"), "{}", body_of(raw));
     }
 
     #[test]
