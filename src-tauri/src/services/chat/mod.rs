@@ -490,17 +490,24 @@ pub(crate) fn local_date(ts: i64, offset_secs: i32) -> chrono::NaiveDate {
         .unwrap_or_default()
 }
 
-/// Unix seconds of local midnight starting `date` in a zone `offset_secs`
-/// ahead of UTC — the inclusive start of that local day.
-pub(crate) fn local_day_start(date: chrono::NaiveDate, offset_secs: i32) -> i64 {
-    date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() - offset_secs as i64
+/// Unix seconds of local midnight starting `date` in the clock's zone, with
+/// the offset in force on THAT day (a summer date stays on summer time when
+/// asked in winter). Two passes: the offset at the naive instant picks an
+/// estimate, the offset at the estimate settles it across a DST switch.
+pub(crate) fn local_day_start_in(date: chrono::NaiveDate, clock: &dyn crate::services::clock::Clock) -> i64 {
+    let naive = date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp();
+    let estimate = naive - clock.utc_offset_at(naive) as i64;
+    naive - clock.utc_offset_at(estimate) as i64
+}
+
+/// A message's date as the user saw it on that day, in `clock`'s zone.
+pub(crate) fn format_date_in(ts: i64, clock: &dyn crate::services::clock::Clock) -> String {
+    local_date(ts, clock.utc_offset_at(ts)).format("%Y-%m-%d").to_string()
 }
 
 /// A message's date as the user sees it (their zone, not UTC).
 pub(crate) fn format_date(ts: i64) -> String {
-    local_date(ts, crate::services::clock::utc_offset_secs())
-        .format("%Y-%m-%d")
-        .to_string()
+    format_date_in(ts, crate::services::clock::current().as_ref())
 }
 
 /// Parse an ISO-8601 date ('YYYY-MM-DD') to a unix timestamp in **seconds**
@@ -511,7 +518,7 @@ pub(crate) fn parse_iso_date_secs(s: &str) -> std::result::Result<i64, String> {
         .map_err(|_| format!("expected 'YYYY-MM-DD', got '{}'", s))?;
     // Midnight in the user's zone: a `since=today` bound must not start
     // yesterday evening (or tonight) just because the machine is not on UTC.
-    Ok(local_day_start(date, crate::services::clock::utc_offset_secs()))
+    Ok(local_day_start_in(date, crate::services::clock::current().as_ref()))
 }
 
 /// An `until` date as the exclusive timestamp bound: the start of the NEXT day,
@@ -521,7 +528,7 @@ pub(crate) fn parse_until_date_secs(s: &str) -> std::result::Result<i64, String>
     let date = chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
         .map_err(|_| format!("expected 'YYYY-MM-DD', got '{}'", s))?;
     let next = date.succ_opt().ok_or_else(|| format!("date out of range: '{}'", s))?;
-    Ok(local_day_start(next, crate::services::clock::utc_offset_secs()))
+    Ok(local_day_start_in(next, crate::services::clock::current().as_ref()))
 }
 
 pub(crate) fn truncate_chars(s: &str, max_chars: usize) -> String {
@@ -768,7 +775,7 @@ pub(crate) fn parse_iso_date_to_ts(raw: &str) -> Option<i64> {
         return Some(dt.timestamp());
     }
     if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-        return Some(local_day_start(d, crate::services::clock::utc_offset_secs()));
+        return Some(local_day_start_in(d, crate::services::clock::current().as_ref()));
     }
     None
 }
@@ -791,6 +798,42 @@ mod tests {
             .expect("valid test date")
     }
 
+    // Europe/Madrid leaves summer time on 2026-10-25 at 01:00 UTC. "Now" is
+    // after it (UTC+1) while the dates below are before it (UTC+2): each date
+    // must use the offset in force on THAT date, not today's.
+    fn madrid_in_november() -> crate::services::clock::ZonedClock {
+        crate::services::clock::ZonedClock::new(utc(2026, 11, 2, 12, 0), chrono_tz::Europe::Madrid)
+    }
+
+    #[test]
+    fn a_summer_date_is_shown_with_the_summer_offset() {
+        // 22:30 UTC on 20 October is 00:30 on the 21st in Madrid (UTC+2).
+        assert_eq!(
+            format_date_in(utc(2026, 10, 20, 22, 30), &madrid_in_november()),
+            "2026-10-21"
+        );
+    }
+
+    #[test]
+    fn a_summer_date_bound_starts_at_that_day_s_local_midnight() {
+        let clock = madrid_in_november();
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
+        assert_eq!(local_day_start_in(day("2026-10-21"), &clock), utc(2026, 10, 20, 22, 0));
+        // The switch day itself still starts in summer time …
+        assert_eq!(local_day_start_in(day("2026-10-25"), &clock), utc(2026, 10, 24, 22, 0));
+        // … and the next one in winter time.
+        assert_eq!(local_day_start_in(day("2026-10-26"), &clock), utc(2026, 10, 25, 23, 0));
+    }
+
+    #[test]
+    fn a_winter_date_bound_before_the_spring_switch_uses_the_winter_offset() {
+        // Summer time starts 2026-03-29 at 01:00 UTC; "now" in summer.
+        let clock = crate::services::clock::ZonedClock::new(utc(2026, 6, 1, 12, 0), chrono_tz::Europe::Madrid);
+        let day = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").expect("date");
+        assert_eq!(local_day_start_in(day("2026-03-29"), &clock), utc(2026, 3, 28, 23, 0));
+        assert_eq!(local_day_start_in(day("2026-03-30"), &clock), utc(2026, 3, 29, 22, 0));
+    }
+
     #[test]
     fn local_date_shifts_by_the_offset() {
         let late_evening = utc(2026, 4, 16, 23, 0);
@@ -810,8 +853,9 @@ mod tests {
     #[test]
     fn local_day_start_is_midnight_in_the_offset() {
         let day = chrono::NaiveDate::from_ymd_opt(2026, 4, 17).expect("date");
-        assert_eq!(local_day_start(day, 0), utc(2026, 4, 17, 0, 0));
-        assert_eq!(local_day_start(day, 7_200), utc(2026, 4, 16, 22, 0));
+        let zone = |offset| crate::services::clock::FixedClock::with_offset(0, offset);
+        assert_eq!(local_day_start_in(day, &zone(0)), utc(2026, 4, 17, 0, 0));
+        assert_eq!(local_day_start_in(day, &zone(7_200)), utc(2026, 4, 16, 22, 0));
     }
 
     #[test]

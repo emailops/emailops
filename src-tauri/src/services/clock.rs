@@ -46,6 +46,15 @@ pub trait Clock: Send + Sync {
     fn utc_offset_secs(&self) -> i32 {
         0
     }
+
+    /// The UTC offset in force at the UTC instant `ts` — which differs from
+    /// today's across a daylight-saving change. Any date that is not today
+    /// (a message's date, a `since`/`until` bound) converts with this one.
+    /// A zone without DST keeps the same offset all year: the default.
+    fn utc_offset_at(&self, ts: i64) -> i32 {
+        let _ = ts;
+        self.utc_offset_secs()
+    }
 }
 
 /// Production clock: delegates to `chrono::Utc::now()`.
@@ -58,6 +67,14 @@ impl Clock for SystemClock {
 
     fn utc_offset_secs(&self) -> i32 {
         chrono::Local::now().offset().local_minus_utc()
+    }
+
+    fn utc_offset_at(&self, ts: i64) -> i32 {
+        use chrono::TimeZone;
+        match chrono::Local.timestamp_opt(ts, 0).single() {
+            Some(dt) => dt.offset().local_minus_utc(),
+            None => self.utc_offset_secs(),
+        }
     }
 }
 
@@ -136,6 +153,44 @@ pub fn install_for_testing(initial_now_secs: i64) -> Arc<FixedClock> {
     let clock = Arc::new(FixedClock::new(initial_now_secs));
     install(clock.clone() as Arc<dyn Clock>);
     clock
+}
+
+/// A pinned clock in a real zone, DST included — for tests of dates on the
+/// other side of a daylight-saving change from "now".
+#[cfg(test)]
+pub(crate) struct ZonedClock {
+    now: i64,
+    tz: chrono_tz::Tz,
+}
+
+#[cfg(test)]
+impl ZonedClock {
+    pub(crate) fn new(now_secs: i64, tz: chrono_tz::Tz) -> Self {
+        Self { now: now_secs, tz }
+    }
+}
+
+#[cfg(test)]
+impl Clock for ZonedClock {
+    fn now_secs(&self) -> i64 {
+        self.now
+    }
+
+    fn utc_offset_secs(&self) -> i32 {
+        self.utc_offset_at(self.now)
+    }
+
+    fn utc_offset_at(&self, ts: i64) -> i32 {
+        use chrono::{Offset, TimeZone};
+        chrono::DateTime::from_timestamp(ts, 0)
+            .map(|dt| {
+                self.tz
+                    .offset_from_utc_datetime(&dt.naive_utc())
+                    .fix()
+                    .local_minus_utc()
+            })
+            .unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
