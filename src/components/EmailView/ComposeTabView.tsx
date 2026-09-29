@@ -55,7 +55,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
-  const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
+  const [attachments, setAttachments] = useState<EmailAttachment[]>(tab.fileAttachments ?? []);
   // File-path attachments carried from the draft (e.g. added via the CLI).
   // Shown as chips; preserved across auto-saves; sent via send_draft.
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentInput[]>(() =>

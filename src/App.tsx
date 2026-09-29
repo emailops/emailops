@@ -1863,7 +1863,11 @@ function AppInner() {
             setIsComposeOpen(false);
             setComposePrefillTo(undefined);
             setViewMode('inbox');
-            openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml);
+            openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml, {
+              draftId: state.draftId,
+              ccAddresses: state.ccAddresses,
+              fileAttachments: state.attachments,
+            });
           }}
         />
       )}

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { MailboxView } from '@/lib/api';
+import type { EmailAttachment, MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
@@ -175,6 +175,9 @@ export interface ComposeTab {
   /** File-path attachments carried over from the draft being edited, so the tab
    *  can display them, preserve them across auto-saves, and send them. */
   attachments?: DraftAttachment[];
+  /** Files attached in the compose modal before it was opened in a tab
+   *  (base64, not yet on any draft row). */
+  fileAttachments?: EmailAttachment[];
 }
 
 export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
@@ -231,7 +234,12 @@ interface EmailStore {
     toAddresses?: string[],
     subject?: string,
     bodyHtml?: string,
-    opts?: { draftId?: string; ccAddresses?: string[]; attachments?: DraftAttachment[] },
+    opts?: {
+      draftId?: string;
+      ccAddresses?: string[];
+      attachments?: DraftAttachment[];
+      fileAttachments?: EmailAttachment[];
+    },
   ) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string | null) => void;
@@ -412,6 +420,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       bodyHtml,
       draftId: opts?.draftId,
       attachments: opts?.attachments,
+      fileAttachments: opts?.fileAttachments,
     };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: id }));
   },

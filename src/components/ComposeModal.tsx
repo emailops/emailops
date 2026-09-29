@@ -23,10 +23,17 @@ import type { Account } from '@/types';
 
 export interface ComposeMaximizeState {
   accountId: string;
+  /** Includes a valid address still sitting in the input box. */
   toAddresses: string[];
+  ccAddresses: string[];
   subject: string;
   /** Rich-text HTML body so the maximized tab can keep formatting + inline images. */
   bodyHtml: string;
+  /** Draft row this composer auto-saved, so the tab upserts it instead of
+   *  creating a second draft. Undefined when nothing was saved yet. */
+  draftId?: string;
+  /** Files attached in the modal (base64), carried into the tab. */
+  attachments: EmailAttachment[];
 }
 
 interface ComposeModalProps {
@@ -310,6 +317,23 @@ export function ComposeModal({
     return () => debounced.flushPending();
   }, []);
 
+  const handleMaximize = async () => {
+    if (!onMaximize) return;
+    // Save an edit still in the debounce window now and wait for every save,
+    // so the tab gets the final draft id and upserts that row.
+    debouncedRef.current.flushPending();
+    const draftId = await autosaverRef.current?.flush();
+    onMaximize({
+      accountId: fromAccountId,
+      toAddresses: mergePendingRecipient(toRecipients, toInput),
+      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      subject,
+      bodyHtml,
+      draftId,
+      attachments,
+    });
+  };
+
   const handleSend = async () => {
     // Include a valid address still sitting in the input box (typed but not
     // tokenized) so it isn't silently dropped from the outgoing message.
@@ -467,8 +491,8 @@ export function ComposeModal({
             {onMaximize && (
               <button
                 type="button"
-                onClick={() => onMaximize({ accountId: fromAccountId, toAddresses: toRecipients, subject, bodyHtml })}
-                disabled={isSending}
+                onClick={() => void handleMaximize()}
+                disabled={isSending || isLoadingAttachments}
                 className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
                 title={t('compose:openInTab')}
               >
