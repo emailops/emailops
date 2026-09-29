@@ -4734,9 +4734,10 @@ async fn resync_mailbox_full_recovers_gap_and_returns_delta() {
         vec![],
     );
 
-    let inserted = emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider)
-        .await
-        .expect("resync_mailbox_full");
+    let inserted =
+        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
+            .await
+            .expect("resync_mailbox_full");
 
     assert_eq!(
         inserted, 3,
@@ -4772,9 +4773,10 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
     // Provider has no messages, so resync just resets state and produces 0 inserts.
     let provider = FakeEmailProvider::new("reset@example.com", "Reset");
 
-    let inserted = emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider)
-        .await
-        .expect("resync_mailbox_full");
+    let inserted =
+        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
+            .await
+            .expect("resync_mailbox_full");
 
     assert_eq!(inserted, 0, "no provider messages → 0 inserted");
 
@@ -5212,4 +5214,51 @@ async fn a_sync_applies_attachment_rules_in_filed_folders_and_sent_not_spam_or_t
         .collect();
     collected.sort();
     assert_eq!(collected, vec!["in-folder".to_string(), "in-sent".to_string()]);
+}
+
+/// Recovering a mailbox's history by hand (Settings → resync Sent) runs the
+/// attachment rules on what it brings back, like a regular sync does.
+#[tokio::test]
+async fn a_manual_sent_resync_applies_attachment_rules() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rs", "rs@example.com")).unwrap();
+    let account = db.get_account("acc-rs").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-rs",
+        "Issued invoices",
+        Some("rs@example.com"),
+        None,
+        Some("*.pdf"),
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("rs@example.com", "Rs");
+    provider.add_message(
+        make_email_with("sent-1", "acc-rs", 1_750_000_000, "rs@example.com", "sent"),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-s1", "fact_0001.pdf")],
+    );
+    provider.set_attachment_bytes("sent-1", "att-s1", b"%PDF".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+    let rules = db.get_attachment_rules("acc-rs").unwrap();
+    let ctx = emailops_lib::services::attachments::RuleSyncCtx {
+        rules: &rules,
+        app_data_dir: data_dir.path(),
+        app: None,
+    };
+
+    emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        emailops_lib::sync::provider::ExtraMailbox::Sent,
+        &provider,
+        Some(&ctx),
+    )
+    .await
+    .expect("resync");
+
+    assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
 }

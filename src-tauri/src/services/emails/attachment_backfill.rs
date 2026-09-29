@@ -115,6 +115,20 @@ pub async fn backfill_attachment_meta(
     account_email: &str,
     should_abort: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<BackfillOutcome> {
+    backfill_attachment_meta_with_rules(db, provider, account_id, account_email, should_abort, None).await
+}
+
+/// [`backfill_attachment_meta`] that also runs the attachment rules of
+/// `rules_ctx` on the emails whose attachments it recovers — they were stored
+/// without any, so no rule has ever seen them.
+pub async fn backfill_attachment_meta_with_rules(
+    db: &Database,
+    provider: &dyn EmailProvider,
+    account_id: &str,
+    account_email: &str,
+    should_abort: &(dyn Fn() -> bool + Send + Sync),
+    rules_ctx: Option<&crate::services::attachments::RuleSyncCtx<'_>>,
+) -> Result<BackfillOutcome> {
     let done_key = backfill_done_key(account_id);
     if db.get_preference(&done_key)?.is_some() {
         return Ok(BackfillOutcome::AlreadyDone);
@@ -136,6 +150,18 @@ pub async fn backfill_attachment_meta(
                 Ok((_, _, infos)) if !infos.is_empty() => {
                     db.insert_attachment_infos(id, account_id, &infos)?;
                     recovered += 1;
+                    // The stored row knows the mailbox; the fetched copy may not.
+                    if let (Some(ctx), Some(stored)) = (rules_ctx, db.get_email(id)?) {
+                        crate::services::attachments::apply_rules_to_stored_email(
+                            db,
+                            Some(provider),
+                            &stored,
+                            &infos,
+                            ctx,
+                            account_email,
+                        )
+                        .await;
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -455,6 +481,56 @@ mod tests {
                 failed: 0
             }
         );
+    }
+
+    fn rule_for_billing(db: &Database) -> crate::models::AttachmentRule {
+        let rule = crate::models::AttachmentRule {
+            id: "rule-b".into(),
+            account_id: "acc".into(),
+            name: "Billing".into(),
+            sender_email_pattern: Some("billing@example.com".into()),
+            subject_pattern: None,
+            filename_pattern: Some("*.pdf".into()),
+            tags: vec![],
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+        db.insert_attachment_rule(&rule).expect("rule");
+        rule
+    }
+
+    #[tokio::test]
+    async fn recovered_attachments_go_through_the_rules_in_their_mailbox() {
+        let db = std::sync::Arc::new(setup());
+        let rule = rule_for_billing(&db);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        for (id, mailbox) in [("in-sent", "sent"), ("in-spam", "spam")] {
+            let mut stored = email(id);
+            stored.mailbox = mailbox.into();
+            db.insert_email(&stored).expect("insert");
+            provider.add_message(email(id), EmailCategory::Updates, vec![pdf(&format!("{id}.pdf"))]);
+            provider.set_attachment_bytes(id, format!("att-{id}.pdf"), b"%PDF".to_vec());
+        }
+        let data_dir = tempfile::tempdir().expect("tmp");
+        let rules = [rule.clone()];
+        let ctx = crate::services::attachments::RuleSyncCtx {
+            rules: &rules,
+            app_data_dir: data_dir.path(),
+            app: None,
+        };
+
+        backfill_attachment_meta_with_rules(&db, &provider, "acc", "me@example.com", &never, Some(&ctx))
+            .await
+            .expect("backfill");
+
+        let collected: Vec<String> = db
+            .get_attachments_for_rule(&rule.id)
+            .expect("query")
+            .into_iter()
+            .map(|a| a.email_id)
+            .collect();
+        assert_eq!(collected, vec!["in-sent".to_string()]);
     }
 
     #[tokio::test]

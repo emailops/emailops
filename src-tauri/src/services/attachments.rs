@@ -332,6 +332,41 @@ pub(crate) fn matches_glob(pattern: &str, value: &str) -> bool {
     }
 }
 
+/// What a path that stores mail needs to run attachment rules on it: the
+/// sync's Sent / folder passes, the attachment backfill, a manual mailbox
+/// resync. `None` where a caller runs no rules.
+pub struct RuleSyncCtx<'a> {
+    pub rules: &'a [AttachmentRule],
+    pub app_data_dir: &'a Path,
+    pub app: Option<&'a AppHandle>,
+}
+
+/// Run the rules of `ctx` on one stored email's attachments, if its mailbox
+/// is one rules reach. Failures are logged against the account and the
+/// caller carries on — one email never stops a sync.
+pub async fn apply_rules_to_stored_email(
+    db: &Database,
+    provider: Option<&dyn EmailProvider>,
+    email: &crate::models::Email,
+    infos: &[AttachmentInfo],
+    ctx: &RuleSyncCtx<'_>,
+    account_email: &str,
+) {
+    if ctx.rules.is_empty() || infos.is_empty() || !rules_apply_to_mailbox(&email.mailbox) {
+        return;
+    }
+    if let Err(e) =
+        process_attachments_for_email(db, provider, email, infos, ctx.rules, ctx.app_data_dir, ctx.app).await
+    {
+        crate::services::emails::emit_account_log(
+            "error",
+            "attachments",
+            account_email,
+            &format!("Attachment rule processing error: {e}"),
+        );
+    }
+}
+
 /// Whether attachment rules collect mail filed in `mailbox`: the inbox,
 /// Sent and the user's own folders, never Spam or Trash — a sender rule must
 /// not pick up the copy of a message the user junked or deleted.
@@ -466,7 +501,7 @@ pub(crate) async fn reextract_with_provider(
 }
 
 pub async fn process_attachments_for_email(
-    db: &Arc<Database>,
+    db: &Database,
     provider: Option<&dyn EmailProvider>,
     email: &crate::models::Email,
     attachment_infos: &[AttachmentInfo],

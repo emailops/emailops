@@ -24,6 +24,7 @@ pub use compose::{
     ComposePlan,
 };
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
+pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, rename_folder};
 pub use html_sanitizer::sanitize_outgoing_html;

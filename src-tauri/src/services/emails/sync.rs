@@ -264,8 +264,9 @@ async fn finish_attachment_upkeep(
     app: Option<&AppHandle>,
     sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     synced_any: bool,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) {
-    use super::attachment_backfill::backfill_attachment_meta;
+    use super::attachment_backfill::backfill_attachment_meta_with_rules;
 
     // Peek, don't take: the sync loop that follows still has to see the flag.
     let abort_requested = || {
@@ -275,7 +276,9 @@ async fn finish_attachment_upkeep(
             .get(&account.id)
             .is_some_and(|flag| flag.load(Ordering::Relaxed))
     };
-    let result = backfill_attachment_meta(db, provider, &account.id, &account.email, &abort_requested).await;
+    let result =
+        backfill_attachment_meta_with_rules(db, provider, &account.id, &account.email, &abort_requested, rules_ctx)
+            .await;
     let report = super::attachment_backfill::backfill_report(&result);
     if let Some((level, message)) = &report.log {
         emit_account_log(level, "sync", &account.email, message);
@@ -871,6 +874,7 @@ pub async fn sync_account_with_provider(
             app.as_ref(),
             &sync_abort_flags,
             false,
+            Some(&rules_ctx),
         )
         .await;
 
@@ -1097,6 +1101,7 @@ pub async fn sync_account_with_provider(
         app.as_ref(),
         &sync_abort_flags,
         synced_count > 0,
+        Some(&rules_ctx),
     )
     .await;
 
@@ -1624,14 +1629,7 @@ fn folder_upserts_from_plan(entries: &[ListedFolder], plan: &FolderPlan) -> Vec<
     upserts
 }
 
-/// What the Sent / Spam / Trash / folder passes need to apply attachment
-/// rules to the mail they ingest. `None` skips rules (the manual mailbox
-/// resync and most tests).
-pub(crate) struct RuleSyncCtx<'a> {
-    pub rules: &'a [crate::models::AttachmentRule],
-    pub app_data_dir: &'a Path,
-    pub app: Option<&'a AppHandle>,
-}
+use crate::services::attachments::RuleSyncCtx;
 
 /// Outcome of ingesting a batch of message refs for one mailbox pass.
 #[derive(Debug, Default)]
@@ -1865,28 +1863,17 @@ async fn ingest_mailbox_refs(
 
         // Rules reach Sent and filed folders too (an IMAP server filter moving
         // invoices into a folder), never Spam or Trash.
-        if let Some(ctx) = rules_ctx
-            .filter(|c| !c.rules.is_empty() && crate::services::attachments::rules_apply_to_mailbox(mailbox_name))
-        {
-            for (email, infos) in chunk_emails.iter().filter(|(_, infos)| !infos.is_empty()) {
-                if let Err(e) = crate::services::attachments::process_attachments_for_email(
+        if let Some(ctx) = rules_ctx {
+            for (email, infos) in &chunk_emails {
+                crate::services::attachments::apply_rules_to_stored_email(
                     db,
                     Some(email_provider),
                     email,
                     infos,
-                    ctx.rules,
-                    ctx.app_data_dir,
-                    ctx.app,
+                    ctx,
+                    account_email,
                 )
-                .await
-                {
-                    emit_account_log(
-                        "error",
-                        "attachments",
-                        account_email,
-                        &format!("Attachment rule processing error: {e}"),
-                    );
-                }
+                .await;
             }
         }
 
@@ -2548,6 +2535,7 @@ pub async fn resync_mailbox_full(
     account: &Account,
     mailbox: ExtraMailbox,
     email_provider: &dyn EmailProvider,
+    rules_ctx: Option<&RuleSyncCtx<'_>>,
 ) -> Result<u32> {
     let account_id = &account.id;
     let mailbox_name = mailbox.as_str();
@@ -2580,10 +2568,10 @@ pub async fn resync_mailbox_full(
     let before_count = db.count_emails_in_mailbox(account_id, mailbox_name).unwrap_or(0);
 
     // Forward pass first to catch anything since the last successful sync.
-    sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider, None).await;
+    sync_extra_mailbox_incremental(db, account, account_id, &target, email_provider, rules_ctx).await;
 
     let mut budget = u32::MAX;
-    sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget, None).await;
+    sync_extra_mailbox_backfill(db, account, account_id, &target, email_provider, &mut budget, rules_ctx).await;
 
     let after_count = db
         .count_emails_in_mailbox(account_id, mailbox_name)
