@@ -171,6 +171,46 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
     (sorted, next_token)
 }
 
+/// Read/write timeout on every IMAP socket, so an unresponsive server cannot
+/// hang a blocking task forever.
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Stream wrapper for the IDLE session. imap 2.4.1's `Handle::wait_with_timeout`
+/// sets the read timeout for the wait and then resets it to `None`, after
+/// which the `DONE` reply and every later command read with no timeout — a
+/// half-dead socket then blocks the IDLE thread forever. This wrapper maps
+/// that `None` back to [`IO_TIMEOUT`], so the socket always keeps a floor.
+struct IdleStream<S> {
+    inner: S,
+}
+
+impl<S> IdleStream<S> {
+    fn new(inner: S) -> Self {
+        Self { inner }
+    }
+}
+
+impl<S: std::io::Read> std::io::Read for IdleStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<S: std::io::Write> std::io::Write for IdleStream<S> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<S: imap::extensions::idle::SetReadTimeout> imap::extensions::idle::SetReadTimeout for IdleStream<S> {
+    fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> imap::error::Result<()> {
+        self.inner.set_read_timeout(Some(timeout.unwrap_or(IO_TIMEOUT)))
+    }
+}
+
 /// Credentials for an IMAP account (stored in keychain as JSON).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImapCredentials {
@@ -521,12 +561,21 @@ impl ImapClient {
     pub(crate) fn connect_sync(
         creds: &ImapCredentials,
     ) -> std::result::Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, imap::Error> {
+        let client = imap::Client::new(Self::open_tls_stream(creds)?);
+        let session = client.login(&creds.username, &creds.password).map_err(|(e, _)| e)?;
+        Ok(session)
+    }
+
+    /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
+    /// the socket. Shared by [`Self::connect_sync`] and the IDLE session.
+    fn open_tls_stream(
+        creds: &ImapCredentials,
+    ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, imap::Error> {
         use std::io;
         use std::net::{TcpStream, ToSocketAddrs};
         use std::time::Duration;
 
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-        const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
         let tls = native_tls::TlsConnector::new().map_err(|e| {
             // Wrap as a MissingMessageData error since there's no generic imap::Error variant for TLS
@@ -549,13 +598,8 @@ impl ImapClient {
         tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
         tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
 
-        let tls_stream = tls
-            .connect(creds.host.as_str(), tcp)
-            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))?;
-
-        let client = imap::Client::new(tls_stream);
-        let session = client.login(&creds.username, &creds.password).map_err(|(e, _)| e)?;
-        Ok(session)
+        tls.connect(creds.host.as_str(), tcp)
+            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -1612,7 +1656,13 @@ impl ImapClient {
         // The IMAP spec allows up to 29 minutes; 30 s is well within that.
         const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-        let mut session = match Self::connect_sync(&creds) {
+        // Wrapped so the read timeout imap clears after each wait is restored
+        // (see [`IdleStream`]).
+        let mut session = match Self::open_tls_stream(&creds).and_then(|stream| {
+            imap::Client::new(IdleStream::new(stream))
+                .login(&creds.username, &creds.password)
+                .map_err(|(e, _)| e)
+        }) {
             Ok(s) => s,
             Err(_) => return,
         };
@@ -2149,6 +2199,75 @@ mod tests {
         assert_eq!(folder, ImapFolder::Inbox);
         let (folder, _) = client.parse_message_ref("acc-1::FOLDER::noseparator");
         assert_eq!(folder, ImapFolder::Inbox);
+    }
+
+    /// A scripted IMAP stream that records every read timeout imap asks for.
+    struct TimeoutRecordingStream {
+        script: std::io::Cursor<Vec<u8>>,
+        timeouts: std::sync::Arc<std::sync::Mutex<Vec<Option<std::time::Duration>>>>,
+    }
+
+    impl std::io::Read for TimeoutRecordingStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.script.read(buf)
+        }
+    }
+
+    impl std::io::Write for TimeoutRecordingStream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl imap::extensions::idle::SetReadTimeout for TimeoutRecordingStream {
+        fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> imap::error::Result<()> {
+            self.timeouts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(timeout);
+            Ok(())
+        }
+    }
+
+    /// imap 2.4.1's `wait_with_timeout` resets the socket read timeout to
+    /// `None` after every wait, and then reads the `DONE` reply — and every
+    /// later command — with no timeout at all. On a half-dead socket that
+    /// blocked the IDLE thread forever. The wrapper must never let `None`
+    /// through to the socket.
+    #[test]
+    fn idle_wait_never_leaves_the_socket_without_a_read_timeout() {
+        let timeouts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = IdleStream::new(TimeoutRecordingStream {
+            script: std::io::Cursor::new(
+                b"a1 OK Logged in.\r\n+ idling\r\n* 3 EXISTS\r\na2 OK IDLE terminated\r\n".to_vec(),
+            ),
+            timeouts: timeouts.clone(),
+        });
+        let mut session = match imap::Client::new(stream).login("u", "p") {
+            Ok(session) => session,
+            Err((e, _)) => panic!("scripted login failed: {e}"),
+        };
+
+        let outcome = session
+            .idle()
+            .expect("idle")
+            .wait_with_timeout(std::time::Duration::from_secs(30))
+            .expect("wait");
+
+        assert_eq!(outcome, imap::extensions::idle::WaitOutcome::MailboxChanged);
+        let recorded = timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert!(!recorded.is_empty(), "the wait must set a read timeout");
+        assert!(
+            recorded.iter().all(Option::is_some),
+            "a read timeout was cleared: {recorded:?}"
+        );
+        assert_eq!(recorded.last(), Some(&Some(IO_TIMEOUT)));
     }
 
     const NOW: i64 = 1_800_000_000;
