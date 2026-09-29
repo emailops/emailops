@@ -583,19 +583,23 @@ impl AiService {
         Ok(())
     }
 
-    fn check_budget(&self, additional_cost: f64) -> Result<()> {
+    /// Refuse a new call once the period's spend has reached the budget.
+    ///
+    /// Checked before the call, on what was actually spent: a provider only
+    /// reports a call's cost after it has been charged, so the call that
+    /// crosses the budget is recorded and its output kept, and the next one is
+    /// refused here.
+    fn ensure_budget_remaining(&self) -> Result<()> {
         let config = Self::get_config(&self.db)?;
         if config.monthly_budget_usd <= 0.0 {
             return Ok(());
         }
 
         let spent = Self::get_usage_since(&self.db, config.period_start)?;
-        let total = spent.total_cost_usd + additional_cost;
-
-        if total > config.monthly_budget_usd {
+        if spent.total_cost_usd >= config.monthly_budget_usd {
             Err(AppError::BudgetExceeded(format!(
-                "AI budget exceeded: ${:.4} spent + ${:.4} would exceed ${:.2} budget",
-                spent.total_cost_usd, additional_cost, config.monthly_budget_usd
+                "AI budget exceeded: ${:.4} spent of ${:.2} budget",
+                spent.total_cost_usd, config.monthly_budget_usd
             )))
         } else {
             Ok(())
@@ -663,6 +667,23 @@ impl AiService {
     }
 
     fn record_usage(&self, result: &CompletionResult, operation: &str) -> Result<()> {
+        self.record_call(
+            &result.model,
+            operation,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.cost_usd,
+        )
+    }
+
+    fn record_call(
+        &self,
+        model: &str,
+        operation: &str,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        cost_usd: f64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         let conn = self.db.connection();
         conn.execute(
@@ -670,22 +691,22 @@ impl AiService {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 self.provider.provider_type().to_string(),
-                result.model,
+                model,
                 operation,
-                result.prompt_tokens,
-                result.completion_tokens,
-                result.cost_usd,
+                prompt_tokens,
+                completion_tokens,
+                cost_usd,
                 now,
             ],
         )?;
 
         self.emit_ai_log(&AiLogEvent {
             provider: self.provider.provider_type().to_string(),
-            model: result.model.clone(),
+            model: model.to_string(),
             operation: operation.to_string(),
-            prompt_tokens: result.prompt_tokens,
-            completion_tokens: result.completion_tokens,
-            cost_usd: result.cost_usd,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
             status: "ok".to_string(),
             timestamp: now,
         });
@@ -720,6 +741,7 @@ impl AiService {
                 opts.think = Some(false);
             }
         }
+        self.ensure_budget_remaining()?;
         let t = std::time::Instant::now();
         let result = if prefix.is_empty() {
             self.provider.complete(suffix, opts).await?
@@ -727,7 +749,6 @@ impl AiService {
             self.provider.complete_with_prefix(prefix, suffix, opts).await?
         };
         let latency_ms = t.elapsed().as_millis() as u64;
-        self.check_budget(result.cost_usd)?;
         self.record_usage(&result, operation)?;
         let input = format!("{prefix}{suffix}");
         crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
@@ -745,8 +766,20 @@ impl AiService {
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.ensure_budget_remaining()?;
         let result = self.provider.embed(text).await?;
-        self.check_budget(result.cost_usd)?;
+        // Only charged embeddings get a usage row: a local provider embeds
+        // every chunk of every email for free, and a row (plus a log event)
+        // per chunk would flood the usage table without informing the budget.
+        if result.cost_usd > 0.0 {
+            self.record_call(
+                self.provider.embedding_model_name(),
+                "embed",
+                result.tokens,
+                0,
+                result.cost_usd,
+            )?;
+        }
         Ok(result.embedding)
     }
 
@@ -1034,6 +1067,86 @@ mod provider_tests {
                 .model_name(),
             "qwen3.5-4b-q8_0"
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::ai::provider::FakeAiProvider;
+
+    fn service_with_budget(budget: &str, fake: FakeAiProvider) -> (AiService, Arc<FakeAiProvider>) {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.set_preference("ai_monthly_budget", budget).unwrap();
+        let fake = Arc::new(fake);
+        (AiService::with_provider(db, fake.clone()), fake)
+    }
+
+    fn paid_completion(text: &str, cost_usd: f64) -> CompletionResult {
+        CompletionResult {
+            text: text.to_string(),
+            cost_usd,
+            model: "fake-model".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// A call that crosses the budget was already paid for: its cost is
+    /// recorded and its output returned, not thrown away unrecorded.
+    #[tokio::test]
+    async fn a_completion_that_crosses_the_budget_is_recorded_and_returned() {
+        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("answer", 1.5));
+
+        let text = svc.complete("q", "test", None).await.expect("paid output is kept");
+
+        assert_eq!(text, "answer");
+        let usage = AiService::usage_summary(&svc.db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 1.5).abs() < 1e-9);
+    }
+
+    /// Once the period's spend has reached the budget, the next call is
+    /// refused before it reaches the provider.
+    #[tokio::test]
+    async fn a_completion_is_refused_before_the_call_once_the_budget_is_spent() {
+        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("first", 1.0));
+        svc.complete("q1", "test", None).await.unwrap();
+
+        let second = svc.complete("q2", "test", None).await;
+
+        assert!(matches!(second, Err(AppError::BudgetExceeded(_))), "got {second:?}");
+        assert_eq!(fake.completion_calls().len(), 1, "no paid call past the budget");
+    }
+
+    #[tokio::test]
+    async fn a_paid_embedding_is_recorded() {
+        let (svc, _fake) = service_with_budget("1.0", FakeAiProvider::new().with_embedding_cost(0.25));
+
+        svc.embed("text").await.unwrap();
+
+        let usage = AiService::usage_summary(&svc.db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn an_embedding_is_refused_before_the_call_once_the_budget_is_spent() {
+        let (svc, fake) = service_with_budget("0.5", FakeAiProvider::new().with_embedding_cost(0.5));
+        svc.embed("a").await.unwrap();
+
+        assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
+        assert_eq!(fake.embed_calls().len(), 1);
+    }
+
+    /// No budget (0) never refuses, whatever was spent.
+    #[tokio::test]
+    async fn no_budget_never_refuses() {
+        let (svc, fake) = service_with_budget("0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("a", 5.0));
+        svc.complete("q1", "test", None).await.unwrap();
+        assert!(svc.complete("q2", "test", None).await.is_ok());
     }
 }
 

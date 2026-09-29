@@ -347,6 +347,8 @@ pub struct FakeAiProvider {
     /// similarity in tests); set to 768 with [`with_embedding_dim`] when a
     /// test writes vectors into a `vec0` table, whose dimension is fixed.
     embedding_dim: usize,
+    /// What each `embed` call reports as charged (0 by default).
+    embedding_cost_usd: f64,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -374,6 +376,7 @@ impl FakeAiProvider {
             model: "fake-model".to_string(),
             embedding_model: "fake-embed-model".to_string(),
             embedding_dim: 8,
+            embedding_cost_usd: 0.0,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -436,6 +439,21 @@ impl FakeAiProvider {
                 aux_plan: None,
                 truncated: false,
             });
+    }
+
+    /// Queue a canned completion with every field chosen by the test (e.g. a
+    /// reported cost).
+    pub fn push_completion_result(&self, result: CompletionResult) {
+        self.completions
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(result);
+    }
+
+    /// Report `cost_usd` as charged on every `embed` call.
+    pub fn with_embedding_cost(mut self, cost_usd: f64) -> Self {
+        self.embedding_cost_usd = cost_usd;
+        self
     }
 
     /// Queue a canned completion that stopped at its output limit
@@ -655,7 +673,7 @@ impl AIProvider for FakeAiProvider {
         Ok(EmbeddingResult {
             embedding: self.deterministic_embedding(text),
             tokens: 0,
-            cost_usd: 0.0,
+            cost_usd: self.embedding_cost_usd,
         })
     }
 
