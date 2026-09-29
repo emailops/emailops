@@ -795,10 +795,10 @@ pub async fn sync_account_with_provider(
                     }
                 }
 
-                // Phase 3: per-email async attachment processing (needs emails already in DB).
-                // Only runs when we have an AppHandle (skipped in test context where
-                // FakeEmailProvider returns no attachments anyway).
-                if let Some(ref a) = app {
+                // Phase 3: per-email async attachment processing (needs emails
+                // already in DB). Headless syncs (CLI, server) run it too: rules
+                // must not depend on a window being open.
+                {
                     for (email, attachment_infos) in &chunk_emails {
                         let should_auto_download = !attachment_infos.is_empty()
                             && auto_download_attachment_categories.contains(&email.category);
@@ -810,7 +810,6 @@ pub async fn sync_account_with_provider(
                                 email,
                                 attachment_infos,
                                 app_data_dir,
-                                a,
                             )
                             .await
                             {
@@ -831,7 +830,7 @@ pub async fn sync_account_with_provider(
                                 attachment_infos,
                                 &attachment_rules,
                                 app_data_dir,
-                                Some(a),
+                                app.as_ref(),
                             )
                             .await
                             {
@@ -964,7 +963,7 @@ pub async fn sync_account_with_provider(
                                         let _ = db.remove_failed_email(account_id, email_id);
                                         synced_count += 1;
                                         all_new_ids.push(email.id.clone());
-                                        if let Some(ref a) = app {
+                                        {
                                             if !attachment_infos.is_empty() && !attachment_rules.is_empty() {
                                                 if let Err(e) =
                                                     crate::services::attachments::process_attachments_for_email(
@@ -974,7 +973,7 @@ pub async fn sync_account_with_provider(
                                                         &attachment_infos,
                                                         &attachment_rules,
                                                         app_data_dir,
-                                                        Some(a),
+                                                        app.as_ref(),
                                                     )
                                                     .await
                                                 {

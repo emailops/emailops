@@ -5038,3 +5038,57 @@ async fn a_sync_with_new_recurring_documents_proposes_a_rule() {
     assert_eq!(pending.len(), 1, "{pending:?}");
     assert_eq!(pending[0].filename_pattern.as_deref(), Some("Invoice_*.pdf"));
 }
+
+/// Attachment rules apply to new mail on every sync — also a headless one
+/// (the CLI, a server), which has no Tauri `AppHandle`.
+#[tokio::test]
+async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-hr", "hr@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-hr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-hr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-hr",
+        "Acme",
+        Some("billing@acme-synthetic.com"),
+        None,
+        Some("*.pdf"),
+        vec!["acme".into()],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("hr@example.com", "Hr");
+    provider.add_message(
+        make_email_with(
+            "inv",
+            "acc-hr",
+            chrono::Utc::now().timestamp() - 86_400,
+            "billing@acme-synthetic.com",
+            "inbox",
+        ),
+        EmailCategory::Primary,
+        vec![pdf_attachment("att-inv", "Invoice_0042.pdf")],
+    );
+    provider.set_attachment_bytes("inv", "att-inv", b"%PDF-1.4".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let collected = db.get_attachments_for_rule(&rule.id).unwrap();
+    assert_eq!(collected.len(), 1, "the rule must collect the new invoice");
+    assert!(data_dir.path().join(&collected[0].file_path).is_file());
+}

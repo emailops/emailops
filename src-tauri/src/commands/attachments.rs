@@ -379,41 +379,22 @@ pub async fn apply_rule_retroactively(
             task,
             Box::new(move || {
                 Box::pin(async move {
-                    let progress_app = app.clone();
-                    let (progress_rule, progress_run) = (rule_id.clone(), run_id.clone());
-                    let on_progress = move |p: services::attachments::RetroProgress| {
-                        let payload = serde_json::json!({
-                            "ruleId": progress_rule,
-                            "runId": progress_run,
-                            "processed": p.processed,
-                            "total": p.total,
-                            "saved": p.saved,
-                        });
-                        if let Err(e) = progress_app.emit("attachment-rule-apply-progress", payload) {
-                            eprintln!("[attachments] could not emit apply progress: {e}");
+                    let emit = |name: &'static str, payload: serde_json::Value| {
+                        if let Err(e) = app.emit(name, payload) {
+                            eprintln!("[attachments] could not emit {name}: {e}");
                         }
                     };
-                    let result = services::attachments::apply_rule_retroactively(
+                    services::attachments::run_rule_apply(
                         &core.db,
                         &rule_id,
                         &account_id,
+                        &run_id,
                         &core.app_data_dir,
                         Some(&app),
-                        &on_progress,
-                        &|| ticket.is_cancelled(),
+                        &ticket,
+                        &emit,
                     )
                     .await;
-                    let outcome = services::attachments::ApplyOutcome::from_result(&result);
-                    let payload = serde_json::json!({
-                        "ruleId": rule_id,
-                        "runId": run_id,
-                        "status": outcome.status,
-                        "saved": outcome.saved,
-                        "error": outcome.error,
-                    });
-                    if let Err(e) = app.emit("attachment-rule-apply-finished", payload) {
-                        eprintln!("[attachments] could not emit apply finished: {e}");
-                    }
                 })
             }),
         )

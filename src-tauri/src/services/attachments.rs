@@ -8,7 +8,7 @@ use tauri::Emitter;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{Account, AppLogEvent, Attachment, AttachmentRule};
+use crate::models::{Account, Attachment, AttachmentRule};
 use crate::services::emails::build_provider;
 use crate::sync::provider::{AttachmentInfo, EmailProvider};
 
@@ -17,17 +17,10 @@ use crate::sync::provider::{AttachmentInfo, EmailProvider};
 /// `apply_rule_retroactively` and `process_attachments_for_email` accept
 /// `Option<&AppHandle>` so they remain unit-testable without a Tauri runtime
 /// — in those tests `app` is `None` and the events are silently dropped.
-fn emit_log(app: Option<&AppHandle>, level: &str, source: &str, message: impl Into<String>) {
-    if let Some(app) = app {
-        let _ = app.emit(
-            "app-log",
-            AppLogEvent {
-                level: level.to_string(),
-                source: source.to_string(),
-                message: message.into(),
-            },
-        );
-    }
+/// Report to the output panel through the process logger (the app's
+/// `app-log` events on desktop, stderr in the CLI, a `VecLogger` in tests).
+fn emit_log(level: &str, source: &str, message: impl Into<String>) {
+    crate::services::logger::log(level, source, message);
 }
 
 /// Resolve a stored attachment `file_path` against `app_data_dir` and verify
@@ -498,7 +491,6 @@ pub async fn process_attachments_for_email(
                     Ok(b) => b,
                     Err(e) => {
                         emit_log(
-                            app,
                             "error",
                             "attachments",
                             format!("Failed to decode inline attachment '{}': {}", info.filename, e),
@@ -515,7 +507,6 @@ pub async fn process_attachments_for_email(
                     Ok(b) => b,
                     Err(e) => {
                         emit_log(
-                            app,
                             "error",
                             "attachments",
                             format!("Failed to download attachment '{}': {}", info.filename, e),
@@ -621,7 +612,6 @@ pub async fn auto_download_attachments(
     email: &crate::models::Email,
     attachment_infos: &[AttachmentInfo],
     app_data_dir: &Path,
-    app: &AppHandle,
 ) -> Result<u32> {
     let mut count = 0u32;
 
@@ -631,13 +621,10 @@ pub async fn auto_download_attachments(
             match decode_inline_base64(inline_b64) {
                 Ok(b) => b,
                 Err(e) => {
-                    let _ = app.emit(
-                        "app-log",
-                        AppLogEvent {
-                            level: "error".to_string(),
-                            source: "attachments".to_string(),
-                            message: format!("Auto-download: failed to decode '{}': {}", info.filename, e),
-                        },
+                    emit_log(
+                        "error",
+                        "attachments",
+                        format!("Auto-download: failed to decode '{}': {}", info.filename, e),
                     );
                     continue;
                 }
@@ -646,13 +633,10 @@ pub async fn auto_download_attachments(
             match provider.fetch_attachment_bytes(&email.id, &info.attachment_id).await {
                 Ok(b) => b,
                 Err(e) => {
-                    let _ = app.emit(
-                        "app-log",
-                        AppLogEvent {
-                            level: "error".to_string(),
-                            source: "attachments".to_string(),
-                            message: format!("Auto-download: failed to fetch '{}': {}", info.filename, e),
-                        },
+                    emit_log(
+                        "error",
+                        "attachments",
+                        format!("Auto-download: failed to fetch '{}': {}", info.filename, e),
                     );
                     continue;
                 }
@@ -668,30 +652,29 @@ pub async fn auto_download_attachments(
 
         if let Some(parent) = absolute_path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                let _ = app.emit(
-                    "app-log",
-                    AppLogEvent {
-                        level: "error".to_string(),
-                        source: "attachments".to_string(),
-                        message: format!("Auto-download: mkdir failed: {}", e),
-                    },
-                );
+                emit_log("error", "attachments", format!("Auto-download: mkdir failed: {}", e));
                 continue;
             }
         }
         if let Err(e) = tokio::fs::write(&absolute_path, &bytes).await {
-            let _ = app.emit(
-                "app-log",
-                AppLogEvent {
-                    level: "error".to_string(),
-                    source: "attachments".to_string(),
-                    message: format!("Auto-download: write failed for '{}': {}", info.filename, e),
-                },
+            emit_log(
+                "error",
+                "attachments",
+                format!("Auto-download: write failed for '{}': {}", info.filename, e),
             );
             continue;
         }
 
-        let _ = db.set_email_attachment_file_path(&email.id, &info.filename, &relative_path);
+        if let Err(e) = db.set_email_attachment_file_path(&email.id, &info.filename, &relative_path) {
+            // The file is on disk but the row does not point at it: the UI
+            // would offer to download it again.
+            emit_log(
+                "error",
+                "attachments",
+                format!("Auto-download: could not record '{}': {e}", info.filename),
+            );
+            continue;
+        }
         count += 1;
     }
 
@@ -1078,6 +1061,58 @@ impl ApplyOutcome {
     }
 }
 
+/// Event with the progress of a queued apply (`ruleId`, `runId`, `processed`,
+/// `total`, `saved`).
+pub const APPLY_PROGRESS_EVENT: &str = "attachment-rule-apply-progress";
+/// Event with how a queued apply ended (`ruleId`, `runId`, `status`, `saved`,
+/// `error`).
+pub const APPLY_FINISHED_EVENT: &str = "attachment-rule-apply-finished";
+
+/// Run one queued apply of `rule_id` and report it through `emit`: progress
+/// as it goes, then exactly one finished event. `run_id` is the caller's tag
+/// for this run, echoed in every event; `ticket` cancels the run when a newer
+/// apply, an edit or a delete of the rule supersedes it.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_rule_apply(
+    db: &Arc<Database>,
+    rule_id: &str,
+    account_id: &str,
+    run_id: &str,
+    app_data_dir: &Path,
+    app: Option<&AppHandle>,
+    ticket: &RuleApplyTicket,
+    emit: &(dyn Fn(&'static str, serde_json::Value) + Send + Sync),
+) -> ApplyOutcome {
+    let on_progress = |p: RetroProgress| {
+        emit(
+            APPLY_PROGRESS_EVENT,
+            serde_json::json!({
+                "ruleId": rule_id,
+                "runId": run_id,
+                "processed": p.processed,
+                "total": p.total,
+                "saved": p.saved,
+            }),
+        );
+    };
+    let result = apply_rule_retroactively(db, rule_id, account_id, app_data_dir, app, &on_progress, &|| {
+        ticket.is_cancelled()
+    })
+    .await;
+    let outcome = ApplyOutcome::from_result(&result);
+    emit(
+        APPLY_FINISHED_EVENT,
+        serde_json::json!({
+            "ruleId": rule_id,
+            "runId": run_id,
+            "status": outcome.status,
+            "saved": outcome.saved,
+            "error": outcome.error,
+        }),
+    );
+    outcome
+}
+
 /// Progress of a retroactive rule application: `processed` of the `total`
 /// planned emails visited, `saved` attachments collected so far.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -1195,7 +1230,6 @@ async fn apply_planned(
         saved: 0,
     });
     emit_log(
-        app,
         "info",
         "attachments",
         format!("Rule '{}': checking {total} of {scanned} emails...", rule.name),
@@ -1209,7 +1243,6 @@ async fn apply_planned(
     for (index, (email_id, source)) in plan.iter().enumerate() {
         if should_abort() {
             emit_log(
-                app,
                 "info",
                 "attachments",
                 format!(
@@ -1236,7 +1269,6 @@ async fn apply_planned(
             RetroSource::FetchMessage => match provider {
                 None => {
                     emit_log(
-                        app,
                         "warn",
                         "attachments",
                         format!("Skipping email {email_id}: its attachments are not stored locally"),
@@ -1246,12 +1278,7 @@ async fn apply_planned(
                 Some(provider) => match provider.get_message(email_id).await {
                     Ok((email, _category, infos)) => Some((email, infos)),
                     Err(e) => {
-                        emit_log(
-                            app,
-                            "warn",
-                            "attachments",
-                            format!("Skipping email {}: {}", email_id, e),
-                        );
+                        emit_log("warn", "attachments", format!("Skipping email {}: {}", email_id, e));
                         None
                     }
                 },
@@ -1282,7 +1309,6 @@ async fn apply_planned(
                 Err(e) => {
                     failed_emails += 1;
                     emit_log(
-                        app,
                         "error",
                         "attachments",
                         format!(
@@ -1313,14 +1339,12 @@ async fn apply_planned(
         (0, _) => "success",
         _ => "error",
     };
-    emit_log(app, level, "attachments", summary);
+    emit_log(level, "attachments", summary);
 
     // Zero candidates is almost always a too-strict pattern (e.g. `apple.com`
     // when the sender is `no_reply@email.apple.com` and needs `*apple.com*`).
     if total == 0 && scanned > 0 {
-        emit_log(
-            app,
-            "warn",
+        emit_log("warn",
             "attachments",
             format!(
                 "Rule '{}' matched no emails. Patterns are exact-match unless they contain `*` — try `*apple.com*` instead of `apple.com`, or leave the sender field empty and filter by subject/filename.",
@@ -2534,6 +2558,252 @@ mod tests {
         assert!(db.get_attachment_rule(&rule.id).expect("get").is_none());
         assert_eq!(db.count_attachments_for_rule(&rule.id).expect("count"), 0);
         assert!(!tmp.path().join(relative).exists());
+    }
+
+    // ── The queued apply: what it tells the frontend ───────────────────────
+
+    type Emitted = std::sync::Mutex<Vec<(&'static str, serde_json::Value)>>;
+
+    fn recorder(emitted: &Emitted) -> impl Fn(&'static str, serde_json::Value) + Send + Sync + '_ {
+        move |name, payload| emitted.lock().expect("lock").push((name, payload))
+    }
+
+    /// Two emails whose attachments are already on disk: an apply needs no
+    /// provider (and so no credentials).
+    fn stored_invoices(db: &Arc<Database>, data_dir: &Path, account_id: &str) -> AttachmentRule {
+        make_account(db, account_id, "imap", "me@example.com");
+        for id in ["q1", "q2"] {
+            let email = make_email(account_id, id, "billing@vendor.example", "Invoice");
+            db.insert_email(&email).expect("insert email");
+            store_local_attachment(db, data_dir, &email, &format!("invoice-{id}.pdf"), b"%PDF");
+        }
+        create_rule(
+            db,
+            account_id,
+            "Vendor",
+            Some("billing@vendor.example"),
+            None,
+            None,
+            vec![],
+        )
+        .expect("rule")
+    }
+
+    #[tokio::test]
+    async fn a_queued_apply_reports_progress_and_its_outcome_under_its_run_id() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-q");
+        let applies = Arc::new(RuleApplies::default());
+        let emitted = Emitted::default();
+
+        run_rule_apply(
+            &db,
+            &rule.id,
+            "acc-q",
+            "run-7",
+            tmp.path(),
+            None,
+            &applies.begin(&rule.id),
+            &recorder(&emitted),
+        )
+        .await;
+
+        let emitted = emitted.into_inner().expect("lock");
+        let progress: Vec<_> = emitted.iter().filter(|(n, _)| *n == APPLY_PROGRESS_EVENT).collect();
+        assert!(!progress.is_empty());
+        assert!(progress
+            .iter()
+            .all(|(_, p)| p["runId"] == "run-7" && p["ruleId"] == rule.id.as_str()));
+        let (name, finished) = emitted.last().expect("finished");
+        assert_eq!(*name, APPLY_FINISHED_EVENT);
+        assert_eq!(finished["runId"], "run-7");
+        assert_eq!(finished["status"], "done");
+        assert_eq!(finished["saved"], 2);
+    }
+
+    #[tokio::test]
+    async fn a_superseded_queued_apply_reports_cancelled() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-q2");
+        let applies = Arc::new(RuleApplies::default());
+        let older = applies.begin(&rule.id);
+        let _newer = applies.begin(&rule.id);
+        let emitted = Emitted::default();
+
+        run_rule_apply(
+            &db,
+            &rule.id,
+            "acc-q2",
+            "run-old",
+            tmp.path(),
+            None,
+            &older,
+            &recorder(&emitted),
+        )
+        .await;
+
+        let emitted = emitted.into_inner().expect("lock");
+        assert_eq!(
+            emitted.last().map(|(_, p)| p["status"].clone()),
+            Some("cancelled".into())
+        );
+        assert!(db.get_attachments_for_rule(&rule.id).expect("query").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_queued_apply_of_a_missing_rule_reports_failed_with_the_error() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-q3", "imap", "me@example.com");
+        let applies = Arc::new(RuleApplies::default());
+        let emitted = Emitted::default();
+
+        run_rule_apply(
+            &db,
+            "ghost",
+            "acc-q3",
+            "run-1",
+            tmp.path(),
+            None,
+            &applies.begin("ghost"),
+            &recorder(&emitted),
+        )
+        .await;
+
+        let emitted = emitted.into_inner().expect("lock");
+        let (_, finished) = emitted.last().expect("finished");
+        assert_eq!(finished["status"], "failed");
+        assert_eq!(finished["error"]["code"], "not_found");
+    }
+
+    /// Sync test on a throwaway runtime: it holds the global seam lock for its
+    /// whole body, which must not span an await (`clippy::await_holding_lock`).
+    #[test]
+    fn a_scan_reports_its_summary_to_the_output_panel_without_an_app_handle() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-log");
+
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime")
+            .block_on(apply_rule_with_provider(
+                &db,
+                &rule,
+                "acc-log",
+                None,
+                tmp.path(),
+                None,
+                &|_| {},
+                &|| false,
+            ))
+            .expect("apply");
+
+        assert!(
+            logger
+                .events()
+                .iter()
+                .any(|e| e.source == "attachments" && e.level == "success" && e.message.contains("saved 2")),
+            "{:?}",
+            logger.events()
+        );
+    }
+
+    // ── Editing a rule drops what it no longer matches ─────────────────────
+
+    #[tokio::test]
+    async fn narrowing_a_rule_removes_the_attachments_it_no_longer_matches() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-n");
+        apply_rule_with_provider(&db, &rule, "acc-n", None, tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+        let before = db.get_attachments_for_rule(&rule.id).expect("query");
+        assert_eq!(before.len(), 2);
+
+        update_rule(
+            &db,
+            &rule.id,
+            "Vendor",
+            Some("billing@vendor.example"),
+            None,
+            Some("invoice-q1.pdf"),
+            vec!["kept".into()],
+            true,
+            tmp.path(),
+        )
+        .expect("update");
+
+        let after = db.get_attachments_for_rule(&rule.id).expect("query");
+        assert_eq!(
+            after.iter().map(|a| a.filename.as_str()).collect::<Vec<_>>(),
+            vec!["invoice-q1.pdf"]
+        );
+        assert_eq!(after[0].tags, vec!["kept".to_string()], "keepers are retagged");
+        let dropped = before.iter().find(|a| a.filename == "invoice-q2.pdf").expect("q2");
+        assert!(
+            !tmp.path().join(&dropped.file_path).exists(),
+            "the dropped file is removed from disk"
+        );
+    }
+
+    // ── Emails the apply has to fetch ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn without_a_provider_an_email_that_needs_fetching_is_skipped() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-s", "imap", "me@example.com");
+        // No backfill: the record is not trusted, so the message must be fetched.
+        db.insert_email(&make_email("acc-s", "m1", "billing@acme.com", "Invoice"))
+            .expect("insert email");
+        let rule = create_rule(&db, "acc-s", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+
+        let saved = apply_rule_with_provider(&db, &rule, "acc-s", None, tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("a skipped email is not an error");
+
+        assert_eq!(saved, 0);
+    }
+
+    #[tokio::test]
+    async fn an_email_the_provider_cannot_return_is_skipped() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-p2", "gmail", "me@example.com");
+        db.insert_email(&make_email("acc-p2", "m1", "billing@acme.com", "Invoice"))
+            .expect("insert email");
+        let rule = create_rule(&db, "acc-p2", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+        let fake = FakeEmailProvider::new("me@example.com", "Me");
+        fake.fail_message("m1");
+
+        let saved = apply_rule_with_provider(&db, &rule, "acc-p2", Some(&fake), tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("a failed fetch is not an error");
+
+        assert_eq!(saved, 0);
+    }
+
+    #[test]
+    fn a_rule_needs_the_provider_only_for_attachments_not_on_disk() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-np");
+        db.set_preference(&crate::services::emails::backfill_done_key("acc-np"), "1")
+            .expect("backfill done");
+        let plan = plan_for(&db, &rule, "acc-np").expect("plan");
+        assert!(!rule_needs_provider(&db, &rule, &plan.emails, tmp.path()).expect("on disk"));
+
+        db.insert_email(&make_email("acc-np", "remote", "billing@vendor.example", "Invoice"))
+            .expect("insert email");
+        recorded_pdf(&db, "remote", "acc-np", "remote.pdf");
+        let plan = plan_for(&db, &rule, "acc-np").expect("plan");
+        assert!(rule_needs_provider(&db, &rule, &plan.emails, tmp.path()).expect("remote"));
     }
 
     // --- save_bytes_to_downloads ---
