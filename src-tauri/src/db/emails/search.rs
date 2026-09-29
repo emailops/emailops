@@ -385,8 +385,10 @@ impl Database {
             param_idx += 1;
         }
         if let Some(ext) = attachment_ext {
+            // `emails.id` must be qualified: a bare `id` binds to the
+            // innermost table (`am.id`) and the filter would never match.
             match_conditions.push(format!(
-                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = id AND LOWER(am.filename) LIKE ?{})",
+                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = emails.id AND LOWER(am.filename) LIKE ?{})",
                 param_idx
             ));
             params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
@@ -3714,5 +3716,40 @@ mod tests {
         let mut found = db.sender_addresses_matching("acc1", "genoveva", 10).unwrap();
         found.sort();
         assert_eq!(found, vec!["genoveva@home.example", "gm@we.example"]);
+    }
+
+    // Regression: the attachment-extension EXISTS used a bare `id`, which
+    // SQLite binds to the innermost table (email_attachment_meta.id), so the
+    // filter compared an attachment's email_id to its own id and never matched.
+    #[test]
+    fn filtered_emails_attachment_ext_matches_email_with_that_attachment() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@example.com");
+        insert_contact_email(&db, "e1", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e2", account, "t2", "Bob", "bob@example.com", "[]", "inbox", 200);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                 VALUES ('att1', 'e1', ?1, 'Report.PDF', 'application/pdf')",
+                rusqlite::params![account],
+            )
+            .unwrap();
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("bob@example.com"),
+                None,
+                None,
+                Some("pdf"),
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"], "only the email carrying a .pdf attachment matches");
     }
 }
