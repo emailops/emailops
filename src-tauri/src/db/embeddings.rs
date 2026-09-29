@@ -323,43 +323,43 @@ impl Database {
         Ok(count)
     }
 
-    /// Delete embeddings for an email
+    /// Delete embeddings for an email. The vec0 rows and their chunk rows go
+    /// in one transaction, so a failure never strands either half.
     pub fn delete_embedding(&self, email_id: &str) -> Result<()> {
-        let conn = self.connection();
-        let mut stmt = conn.prepare("SELECT rowid FROM embedding_chunks WHERE email_id = ?1")?;
-        let rowids: Vec<i64> = stmt
-            .query_map(params![email_id], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        for rowid in &rowids {
-            conn.execute("DELETE FROM vec_emails WHERE rowid = ?1", params![rowid])?;
-        }
-        conn.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM vec_emails WHERE rowid IN (SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
+            params![email_id],
+        )?;
+        tx.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        tx.commit()?;
         Ok(())
     }
 
-    /// Delete all embeddings, optionally filtered by account
+    /// Delete all embeddings, optionally filtered by account, in one
+    /// transaction.
     pub fn delete_all_embeddings(&self, account_id: Option<&str>) -> Result<u32> {
-        let conn = self.connection();
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
 
-        match account_id {
+        let deleted = match account_id {
             Some(acc) => {
-                conn.execute(
+                tx.execute(
                     "DELETE FROM vec_emails WHERE rowid IN (
                         SELECT rowid FROM embedding_chunks WHERE account_id = ?1
                     )",
                     params![acc],
                 )?;
-                let deleted = conn.execute("DELETE FROM embedding_chunks WHERE account_id = ?1", params![acc])?;
-                Ok(deleted as u32)
+                tx.execute("DELETE FROM embedding_chunks WHERE account_id = ?1", params![acc])?
             }
             None => {
-                conn.execute("DELETE FROM vec_emails", [])?;
-                let deleted = conn.execute("DELETE FROM embedding_chunks", [])?;
-                Ok(deleted as u32)
+                tx.execute("DELETE FROM vec_emails", [])?;
+                tx.execute("DELETE FROM embedding_chunks", [])?
             }
-        }
+        };
+        tx.commit()?;
+        Ok(deleted as u32)
     }
 
     /// Full-text search using FTS5
@@ -918,6 +918,51 @@ mod tests {
             let hits = db.fts_search("factura", account, None, 10).unwrap();
             let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
             assert_eq!(ids, vec!["e-keep"], "account {account:?}");
+        }
+    }
+
+    fn email_vector_rows(db: &Database) -> i64 {
+        db.reader()
+            .query_row("SELECT COUNT(*) FROM vec_emails", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Makes every DELETE on embedding_chunks fail, after the vec0 rows are
+    /// already gone, to prove the pair is removed all-or-nothing.
+    fn block_chunk_deletes(db: &Database) {
+        db.connection()
+            .execute_batch(
+                "CREATE TEMP TRIGGER block_chunk_delete BEFORE DELETE ON embedding_chunks
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+    }
+
+    fn seed_one_embedding(db: &Database) {
+        insert_fts_email(db, "e-1", "acc1", "alice@example.com", "subject", "body", 100);
+        db.store_embedding_chunks("e-1", "acc1", &[vec![0.1_f32; 768]], "test-model", "hash")
+            .unwrap();
+    }
+
+    #[test]
+    fn delete_embedding_is_all_or_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        seed_one_embedding(&db);
+        block_chunk_deletes(&db);
+
+        assert!(db.delete_embedding("e-1").is_err());
+        assert_eq!(email_vector_rows(&db), 1, "the vector must survive the failed delete");
+    }
+
+    #[test]
+    fn delete_all_embeddings_is_all_or_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        seed_one_embedding(&db);
+        block_chunk_deletes(&db);
+
+        for account in [Some("acc1"), None] {
+            assert!(db.delete_all_embeddings(account).is_err());
+            assert_eq!(email_vector_rows(&db), 1, "account {account:?}");
         }
     }
 
