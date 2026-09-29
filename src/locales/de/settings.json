@@ -437,6 +437,8 @@
     "allowRemoteToggleDesc": "Wenn aus, werden externe Bilder und Tracker blockiert. Ein Banner lässt dich sie pro E-Mail laden.",
     "privacyPolicyLink": "Datenschutzerklärung",
     "loading": "Lädt...",
+    "loadFailed": "Datenschutzeinstellungen konnten nicht geladen werden: {{error}}",
+    "saveFailed": "Die Einstellung konnte nicht gespeichert werden: {{error}}",
     "passwordDialog": {
       "setTitle": "Hauptpasswort festlegen",
       "changeTitle": "Hauptpasswort ändern",

@@ -437,6 +437,8 @@
     "allowRemoteToggleDesc": "Lorsque c'est désactivé, les images externes et trackers sont bloqués. Un bandeau vous permet de les charger par courriel.",
     "privacyPolicyLink": "Politique de confidentialité",
     "loading": "Chargement...",
+    "loadFailed": "Impossible de charger les paramètres de confidentialité : {{error}}",
+    "saveFailed": "Impossible d'enregistrer le paramètre : {{error}}",
     "passwordDialog": {
       "setTitle": "Définir le mot de passe principal",
       "changeTitle": "Changer le mot de passe principal",

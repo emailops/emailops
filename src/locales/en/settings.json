@@ -437,6 +437,8 @@
     "allowRemoteToggleDesc": "When off, external images and trackers are blocked. A banner lets you load them per-email.",
     "privacyPolicyLink": "Privacy policy",
     "loading": "Loading...",
+    "loadFailed": "Could not load privacy settings: {{error}}",
+    "saveFailed": "Could not save the setting: {{error}}",
     "passwordDialog": {
       "setTitle": "Set main password",
       "changeTitle": "Change main password",

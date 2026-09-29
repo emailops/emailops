@@ -437,6 +437,8 @@
     "allowRemoteToggleDesc": "Cuando está desactivado, se bloquean imágenes externas y rastreadores. Un aviso te permite cargarlos por correo.",
     "privacyPolicyLink": "Política de privacidad",
     "loading": "Cargando...",
+    "loadFailed": "No se pudieron cargar los ajustes de privacidad: {{error}}",
+    "saveFailed": "No se pudo guardar el ajuste: {{error}}",
     "passwordDialog": {
       "setTitle": "Definir contraseña principal",
       "changeTitle": "Cambiar contraseña principal",
