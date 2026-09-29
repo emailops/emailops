@@ -688,8 +688,9 @@ impl Database {
             .expect("seed test account");
     }
 
-    /// Open an existing database read-only for benchmarks / diagnostics.
-    #[cfg(test)]
+    /// Open an existing database read-only for benchmarks / diagnostics and
+    /// the CLI's read commands. Runs no migrations.
+    #[cfg(any(test, feature = "cli"))]
     pub fn open_readonly(db_path: PathBuf) -> Result<Self> {
         unsafe {
             sqlite3_auto_extension(Some(std::mem::transmute::<
