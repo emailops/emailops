@@ -523,7 +523,11 @@
       "unsaved": "Ungespeicherte Änderungen",
       "pick": "Wähle einen Skill zum Bearbeiten.",
       "hint": "SKILL.md: ein Frontmatter-Block mit name (dem Ordnernamen) und description, danach die Anweisungen. Änderungen gelten ab der nächsten Chat-Nachricht.",
-      "reloadFromDisk": "Von der Festplatte neu laden"
+      "reloadFromDisk": "Von der Festplatte neu laden",
+      "delete": "Löschen",
+      "deleteConfirm": "Diesen Skill löschen? Er wird nach skills/.deleted verschoben.",
+      "deleteYes": "Löschen",
+      "deleteNo": "Abbrechen"
     }
   }
 }

@@ -523,7 +523,11 @@
       "unsaved": "Cambios sin guardar",
       "pick": "Elige una skill para editarla.",
       "hint": "SKILL.md: un bloque de cabecera con name (el nombre de la carpeta) y description, y después las instrucciones. Los cambios se aplican al siguiente mensaje del chat.",
-      "reloadFromDisk": "Recargar del disco"
+      "reloadFromDisk": "Recargar del disco",
+      "delete": "Borrar",
+      "deleteConfirm": "¿Borrar esta skill? Se mueve a skills/.deleted.",
+      "deleteYes": "Borrar",
+      "deleteNo": "Cancelar"
     }
   }
 }

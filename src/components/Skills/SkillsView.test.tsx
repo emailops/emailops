@@ -17,13 +17,20 @@ const readSkill = vi.fn<(name: string) => Promise<string>>();
 const saveSkill = vi.fn<(name: string, content: string, base: string) => Promise<string>>();
 const createSkill = vi.fn<(name: string) => Promise<void>>();
 const setSkillEnabled = vi.fn<(name: string, enabled: boolean) => Promise<void>>();
+const deleteSkill = vi.fn<(name: string) => Promise<void>>();
 vi.mock('@/lib/api', () => ({
   listSkills: () => listSkills(),
   readSkill: (n: string) => readSkill(n),
   saveSkill: (n: string, c: string, b: string) => saveSkill(n, c, b),
   createSkill: (n: string) => createSkill(n),
   setSkillEnabled: (n: string, e: boolean) => setSkillEnabled(n, e),
+  deleteSkill: (n: string) => deleteSkill(n),
 }));
+
+const errorText = vi.fn((e: unknown) =>
+  typeof e === 'object' && e !== null && 'code' in e ? `translated:${(e as { code: string }).code}` : String(e),
+);
+vi.mock('@/lib/errors', () => ({ errorText: (e: unknown) => errorText(e) }));
 
 import { SkillsView } from './SkillsView';
 
@@ -76,6 +83,7 @@ beforeEach(() => {
   saveSkill.mockImplementation((n) => Promise.resolve(n));
   createSkill.mockResolvedValue();
   setSkillEnabled.mockResolvedValue();
+  deleteSkill.mockResolvedValue();
 });
 
 afterEach(() => {
@@ -170,5 +178,39 @@ describe('SkillsView', () => {
     await click(q('skill-reload'));
     expect((q('skill-editor') as HTMLTextAreaElement).value).toBe('theirs');
     expect(q('skills-error')).toBeNull();
+  });
+
+  it('deletes a skill only after the user confirms', async () => {
+    listSkills.mockResolvedValue(overview([{ name: 'alpha' }, { name: 'beta' }]));
+    await render();
+    await click(q('skill-delete'));
+    expect(deleteSkill).not.toHaveBeenCalled();
+    await click(q('skill-delete-cancel'));
+    expect(q('skill-delete-confirm')).toBeNull();
+
+    await click(q('skill-delete'));
+    listSkills.mockResolvedValue(overview([{ name: 'beta' }]));
+    await click(q('skill-delete-confirm'));
+    expect(deleteSkill).toHaveBeenCalledWith('alpha');
+    expect(q('skill-row-alpha')).toBeNull();
+    // The next skill opens instead of an editor pointing at a deleted file.
+    expect(readSkill).toHaveBeenLastCalledWith('beta');
+  });
+
+  it('shows why a skill in the folder failed to load, translated', async () => {
+    listSkills.mockResolvedValue({
+      ...overview([]),
+      errors: [
+        {
+          path: '/data/skills/broken/SKILL.md',
+          message: 'SKILL.md must start with a `---` frontmatter block',
+          code: 'skill_no_frontmatter',
+          params: {},
+        },
+      ],
+    });
+    await render();
+    expect(errorText).toHaveBeenCalledWith(expect.objectContaining({ code: 'skill_no_frontmatter' }));
+    expect(container.textContent).toContain('translated:skill_no_frontmatter');
   });
 });

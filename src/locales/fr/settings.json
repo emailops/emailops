@@ -523,7 +523,11 @@
       "unsaved": "Modifications non enregistrées",
       "pick": "Choisissez un skill pour le modifier.",
       "hint": "SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions. Les modifications s'appliquent au prochain message du chat.",
-      "reloadFromDisk": "Recharger depuis le disque"
+      "reloadFromDisk": "Recharger depuis le disque",
+      "delete": "Supprimer",
+      "deleteConfirm": "Supprimer ce skill ? Il est déplacé vers skills/.deleted.",
+      "deleteYes": "Supprimer",
+      "deleteNo": "Annuler"
     }
   }
 }

@@ -220,6 +220,7 @@ macro_rules! app_commands {
             commands::skills::read_skill,
             commands::skills::save_skill,
             commands::skills::create_skill,
+            commands::skills::delete_skill,
             commands::security::has_main_password,
             commands::security::set_main_password,
             commands::security::verify_main_password,

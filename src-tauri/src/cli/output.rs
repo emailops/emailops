@@ -206,7 +206,7 @@ pub fn emit_error(err: &AppError, mode: OutputMode) {
 /// everything else (1).
 pub fn exit_code(err: &AppError) -> u8 {
     match err {
-        AppError::InvalidInput(_) => 2,
+        AppError::InvalidInput(_) | AppError::Skill(_) => 2,
         AppError::NotFound(_) => 3,
         AppError::AuthError(_)
         | AppError::OAuthError(_)
@@ -1358,6 +1358,10 @@ mod tests {
     fn exit_code_groups_errors_by_remediation() {
         // input
         assert_eq!(exit_code(&AppError::InvalidInput("x".into())), 2);
+        assert_eq!(
+            exit_code(&AppError::Skill(crate::services::skills::SkillProblem::NoName)),
+            2
+        );
         // not found
         assert_eq!(exit_code(&AppError::NotFound("x".into())), 3);
         // auth

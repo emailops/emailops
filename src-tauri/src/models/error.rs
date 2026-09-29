@@ -72,6 +72,11 @@ pub enum AppError {
 
     #[error("Cancelled by user")]
     Cancelled,
+
+    /// A skill could not be loaded, saved, created or deleted; the problem
+    /// carries its own translation code (`skill_*`) and params.
+    #[error("{0}")]
+    Skill(#[from] crate::services::skills::SkillProblem),
 }
 
 impl AppError {
@@ -98,6 +103,7 @@ impl AppError {
             AppError::IoError(_) => "io",
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
+            AppError::Skill(problem) => problem.code(),
         }
     }
 
@@ -135,6 +141,9 @@ impl AppError {
                 p.insert("model", model.clone());
             }
             AppError::AiDisabled | AppError::Cancelled => {}
+            AppError::Skill(problem) => {
+                p = problem.params();
+            }
         }
         p
     }

@@ -26,12 +26,20 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
+use crate::models::error::AppError;
+
+mod problem;
+pub use problem::SkillProblem;
 
 /// File every skill folder must contain.
 pub const SKILL_FILE: &str = "SKILL.md";
 
 /// Folder under the data dir that holds one sub-folder per skill.
 pub const SKILLS_DIR: &str = "skills";
+
+/// Folder inside the skills folder where deleted skills are moved, so a delete
+/// can be undone by hand. It holds no `SKILL.md` itself, so the catalog skips it.
+pub const DELETED_DIR: &str = ".deleted";
 
 /// Preference key gating the whole feature. Experimental, so off unless the
 /// user turns it on in Settings → AI Skills.
@@ -87,7 +95,33 @@ pub struct Skill {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkillLoadError {
     pub path: PathBuf,
+    /// English text: the fallback, the CLI line and the log.
     pub message: String,
+    /// Translation code and params, the same shape as an `AppError` payload.
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
+}
+
+impl SkillLoadError {
+    fn new(path: PathBuf, problem: &SkillProblem) -> Self {
+        Self {
+            path,
+            message: problem.to_string(),
+            code: problem.code().to_string(),
+            params: problem.params().into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+        }
+    }
+
+    fn io(path: PathBuf, message: String) -> Self {
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("detail".to_string(), message.clone());
+        Self {
+            path,
+            message,
+            code: "io".to_string(),
+            params,
+        }
+    }
 }
 
 /// Everything found in the skills folder.
@@ -118,17 +152,18 @@ struct Frontmatter {
 /// Parse the text of a `SKILL.md`. `folder` is the name of the folder that
 /// holds it: the frontmatter `name` must match it, as in the Agent Skills
 /// spec, so the name the user types (`/name`) is the one they see on disk.
-pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
+pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, SkillProblem> {
     let (fm, body) = read_frontmatter(text)?;
     let name = fm.name.map(|n| n.trim().to_string()).unwrap_or_default();
     if name.is_empty() {
-        return Err("the frontmatter has no `name`".to_string());
+        return Err(SkillProblem::NoName);
     }
     validate_name(&name)?;
     if name != folder {
-        return Err(format!(
-            "`name: {name}` must match its folder name `{folder}` (rename one of them)"
-        ));
+        return Err(SkillProblem::NameMismatch {
+            name,
+            folder: folder.to_string(),
+        });
     }
 
     let description = fm
@@ -136,22 +171,18 @@ pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
         .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
         .unwrap_or_default();
     if description.is_empty() {
-        return Err("the frontmatter has no `description` (say what the skill does and when to use it)".to_string());
+        return Err(SkillProblem::NoDescription);
     }
     if description.chars().count() > MAX_DESCRIPTION_CHARS {
-        return Err(format!(
-            "the description is longer than {MAX_DESCRIPTION_CHARS} characters"
-        ));
+        return Err(SkillProblem::DescriptionTooLong);
     }
 
     let body = body.trim().to_string();
     if body.is_empty() {
-        return Err("the skill has no instructions after the frontmatter".to_string());
+        return Err(SkillProblem::NoBody);
     }
     if body.chars().count() > MAX_BODY_CHARS {
-        return Err(format!(
-            "the instructions are longer than {MAX_BODY_CHARS} characters; shorten them so they fit the model's context"
-        ));
+        return Err(SkillProblem::BodyTooLong);
     }
 
     Ok(Skill {
@@ -164,17 +195,15 @@ pub fn parse_skill_md(text: &str, folder: &str) -> Result<Skill, String> {
 }
 
 /// The `name` a `SKILL.md` declares, before any other check.
-fn declared_name(text: &str) -> Result<String, String> {
+fn declared_name(text: &str) -> Result<String, SkillProblem> {
     let (fm, _) = read_frontmatter(text)?;
     Ok(fm.name.map(|n| n.trim().to_string()).unwrap_or_default())
 }
 
 /// Split a `SKILL.md` into its parsed frontmatter and the text after it.
-fn read_frontmatter(text: &str) -> Result<(Frontmatter, String), String> {
+fn read_frontmatter(text: &str) -> Result<(Frontmatter, String), SkillProblem> {
     let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
-    let rest = text
-        .strip_prefix("---\n")
-        .ok_or("SKILL.md must start with a `---` frontmatter block holding `name` and `description`")?;
+    let rest = text.strip_prefix("---\n").ok_or(SkillProblem::NoFrontmatter)?;
     let (yaml, body) = match rest.find("\n---") {
         Some(end) => {
             let after = &rest[end + 4..];
@@ -182,19 +211,19 @@ fn read_frontmatter(text: &str) -> Result<(Frontmatter, String), String> {
             let after = match after.find('\n') {
                 Some(nl) if after[..nl].trim().is_empty() => &after[nl + 1..],
                 None if after.trim().is_empty() => "",
-                _ => return Err("the frontmatter's closing `---` must be on its own line".to_string()),
+                _ => return Err(SkillProblem::FenceNotOnOwnLine),
             };
             (&rest[..end], after)
         }
-        None => return Err("the frontmatter block is never closed with `---`".to_string()),
+        None => return Err(SkillProblem::UnclosedFrontmatter),
     };
-    let fm: Frontmatter = serde_yaml::from_str(yaml).map_err(|e| format!("invalid frontmatter: {e}"))?;
+    let fm: Frontmatter = serde_yaml::from_str(yaml).map_err(|e| SkillProblem::InvalidFrontmatter(e.to_string()))?;
     Ok((fm, body.to_string()))
 }
 
 /// Agent Skills naming: lowercase ASCII letters, digits and single hyphens,
 /// not starting or ending with a hyphen, at most `MAX_NAME_CHARS`.
-fn validate_name(name: &str) -> Result<(), String> {
+fn validate_name(name: &str) -> Result<(), SkillProblem> {
     let valid = name.len() <= MAX_NAME_CHARS
         && !name.starts_with('-')
         && !name.ends_with('-')
@@ -205,9 +234,7 @@ fn validate_name(name: &str) -> Result<(), String> {
     if valid {
         Ok(())
     } else {
-        Err(format!(
-            "`{name}` is not a valid skill name: use lowercase letters, digits and single hyphens, at most {MAX_NAME_CHARS} characters"
-        ))
+        Err(SkillProblem::InvalidName(name.to_string()))
     }
 }
 
@@ -516,10 +543,10 @@ pub fn load_catalog(dir: &Path) -> SkillCatalog {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return catalog,
         Err(e) => {
-            catalog.errors.push(SkillLoadError {
-                path: dir.to_path_buf(),
-                message: format!("cannot read the skills folder: {e}"),
-            });
+            catalog.errors.push(SkillLoadError::io(
+                dir.to_path_buf(),
+                format!("cannot read the skills folder: {e}"),
+            ));
             return catalog;
         }
     };
@@ -533,16 +560,22 @@ pub fn load_catalog(dir: &Path) -> SkillCatalog {
             continue;
         }
         let folder = entry.file_name().to_string_lossy().into_owned();
-        let parsed = std::fs::read_to_string(&file)
-            .map_err(|e| format!("cannot read the file: {e}"))
-            .and_then(|text| parse_skill_md(&text, &folder));
-        match parsed {
+        let text = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(e) => {
+                catalog
+                    .errors
+                    .push(SkillLoadError::io(file, format!("cannot read the file: {e}")));
+                continue;
+            }
+        };
+        match parse_skill_md(&text, &folder) {
             Ok(mut skill) => {
                 skill.files = list_skill_files(&folder_path);
                 skill.path = file;
                 catalog.skills.push(skill);
             }
-            Err(message) => catalog.errors.push(SkillLoadError { path: file, message }),
+            Err(problem) => catalog.errors.push(SkillLoadError::new(file, &problem)),
         }
     }
     catalog.skills.sort_by(|a, b| a.name.cmp(&b.name));
@@ -621,17 +654,15 @@ pub fn ensure_skills_dir(db: &Database) -> crate::models::error::Result<PathBuf>
 /// A name from the frontend, checked against the skill naming rules before
 /// it is stored or turned into a path.
 fn check_name(name: &str) -> crate::models::error::Result<()> {
-    use crate::models::error::AppError;
     if name.is_empty() {
-        return Err(AppError::InvalidInput("a skill needs a name".to_string()));
+        return Err(SkillProblem::EmptyName.into());
     }
-    validate_name(name).map_err(AppError::InvalidInput)
+    Ok(validate_name(name)?)
 }
 
 /// `<skills dir>/<name>`, once `name` is a valid skill name — so a name from
 /// the frontend can never point outside the skills folder.
 fn skill_folder(db: &Database, name: &str) -> crate::models::error::Result<PathBuf> {
-    use crate::models::error::AppError;
     check_name(name)?;
     let dir = skills_dir(db).ok_or_else(|| AppError::IoError("this install has no data folder".to_string()))?;
     Ok(dir.join(name))
@@ -657,7 +688,6 @@ pub fn read_skill_source(db: &Database, name: &str) -> crate::models::error::Res
 /// - The file wins on the name: text declaring another `name:` renames the
 ///   folder (and moves its on/off switch), unless a skill by that name exists.
 pub fn save_skill_source(db: &Database, name: &str, text: &str, base: &str) -> crate::models::error::Result<String> {
-    use crate::models::error::AppError;
     let folder = skill_folder(db, name)?;
     let file = folder.join(SKILL_FILE);
     if !file.is_file() {
@@ -666,26 +696,22 @@ pub fn save_skill_source(db: &Database, name: &str, text: &str, base: &str) -> c
     let on_disk = std::fs::read_to_string(&file)
         .map_err(|e| AppError::IoError(format!("could not read '{}': {e}", file.display())))?;
     if on_disk != base {
-        return Err(AppError::InvalidInput(format!(
-            "{name}/SKILL.md changed on disk since you opened it; reload it before saving"
-        )));
+        return Err(SkillProblem::ChangedOnDisk(name.to_string()).into());
     }
-    let declared = declared_name(text).map_err(AppError::InvalidInput)?;
+    let declared = declared_name(text)?;
     let target = if declared.is_empty() {
         name.to_string()
     } else {
         declared
     };
-    parse_skill_md(text, &target).map_err(AppError::InvalidInput)?;
+    parse_skill_md(text, &target)?;
     if target == name {
         write_atomically(&file, text)?;
         return Ok(target);
     }
     let new_folder = skill_folder(db, &target)?;
     if new_folder.exists() {
-        return Err(AppError::InvalidInput(format!(
-            "a skill named {target} already exists; pick another name"
-        )));
+        return Err(SkillProblem::AlreadyExists(target).into());
     }
     std::fs::rename(&folder, &new_folder).map_err(|e| {
         AppError::IoError(format!(
@@ -705,10 +731,9 @@ pub fn save_skill_source(db: &Database, name: &str, text: &str, base: &str) -> c
 /// Create `<skills dir>/<name>/SKILL.md` from a template the catalog accepts,
 /// for the user to fill in from the editor.
 pub fn create_skill(db: &Database, name: &str) -> crate::models::error::Result<()> {
-    use crate::models::error::AppError;
     let folder = skill_folder(db, name)?;
     if folder.exists() {
-        return Err(AppError::InvalidInput(format!("a skill named {name} already exists")));
+        return Err(SkillProblem::AlreadyExists(name.to_string()).into());
     }
     std::fs::create_dir_all(&folder)
         .map_err(|e| AppError::IoError(format!("could not create '{}': {e}", folder.display())))?;
@@ -717,6 +742,39 @@ pub fn create_skill(db: &Database, name: &str) -> crate::models::error::Result<(
 1. First step.\n2. Second step.\n"
     );
     write_atomically(&folder.join(SKILL_FILE), &template)
+}
+
+/// Delete a skill by moving its folder to `<skills dir>/.deleted/<name>`
+/// (`<name>-2`, `-3`… when that is taken), so it can be restored by hand. Its
+/// on/off switch is forgotten.
+pub fn delete_skill(db: &Database, name: &str) -> crate::models::error::Result<()> {
+    let folder = skill_folder(db, name)?;
+    if !folder.join(SKILL_FILE).is_file() {
+        return Err(AppError::NotFound(format!("skill {name}")));
+    }
+    let bin = folder
+        .parent()
+        .map(|dir| dir.join(DELETED_DIR))
+        .ok_or_else(|| AppError::IoError("the skill has no parent folder".to_string()))?;
+    std::fs::create_dir_all(&bin)
+        .map_err(|e| AppError::IoError(format!("could not create '{}': {e}", bin.display())))?;
+    let mut target = bin.join(name);
+    let mut n = 2;
+    while target.exists() {
+        target = bin.join(format!("{name}-{n}"));
+        n += 1;
+    }
+    std::fs::rename(&folder, &target).map_err(|e| {
+        AppError::IoError(format!(
+            "could not move '{}' to '{}': {e}",
+            folder.display(),
+            target.display()
+        ))
+    })?;
+    if disabled_skills(db).contains(name) {
+        set_skill_enabled(db, name, true)?;
+    }
+    Ok(())
 }
 
 /// Write through a sibling temp file and rename, so a crash mid-save never

@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { createSkill, listSkills, readSkill, type SkillsOverview, saveSkill, setSkillEnabled } from '@/lib/api';
+import {
+  createSkill,
+  deleteSkill,
+  listSkills,
+  readSkill,
+  type SkillsOverview,
+  saveSkill,
+  setSkillEnabled,
+} from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 
@@ -24,6 +32,7 @@ export function SkillsView() {
   const [status, setStatus] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const fail = useCallback(
     (what: string, err: unknown) => {
@@ -107,6 +116,24 @@ export function SkillsView() {
       await reload();
     } catch (err) {
       fail(`Failed to save skill ${selected}`, err);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selected) return;
+    const name = selected;
+    setConfirmingDelete(false);
+    setError(null);
+    try {
+      await deleteSkill(name);
+      addLog('success', 'ai', `Deleted skill ${name} (moved to skills/.deleted)`);
+      setDrafts(({ [name]: _, ...rest }) => rest);
+      setSaved(({ [name]: _, ...rest }) => rest);
+      setSelected(null);
+      const next = (await reload())?.skills[0]?.name;
+      if (next) await open(next);
+    } catch (err) {
+      fail(`Failed to delete skill ${name}`, err);
     }
   };
 
@@ -222,7 +249,7 @@ export function SkillsView() {
             <p className="text-xs font-medium text-red-300">{t('settings:skills.errorsTitle')}</p>
             {overview.errors.map((e) => (
               <p key={e.path} className="text-xs text-red-300/80 break-all">
-                <code>{e.path}</code>: {e.message}
+                <code>{e.path}</code>: {errorText(e)}
               </p>
             ))}
           </div>
@@ -263,6 +290,36 @@ export function SkillsView() {
               >
                 {t('settings:skills.view.save')}
               </button>
+              {confirmingDelete ? (
+                <span className="flex items-center gap-1">
+                  <span className="text-xs text-red-300">{t('settings:skills.view.deleteConfirm')}</span>
+                  <button
+                    type="button"
+                    data-testid="skill-delete-confirm"
+                    onClick={() => void handleDelete()}
+                    className="px-2 py-1 text-xs rounded bg-red-700 hover:bg-red-600 text-white"
+                  >
+                    {t('settings:skills.view.deleteYes')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="skill-delete-cancel"
+                    onClick={() => setConfirmingDelete(false)}
+                    className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-200"
+                  >
+                    {t('settings:skills.view.deleteNo')}
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="skill-delete"
+                  onClick={() => setConfirmingDelete(true)}
+                  className="px-2 py-1 text-xs rounded text-red-300 hover:bg-red-900/40"
+                >
+                  {t('settings:skills.view.delete')}
+                </button>
+              )}
             </div>
             <textarea
               data-testid="skill-editor"

@@ -55,6 +55,20 @@
     "ai_data_policy": "The model {{model}} is not available under EmailOps' data policy. Choose another model in Settings → AI.",
     "io": "File error: {{detail}}",
     "budget_exceeded": "AI budget exceeded: {{detail}}",
-    "cancelled": "Cancelled."
+    "cancelled": "Cancelled.",
+    "skill_no_frontmatter": "SKILL.md must start with a --- block holding name and description.",
+    "skill_unclosed_frontmatter": "The frontmatter block is never closed with ---.",
+    "skill_fence_not_on_own_line": "The closing --- of the frontmatter must be on its own line.",
+    "skill_invalid_frontmatter": "The frontmatter is not valid YAML: {{detail}}",
+    "skill_no_name": "The frontmatter has no name.",
+    "skill_empty_name": "A skill needs a name.",
+    "skill_invalid_name": "\"{{name}}\" is not a valid skill name: use lowercase letters, digits and single hyphens.",
+    "skill_name_mismatch": "name: {{name}} must match its folder name {{folder}}.",
+    "skill_no_description": "The frontmatter has no description — say what the skill does and when to use it.",
+    "skill_description_too_long": "The description is longer than {{max}} characters.",
+    "skill_no_body": "The skill has no instructions after the frontmatter.",
+    "skill_body_too_long": "The instructions are longer than {{max}} characters; shorten them so they fit the model's context.",
+    "skill_changed_on_disk": "{{name}}/SKILL.md changed on disk since you opened it. Reload it before saving.",
+    "skill_already_exists": "A skill named {{name}} already exists. Pick another name."
   }
 }

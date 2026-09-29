@@ -31,6 +31,11 @@ vi.mock('@/lib/api', () => ({
   openSkillsFolder: () => openSkillsFolder(),
 }));
 
+const errorText = vi.fn((e: unknown) =>
+  typeof e === 'object' && e !== null && 'code' in e ? `translated:${(e as { code: string }).code}` : String(e),
+);
+vi.mock('@/lib/errors', () => ({ errorText: (e: unknown) => errorText(e) }));
+
 import { SkillsSettings } from './SkillsSettings';
 
 let container: HTMLDivElement;
@@ -80,11 +85,20 @@ describe('SkillsSettings', () => {
       enabled: true,
       dir: '/data/skills',
       skills: [],
-      errors: [{ path: '/data/skills/Bad/SKILL.md', message: 'the frontmatter has no `name`' }],
+      errors: [
+        {
+          path: '/data/skills/Bad/SKILL.md',
+          message: 'the frontmatter has no `name`',
+          code: 'skill_no_name',
+          params: {},
+        },
+      ],
     });
     await render();
     expect(container.textContent).toContain('/data/skills/Bad/SKILL.md');
-    expect(container.textContent).toContain('the frontmatter has no `name`');
+    // Rendered through errorText, which translates `errors:codes.<code>`.
+    expect(errorText).toHaveBeenCalledWith(expect.objectContaining({ code: 'skill_no_name' }));
+    expect(container.textContent).toContain('translated:skill_no_name');
   });
 
   it('says how to add one when the folder is empty', async () => {

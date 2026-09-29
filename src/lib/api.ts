@@ -993,7 +993,8 @@ export interface SkillsOverview {
   enabled: boolean;
   dir: string | null;
   skills: SkillInfo[];
-  errors: { path: string; message: string }[];
+  /** Skills that failed to load. `code`/`params` translate like an `AppError`. */
+  errors: { path: string; message: string; code: string; params: Record<string, string> }[];
 }
 
 export async function listSkills(): Promise<SkillsOverview> {
@@ -1023,6 +1024,11 @@ export async function readSkill(name: string): Promise<string> {
  */
 export async function saveSkill(name: string, content: string, base: string): Promise<string> {
   return invoke('save_skill', { name, content, base });
+}
+
+/** Delete a skill: its folder moves to `skills/.deleted/`, restorable by hand. */
+export async function deleteSkill(name: string): Promise<void> {
+  return invoke('delete_skill', { name });
 }
 
 /** Create a new skill from the template. */

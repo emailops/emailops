@@ -128,7 +128,7 @@ export function SkillsSettings() {
             <ul className="space-y-1">
               {overview.errors.map((e) => (
                 <li key={e.path} className="text-xs text-red-300/80">
-                  <code className="break-all">{e.path}</code>: {e.message}
+                  <code className="break-all">{e.path}</code>: {errorText(e)}
                 </li>
               ))}
             </ul>

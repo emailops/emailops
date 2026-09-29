@@ -54,22 +54,27 @@ fn accepts_crlf_line_endings_and_a_bom() {
 
 #[test]
 fn rejects_a_file_without_frontmatter() {
-    let err = parse_skill_md("# Just markdown", "x").unwrap_err();
+    let err = parse_skill_md("# Just markdown", "x").unwrap_err().to_string();
     assert!(err.contains("frontmatter"), "{err}");
 }
 
 #[test]
 fn rejects_unterminated_frontmatter() {
-    let err = parse_skill_md("---\nname: x\ndescription: y\n", "x").unwrap_err();
+    let err = parse_skill_md("---\nname: x\ndescription: y\n", "x")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("frontmatter"), "{err}");
 }
 
 #[test]
 fn rejects_missing_name_or_description() {
     let no_desc = "---\nname: x\n---\nbody";
-    assert!(parse_skill_md(no_desc, "x").unwrap_err().contains("description"));
+    assert!(parse_skill_md(no_desc, "x")
+        .unwrap_err()
+        .to_string()
+        .contains("description"));
     let no_name = "---\ndescription: y\n---\nbody";
-    assert!(parse_skill_md(no_name, "x").unwrap_err().contains("name"));
+    assert!(parse_skill_md(no_name, "x").unwrap_err().to_string().contains("name"));
 }
 
 #[test]
@@ -92,13 +97,17 @@ fn rejects_invalid_names() {
 
 #[test]
 fn rejects_a_name_that_does_not_match_its_folder() {
-    let err = parse_skill_md(&skill_md("weekly", "d", "b"), "monthly").unwrap_err();
+    let err = parse_skill_md(&skill_md("weekly", "d", "b"), "monthly")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("monthly"), "{err}");
 }
 
 #[test]
 fn rejects_an_empty_body() {
-    let err = parse_skill_md(&skill_md("x", "d", "  \n"), "x").unwrap_err();
+    let err = parse_skill_md(&skill_md("x", "d", "  \n"), "x")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("instructions"), "{err}");
 }
 
@@ -107,7 +116,9 @@ fn rejects_an_overlong_description_or_body_instead_of_cutting_it() {
     let long_desc = "d".repeat(MAX_DESCRIPTION_CHARS + 1);
     assert!(parse_skill_md(&skill_md("x", &long_desc, "b"), "x").is_err());
     let long_body = "b".repeat(MAX_BODY_CHARS + 1);
-    let err = parse_skill_md(&skill_md("x", "d", &long_body), "x").unwrap_err();
+    let err = parse_skill_md(&skill_md("x", "d", &long_body), "x")
+        .unwrap_err()
+        .to_string();
     assert!(err.contains(&MAX_BODY_CHARS.to_string()), "{err}");
 }
 
@@ -700,4 +711,109 @@ fn the_question_of_a_skill_turn_drops_the_invocation() {
     assert_eq!(question_of("/weekly-summary acme", &catalog), "acme");
     assert_eq!(question_of("/weekly-summary", &catalog), "Weekly recap.");
     assert_eq!(question_of("plain question", &catalog), "plain question");
+}
+
+// ── error codes (translated in the UI) ─────────────────────────────────
+
+#[test]
+fn parse_problems_carry_a_code_for_the_ui_to_translate() {
+    let long_body = "x".repeat(MAX_BODY_CHARS + 1);
+    for (text, folder, code) in [
+        ("# Just markdown".to_string(), "x", "skill_no_frontmatter"),
+        (
+            "---\nname: x\ndescription: y\n".to_string(),
+            "x",
+            "skill_unclosed_frontmatter",
+        ),
+        (skill_md("weekly", "d", "b"), "monthly", "skill_name_mismatch"),
+        ("---\nname: x\n---\nbody".to_string(), "x", "skill_no_description"),
+        (skill_md("x", "d", &long_body), "x", "skill_body_too_long"),
+    ] {
+        assert_eq!(parse_skill_md(&text, folder).unwrap_err().code(), code, "{text:.40}");
+    }
+    let mismatch = parse_skill_md(&skill_md("weekly", "d", "b"), "monthly").unwrap_err();
+    assert_eq!(mismatch.params().get("name").map(String::as_str), Some("weekly"));
+    assert_eq!(mismatch.params().get("folder").map(String::as_str), Some("monthly"));
+}
+
+#[test]
+fn a_skill_problem_crosses_the_command_boundary_with_its_code() {
+    let err = crate::models::error::AppError::from(SkillProblem::AlreadyExists("beta".into()));
+    assert_eq!(err.code(), "skill_already_exists");
+    assert_eq!(err.params().get("name").map(String::as_str), Some("beta"));
+    assert!(err.to_string().contains("beta"), "{err}");
+}
+
+#[test]
+fn editing_errors_are_coded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "alpha").unwrap();
+    assert_eq!(create_skill(&db, "alpha").unwrap_err().code(), "skill_already_exists");
+    assert_eq!(
+        set_skill_enabled(&db, "Bad Name", false).unwrap_err().code(),
+        "skill_invalid_name"
+    );
+    let base = read_skill_source(&db, "alpha").unwrap();
+    fs::write(
+        tmp.path().join(SKILLS_DIR).join("alpha").join(SKILL_FILE),
+        "edited elsewhere",
+    )
+    .unwrap();
+    let err = save_skill_source(&db, "alpha", &skill_md("alpha", "D.", "B."), &base).unwrap_err();
+    assert_eq!(err.code(), "skill_changed_on_disk");
+}
+
+#[test]
+fn load_errors_carry_the_same_code_and_params() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join(SKILLS_DIR);
+    write_skill(&dir, "broken", "no frontmatter here");
+    let catalog = load_catalog(&dir);
+    assert_eq!(catalog.errors[0].code, "skill_no_frontmatter");
+    assert!(catalog.errors[0].message.contains("frontmatter"));
+}
+
+// ── delete ─────────────────────────────────────────────────────────────
+
+#[test]
+fn delete_moves_the_skill_aside_and_forgets_its_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    create_skill(&db, "alpha").unwrap();
+    set_skill_enabled(&db, "alpha", false).unwrap();
+    delete_skill(&db, "alpha").unwrap();
+
+    assert!(overview(&db).skills.is_empty());
+    assert!(disabled_skills(&db).is_empty());
+    // Recoverable: the folder is kept under .deleted, which the catalog skips.
+    let kept = tmp
+        .path()
+        .join(SKILLS_DIR)
+        .join(DELETED_DIR)
+        .join("alpha")
+        .join(SKILL_FILE);
+    assert!(kept.is_file(), "{}", kept.display());
+    assert!(overview(&db).errors.is_empty());
+}
+
+#[test]
+fn deleting_the_same_name_twice_keeps_both_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    for _ in 0..2 {
+        create_skill(&db, "alpha").unwrap();
+        delete_skill(&db, "alpha").unwrap();
+    }
+    let deleted = tmp.path().join(SKILLS_DIR).join(DELETED_DIR);
+    assert!(deleted.join("alpha").is_dir());
+    assert!(deleted.join("alpha-2").is_dir());
+}
+
+#[test]
+fn deleting_a_missing_or_badly_named_skill_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    assert_eq!(delete_skill(&db, "ghost").unwrap_err().code(), "not_found");
+    assert_eq!(delete_skill(&db, "../x").unwrap_err().code(), "skill_invalid_name");
 }

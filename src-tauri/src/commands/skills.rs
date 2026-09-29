@@ -49,3 +49,10 @@ pub async fn save_skill(
 pub async fn create_skill(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
     skills::create_skill(&state.db, &name)
 }
+
+/// Delete a skill: its folder moves to `skills/.deleted/`, where it can be
+/// restored by hand.
+#[tauri::command]
+pub async fn delete_skill(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
+    skills::delete_skill(&state.db, &name)
+}
