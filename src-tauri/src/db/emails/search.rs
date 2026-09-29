@@ -180,17 +180,6 @@ impl Database {
         })
     }
 
-    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
-    /// branches. MUST drive from `matched_threads` with an indexed scalar
-    /// subquery per row.
-    ///
-    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
-    /// 90k-email DB (unified intent filter): SQLite scanned each matched
-    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
-    /// re-walking the account's whole mailbox partition per thread. The
-    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
-    /// the planner prefers the mailbox index for the inner MAX() too (54s);
-    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
     /// The junk detector's spam/phishing exclusion as a bare WHERE term
     /// (`exclude_junk_sql` returns it with a leading `AND` for callers that
     /// append it to a finished clause).
@@ -201,26 +190,43 @@ impl Database {
             .to_string()
     }
 
+    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
+    /// branches. MUST drive from `matched_threads` with an indexed scalar
+    /// subquery per row.
+    ///
+    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
+    /// 90k-email DB (unified intent filter): SQLite scanned each matched
+    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
+    /// re-walking the account's whole mailbox partition per thread. The
+    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
+    /// the planner prefers the mailbox index for the inner lookup too (54s);
+    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
+    ///
+    /// The subquery picks the representative's id with the inbox's
+    /// `timestamp DESC, id DESC` order, so two emails of one thread stamped in
+    /// the same second still yield exactly one row (a `timestamp = MAX(...)`
+    /// join returned both).
     const THREAD_LATEST_CTE: &'static str = "thread_latest AS (
                  SELECT mt.aid AS aid, mt.tid AS tid,
-                        (SELECT MAX(e3.timestamp)
+                        (SELECT e3.id
                          FROM emails e3 INDEXED BY idx_emails_thread_latest
                          WHERE e3.account_id = mt.aid AND e3.thread_id = mt.tid
-                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')) AS max_ts
+                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')
+                         ORDER BY e3.timestamp DESC, e3.id DESC
+                         LIMIT 1) AS rep_id
                  FROM matched_threads mt
              )";
 
     /// Representative-row SELECT paired with [`Self::THREAD_LATEST_CTE`].
     /// CROSS JOIN pins the join order (SQLite never reorders CROSS JOIN) so
-    /// the probe drives from the small `thread_latest` set into
-    /// `idx_emails_thread_latest`, never the reverse.
+    /// the probe drives from the small `thread_latest` set into the emails
+    /// primary key, never the reverse.
     fn representative_select() -> String {
         format!(
             "SELECT {cols}
              FROM thread_latest l
-             CROSS JOIN emails e INDEXED BY idx_emails_thread_latest
-             WHERE e.account_id = l.aid AND e.thread_id = l.tid AND e.timestamp = l.max_ts
-               AND e.is_deleted = 0 AND e.mailbox IN ('inbox', 'sent')",
+             CROSS JOIN emails e
+             WHERE e.id = l.rep_id",
             cols = EMAIL_COLUMNS
         )
     }
@@ -1120,29 +1126,21 @@ impl Database {
             // ── Step 3: latest MATCHING email per thread via GROUP BY ─────────
             // GROUP BY + MAX(timestamp) is ~250x faster than NOT EXISTS for
             // finding the latest email per thread (4ms vs 3,200ms benchmarked).
-            // Placeholders for matched_ids are reused in two places (the
-            // grouping subquery AND the outer JOIN's `e.id IN (...)` guard).
-            // SQLite binds reused positional params to a single value — we
-            // only push each id once.
             let id_start = 2usize; // ?1 = account_id
             let id_phs: Vec<String> = (0..matched_ids.len()).map(|i| format!("?{}", id_start + i)).collect();
             let limit_idx = id_start + matched_ids.len();
             let final_sql = format!(
-                "SELECT {cols}
-                 FROM emails e
-                 INNER JOIN (
-                     SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
+                "WITH filter_match AS (
+                     SELECT id, thread_id, timestamp
                      FROM emails
                      WHERE account_id = ?1 AND is_deleted = 0 AND id IN ({phs})
-                     GROUP BY thread_id
-                 ) l ON e.thread_id = l.tid AND e.timestamp = l.max_ts
-                 WHERE e.account_id = ?1 AND e.is_deleted = 0 AND e.id IN ({phs})
+                 ),
+                 {dedup}
                  ORDER BY {order}
                  LIMIT ?{limit_idx}",
                 phs = id_phs.join(", "),
-                cols = EMAIL_COLUMNS,
+                dedup = thread_representative_sql(thread_pick),
                 order = order_clause,
-                thread_pick = thread_pick,
                 limit_idx = limit_idx,
             );
 
@@ -1167,10 +1165,9 @@ impl Database {
         // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
         // for finding the latest email per thread (benchmarked on 47k emails).
         // `filter_match` emits id/thread_id/timestamp for matching emails,
-        // so `thread_latest` groups by thread over ONLY the matching rows —
-        // not all emails in those threads. The outer query then restricts
-        // `e.id IN filter_match` so a non-matching email with the same
-        // timestamp cannot slip through. See the regression test
+        // so the dedup groups by thread over ONLY the matching rows — not all
+        // emails in those threads, and the representative id always comes
+        // from `filter_match`. See the regression test
         // `search_emails_from_filter_returns_matching_email_not_reply`.
         let sql = format!(
             "WITH filter_match AS (
@@ -1178,22 +1175,12 @@ impl Database {
                  FROM emails match_e
                  WHERE {cte_where}
              ),
-             thread_latest AS (
-                 SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
-                 FROM filter_match
-                 GROUP BY thread_id
-             )
-             SELECT {cols}
-             FROM emails e
-             INNER JOIN thread_latest tl ON e.thread_id = tl.tid AND e.timestamp = tl.max_ts
-             WHERE e.account_id = ?1 AND e.is_deleted = 0
-               AND e.id IN (SELECT id FROM filter_match)
+             {dedup}
              ORDER BY {order}
              LIMIT ?{limit_idx}",
             cte_where = cte_where,
-            cols = EMAIL_COLUMNS,
+            dedup = thread_representative_sql(thread_pick),
             order = order_clause,
-            thread_pick = thread_pick,
             limit_idx = param_idx,
         );
 
@@ -1211,6 +1198,33 @@ impl Database {
 
         Ok(result)
     }
+}
+
+/// Thread dedup tail for `search_emails_inner`, run over a preceding
+/// `filter_match (id, thread_id, timestamp)` CTE: one representative per
+/// thread, picked with `thread_pick` (`MAX` newest-first, `MIN` oldest-first)
+/// on the timestamp and then on the id. The id tie-break keeps two matching
+/// emails stamped in the same second from both coming back (matching the
+/// inbox's `timestamp DESC, id DESC` order); the final lookup is by primary key.
+fn thread_representative_sql(thread_pick: &str) -> String {
+    format!(
+        "thread_latest AS (
+             SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
+             FROM filter_match
+             GROUP BY thread_id
+         ),
+         thread_rep AS (
+             SELECT {thread_pick}(fm.id) AS rep_id
+             FROM filter_match fm
+             JOIN thread_latest tl ON fm.thread_id = tl.tid AND fm.timestamp = tl.max_ts
+             GROUP BY fm.thread_id
+         )
+         SELECT {cols}
+         FROM thread_rep r
+         CROSS JOIN emails e
+         WHERE e.id = r.rep_id",
+        cols = EMAIL_COLUMNS
+    )
 }
 
 #[cfg(test)]
@@ -3751,5 +3765,74 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["e1"], "only the email carrying a .pdf attachment matches");
+    }
+
+    // ── Thread dedup: same-second ties ──────────────────────────────────────────
+
+    // Regression: thread dedup joined back on `timestamp = MAX(timestamp)`, so
+    // two emails of one thread stamped in the same second both came back and
+    // the thread showed twice. The representative must be exactly one row,
+    // tie-broken like the inbox (`timestamp DESC, id DESC`).
+    #[test]
+    fn filtered_emails_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@example.com");
+        insert_contact_email(&db, "e-a", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e-b", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("bob@example.com"),
+                None,
+                None,
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
+    }
+
+    fn insert_same_second_thread(db: &Database, account: &str) {
+        for id in ["e-a", "e-b"] {
+            insert_search_email(
+                db,
+                id,
+                account,
+                "t1",
+                "Alice",
+                "alice@example.com",
+                "invoice",
+                "body",
+                100,
+            );
+        }
+    }
+
+    #[test]
+    fn search_keyword_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        insert_same_second_thread(&db, "acc1");
+        let results = db
+            .search_emails("acc1", "invoice", None, None, None, None, None, None, None, 50)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
+    }
+
+    #[test]
+    fn search_from_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        insert_same_second_thread(&db, "acc1");
+        let results = db
+            .search_emails("acc1", "", None, Some("alice"), None, None, None, None, None, 50)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
     }
 }
