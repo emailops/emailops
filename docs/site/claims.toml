@@ -564,7 +564,7 @@ checks = [
 [feat-attachments-view-7]
 checks = [
   { app = true },
-  { tests = ['a_sync_applies_attachment_rules_in_filed_folders_and_sent_not_spam_or_trash', 'services::attachments::tests::applying_a_rule_to_existing_mail_skips_spam_and_trash', 'services::attachments::tests::rules_reach_the_inbox_sent_and_filed_folders_not_spam_or_trash'], covers = ["Rules reach the inbox, Sent and your own folders, never Spam or Trash."] },
+  { tests = ['services::attachments::tests::applying_a_rule_to_existing_mail_skips_spam_and_trash', 'services::attachments::tests::rules_reach_the_inbox_sent_and_filed_folders_not_spam_or_trash'], covers = ["Rules reach the inbox, Sent and your own folders, never Spam or Trash."] },
 ]
 
 [feat-attachments-view-8]

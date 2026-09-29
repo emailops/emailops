@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.12] — 2026-09-29
+
+### Added
+
+- **Chat skills (experimental, off by default).** Save a procedure the chat
+  should follow for one kind of request as a `SKILL.md` in a folder under the
+  data folder. Turn them on in **Settings → AI Skills**; a **Skills** view in
+  the sidebar lists them with a switch each and edits, creates and deletes
+  them. The chat applies a skill when its description matches your question,
+  when the assistant loads one, or when you start a message with `/name`
+  (typing `/` suggests your skills). The reasoning trace shows which skill a
+  turn followed.
+- **Suggested attachment rules.** EmailOps spots recurring document
+  attachments (monthly invoices, receipts) and offers rules for them, which
+  you can review or dismiss. Attachment rules now also collect from Sent and
+  filed folders, not only the inbox.
+- **`/clear` in the chat** starts a new conversation without calling the model.
+- **The research estimate shows the search it ran**, even when it found
+  nothing, and lists only the filters that bound the set.
+
+### Changed
+
+- **OpenRouter never routes your mail to providers that train on it.** Every
+  chat and embedding request asks OpenRouter to exclude providers that collect
+  data; zero data retention is an opt-in switch in the OpenRouter settings. A
+  model no compliant provider serves fails with an error naming it.
+
 ### Security
 
 - **Google sign-in uses PKCE.** Adding or re-authenticating a Gmail account
@@ -27,6 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Lens columns whose key contains a quote** no longer break sorting,
   filtering or the column-value list.
+- **Signing in to Gmail no longer times out during Google's consent
+  screens**, and a callback that arrives just after the browser connects is
+  no longer dropped.
+- **"Sign in again" retries a failed account add** instead of doing nothing or
+  re-authenticating another account, and a failed add no longer leaves an
+  unhandled error behind.
+- **Removing an account while it syncs** no longer logs spurious errors or
+  leaves the inbox spinner running.
+- **AI drafts render bold text** instead of showing the asterisks.
+- **Composing with inline images** no longer warns about unfilled
+  placeholders, and a long reply no longer hides the thread it answers.
+- **Date windows in chat and research include their last day**, and a window
+  ending today includes today's mail.
+- **Bracketed `email://` citations in answers become links.**
+- **Mail you received keeps the chat's category scope.**
+- **Research no longer returns nothing** when a semantic query met a sender
+  filter.
 
 ## [0.6.11] — 2026-09-27
 
