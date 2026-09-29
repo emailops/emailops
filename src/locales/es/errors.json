@@ -52,6 +52,7 @@
     "invalid_input": "Entrada no válida: {{detail}}",
     "ai": "Error de IA: {{detail}}",
     "ai_disabled": "La IA está desactivada. Actívala en Ajustes.",
+    "ai_data_policy": "El modelo {{model}} no está disponible con la política de datos de EmailOps. Elige otro modelo en Ajustes → IA.",
     "io": "Error de archivo: {{detail}}",
     "budget_exceeded": "Presupuesto de IA superado: {{detail}}",
     "cancelled": "Cancelado."

@@ -945,6 +945,13 @@ checks = [
   { app = true },
 ]
 
+[priv-there-no-3]
+checks = [
+  { tests = ['ai::openrouter::data_policy_tests::every_chat_request_denies_data_collection', 'ai::openrouter::data_policy_tests::every_embedding_request_carries_the_same_policy', 'ai::openrouter::data_policy_tests::a_data_policy_404_names_the_blocked_model'], covers = ["every request tells OpenRouter to use only providers that neither store nor train on what they receive", "a model that no such provider serves is refused with an error, never sent anyway"] },
+  { tests = ['ai::openrouter::data_policy_tests::a_chat_request_asks_for_zero_retention_when_enabled', 'services::ai::provider_tests::zero_data_retention_defaults_off_and_round_trips'], covers = ["narrows that to providers that keep nothing at all after answering"] },
+  { manual = 'OpenRouter is not configured on the demo instance, so the panel toggle is covered by OpenRouterPanel.test.tsx rather than a live run.', covers = ["**Zero data retention only**, in the same panel"] },
+]
+
 [priv-what-emailops-1]
 checks = [
   { tests = ['services::emails::mailbox_state::tests::mark_read_updates_the_row_and_pushes_to_the_provider', 'services::emails::compose::tests::delete_draft_removes_local_and_provider_copies'], covers = ["Marking a message read or unread", "Saving a draft"] },

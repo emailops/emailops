@@ -52,6 +52,7 @@
     "invalid_input": "Ungültige Eingabe: {{detail}}",
     "ai": "KI-Fehler: {{detail}}",
     "ai_disabled": "Die KI ist deaktiviert. Aktiviere sie in den Einstellungen.",
+    "ai_data_policy": "Das Modell {{model}} ist mit der Datenrichtlinie von EmailOps nicht verfügbar. Wähle in den Einstellungen → KI ein anderes Modell.",
     "io": "Dateifehler: {{detail}}",
     "budget_exceeded": "KI-Budget überschritten: {{detail}}",
     "cancelled": "Abgebrochen."

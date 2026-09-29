@@ -52,6 +52,7 @@
     "invalid_input": "Invalid input: {{detail}}",
     "ai": "AI error: {{detail}}",
     "ai_disabled": "AI is disabled. Enable it in Settings.",
+    "ai_data_policy": "The model {{model}} is not available under EmailOps' data policy. Choose another model in Settings → AI.",
     "io": "File error: {{detail}}",
     "budget_exceeded": "AI budget exceeded: {{detail}}",
     "cancelled": "Cancelled."

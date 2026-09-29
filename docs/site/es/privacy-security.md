@@ -61,6 +61,12 @@ La última fila es la única vía por la que tu correo puede llegar a un tercero
 por defecto y requiere un cambio deliberado en **Ajustes → IA: backend y modelos** más tu
 propia clave de API.
 
+<!-- claim:priv-there-no-3 -->
+Si la activas, cada petición indica a OpenRouter que use solo proveedores que no guarden lo que
+reciben ni entrenen con ello; un modelo que ningún proveedor así sirva se rechaza con un error,
+nunca se envía igualmente. **Solo retención cero**, en el mismo panel, lo restringe a
+proveedores que no conservan nada tras responder.
+
 ## Qué cambia EmailOps en tu buzón
 
 <!-- claim:priv-what-emailops-1 -->

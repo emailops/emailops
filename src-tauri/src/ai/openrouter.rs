@@ -29,6 +29,44 @@ struct OpenRouterChatRequest {
     /// Structured output: the reply must follow a JSON Schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<serde_json::Value>,
+    provider: ProviderPreferences,
+}
+
+/// OpenRouter routing constraints sent with every request that carries mail
+/// content. `data_collection: "deny"` is fixed: Google's Workspace user-data
+/// policy forbids letting Gmail data train a model, and OpenRouter's default
+/// ("allow") would route to providers that store and train on prompts. Zero
+/// data retention is stricter and costs models, so it is the user's choice.
+#[derive(Debug, Serialize)]
+struct ProviderPreferences {
+    data_collection: &'static str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    zdr: bool,
+}
+
+impl ProviderPreferences {
+    fn new(zero_data_retention: bool) -> Self {
+        Self {
+            data_collection: "deny",
+            zdr: zero_data_retention,
+        }
+    }
+}
+
+/// OpenRouter's answer when no provider for the model meets the request's
+/// data policy.
+const DATA_POLICY_REJECTION: &str = "No endpoints found matching your data policy";
+
+/// The error for a failed OpenRouter request: a data-policy rejection names the
+/// blocked model so the user knows to choose another; anything else keeps the
+/// raw body for the log.
+fn request_error(status: u16, body: &str, model: &str, context: &str) -> AppError {
+    if status == 404 && body.contains(DATA_POLICY_REJECTION) {
+        return AppError::AiDataPolicy {
+            model: model.to_string(),
+        };
+    }
+    AppError::AiError(format!("{context}: {body}"))
 }
 
 /// OpenRouter's structured-output request for `shape`, strict so the model
@@ -107,6 +145,7 @@ struct OpenRouterEmbeddingRequest {
     model: String,
     input: String,
     encoding_format: String,
+    provider: ProviderPreferences,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +170,7 @@ pub struct OpenRouterClient {
     api_key: String,
     model: String,
     embedding_model: String,
+    zero_data_retention: bool,
 }
 
 impl OpenRouterClient {
@@ -145,6 +185,37 @@ impl OpenRouterClient {
             api_key,
             model,
             embedding_model,
+            zero_data_retention: false,
+        }
+    }
+
+    /// Route only to providers with a zero-data-retention policy.
+    pub fn with_zero_data_retention(mut self, enabled: bool) -> Self {
+        self.zero_data_retention = enabled;
+        self
+    }
+
+    fn chat_request(&self, prompt: &str, options: &CompletionOptions) -> OpenRouterChatRequest {
+        OpenRouterChatRequest {
+            model: self.model.clone(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            }],
+            stream: false,
+            max_tokens: options.max_tokens,
+            temperature: options.temperature,
+            response_format: response_format(options.json_shape.as_ref()),
+            provider: ProviderPreferences::new(self.zero_data_retention),
+        }
+    }
+
+    fn embedding_request(&self, text: &str) -> OpenRouterEmbeddingRequest {
+        OpenRouterEmbeddingRequest {
+            model: self.embedding_model.clone(),
+            input: text.to_string(),
+            encoding_format: "float".to_string(),
+            provider: ProviderPreferences::new(self.zero_data_retention),
         }
     }
 
@@ -266,17 +337,7 @@ impl AIProvider for OpenRouterClient {
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
         let url = format!("{}/chat/completions", OPENROUTER_BASE_URL);
 
-        let request = OpenRouterChatRequest {
-            model: self.model.clone(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
-            stream: false,
-            max_tokens: options.max_tokens,
-            temperature: options.temperature,
-            response_format: response_format(options.json_shape.as_ref()),
-        };
+        let request = self.chat_request(prompt, &options);
 
         let response = self
             .client
@@ -301,8 +362,9 @@ impl AIProvider for OpenRouterClient {
             })?;
 
         if !response.status().is_success() {
+            let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::AiError(format!("OpenRouter error: {}", error_text)));
+            return Err(request_error(status, &error_text, &self.model, "OpenRouter error"));
         }
 
         let cost_from_headers = extract_cost_from_response(&response);
@@ -347,11 +409,7 @@ impl AIProvider for OpenRouterClient {
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
         let url = format!("{}/embeddings", OPENROUTER_BASE_URL);
-        let request = OpenRouterEmbeddingRequest {
-            model: self.embedding_model.clone(),
-            input: text.to_string(),
-            encoding_format: "float".to_string(),
-        };
+        let request = self.embedding_request(text);
 
         let response = self
             .client
@@ -376,8 +434,14 @@ impl AIProvider for OpenRouterClient {
             })?;
 
         if !response.status().is_success() {
+            let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::AiError(format!("OpenRouter embedding error: {}", error_text)));
+            return Err(request_error(
+                status,
+                &error_text,
+                &self.embedding_model,
+                "OpenRouter embedding error",
+            ));
         }
 
         let body: OpenRouterEmbeddingResponse = response
@@ -493,6 +557,64 @@ fn extract_cost_from_response(response: &reqwest::Response) -> f64 {
         }
     }
     0.0
+}
+
+#[cfg(test)]
+mod data_policy_tests {
+    use super::*;
+
+    fn client(zdr: bool) -> OpenRouterClient {
+        OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into()).with_zero_data_retention(zdr)
+    }
+
+    #[test]
+    fn every_chat_request_denies_data_collection() {
+        let body = serde_json::to_value(client(false).chat_request("hi", &CompletionOptions::default())).unwrap();
+        assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
+    }
+
+    #[test]
+    fn a_chat_request_asks_for_zero_retention_when_enabled() {
+        let body = serde_json::to_value(client(true).chat_request("hi", &CompletionOptions::default())).unwrap();
+        assert_eq!(
+            body["provider"],
+            serde_json::json!({ "data_collection": "deny", "zdr": true })
+        );
+    }
+
+    #[test]
+    fn every_embedding_request_carries_the_same_policy() {
+        let body = serde_json::to_value(client(false).embedding_request("hi")).unwrap();
+        assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
+        let body = serde_json::to_value(client(true).embedding_request("hi")).unwrap();
+        assert_eq!(
+            body["provider"],
+            serde_json::json!({ "data_collection": "deny", "zdr": true })
+        );
+    }
+
+    #[test]
+    fn a_data_policy_404_names_the_blocked_model() {
+        let body = r#"{"error":{"message":"No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy","code":404}}"#;
+        match request_error(404, body, "vendor/model", "OpenRouter error") {
+            AppError::AiDataPolicy { model } => assert_eq!(model, "vendor/model"),
+            other => panic!("expected AiDataPolicy, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn other_failures_stay_generic_ai_errors() {
+        let body = r#"{"error":{"message":"Provider returned error","code":429}}"#;
+        assert!(matches!(
+            request_error(429, body, "vendor/model", "OpenRouter error"),
+            AppError::AiError(msg) if msg == format!("OpenRouter error: {body}")
+        ));
+        let body = r#"{"error":{"message":"x cannot be used with the chat/completions endpoint","code":404}}"#;
+        assert!(matches!(
+            request_error(404, body, "vendor/model", "OpenRouter error"),
+            AppError::AiError(_)
+        ));
+    }
 }
 
 #[cfg(test)]

@@ -59,6 +59,12 @@ The last row is the only path by which your mail can reach a third party, it is 
 default, and it takes a deliberate change in **Settings → AI Backend & Models** plus your own
 API key to enable.
 
+<!-- claim:priv-there-no-3 -->
+When you do enable it, every request tells OpenRouter to use only providers that neither store
+nor train on what they receive; a model that no such provider serves is refused with an
+error, never sent anyway. **Zero data retention only**, in the same panel, narrows that to
+providers that keep nothing at all after answering.
+
 ## What EmailOps changes in your mailbox
 
 <!-- claim:priv-what-emailops-1 -->

@@ -26,6 +26,7 @@ pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Val
         "periodStart": config.period_start,
         "hasApiKey": has_api_key,
         "thinkingEnabled": config.thinking_enabled,
+        "zeroDataRetention": config.zero_data_retention,
     }))
 }
 
@@ -39,6 +40,7 @@ pub async fn set_ai_config(
     api_key: Option<String>,
     monthly_budget_usd: f64,
     thinking_enabled: Option<bool>,
+    zero_data_retention: Option<bool>,
 ) -> Result<(), AppError> {
     // If no API key is being written, keychain is not touched — safe to call directly.
     let result = if api_key.is_none() {
@@ -50,6 +52,7 @@ pub async fn set_ai_config(
             None,
             monthly_budget_usd,
             thinking_enabled,
+            zero_data_retention,
         )
     } else {
         // Keychain writes can block on a macOS permission prompt; use a dedicated
@@ -64,6 +67,7 @@ pub async fn set_ai_config(
                 api_key.as_deref(),
                 monthly_budget_usd,
                 thinking_enabled,
+                zero_data_retention,
             )
         });
 
@@ -212,11 +216,11 @@ pub async fn test_ai_provider(
             Some(key) if !key.is_empty() => key,
             _ => AiService::load_openrouter_api_key(&state.db)?,
         };
-        Arc::new(crate::ai::openrouter::OpenRouterClient::new(
-            key,
-            model,
-            "openai/text-embedding-3-small".to_string(),
-        ))
+        let zdr = AiService::get_config(&state.db)?.zero_data_retention;
+        Arc::new(
+            crate::ai::openrouter::OpenRouterClient::new(key, model, "openai/text-embedding-3-small".to_string())
+                .with_zero_data_retention(zdr),
+        )
     } else {
         // Covers "ollama", "llamacpp", and any future provider.
         // build_provider resolves GGUF paths via DB preferences for llamacpp.

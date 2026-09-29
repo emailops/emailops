@@ -163,6 +163,9 @@
   },
   "openRouter": {
     "apiKeyPlaceholder": "sk-or-...",
+    "noTrainingNotice": "Nunca se usan proveedores que guarden o entrenen con tu correo.",
+    "zeroDataRetention": "Solo retención cero",
+    "zeroDataRetentionHelp": "Envía solo a proveedores que no guardan nada tras responder. Habrá menos modelos disponibles.",
     "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it"
   },
   "promptEditor": {
