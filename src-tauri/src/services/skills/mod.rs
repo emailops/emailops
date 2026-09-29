@@ -446,8 +446,16 @@ pub fn render_skill_block(skill: &Skill) -> String {
             skill.files.join(", ")
         )
     };
+    // The explicit "do not call load_skill" wording measured best (softer
+    // phrasing brought back a redundant load round and dropped steps); with
+    // reference files it must still allow reading them.
+    let exception = if skill.files.is_empty() {
+        ""
+    } else {
+        " except to read one of its reference files"
+    };
     format!(
-        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already here — do not load them again. Follow them:\n\n{1}{files}\n</skill>",
+        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already loaded — do not call load_skill for \"{0}\"{exception}. Follow them:\n\n{1}{files}\n</skill>",
         skill.name, skill.body
     )
 }

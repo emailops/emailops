@@ -434,7 +434,12 @@ fn the_skill_block_says_it_is_already_loaded() {
     // A `/name` turn carries the block in the user message; without this the
     // index's "call load_skill FIRST" made the model load it a second time.
     let block = render_skill_block(&skill("vendor-reply", "d"));
-    assert!(block.contains("already here — do not load them again"), "{block}");
+    // The explicit wording measured best: softer phrasing brought back the
+    // redundant load_skill round and models dropped the skill's steps.
+    assert!(
+        block.contains("already loaded — do not call load_skill for \"vendor-reply\". Follow them:"),
+        "{block}"
+    );
 }
 
 #[test]
@@ -444,7 +449,10 @@ fn the_already_loaded_note_still_lets_the_model_read_reference_files() {
     let mut s = skill("vendor-support", "d");
     s.files = vec!["references/escalation.md".into()];
     let block = render_skill_block(&s);
-    assert!(!block.contains("do not call load_skill"), "{block}");
+    assert!(
+        block.contains("do not call load_skill for \"vendor-support\" except to read one of its reference files"),
+        "{block}"
+    );
     assert!(block.contains("load_skill(name=\"vendor-support\", file="), "{block}");
 }
 
