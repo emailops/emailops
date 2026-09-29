@@ -318,6 +318,12 @@ fn build_prompt(
     vars.insert("sender", email.sender.clone());
     vars.insert("sender_email", email.sender_email.clone());
     vars.insert("subject", email.subject.clone());
+    vars.insert(
+        "sent_date",
+        chrono::DateTime::from_timestamp(email.timestamp, 0)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+    );
     vars.insert("snippet", snippet.to_string());
     Ok(crate::services::prompts::render(&template, &vars))
 }
@@ -672,6 +678,20 @@ mod thread_tests {
         let prompt = build_prompt(&db, &email, &TaskConfig::default(), &[]).unwrap();
         assert!(prompt.contains(fixtures::REPLY_NEW), "{prompt}");
         assert!(!prompt.contains(fixtures::REQUEST), "{prompt}");
+    }
+
+    /// Relative deadlines ("tomorrow") are resolved against the email's send
+    /// date, so the prompt must carry it — not only today's date.
+    #[test]
+    fn the_prompt_carries_the_emails_sent_date() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        db.connection()
+            .execute("UPDATE emails SET timestamp = 1700000000 WHERE id = 'e2'", [])
+            .unwrap();
+        let email = db.get_email_by_id("e2").unwrap().expect("e2");
+        let prompt = build_prompt(&db, &email, &TaskConfig::default(), &[]).unwrap();
+        assert!(prompt.contains("Date: 2023-11-14"), "{prompt}");
     }
 }
 
