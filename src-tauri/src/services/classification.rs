@@ -1310,7 +1310,7 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
                 .map(|(i, p)| {
                     let like = glob_to_sql_like(p.trim());
                     params.push(Box::new(like));
-                    format!("LOWER(e.sender_email) LIKE ?{}", idx + i)
+                    format!("LOWER(e.sender_email) LIKE ?{} ESCAPE '\\'", idx + i)
                 })
                 .collect();
             idx += like_parts.len();
@@ -1321,7 +1321,7 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
     if let Some(ref pattern) = rule.subject_pattern {
         if !pattern.is_empty() {
             let like = glob_to_sql_like(pattern);
-            conditions.push(format!("LOWER(e.subject) LIKE ?{}", idx));
+            conditions.push(format!("LOWER(e.subject) LIKE ?{} ESCAPE '\\'", idx));
             params.push(Box::new(like));
         }
     }
@@ -1375,8 +1375,10 @@ fn glob_to_sql_like(pattern: &str) -> String {
         match ch {
             '*' => like.push('%'),
             '?' => like.push('_'),
+            // Escaped for the `ESCAPE '\'` clause at every call site.
             '%' => like.push_str("\\%"),
             '_' => like.push_str("\\_"),
+            '\\' => like.push_str("\\\\"),
             _ => like.push(ch),
         }
     }
@@ -1709,6 +1711,54 @@ mod tests {
         assert_eq!(classified.topic, "operations");
         assert_eq!(repairs.intent, Repair::Fallback);
         assert_eq!(repairs.topic, Repair::Fallback);
+    }
+
+    /// `_` and `%` in a rule pattern are literal characters; they must match
+    /// themselves, not act as LIKE wildcards (nor turn into a literal `\_`).
+    #[test]
+    fn rule_patterns_match_underscore_and_percent_literally() {
+        let db = Database::new_for_testing().unwrap();
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+            for (id, sender, subject) in [
+                ("u", "first_last@example.com", "Save 50% today"),
+                ("x", "firstxlast@example.com", "Save 50x today"),
+            ] {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct',?1,?3,'S',?2,'example.com','[]','[]',
+                             'a snippet long enough to pass the length filter',100,0,'primary',0)",
+                    rusqlite::params![id, sender, subject],
+                )
+                .unwrap();
+            }
+        }
+        let rule = |sender: Option<&str>, subject: Option<&str>| ClassificationRule {
+            id: "r".into(),
+            account_id: "acct".into(),
+            name: "r".into(),
+            sender_pattern: sender.map(str::to_string),
+            subject_pattern: subject.map(str::to_string),
+            priority: "normal".into(),
+            intent: "notification".into(),
+            topic: "operations".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let by_sender = find_emails_matching_rule(&db, &rule(Some("first_last@example.com"), None)).unwrap();
+        assert_eq!(by_sender, vec!["u".to_string()]);
+        let by_subject = find_emails_matching_rule(&db, &rule(None, Some("*50%*"))).unwrap();
+        assert_eq!(by_subject, vec!["u".to_string()]);
     }
 
     #[test]
