@@ -660,8 +660,9 @@ impl Database {
         Ok(ids.filter_map(|r| r.ok()).collect())
     }
 
-    /// Get all emails for an account, without thread deduplication.
-    /// Get emails by a list of IDs, preserving the order of IDs
+    /// Get emails by a list of IDs, preserving the order of IDs. Soft-deleted
+    /// rows are skipped: every caller feeds retrieval, citations or embedding,
+    /// none of which may surface a deleted email.
     pub fn get_emails_by_ids(&self, email_ids: &[String]) -> Result<Vec<Email>> {
         if email_ids.is_empty() {
             return Ok(Vec::new());
@@ -673,7 +674,7 @@ impl Database {
         let placeholders: Vec<String> = (1..=email_ids.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
             "SELECT {}
-             FROM emails WHERE id IN ({})",
+             FROM emails WHERE id IN ({}) AND is_deleted = 0",
             EMAIL_COLUMNS,
             placeholders.join(", ")
         );
@@ -1654,5 +1655,19 @@ mod tests {
             db.email_exists("e1").unwrap(),
             "email_exists must return true for deleted emails to prevent re-downloading"
         );
+    }
+
+    // Regression: retrieval (chat RAG, research, semantic search) loads its
+    // candidates through get_emails_by_ids, which returned soft-deleted rows.
+    #[test]
+    fn get_emails_by_ids_skips_soft_deleted_emails() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "e1", "acc1", "t1", 100);
+        insert_email(&db, "e2", "acc1", "t2", 200);
+        db.delete_email("e2").unwrap();
+
+        let got = db.get_emails_by_ids(&["e1".to_string(), "e2".to_string()]).unwrap();
+        let ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"]);
     }
 }
