@@ -343,7 +343,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     createConversation: async (accountId, title) => {
       const conv = await api.createChatConversation(accountId, title);
+      dropPendingResearch();
       set((s) => ({
+        ...leaveOpenConversation(s),
         conversations: [conv, ...s.conversations],
         activeConversationId: conv.id,
         messages: [],
@@ -356,7 +358,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Hydrate messages immediately so the system message (the thread context)
       // is available for the UI to render as a context card.
       const messages = await api.getChatMessages(conv.id);
+      dropPendingResearch();
       set((s) => ({
+        ...leaveOpenConversation(s),
         conversations: [conv, ...s.conversations],
         activeConversationId: conv.id,
         messages,
@@ -441,13 +445,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     deleteConversation: async (id) => {
       await api.deleteChatConversation(id);
+      if (get().activeConversationId === id) dropPendingResearch();
       set((s) => {
         const remaining = s.conversations.filter((c) => c.id !== id);
         const wasActive = s.activeConversationId === id;
+        // The deleted conversation's turn has nowhere to be shown again, so it
+        // is dropped rather than parked.
+        const backgroundTurns = { ...s.backgroundTurns };
+        delete backgroundTurns[id];
+        if (!wasActive) return { conversations: remaining, backgroundTurns };
         return {
           conversations: remaining,
-          activeConversationId: wasActive ? null : s.activeConversationId,
-          messages: wasActive ? [] : s.messages,
+          activeConversationId: null,
+          messages: [],
+          backgroundTurns,
+          streamingMessageId: null,
+          streamingPhase: null,
+          researchProgress: null,
         };
       });
     },
@@ -551,8 +565,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
           research,
           opts.researchEstimateId,
         );
-        // Only mutate if we're still on the same conversation.
-        if (get().activeConversationId !== conversationId) return;
+        // Only mutate if we're still on the same conversation. The turn keeps
+        // streaming into `backgroundTurns`; the lock must still be released or
+        // the conversation now on screen can never send.
+        if (get().activeConversationId !== conversationId) {
+          set({ isSending: false });
+          return;
+        }
         set((s) => ({
           messages: [...s.messages, userMessage, assistantMessage],
           streamingMessageId: assistantMessage.id,
@@ -771,6 +790,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
     },
   };
 });
+
+/** State for switching away from the open conversation: its running turn is
+ *  parked and the streaming flags that disable the input are cleared, the same
+ *  way `selectConversation` leaves one. */
+function leaveOpenConversation(s: ChatStore): Partial<ChatStore> {
+  return {
+    backgroundTurns: parkRunningTurn(s),
+    streamingMessageId: null,
+    streamingPhase: null,
+    researchProgress: null,
+  };
+}
 
 /** `backgroundTurns` with the open conversation's running turn parked in it. */
 function parkRunningTurn(s: ChatStore): Record<string, BackgroundTurn> {
