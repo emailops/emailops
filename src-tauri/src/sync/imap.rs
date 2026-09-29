@@ -846,6 +846,12 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     let ct = &msg.ctype;
     let mime = ct.mimetype.as_str();
 
+    // An attached file (`.html`, `.txt`) is not the body even when it is the
+    // first text part; neither is a forwarded `message/rfc822`.
+    if mime == "message/rfc822" || is_attached_file(msg) {
+        return (None, None);
+    }
+
     if mime == "text/html" {
         let body = msg.get_body().unwrap_or_default();
         return (Some(body), None);
@@ -869,6 +875,14 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     }
 
     (html, plain)
+}
+
+/// A part the sender attached as a file: disposed as `attachment`, or named.
+fn is_attached_file(part: &mailparse::ParsedMail) -> bool {
+    let disposition = part.get_content_disposition();
+    disposition.disposition == mailparse::DispositionType::Attachment
+        || disposition.params.contains_key("filename")
+        || part.ctype.params.contains_key("name")
 }
 
 fn strip_html_tags_owned(html: &str) -> String {
@@ -2334,6 +2348,33 @@ mod tests {
         let names = attachment_names(&raw);
         assert_eq!(names.len(), 2);
         assert_ne!(names[0], names[1], "{names:?}");
+    }
+
+    fn body_of(raw: &[u8]) -> String {
+        extract_body(&parse_mail(raw).expect("parse")).0
+    }
+
+    #[test]
+    fn body_skips_an_attached_html_file() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html\r\nContent-Disposition: attachment; filename=\"page.html\"\r\n\r\n<p>attached page</p>\r\n\
+            --XX\r\nContent-Type: text/plain\r\n\r\nreal body\r\n--XX--\r\n";
+        let body = body_of(raw);
+        assert!(body.contains("real body"), "{body}");
+        assert!(!body.contains("attached page"), "{body}");
+    }
+
+    #[test]
+    fn body_ignores_a_forwarded_message() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/plain\r\n\r\nouter body\r\n\
+            --XX\r\nContent-Type: message/rfc822\r\n\r\n\
+            Subject: inner\r\nContent-Type: text/html\r\n\r\n<p>forwarded</p>\r\n--XX--\r\n";
+        let body = body_of(raw);
+        assert!(body.contains("outer body"), "{body}");
+        assert!(!body.contains("forwarded"), "{body}");
     }
 
     const NOW: i64 = 1_800_000_000;

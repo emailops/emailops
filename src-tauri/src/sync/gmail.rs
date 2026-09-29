@@ -1056,6 +1056,26 @@ fn collect_inline_image_refs_recursive(parts: &[GmailPart], out: &mut Vec<Inline
     }
 }
 
+/// Whether a part (or anything under it) may hold the message's own body.
+/// A named or attachment-disposed part is a file the sender attached, and a
+/// `message/rfc822` part is a forwarded message with a body of its own —
+/// picking the first `text/html` at any depth used to render those instead.
+fn is_body_candidate(part: &GmailPart) -> bool {
+    if part.mime_type.eq_ignore_ascii_case("message/rfc822") {
+        return false;
+    }
+    if part.filename.as_deref().is_some_and(|f| !f.trim().is_empty()) {
+        return false;
+    }
+    let disposed_as_attachment = part.headers.as_ref().is_some_and(|headers| {
+        headers.iter().any(|h| {
+            h.name.eq_ignore_ascii_case("Content-Disposition")
+                && h.value.trim_start().to_ascii_lowercase().starts_with("attachment")
+        })
+    });
+    !disposed_as_attachment
+}
+
 impl GmailClient {
     fn find_body_part(&self, payload: &GmailPayload, mime_type: &str) -> Option<String> {
         let mut log = Vec::new();
@@ -1084,6 +1104,9 @@ impl GmailClient {
     }
 
     fn find_body_part_recursive(part: &GmailPart, mime_type: &str, log: &mut Vec<String>) -> Option<String> {
+        if !is_body_candidate(part) {
+            return None;
+        }
         if part.mime_type == mime_type {
             match &part.body {
                 Some(body) => match (&body.data, &body.attachment_id) {
@@ -1136,6 +1159,9 @@ impl GmailClient {
     }
 
     fn find_attachment_id_recursive(part: &GmailPart, mime_type: &str) -> Option<String> {
+        if !is_body_candidate(part) {
+            return None;
+        }
         if part.mime_type == mime_type {
             if let Some(ref body) = part.body {
                 if let Some(ref att_id) = body.attachment_id {
@@ -3015,6 +3041,71 @@ mod tests {
     }
 
     // --- find_body_part tests ---
+
+    /// An `.html` file attached ahead of the real body used to be picked as
+    /// the message body because it was the first `text/html` part found.
+    #[test]
+    fn find_body_skips_an_attached_html_file() {
+        let client = gmail_client();
+        let mut attached = make_part("text/html", Some(&encode("<p>attached page</p>")), None);
+        attached.filename = Some("page.html".to_string());
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![
+                attached,
+                make_part("text/html", Some(&encode("<p>real body</p>")), None),
+            ]),
+        );
+        assert_eq!(
+            client.find_body_part(&payload, "text/html").unwrap(),
+            "<p>real body</p>"
+        );
+    }
+
+    #[test]
+    fn find_body_skips_a_part_disposed_as_attachment() {
+        let client = gmail_client();
+        let mut attached = make_part("text/plain", Some(&encode("notes.txt contents")), None);
+        attached.headers = Some(vec![GmailHeader {
+            name: "Content-Disposition".to_string(),
+            value: "attachment".to_string(),
+        }]);
+        let payload = make_payload("multipart/mixed", None, Some(vec![attached]));
+        assert_eq!(client.find_body_part(&payload, "text/plain"), None);
+    }
+
+    /// A forwarded message (message/rfc822) carries its own body; that is not
+    /// the body of the message it is attached to.
+    #[test]
+    fn find_body_does_not_descend_into_an_attached_message() {
+        let client = gmail_client();
+        let forwarded = make_part(
+            "message/rfc822",
+            None,
+            Some(vec![make_part("text/html", Some(&encode("<p>forwarded</p>")), None)]),
+        );
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![forwarded, make_part("text/plain", Some(&encode("outer")), None)]),
+        );
+        assert_eq!(client.find_body_part(&payload, "text/html"), None);
+        assert_eq!(client.find_body_part(&payload, "text/plain").unwrap(), "outer");
+    }
+
+    #[test]
+    fn body_attachment_id_ignores_attached_files() {
+        let mut attached = make_part("text/html", None, None);
+        attached.filename = Some("page.html".to_string());
+        attached.body = Some(GmailBody {
+            data: None,
+            size: 10,
+            attachment_id: Some("att-file".to_string()),
+        });
+        let payload = make_payload("multipart/mixed", None, Some(vec![attached]));
+        assert_eq!(GmailClient::find_body_attachment_id(&payload, "text/html"), None);
+    }
 
     #[test]
     fn find_body_direct_match() {
