@@ -423,6 +423,18 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             None => None,
         };
 
+        // This search replaces whatever page an earlier one left open: until it
+        // produces a page of its own (the paged branch below), there is nothing
+        // for `next_page` to continue. Otherwise "the next ones" after a
+        // semantic or fallback result would continue an older, different search.
+        if let Some(state) = ctx.page {
+            state.remember(SearchPage {
+                args: args.clone(),
+                next_offset: 0,
+                total: 0,
+            });
+        }
+
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 25) as i32;
         // Paging is applied after the DB call: the search is thread-deduped and
         // ordered, so the page is a slice of the first `offset + limit` rows.

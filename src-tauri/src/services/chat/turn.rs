@@ -3390,6 +3390,7 @@ async fn run_thread_bound_turn(
                 research: None,
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
+                search_page: tools::next_page::page_trace(&page_state),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -5425,6 +5426,7 @@ async fn run_chat_turn_inner(
                 research: research_trace.clone(),
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
+                search_page: tools::next_page::page_trace(&page_state),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));

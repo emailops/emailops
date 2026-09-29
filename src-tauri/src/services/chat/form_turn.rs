@@ -112,6 +112,7 @@ pub fn form_fill_trace(
         research: None,
         applied_skills: Vec::new(),
         steps: Vec::new(),
+        search_page: None,
     })
 }
 

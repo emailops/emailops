@@ -89,6 +89,12 @@ impl PageState {
         }
     }
 
+    /// The page as the last search left it — exhausted or not — so a turn can
+    /// persist it and the next turn continue (or not) from exactly there.
+    pub fn snapshot(&self) -> Option<SearchPage> {
+        self.0.lock().ok().and_then(|slot| slot.clone())
+    }
+
     /// The page to continue, or `None` when the last search had no more
     /// results (or no search ran in this conversation).
     pub fn pending(&self) -> Option<SearchPage> {
@@ -2430,6 +2436,32 @@ mod tests {
         );
 
         assert!(!out.contains("never classified"), "out:\n{out}");
+    }
+
+    #[tokio::test]
+    async fn a_semantic_search_closes_the_page_an_earlier_search_left_open() {
+        // "the next ones" after a semantic search must not continue the older
+        // keyword search it replaced.
+        let db = tools_test_db();
+        let categories: Vec<String> = Vec::new();
+        let page = PageState::seeded(Some(SearchPage {
+            args: serde_json::json!({"from": "old@example.com"}),
+            next_offset: 25,
+            total: 54,
+        }));
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acc",
+            categories: &categories,
+            page: Some(&page),
+        };
+
+        search_emails::SearchEmailsTool
+            .execute(&ctx, serde_json::json!({"query": "supplier quote", "mode": "semantic"}))
+            .await
+            .expect("tool ran");
+
+        assert!(page.pending().is_none(), "{:?}", page.snapshot());
     }
 
     #[tokio::test]

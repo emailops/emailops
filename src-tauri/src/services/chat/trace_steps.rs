@@ -401,6 +401,7 @@ mod tests {
             research: None,
             applied_skills: Vec::new(),
             steps: vec![],
+            search_page: None,
         }
     }
 
