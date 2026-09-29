@@ -412,7 +412,6 @@ function AppInner() {
     silentRefetch: silentRefetchEmails,
     error: emailError,
     clearError: clearEmailError,
-    reset: resetEmails,
   } = useEmails(selectedCategoriesList, viewModeToMailbox(viewMode));
 
   // Keep stable refs so the sync effects always call the latest version.
@@ -948,9 +947,10 @@ function AppInner() {
     // every enabled account. The backend runs per-account queues, so the
     // syncs proceed independently; progress events drive list refreshes.
     if (isUnified) {
-      resetEmails();
       // Keyed on the account: this effect also re-runs when the account list
-      // reloads, and a same-account reset emptied the chat mid-conversation.
+      // reloads, and a same-account reset closed every tab and emptied the
+      // chat mid-conversation.
+      useEmailStore.getState().resetForAccount(activeAccountId);
       useChatStore.getState().resetForAccount(activeAccountId);
 
       if (!useConnectivityStore.getState().isOnline) {
@@ -977,10 +977,9 @@ function AppInner() {
     // Track if this effect was cleaned up (account changed)
     const abortController = { cancelled: false };
 
-    // Reset emails when switching accounts to avoid showing stale data
-    resetEmails();
-    // Also clear any chat state held from the previous account — only on a
-    // real switch (see `resetForAccount`).
+    // Reset emails and chat state when switching accounts to avoid showing
+    // stale data — only on a real switch (see `resetForAccount`).
+    useEmailStore.getState().resetForAccount(activeAccountId);
     useChatStore.getState().resetForAccount(activeAccountId);
 
     // Skip sync for disabled accounts — still load cached emails

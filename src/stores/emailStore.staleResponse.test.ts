@@ -126,25 +126,6 @@ describe('navigateToEmail thread phase', () => {
   });
 });
 
-describe('fetchEmails after a reset', () => {
-  beforeEach(() => {
-    useEmailStore.getState().reset();
-    vi.clearAllMocks();
-  });
-
-  it('drops the list of the account that was reset away', async () => {
-    const slow = deferred<Email[]>();
-    vi.mocked(api.getEmails).mockReturnValue(slow.promise);
-
-    const fetch = useEmailStore.getState().fetchEmails('acc', null, [], false, undefined);
-    useEmailStore.getState().reset();
-    slow.resolve([a]);
-    await fetch;
-
-    expect(useEmailStore.getState().emails).toEqual([]);
-  });
-});
-
 describe('openTab with an out-of-order thread response', () => {
   beforeEach(() => {
     useEmailStore.getState().reset();

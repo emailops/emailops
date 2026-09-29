@@ -279,6 +279,16 @@ interface EmailStore {
   clearSearchQuery: () => void;
   clearError: () => void;
   reset: () => void;
+  /** Account key the list was last reset for (see `resetForAccount`). */
+  resetAccountKey: string | null;
+  /**
+   * Clear the list, selection and tabs because the app switched to
+   * `accountKey` — a no-op when it was already reset for that key. The App
+   * effect that calls this re-runs whenever the account list reloads (saving
+   * account settings, reordering, re-auth), and an unconditional reset there
+   * closed every open tab while the account stayed the same.
+   */
+  resetForAccount: (accountKey: string) => void;
 }
 
 export const useEmailStore = create<EmailStore>((set, get) => ({
@@ -302,6 +312,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   tabs: [],
   activeTabId: null,
   pendingChatDraft: null,
+  resetAccountKey: null,
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
@@ -775,13 +786,22 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
+  resetForAccount: (accountKey) => {
+    if (get().resetAccountKey === accountKey) return;
+    get().reset();
+    set({ resetAccountKey: accountKey });
+  },
+
   reset: () => {
-    // Invalidate every request still in flight: none of them belongs to what
-    // comes after the reset (typically another account).
+    // Invalidate the thread loads still in flight: none of them belongs to
+    // what comes after the reset (typically another account). `currentFetchId`
+    // is deliberately left alone — the list fetch for the new account is
+    // usually already in flight when the account effect resets the store, and
+    // any older list fetch is superseded by it.
     threadRequestSeq++;
     tabLoadIds.clear();
-    set((state) => ({
-      currentFetchId: state.currentFetchId + 1,
+    set({
+      resetAccountKey: null,
       emails: [],
       selectedEmail: null,
       threadEmails: [],
@@ -802,6 +822,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       activeTabId: null,
       pendingChatDraft: null,
       sentRefreshTick: 0,
-    }));
+    });
   },
 }));
