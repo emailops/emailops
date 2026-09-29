@@ -36,7 +36,12 @@ pub fn compose_fill_reply(form: &FormDef, fill: &FormFill, lang: Language) -> St
     if fill.missing_required.is_empty() {
         return opened;
     }
-    let missing = fill.missing_required.join(", ");
+    let missing = fill
+        .missing_required
+        .iter()
+        .map(|key| field_words(key))
+        .collect::<Vec<_>>()
+        .join(", ");
     let tail = match lang {
         Language::En => format!("Still needed: {missing}."),
         Language::Es => format!("Falta por rellenar: {missing}."),
@@ -44,6 +49,24 @@ pub fn compose_fill_reply(form: &FormDef, fill: &FormFill, lang: Language) -> St
         Language::De => format!("Noch erforderlich: {missing}."),
     };
     format!("{opened} {tail}")
+}
+
+/// A field key as words for the chat answer: `promptText` → `prompt text`.
+/// The keys are the backing struct's camelCase names; the sentence is read by
+/// a person. Pure.
+fn field_words(key: &str) -> String {
+    let mut out = String::with_capacity(key.len() + 4);
+    for c in key.chars() {
+        if c.is_uppercase() {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The reasoning trace of a form-fill turn: the route, the one completion that
@@ -155,9 +178,15 @@ pub(super) async fn run_form_fill_turn(
     current_values: &serde_json::Value,
     user_question: &str,
     turn_start: std::time::Instant,
+    // Raised by the chat's Cancel button (see `chat::cancel`).
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), AppError> {
     use super::{emit_log, emit_phase};
+    let cancelled = || cancel.load(std::sync::atomic::Ordering::Relaxed);
 
+    if cancelled() {
+        return finish_cancelled_fill(db, conversation_id, assistant_message_id, language, turn_start);
+    }
     emit_phase(conversation_id, assistant_message_id, ChatPhase::Generating);
     let template = crate::services::prompts::get_template(db, "forms.fill")?;
 
@@ -173,6 +202,10 @@ pub(super) async fn run_form_fill_turn(
     )
     .await;
     let fill_ms = t_fill.elapsed().as_millis() as i64;
+    // Cancelled while the fill ran: the form does not open.
+    if cancelled() {
+        return finish_cancelled_fill(db, conversation_id, assistant_message_id, language, turn_start);
+    }
 
     let (answer, effect) = match &run.fill {
         Some(fill) => {
@@ -188,7 +221,15 @@ pub(super) async fn run_form_fill_turn(
             (compose_fill_reply(form, fill, language), fill_effect(form, fill))
         }
         None => {
-            emit_log("error", &format!("form: could not fill {} [{fill_ms}ms]", form.id));
+            let why = run
+                .error
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "no reason given".to_string());
+            emit_log(
+                "error",
+                &format!("form: could not fill {} ({why}) [{fill_ms}ms]", form.id),
+            );
             let empty = FormFill {
                 form_id: form.id.to_string(),
                 values: serde_json::Map::new(),
@@ -238,6 +279,35 @@ pub(super) async fn run_form_fill_turn(
         },
     );
 
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: assistant_message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token: answer,
+            done: true,
+            error: None,
+            token_count: None,
+            latency_ms: Some(latency_ms),
+            replace: Some(true),
+        },
+    );
+    Ok(())
+}
+
+/// A cancelled form-fill turn: no form opens; the answer is the cancellation
+/// note, as on every cancelled chat turn.
+fn finish_cancelled_fill(
+    db: &Database,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    language: Language,
+    turn_start: std::time::Instant,
+) -> Result<(), AppError> {
+    super::emit_log("info", "turn cancelled by the user");
+    let answer = super::cancel::cancelled_answer("", language.as_code());
+    let latency_ms = turn_start.elapsed().as_millis() as i64;
+    db.update_chat_message_completion(assistant_message_id, &answer, None, Some(latency_ms))?;
     crate::services::events::emit(
         "chat-stream",
         ChatStreamEvent {
@@ -334,7 +404,52 @@ mod tests {
             Language::Es,
         );
         assert!(reply.contains("columns"));
-        assert!(reply.contains("promptText"));
+        assert!(reply.contains("prompt text"), "{reply}");
+        assert!(!reply.contains("promptText"), "no raw key in the answer: {reply}");
+    }
+
+    // Sync with its own runtime so the global seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn a_cancelled_form_turn_opens_no_form_and_says_so() {
+        let _g = crate::services::events::seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion(r#"{"name": "Facturas"}"#);
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(run_form_fill_turn(
+                &db,
+                &provider,
+                "conv-form-cancel",
+                "msg-form-cancel",
+                &LENS_CREATE,
+                Language::En,
+                "2026-09-29",
+                &json!({}),
+                "create a lens for invoices",
+                std::time::Instant::now(),
+                &cancel,
+            ));
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+
+        assert!(result.is_ok());
+        assert!(provider.completion_calls().is_empty(), "no fill call after the cancel");
+        assert!(
+            sink.payloads_for("chat-tool-effect").is_empty(),
+            "no form opens on a cancelled turn"
+        );
+        let done: Vec<serde_json::Value> = sink
+            .payloads_for("chat-stream")
+            .into_iter()
+            .filter(|p| p["messageId"] == json!("msg-form-cancel") && p["done"] == json!(true))
+            .collect();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0]["token"], json!("_Cancelled by the user._"));
     }
 
     #[test]

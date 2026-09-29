@@ -4331,6 +4331,7 @@ async fn run_chat_turn_inner(
             &context_form_values,
             &user_question,
             turn_start,
+            &turn_guard.flag,
         )
         .await;
     }

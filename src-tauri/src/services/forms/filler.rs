@@ -37,6 +37,9 @@ pub struct FormFill {
 pub enum FillError {
     #[error("no JSON object in the model reply")]
     NoJsonObject,
+    /// The completion itself failed (model not loaded, runtime error…).
+    #[error("the fill completion failed: {0}")]
+    Provider(String),
 }
 
 /// Split a camelCase form key into the nested path a model might have used
@@ -216,8 +219,16 @@ fn pick(obj: &Map<String, Value>, field: &FieldDef) -> Option<Value> {
         .cloned()
 }
 
-/// Model reply → a filled form. Pure.
+/// Model reply → a filled form, for a form with nothing on screen yet. Pure.
 pub fn parse_fill(raw: &str, form: &FormDef) -> Result<FormFill, FillError> {
+    parse_fill_with_current(raw, form, &Value::Null)
+}
+
+/// Model reply → a filled form, over the values the open form already holds
+/// (`current`, keyed like the fields). A required field the reply leaves out
+/// is only missing when the form does not already hold a usable value for it:
+/// the frontend keeps every value the fill does not replace. Pure.
+pub fn parse_fill_with_current(raw: &str, form: &FormDef, current: &Value) -> Result<FormFill, FillError> {
     let json = extract_json_object(raw).ok_or(FillError::NoJsonObject)?;
     let parsed: Value = serde_json::from_str(json).map_err(|_| FillError::NoJsonObject)?;
     let obj = parsed.as_object().ok_or(FillError::NoJsonObject)?;
@@ -225,6 +236,11 @@ pub fn parse_fill(raw: &str, form: &FormDef) -> Result<FormFill, FillError> {
     let mut values = Map::new();
     let mut dropped = Vec::new();
     let mut missing_required = Vec::new();
+    let on_screen = |field: &FieldDef| {
+        current
+            .get(field.key)
+            .is_some_and(|v| !v.is_null() && coerce_field(field, v).is_some())
+    };
 
     for field in form.fields {
         match pick(obj, field) {
@@ -234,13 +250,13 @@ pub fn parse_fill(raw: &str, form: &FormDef) -> Result<FormFill, FillError> {
                 }
                 None => {
                     dropped.push(field.key.to_string());
-                    if field.required {
+                    if field.required && !on_screen(field) {
                         missing_required.push(field.key.to_string());
                     }
                 }
             },
             None => {
-                if field.required {
+                if field.required && !on_screen(field) {
                     missing_required.push(field.key.to_string());
                 }
             }
@@ -352,7 +368,7 @@ pub async fn fill_form(
         json_shape: None,
     };
     match provider.complete_with_prefix(&prefix, &suffix, opts).await {
-        Ok(result) => match parse_fill(&result.text, form) {
+        Ok(result) => match parse_fill_with_current(&result.text, form, current_values) {
             Ok(fill) => FillRun {
                 fill: Some(fill),
                 error: None,
@@ -366,9 +382,9 @@ pub async fn fill_form(
                 prefill_ms: result.prefill_ms,
             },
         },
-        Err(_) => FillRun {
+        Err(e) => FillRun {
             fill: None,
-            error: Some(FillError::NoJsonObject),
+            error: Some(FillError::Provider(e.to_string())),
             prompt_tokens: 0,
             prefill_ms: None,
         },
@@ -460,6 +476,41 @@ mod tests {
         let fill = parse_fill(r#"{"icon": "🧾"}"#, &LENS_CREATE).expect("partial fills still parse");
         assert_eq!(fill.missing_required, vec!["name", "columns", "promptText"]);
         assert_eq!(fill.values.get("icon").and_then(Value::as_str), Some("🧾"));
+    }
+
+    #[test]
+    fn a_field_already_filled_on_screen_is_not_reported_missing() {
+        // "add a column for VAT" on an open form: the model returns only what
+        // changes, and the name and prompt the form already holds stay.
+        let current = serde_json::json!({"name": "Facturas", "promptText": "Extrae el importe."});
+        let fill = parse_fill_with_current(
+            r#"{"columns": [{"key":"vat","label":"IVA","type":"currency"}]}"#,
+            &LENS_CREATE,
+            &current,
+        )
+        .expect("parses");
+        assert!(fill.missing_required.is_empty(), "{:?}", fill.missing_required);
+    }
+
+    #[tokio::test]
+    async fn a_provider_failure_is_reported_as_one_not_as_bad_json() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.fail_completions(Some("model crashed"));
+        let run = fill_form(
+            &provider,
+            "Form: {{form_id}}",
+            &LENS_CREATE,
+            "English",
+            "2026-09-29",
+            &serde_json::json!({}),
+            "a lens for invoices",
+        )
+        .await;
+        assert!(run.fill.is_none());
+        match run.error {
+            Some(FillError::Provider(message)) => assert!(message.contains("model crashed"), "{message}"),
+            other => panic!("expected a provider error, got {other:?}"),
+        }
     }
 
     #[test]
