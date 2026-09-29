@@ -179,6 +179,15 @@ struct GenRequest {
     reply: tokio::sync::oneshot::Sender<std::result::Result<GenOutcome, String>>,
 }
 
+impl GenRequest {
+    /// The caller stopped waiting for this reply (its future was dropped by a
+    /// timeout or a cancelled turn), so generating it is wasted work that
+    /// holds up the queue.
+    fn caller_gone(&self) -> bool {
+        self.reply.is_closed()
+    }
+}
+
 /// Cloneable handle to the actor thread. Dropping every handle closes the
 /// channel, which makes the thread exit and release the context + model Arc.
 #[derive(Clone)]
@@ -382,6 +391,10 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     // and repeating the same advice would spam the output panel.
     let mut n_ctx_suggested = false;
     while let Ok(req) = rx.recv() {
+        if req.caller_gone() {
+            crate::services::logger::log("debug", "ai", "llamacpp: skipped a request its caller abandoned");
+            continue;
+        }
         let GenRequest {
             prompt,
             temperature,
@@ -410,6 +423,7 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             on_token.as_mut(),
             &mut n_ctx_suggested,
             grammar.as_deref(),
+            &|| reply.is_closed(),
         );
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
@@ -474,6 +488,7 @@ fn generate_with_cache(
     mut on_token: Option<&mut OnToken>,
     n_ctx_suggested: &mut bool,
     grammar: Option<&str>,
+    caller_gone: &dyn Fn() -> bool,
 ) -> std::result::Result<GenOutcome, String> {
     // Prefill clock starts before tokenisation: everything up to the first
     // sampled token is latency the user perceives as "thinking".
@@ -876,6 +891,12 @@ fn generate_with_cache(
     let mut ended = false;
 
     for i in 0..max_gen {
+        // Nobody is waiting for the rest of this reply: stop, so the next
+        // request is not stuck behind it.
+        if caller_gone() {
+            ended = true;
+            break;
+        }
         // `sample` already accepts the token into every sampler of the chain
         // (`llama_sampler_sample` → `llama_sampler_accept`). Accepting it again
         // is a no-op for temperature and distribution but advances a grammar
@@ -931,4 +952,39 @@ fn generate_with_cache(
         dropped_front_tokens: dropped_front as u32,
         aux_plan: aux_plan_name,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A handle wired to a channel the test reads, with no inference thread.
+    fn detached_handle() -> (InferenceActorHandle, Receiver<GenRequest>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = InferenceActorHandle {
+            tx,
+            thread: Arc::new(Mutex::new(None)),
+            n_ctx: Arc::new(AtomicU32::new(0)),
+        };
+        (handle, rx)
+    }
+
+    /// A caller that stops waiting (a timeout, a cancelled turn) drops its
+    /// `generate` future; the actor must see that, so it skips a queued request
+    /// and stops decoding one in flight instead of running it to `max_tokens`.
+    #[tokio::test]
+    async fn the_actor_sees_a_caller_that_stopped_waiting() {
+        let (handle, rx) = detached_handle();
+        let mut call = Box::pin(handle.generate("p".into(), 0.0, 8, false, None, None, None, None, None));
+        // Drive the call until it is parked on the reply.
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(20), &mut call)
+            .await
+            .is_err());
+        let request = rx.try_recv().expect("the request was queued");
+        assert!(!request.caller_gone(), "the caller is still waiting");
+
+        drop(call);
+
+        assert!(request.caller_gone());
+    }
 }
