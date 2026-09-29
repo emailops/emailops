@@ -149,6 +149,31 @@
       ]
     },
     {
+      "id": "skills",
+      "name": "Skills del chat",
+      "rust": [
+        "services::skills",
+        "commands::skills",
+        "services::chat::tools::load_skill",
+        "evals::skill_fixtures"
+      ],
+      "vitest": [
+        "src/components/Skills",
+        "src/components/Settings/SkillsSettings",
+        "src/components/Chat/ChatInput.slash",
+        "src/lib/slashSkills"
+      ],
+      "e2e": [
+        "Skills"
+      ],
+      "evals": [
+        "skill_"
+      ],
+      "integration_names": [
+        "skill"
+      ]
+    },
+    {
       "id": "chat",
       "name": "Chat con el buzón",
       "rust": [

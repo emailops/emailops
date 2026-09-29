@@ -5261,4 +5261,68 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
     .expect("resync");
 
     assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
+
+// ── Skills ───────────────────────────────────────────────────────────────
+
+/// The whole life of a skill through the service the Skills view calls, on a
+/// real data dir: create → switch off → save under another name (the file wins)
+/// → an edit made elsewhere blocks a stale save → delete. The chat's catalog
+/// follows every step.
+#[test]
+fn skill_lifecycle_through_the_service() {
+    use emailops_lib::services::skills;
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db = Database::new(tmp.path().to_path_buf()).expect("db");
+    db.set_preference(skills::SKILLS_ENABLED_PREF, "true").expect("pref");
+
+    skills::create_skill(&db, "weekly-report").expect("create");
+    assert_eq!(skills::catalog_for(&db).names(), vec!["weekly-report"]);
+
+    skills::set_skill_enabled(&db, "weekly-report", false).expect("off");
+    assert!(
+        skills::catalog_for(&db).skills.is_empty(),
+        "a switched-off skill leaves the prompt"
+    );
+
+    let base = skills::read_skill_source(&db, "weekly-report").expect("read");
+    let pasted = "---\nname: weekly-email-summary\ndescription: Weekly recap of the mail.\n---\n1. Group by topic.\n";
+    let name = skills::save_skill_source(&db, "weekly-report", pasted, &base).expect("save");
+    assert_eq!(name, "weekly-email-summary");
+    let listed: Vec<(String, bool)> = skills::overview(&db)
+        .skills
+        .into_iter()
+        .map(|s| (s.name, s.enabled))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![("weekly-email-summary".to_string(), false)],
+        "renamed, still off"
+    );
+
+    skills::set_skill_enabled(&db, "weekly-email-summary", true).expect("on");
+    let opened = skills::read_skill_source(&db, "weekly-email-summary").expect("read");
+    let file = tmp
+        .path()
+        .join(skills::SKILLS_DIR)
+        .join("weekly-email-summary")
+        .join(skills::SKILL_FILE);
+    std::fs::write(
+        &file,
+        "---\nname: weekly-email-summary\ndescription: Edited elsewhere.\n---\nTheirs.\n",
+    )
+    .expect("write");
+    let err = skills::save_skill_source(&db, "weekly-email-summary", pasted, &opened).expect_err("stale save");
+    assert!(matches!(err, AppError::Skill(_)), "{err}");
+    assert!(std::fs::read_to_string(&file)
+        .expect("read")
+        .contains("Edited elsewhere."));
+
+    skills::delete_skill(&db, "weekly-email-summary").expect("delete");
+    assert!(skills::overview(&db).skills.is_empty());
+    assert!(tmp
+        .path()
+        .join(skills::SKILLS_DIR)
+        .join(skills::DELETED_DIR)
+        .join("weekly-email-summary")
+        .is_dir());
 }

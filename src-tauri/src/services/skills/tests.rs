@@ -322,7 +322,7 @@ fn a_skill_turn_asks_the_rest_and_carries_the_block() {
 }
 
 #[test]
-fn a_bare_invocation_asks_to_apply_the_skill() {
+fn a_bare_invocation_asks_what_the_skill_is_for() {
     // Retrieval, the planner and the conversation title all read the
     // question; an empty one would give them nothing to work with.
     let catalog = catalog_of(vec![skill("weekly-summary", "Weekly recap.")]);
