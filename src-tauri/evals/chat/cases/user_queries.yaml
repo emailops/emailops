@@ -1,5 +1,5 @@
 # Public synthetic chat eval examples.
-# Real mailbox-specific cases belong under ignored `private-evals/chat/cases/`.
+# Cases built on private data belong under ignored `private-evals/chat/cases/`.
 #
 # Keyed to the bundled demo DB (`make demo-db`) — the Ulises / EmailOps Labs
 # consultant persona. The primary account is `ulises@emailopslabs.dev`
@@ -76,7 +76,7 @@
     - answer_relevancy
     - faithfulness
 
-# A lookup must never end in a saved draft. Observed on the real mailbox with
+# A lookup must never end in a saved draft. Observed on real-world mail with
 # Qwen 3.6 35B: "primer correo que envié a X" found the email and the model
 # then called generate_email_draft on its own, saving (and pushing) a reply
 # nobody asked for. The tool loop now refuses generate_email_draft on a turn

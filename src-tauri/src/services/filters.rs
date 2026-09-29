@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn board_stats_ranks_a_read_but_unanswered_tag_above_ignored_bulk() {
-        // Regression from a real mailbox: a listings digest (never replied
+        // Regression from real-world mail: a listings digest (never replied
         // to, about half read) must outrank a social-notification feed
         // (never replied to, never read), even with fewer threads.
         let db = Arc::new(Database::new_for_testing().unwrap());

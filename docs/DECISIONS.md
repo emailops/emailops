@@ -1225,7 +1225,7 @@ unrelated shipping notice. A prompt-only fix (the CITATION CONTRACT rewrite plus
 under the Sources header) was measured on the demo DB, 54 chat cases, greedy decoding: it
 raised tool turns with `email://` links from 22/34 to 26/36 and fixed `kelvo_support_addresses`
 (`[1][2][2]` → two links), but `pc_priya_address` still answered `… [1]` for a fact in Source
-`[6]` on both prompts, and the developer's real mailbox still got `[1][2][3]` in bullet
+`[6]` on both prompts, and real-world mail still got `[1][2][3]` in bullet
 order with no links. Self-numbering survives the instruction, so the fix had to stop
 depending on the model: on those two sweeps bare `[n]` appeared on 2–3 of ~35 tool turns
 and was wrong in the self-numbered ones, while 22–26 of them carried `email://` links —
@@ -1453,7 +1453,7 @@ direct answer: citation cleanup, sources and trace. Bare `(email://ID)` and
 `[email://ID]` references are relinked to `[subject](email://ID)`.
 **Context:** a normal turn answers from about 8 sources or one 25-row page. That suits
 "what did X say?" but is too thin for "what themes came up this quarter?". Measured
-before and after on the developer's mailbox (qwen3.5-4b-q8_0, n_ctx 15360), the same
+before and after on real-world mail (qwen3.5-4b-q8_0, n_ctx 15360), the same
 question went from 25 rows read in 53 s to 100 emails read in 10 batches in 213 s, with
 35 emails cited. Every research call runs on the one-shot prefix slot (2026-09-19
 entry), so the chat's KV anchor survives for the next ordinary turn, and the map
@@ -1677,7 +1677,7 @@ account's most frequent senders matching the name), so mail the user sent to tho
 addresses is found even when it doesn't carry X's name. The planner is told: "with X" /
 "con X" with no direction → `with = X`, not `from`/`to`.
 **Context:** "resume todos los correos con Genoveva" was planned as
-`from: genoveva, to: me`. On a real mailbox that missed the 40 threads the user started
+`from: genoveva, to: me`. On real-world mail that missed the 40 threads the user started
 (about 40% of the conversations). `from` and `to` are AND-ed, so no plan could express
 "either way", and a `to` on a name misses mail addressed to a bare address.
 **Rejected:**
@@ -1721,7 +1721,7 @@ the only copy: forwards with a note, Apple Mail forwards in a `<blockquote>`, re
 to mail that was never synced, contact-form notifications that open with `From:` /
 `Subject:` or end in a `--` footer. Each new marker rule added another way to lose
 text. Comparing with the thread fails safe: when it errs, the model reads more text,
-never less. On a 50-email sample of a real mailbox the AI now reads 66% of the text
+never less. On a 50-email sample of real-world mail the AI now reads 66% of the text
 instead of 31%.
 **Rejected:**
 - *More marker rules, forward detection by subject prefix* (Mailgun `talon` does this
@@ -1767,6 +1767,80 @@ pattern is visible in `email_attachment_meta` without reading bodies.
 sender × filename × cadence pattern); one-click creation without review (a wrong
 glob silently downloads the wrong files); computing only when the modal opens (the
 user would never discover the feature without a proactive signal).
+
+## 2026-09-25 — Windows Vulkan builds without --jobs 1
+
+**Decision:** `scripts/build_platform.sh` no longer forces `--jobs 1` on Windows Vulkan
+builds. The C1041 PDB race it worked around is covered by three later fixes: the Ninja
+generator, `CL=/FS`, and the short `CARGO_TARGET_DIR` (C:/ct). Confirmed by a
+`windows-vulkan` dry run (run 36119358082): no C1041, the smoke test passed, pass 1 took
+22m57s (was 43m53s) and the job 35 min (was 54).
+**Context:** `--jobs 1` serialized every Rust crate, not just the CMake build. On the
+25/09/2026 release run, pass 1 took 43m53s on Windows against 17m05s on Linux. After the
+CUDA job was trimmed, the 54-minute Windows Vulkan leg became the next-longest part of
+the release. The commit that added `--jobs 1` was made before any of the three later
+fixes, and the short-target-dir fix showed C1041 also fired on a single, uncontended
+compile, from path length alone.
+**Rejected:**
+- *Serializing only llama-cpp-sys-2* (a `cargo build -p llama-cpp-sys-2 --jobs 1`
+  first pass): cargo refuses `--features` for a package outside the workspace. Without
+  them the crate would build with different features and be rebuilt in pass 2.
+- *Avoiding pass 2's recompile of `emailops`* (~3-5 min per leg): the merged Tauri
+  config, which includes backends staged after pass 1, changes the app's build script
+  input. Fixing it means reworking packaging around `tauri build --no-bundle` +
+  `tauri bundle`, on a path with no per-PR CI coverage.
+
+## 2026-09-27 — Task-queue submits box the task first; Windows reserves an 8 MiB main stack
+
+**Decision:** `TaskQueue::submit*` are plain `fn`s that box the task before anything is
+awaited, and never `async fn`s taking the task by value. The Windows app links with
+`/STACK:8388608` (`build.rs`), the main-thread stack size macOS and Linux already give it.
+Guarded by `#![deny(clippy::large_futures)]` (16 KiB, `clippy.toml`), a CI Clippy step
+with `--features desktop` (the only one that compiles `commands/`), and a test that holds
+every registered Tauri command's future to the same 16 KiB. The command list lives once, in
+`app_commands!`, so the test sees every command `generate_handler!` does.
+**Context:** v0.6.10 crashed on Windows with STATUS_STACK_OVERFLOW (0xc00000fd) once a
+sync started. Tauri builds and spawns each async command's future on the main thread,
+and copies it through `respond_async_serialized` → `async_runtime::spawn` →
+`tokio::spawn`. Making `submit_named` an `async fn` that awaited `submit_with_priority`
+put every queued task inline in the caller twice. That doubled the futures of the sync
+and send commands: the spawn frames for `start_sync_account` went from ~486 KB (v0.6.9)
+to ~939 KB, over Windows' 1 MB default and harmless under macOS' 8 MiB. With the task
+boxed first, the largest spawn frame is ~75 KB.
+**Rejected:**
+- *Only raising the stack*: it hides the doubling, and every queued task still costs its
+  full size on the stack several times over.
+- *Only boxing the task*: the next command whose future grows would again crash on
+  Windows alone. No CI leg runs the app on Windows.
+- *Running a custom Tauri async runtime with larger worker stacks*: the frames that
+  overflowed were on the main thread, which that setting does not reach.
+- *An IPC test through `tauri::test`'s mock runtime on a 1 MB thread*: commands take
+  `AppHandle`, which is `AppHandle<Wry>`, so they cannot be registered on the mock
+  runtime, and a real Wry app needs a display and the process main thread. The future-size
+  budget measures the same thing from the types alone, on every OS.
+
+## 2026-09-28 — A search window's `until` includes its own day
+
+**Decision:** Every date window the AI reads or writes — `search_emails`,
+`list_calendar_events`, the query planner, research, the today/week shortcuts — treats
+`until` as the last day included: one day is `since == until`, a week ends on its
+Sunday, "last 6 months" ends today. The conversion to a timestamp happens in one place,
+`parse_until_date_secs` (start of the next local day). "Today", "yesterday" and the
+calendar weeks are injected into the planner prompt as computed dates, so the model
+never does that arithmetic.
+**Context:** `until` was end-exclusive, and the prompts said so, but the model kept
+writing inclusive ends ("últimos 6 meses" → `until = today`, "en 2025" →
+`until = 2025-12-31`), so the last day's mail — today's report, in the case that
+surfaced it — silently dropped out. An inclusive end is what a model and a user both
+assume, and the worst case of a model still writing a half-open end is one extra day
+of mail rather than a missing one.
+**Rejected:**
+- *Ignoring `until` when it equals today*: `until = today` is also the correct
+  half-open end for "yesterday" and for "last week" asked on a Monday, so the rule
+  needed exceptions, and it overrode what the planner asked for.
+- *A prompt rule "a period up to now has no until"*: it fixed those questions but moved
+  unrelated plans on the 4B model (a recipient flipped to sender; a document keyword
+  replaced by a tag), measured on the planner and chat evals.
 
 ## 2026-09-29 — Attachment rule suggestions: dismissals match by sender identity, not key
 

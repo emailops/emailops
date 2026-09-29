@@ -1,6 +1,6 @@
 # Synthetic tag-classification corpus — education, travel and personal.
 # Every address is a .test domain and every name is invented: this corpus
-# never touches a real mailbox. Gold label first, accepted alternatives after.
+# never touches real-world mail. Gold label first, accepted alternatives after.
 
 - id: en_education_course_enrolment
   lang: en

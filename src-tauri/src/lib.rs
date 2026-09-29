@@ -10,6 +10,12 @@
 // Tests are exempted globally via `allow-unwrap-in-tests = true` and
 // `allow-expect-in-tests = true` in `clippy.toml`.
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+// A future bigger than `future-size-threshold` (clippy.toml) must be boxed
+// before it is awaited or handed on. Futures are copied by value on their way
+// to the executor, and Tauri spawns command futures on the main thread — 1 MB on
+// Windows. v0.6.10 crashed there with a stack overflow when two nested
+// `async fn`s each carried a queued sync task inline.
+#![deny(clippy::large_futures)]
 
 // These are used only by the desktop shell (`run()`, `AppState`, the instance lock);
 // the state they used to serve now lives in `runtime::core`.
@@ -132,6 +138,243 @@ impl AppState {
 // Objective-C boundary and the process `abort()`s with an opaque crash report.
 // The only remaining `.expect(...)` is the final `Builder::run()` (the event
 // loop itself failing to start has no graceful recovery).
+/// Every Tauri command the app registers, listed once. Invoked with the macro
+/// that consumes the list: `tauri::generate_handler` for the app, and the
+/// future-size budget test below, so the test can never miss a command.
+#[cfg(feature = "desktop")]
+macro_rules! app_commands {
+    ($($consumer:ident)::+) => {
+        $($consumer)::+![
+            commands::accounts::add_account,
+            commands::accounts::test_imap_connection,
+            commands::accounts::add_imap_account,
+            commands::accounts::get_imap_settings,
+            commands::accounts::update_imap_credentials,
+            commands::accounts::list_accounts,
+            commands::accounts::remove_account,
+            commands::accounts::reauthenticate_account,
+            commands::accounts::reorder_accounts,
+            commands::accounts::set_account_enabled,
+            commands::accounts::update_account_sync_from,
+            commands::accounts::update_account_name,
+            commands::accounts::get_account_settings,
+            commands::accounts::set_account_settings,
+            commands::accounts::get_available_categories,
+            commands::emails::get_emails,
+            commands::emails::get_folders,
+            commands::emails::create_folder,
+            commands::emails::rename_folder,
+            commands::emails::delete_folder,
+            commands::emails::move_email,
+            commands::emails::get_thread,
+            commands::emails::get_email_body,
+            commands::emails::mark_as_read,
+            commands::emails::delete_email,
+            commands::emails::send_reply,
+            commands::emails::send_new_email,
+            commands::emails::generate_draft,
+            commands::emails::generate_new_draft,
+            commands::translation::detect_email_language,
+            commands::translation::translate_email,
+            commands::translation::translate_compose_text,
+            commands::emails::redownload_email,
+            commands::emails::start_redownload_empty_emails,
+            commands::emails::sync_account,
+            commands::emails::start_sync_account,
+            commands::emails::start_resync_mailbox,
+            commands::emails::get_email_inbox_position,
+            commands::emails::autocomplete_senders,
+            commands::emails::autocomplete_recipients,
+            commands::emails::get_email_by_id,
+            commands::emails::get_email_count,
+            commands::emails::get_sync_status,
+            commands::search::search_emails,
+            commands::search::generate_embeddings,
+            commands::search::start_generate_embeddings,
+            commands::search::regenerate_embeddings,
+            commands::search::start_regenerate_embeddings,
+            commands::search::rebuild_fts_index,
+            commands::search::get_pending_embeddings_count,
+            commands::search::list_ollama_models,
+            commands::search::get_ai_model,
+            commands::search::set_ai_model,
+            commands::calendar::get_calendar_events,
+            commands::calendar::get_calendars,
+            commands::calendar::set_calendar_visible,
+            commands::calendar::create_calendar_event,
+            commands::calendar::delete_calendar_event,
+            commands::calendar::get_calendar_invite,
+            commands::calendar::rsvp_calendar_invite,
+            commands::calendar::sync_calendar_now,
+            commands::preferences::get_pref,
+            commands::preferences::set_pref,
+            commands::preferences::get_auto_n_ctx,
+            commands::preferences::show_main_window,
+            commands::preferences::get_system_locale,
+            commands::prompts::list_prompts,
+            commands::prompts::set_prompt,
+            commands::prompts::reset_prompt,
+            commands::security::has_main_password,
+            commands::security::set_main_password,
+            commands::security::verify_main_password,
+            commands::security::remove_main_password,
+            commands::contacts::get_contacts,
+            commands::contacts::list_contacts,
+            commands::contacts::get_contact_detail,
+            commands::contacts::list_contacts_by_company,
+            commands::drafts::list_drafts,
+            commands::drafts::get_draft,
+            commands::drafts::refresh_drafts,
+            commands::drafts::list_draft_attachments,
+            commands::drafts::save_draft,
+            commands::drafts::send_draft,
+            commands::drafts::delete_draft,
+            commands::filters::refresh_filter_stats,
+            commands::filters::get_saved_suggestions,
+            commands::filters::get_filtered_emails,
+            commands::filters::get_tag_stats,
+            commands::filters::get_tag_board_stats,
+            commands::filters::get_thread_participants,
+            commands::filters::get_attachment_ext_stats,
+            commands::filters::get_filter_prefs,
+            commands::filters::pin_filter,
+            commands::filters::remove_filter,
+            commands::filters::delete_filter_pref,
+            commands::trusted_senders::add_trusted_sender,
+            commands::trusted_senders::remove_trusted_sender,
+            commands::trusted_senders::list_trusted_senders,
+            commands::trusted_senders::is_sender_trusted,
+            commands::attachments::create_attachment_rule,
+            commands::attachments::update_attachment_rule,
+            commands::attachments::delete_attachment_rule,
+            commands::attachments::list_attachment_rules,
+            commands::attachments::count_attachments_for_rule,
+            commands::attachments::list_attachment_rule_suggestions,
+            commands::attachments::refresh_attachment_rule_suggestions,
+            commands::attachments::dismiss_attachment_rule_suggestion,
+            commands::attachments::accept_attachment_rule_suggestion,
+            commands::attachments::list_dismissed_attachment_rule_suggestions,
+            commands::attachments::restore_attachment_rule_suggestion,
+            commands::attachments::get_attachments,
+            commands::attachments::get_attachments_for_email,
+            commands::attachments::count_attachments,
+            commands::attachments::get_attachment,
+            commands::attachments::get_attachment_tags,
+            commands::attachments::get_attachment_file_path,
+            commands::attachments::get_attachment_data,
+            commands::attachments::bulk_download_attachments,
+            commands::attachments::save_attachment_to_downloads,
+            commands::attachments::reveal_in_finder,
+            commands::attachments::apply_rule_retroactively,
+            commands::attachments::open_attachment_externally,
+            commands::attachments::get_email_attachment_metas,
+            commands::attachments::reextract_email_attachments,
+            commands::attachments::fetch_email_attachment_bytes,
+            commands::attachments::open_email_attachment_meta,
+            commands::classification::get_classification_config,
+            commands::classification::set_classification_config,
+            commands::classification::classify_previous_emails,
+            commands::classification::reclassify_all_emails,
+            commands::classification::get_email_tags,
+            commands::classification::get_email_tags_batch,
+            commands::classification::count_unclassified_emails,
+            commands::classification::get_tag_priorities,
+            commands::classification::list_classification_rules,
+            commands::classification::create_classification_rule,
+            commands::classification::update_classification_rule,
+            commands::classification::delete_classification_rule,
+            commands::junk::get_junk_verdicts,
+            commands::junk::set_junk_feedback,
+            commands::junk::backfill_junk_scores,
+            commands::junk::report_junk_to_provider,
+            commands::junk::get_junk_config,
+            commands::junk::set_junk_config,
+            commands::junk::get_junk_stats,
+            commands::ai_config::get_ai_config,
+            commands::ai_config::set_ai_config,
+            commands::ai_config::get_ai_usage,
+            commands::ai_config::reset_ai_usage,
+            commands::ai_config::list_ai_models,
+            commands::ai_config::list_ai_embedding_models,
+            commands::ai_config::get_embeddings_config,
+            commands::ai_config::set_embeddings_config,
+            commands::ai_config::check_ai_available,
+            commands::ai_config::test_ai_provider,
+            commands::ai_models::list_catalog_models,
+            commands::ai_models::list_local_models,
+            commands::ai_models::delete_local_model,
+            commands::ai_models::start_model_download,
+            commands::ai_models::link_local_model,
+            commands::ai_models::cancel_model_download,
+            commands::chat::list_chat_conversations,
+            commands::chat::create_chat_conversation,
+            commands::chat::create_chat_conversation_with_thread,
+            commands::chat::rename_chat_conversation,
+            commands::chat::delete_chat_conversation,
+            commands::chat::get_chat_messages,
+            commands::chat::send_chat_message,
+            commands::chat::estimate_research,
+            commands::chat::cancel_chat_turn,
+            commands::chat::confirm_exit,
+            commands::chat::prewarm_chat,
+            commands::memory::list_pending_tasks,
+            commands::memory::get_task_counts,
+            commands::memory::create_pending_task,
+            commands::memory::update_pending_task_status,
+            commands::memory::list_open_threads,
+            commands::memory::list_memory_facts,
+            commands::memory::promote_memory_fact,
+            commands::memory::retire_memory_fact,
+            commands::memory::update_memory_fact,
+            commands::memory::delete_memory_fact,
+            commands::memory::get_memory_counts,
+            commands::memory::get_memory_config,
+            commands::memory::set_memory_config,
+            commands::memory::get_task_config,
+            commands::memory::set_task_config,
+            commands::memory::get_memory_backfill_status,
+            commands::memory::start_memory_backfill,
+            commands::memory::cancel_memory_backfill,
+            commands::memory::reset_memory_extraction,
+            commands::memory::get_task_backfill_status,
+            commands::memory::start_task_backfill,
+            commands::memory::cancel_task_backfill,
+            commands::memory::reset_task_extraction,
+            commands::memory::run_memory_consolidation,
+            commands::dashboard::get_dashboard_stats,
+            commands::dashboard::refresh_server_total,
+            commands::dashboard::get_queue_state,
+            commands::dashboard::get_storage_stats,
+            commands::system::detect_ai_capability,
+            commands::system::is_rosetta_translated,
+            commands::system::get_available_update,
+            commands::system::get_build_info,
+            commands::connectivity::is_online,
+            commands::lenses::list_lenses,
+            commands::lenses::get_lens,
+            commands::lenses::create_lens,
+            commands::lenses::update_lens,
+            commands::lenses::delete_lens,
+            commands::lenses::duplicate_lens,
+            commands::lenses::list_lens_templates,
+            commands::lenses::create_lens_from_template,
+            commands::lenses::get_lens_rows,
+            commands::lenses::get_lens_column_values,
+            commands::lenses::list_lens_run_failures,
+            commands::lenses::get_excluded_lens_rows,
+            commands::lenses::update_lens_row_override,
+            commands::lenses::exclude_lens_row,
+            commands::lenses::include_lens_row,
+            commands::lenses::run_lens,
+            commands::lenses::cancel_lens_run,
+            commands::lenses::get_lens_status,
+            commands::lenses::list_lens_runs,
+            commands::lenses::reextract_lens_row,
+            commands::lenses::preview_lens_extraction,
+        ]
+    };
+}
+
 #[allow(clippy::expect_used)]
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -475,234 +718,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::accounts::add_account,
-            commands::accounts::test_imap_connection,
-            commands::accounts::add_imap_account,
-            commands::accounts::get_imap_settings,
-            commands::accounts::update_imap_credentials,
-            commands::accounts::list_accounts,
-            commands::accounts::remove_account,
-            commands::accounts::reauthenticate_account,
-            commands::accounts::reorder_accounts,
-            commands::accounts::set_account_enabled,
-            commands::accounts::update_account_sync_from,
-            commands::accounts::update_account_name,
-            commands::accounts::get_account_settings,
-            commands::accounts::set_account_settings,
-            commands::accounts::get_available_categories,
-            commands::emails::get_emails,
-            commands::emails::get_folders,
-            commands::emails::create_folder,
-            commands::emails::rename_folder,
-            commands::emails::delete_folder,
-            commands::emails::move_email,
-            commands::emails::get_thread,
-            commands::emails::get_email_body,
-            commands::emails::mark_as_read,
-            commands::emails::delete_email,
-            commands::emails::send_reply,
-            commands::emails::send_new_email,
-            commands::emails::generate_draft,
-            commands::emails::generate_new_draft,
-            commands::translation::detect_email_language,
-            commands::translation::translate_email,
-            commands::translation::translate_compose_text,
-            commands::emails::redownload_email,
-            commands::emails::start_redownload_empty_emails,
-            commands::emails::sync_account,
-            commands::emails::start_sync_account,
-            commands::emails::start_resync_mailbox,
-            commands::emails::get_email_inbox_position,
-            commands::emails::autocomplete_senders,
-            commands::emails::autocomplete_recipients,
-            commands::emails::get_email_by_id,
-            commands::emails::get_email_count,
-            commands::emails::get_sync_status,
-            commands::search::search_emails,
-            commands::search::generate_embeddings,
-            commands::search::start_generate_embeddings,
-            commands::search::regenerate_embeddings,
-            commands::search::start_regenerate_embeddings,
-            commands::search::rebuild_fts_index,
-            commands::search::get_pending_embeddings_count,
-            commands::search::list_ollama_models,
-            commands::search::get_ai_model,
-            commands::search::set_ai_model,
-            commands::calendar::get_calendar_events,
-            commands::calendar::get_calendars,
-            commands::calendar::set_calendar_visible,
-            commands::calendar::create_calendar_event,
-            commands::calendar::delete_calendar_event,
-            commands::calendar::get_calendar_invite,
-            commands::calendar::rsvp_calendar_invite,
-            commands::calendar::sync_calendar_now,
-            commands::preferences::get_pref,
-            commands::preferences::set_pref,
-            commands::preferences::get_auto_n_ctx,
-            commands::preferences::show_main_window,
-            commands::preferences::get_system_locale,
-            commands::prompts::list_prompts,
-            commands::prompts::set_prompt,
-            commands::prompts::reset_prompt,
-            commands::security::has_main_password,
-            commands::security::set_main_password,
-            commands::security::verify_main_password,
-            commands::security::remove_main_password,
-            commands::contacts::get_contacts,
-            commands::contacts::list_contacts,
-            commands::contacts::get_contact_detail,
-            commands::contacts::list_contacts_by_company,
-            commands::drafts::list_drafts,
-            commands::drafts::get_draft,
-            commands::drafts::refresh_drafts,
-            commands::drafts::list_draft_attachments,
-            commands::drafts::save_draft,
-            commands::drafts::send_draft,
-            commands::drafts::delete_draft,
-            commands::filters::refresh_filter_stats,
-            commands::filters::get_saved_suggestions,
-            commands::filters::get_filtered_emails,
-            commands::filters::get_tag_stats,
-            commands::filters::get_tag_board_stats,
-            commands::filters::get_thread_participants,
-            commands::filters::get_attachment_ext_stats,
-            commands::filters::get_filter_prefs,
-            commands::filters::pin_filter,
-            commands::filters::remove_filter,
-            commands::filters::delete_filter_pref,
-            commands::trusted_senders::add_trusted_sender,
-            commands::trusted_senders::remove_trusted_sender,
-            commands::trusted_senders::list_trusted_senders,
-            commands::trusted_senders::is_sender_trusted,
-            commands::attachments::create_attachment_rule,
-            commands::attachments::update_attachment_rule,
-            commands::attachments::delete_attachment_rule,
-            commands::attachments::list_attachment_rules,
-            commands::attachments::count_attachments_for_rule,
-            commands::attachments::list_attachment_rule_suggestions,
-            commands::attachments::refresh_attachment_rule_suggestions,
-            commands::attachments::dismiss_attachment_rule_suggestion,
-            commands::attachments::accept_attachment_rule_suggestion,
-            commands::attachments::list_dismissed_attachment_rule_suggestions,
-            commands::attachments::restore_attachment_rule_suggestion,
-            commands::attachments::get_attachments,
-            commands::attachments::get_attachments_for_email,
-            commands::attachments::count_attachments,
-            commands::attachments::get_attachment,
-            commands::attachments::get_attachment_tags,
-            commands::attachments::get_attachment_file_path,
-            commands::attachments::get_attachment_data,
-            commands::attachments::bulk_download_attachments,
-            commands::attachments::save_attachment_to_downloads,
-            commands::attachments::reveal_in_finder,
-            commands::attachments::apply_rule_retroactively,
-            commands::attachments::open_attachment_externally,
-            commands::attachments::get_email_attachment_metas,
-            commands::attachments::reextract_email_attachments,
-            commands::attachments::fetch_email_attachment_bytes,
-            commands::attachments::open_email_attachment_meta,
-            commands::classification::get_classification_config,
-            commands::classification::set_classification_config,
-            commands::classification::classify_previous_emails,
-            commands::classification::reclassify_all_emails,
-            commands::classification::get_email_tags,
-            commands::classification::get_email_tags_batch,
-            commands::classification::count_unclassified_emails,
-            commands::classification::get_tag_priorities,
-            commands::classification::list_classification_rules,
-            commands::classification::create_classification_rule,
-            commands::classification::update_classification_rule,
-            commands::classification::delete_classification_rule,
-            commands::junk::get_junk_verdicts,
-            commands::junk::set_junk_feedback,
-            commands::junk::backfill_junk_scores,
-            commands::junk::report_junk_to_provider,
-            commands::junk::get_junk_config,
-            commands::junk::set_junk_config,
-            commands::junk::get_junk_stats,
-            commands::ai_config::get_ai_config,
-            commands::ai_config::set_ai_config,
-            commands::ai_config::get_ai_usage,
-            commands::ai_config::reset_ai_usage,
-            commands::ai_config::list_ai_models,
-            commands::ai_config::list_ai_embedding_models,
-            commands::ai_config::get_embeddings_config,
-            commands::ai_config::set_embeddings_config,
-            commands::ai_config::check_ai_available,
-            commands::ai_config::test_ai_provider,
-            commands::ai_models::list_catalog_models,
-            commands::ai_models::list_local_models,
-            commands::ai_models::delete_local_model,
-            commands::ai_models::start_model_download,
-            commands::ai_models::link_local_model,
-            commands::ai_models::cancel_model_download,
-            commands::chat::list_chat_conversations,
-            commands::chat::create_chat_conversation,
-            commands::chat::create_chat_conversation_with_thread,
-            commands::chat::rename_chat_conversation,
-            commands::chat::delete_chat_conversation,
-            commands::chat::get_chat_messages,
-            commands::chat::send_chat_message,
-            commands::chat::estimate_research,
-            commands::chat::cancel_chat_turn,
-            commands::chat::confirm_exit,
-            commands::chat::prewarm_chat,
-            commands::memory::list_pending_tasks,
-            commands::memory::get_task_counts,
-            commands::memory::create_pending_task,
-            commands::memory::update_pending_task_status,
-            commands::memory::list_open_threads,
-            commands::memory::list_memory_facts,
-            commands::memory::promote_memory_fact,
-            commands::memory::retire_memory_fact,
-            commands::memory::update_memory_fact,
-            commands::memory::delete_memory_fact,
-            commands::memory::get_memory_counts,
-            commands::memory::get_memory_config,
-            commands::memory::set_memory_config,
-            commands::memory::get_task_config,
-            commands::memory::set_task_config,
-            commands::memory::get_memory_backfill_status,
-            commands::memory::start_memory_backfill,
-            commands::memory::cancel_memory_backfill,
-            commands::memory::reset_memory_extraction,
-            commands::memory::get_task_backfill_status,
-            commands::memory::start_task_backfill,
-            commands::memory::cancel_task_backfill,
-            commands::memory::reset_task_extraction,
-            commands::memory::run_memory_consolidation,
-            commands::dashboard::get_dashboard_stats,
-            commands::dashboard::refresh_server_total,
-            commands::dashboard::get_queue_state,
-            commands::dashboard::get_storage_stats,
-            commands::system::detect_ai_capability,
-            commands::system::is_rosetta_translated,
-            commands::system::get_available_update,
-            commands::system::get_build_info,
-            commands::connectivity::is_online,
-            commands::lenses::list_lenses,
-            commands::lenses::get_lens,
-            commands::lenses::create_lens,
-            commands::lenses::update_lens,
-            commands::lenses::delete_lens,
-            commands::lenses::duplicate_lens,
-            commands::lenses::list_lens_templates,
-            commands::lenses::create_lens_from_template,
-            commands::lenses::get_lens_rows,
-            commands::lenses::get_lens_column_values,
-            commands::lenses::list_lens_run_failures,
-            commands::lenses::get_excluded_lens_rows,
-            commands::lenses::update_lens_row_override,
-            commands::lenses::exclude_lens_row,
-            commands::lenses::include_lens_row,
-            commands::lenses::run_lens,
-            commands::lenses::cancel_lens_run,
-            commands::lenses::get_lens_status,
-            commands::lenses::list_lens_runs,
-            commands::lenses::reextract_lens_row,
-            commands::lenses::preview_lens_extraction,
-        ])
+        .invoke_handler(app_commands!(tauri::generate_handler))
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|_app_handle, event| {
@@ -1035,5 +1051,94 @@ mod appstate_tests {
             services::background_tasks::BackgroundTask::GenerateDraft { email_id, .. }
                 if email_id == "e-1"
         ));
+    }
+}
+
+/// Tauri builds every async command's future on the main thread and copies it
+/// several times while spawning it (`respond_async_serialized` →
+/// `async_runtime::spawn` → `tokio::spawn`): measured at ~24× the future's size
+/// in stack across those frames. The main thread is 1 MB by default on Windows,
+/// and v0.6.10 overflowed it (0xc00000fd) once `TaskQueue::submit_named` had
+/// doubled the futures of the sync and send commands to ~38 KB. These tests
+/// hold every registered command to the same budget `clippy::large_futures`
+/// enforces (`future-size-threshold` in clippy.toml): what a command queues or
+/// awaits that is bigger belongs behind `Box::pin`.
+#[cfg(all(test, feature = "desktop"))]
+mod command_future_budget_tests {
+    use crate::commands;
+
+    /// Must match `future-size-threshold` in clippy.toml.
+    const COMMAND_FUTURE_BUDGET_BYTES: usize = 16 * 1024;
+
+    /// The size of what a command function returns — its future, for an
+    /// `async` command — read from the function's type alone, with no app,
+    /// state or arguments to build.
+    trait ReturnSize<Args> {
+        fn return_size(&self) -> usize;
+    }
+
+    macro_rules! impl_return_size {
+        ($($arg:ident),*) => {
+            impl<Func, Ret, $($arg),*> ReturnSize<($($arg,)*)> for Func
+            where
+                Func: Fn($($arg),*) -> Ret,
+            {
+                fn return_size(&self) -> usize {
+                    std::mem::size_of::<Ret>()
+                }
+            }
+        };
+    }
+
+    impl_return_size!();
+    impl_return_size!(A);
+    impl_return_size!(A, B);
+    impl_return_size!(A, B, C);
+    impl_return_size!(A, B, C, D);
+    impl_return_size!(A, B, C, D, E);
+    impl_return_size!(A, B, C, D, E, F);
+    impl_return_size!(A, B, C, D, E, F, G);
+    impl_return_size!(A, B, C, D, E, F, G, H);
+    impl_return_size!(A, B, C, D, E, F, G, H, I);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K, L);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
+    impl_return_size!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
+
+    fn return_size<Args, Func: ReturnSize<Args>>(func: Func) -> usize {
+        func.return_size()
+    }
+
+    macro_rules! command_future_sizes {
+        ($($command:path),* $(,)?) => {
+            vec![$((stringify!($command), return_size($command))),*]
+        };
+    }
+
+    #[test]
+    fn every_command_future_fits_the_main_thread_budget() {
+        let sizes: Vec<(&str, usize)> = app_commands!(command_future_sizes);
+        let mut over: Vec<String> = sizes
+            .iter()
+            .filter(|(_, size)| *size > COMMAND_FUTURE_BUDGET_BYTES)
+            .map(|(name, size)| format!("{}: {size} bytes", name.replace(" :: ", "::")))
+            .collect();
+        over.sort();
+        assert!(
+            over.is_empty(),
+            "command futures over the {COMMAND_FUTURE_BUDGET_BYTES}-byte budget (box what they queue or await):\n{}",
+            over.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_budget_sees_every_registered_command() {
+        // A command added to `app_commands!` is measured by construction; this
+        // only guards against the list being emptied or bypassed.
+        let sizes: Vec<(&str, usize)> = app_commands!(command_future_sizes);
+        assert!(sizes.len() > 200, "only {} commands measured", sizes.len());
     }
 }

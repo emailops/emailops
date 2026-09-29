@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -89,6 +89,11 @@ demo-es:
 check:
 	npm run check
 
+# Quality gates with one summary line each; full output in files.
+# SET=commit|push|rust|frontend|all|<gate> (default commit), OUT=<dir> optional.
+gates:
+	@bash scripts/gates.sh $(or $(SET),commit) $(OUT)
+
 # Lint only (fast)
 lint:
 	npx biome check src/
@@ -169,7 +174,7 @@ cli-demo:
 #
 # Pinned to `--cases-dir src-tauri/evals/chat/cases` (the PUBLIC cases) so the
 # demo-DB run never tries to use `private-evals/chat/cases/`, whose cases
-# target the developer's real mailbox account (`$(EMAILOPS_PERSONAL_ACCOUNT)`,
+# target a private account (`$(EMAILOPS_PERSONAL_ACCOUNT)`,
 # set in the gitignored `.env.local`) which doesn't exist in the demo DB. The
 # CLI's auto-resolver prefers `private-evals/` when present (see
 # `cli/eval.rs:resolve_cases_dir`), which would otherwise blow up with
@@ -283,15 +288,15 @@ bench-oneshot-kv:
 cli-kv-xconv:
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/cli_kv_xconv.sh
 
-# Same bench against the user's REAL data + account + question, sourced from
+# Same bench against private data + account + question, sourced from
 # .env.local (gitignored). Used to reproduce KV-cache bugs that only show up
-# on real mailboxes / specific prompts. See .env.local.example for the env
+# on private data / specific prompts. See .env.local.example for the env
 # vars and scripts/cli_kv_personal.sh for the logic.
 #   make cli-kv-personal
 cli-kv-personal:
 	scripts/cli_kv_personal.sh
 
-# Ad-hoc chat query against the user's real mailbox. Inherits EMAILOPS_DATA_DIR
+# Ad-hoc chat query against the local data dir. Inherits EMAILOPS_DATA_DIR
 # and EMAILOPS_PERSONAL_ACCOUNT from .env.local (gitignored) so nothing
 # sensitive lands in a tracked file; the question itself stays on the
 # developer's terminal (and in shell history) — never committed.
@@ -392,7 +397,7 @@ docs-gen:
 model-memory:
 	bash scripts/measure_model_memory.sh $(ARGS)
 
-# Private evals (real mailbox) against the `make eval-snapshot` copy; report stays local.
+# Private evals (private data) against the `make eval-snapshot` copy; report stays local.
 verify-private:
 	bash scripts/verify_private.sh $(ARGS)
 
@@ -408,7 +413,11 @@ audit:
 # Clean build artifacts
 clean:
 	rm -rf dist/
-	cargo clean --manifest-path src-tauri/Cargo.toml
+	bash scripts/build_target.sh clean
+
+# Point src-tauri/target at the Time Machine-excluded /Volumes/Build (no-op without it)
+link-target:
+	bash scripts/build_target.sh link
 
 # Install git hooks
 hooks:

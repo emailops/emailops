@@ -495,12 +495,8 @@ jobs:
 
       # See the comment on the equivalent step in the `release` job above —
       # same MSVC-environment requirement (Ninja generator needs vcvars on
-      # PATH). The vulkan-shaders-gen PDB-race workaround that job also
-      # needs does NOT apply here: GGML_VULKAN is never turned on for a
-      # CUDA-only build (confirmed in llama-cpp-sys-2's build.rs), so
-      # scripts/build_platform.sh skips forcing --jobs 1 for this feature
-      # set — validated at 31m54s for a from-scratch release compile here,
-      # vs 270m40s when --jobs 1 was applied unconditionally.
+      # PATH). Never build this with `--jobs 1`: a from-scratch CUDA release
+      # compile measured 270m40s forced to one job vs 31m54s in parallel.
       - name: Set up MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:

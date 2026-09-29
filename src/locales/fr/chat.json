@@ -263,6 +263,18 @@
     "stopping": "Annulation…",
     "filter": "Filtre",
     "byMeaning": "Rassemblés par le sens (sans filtre)",
+    "field": {
+      "from": "De",
+      "to": "À",
+      "with": "Avec",
+      "subject": "Objet",
+      "query": "Mots",
+      "intent": "Type",
+      "topic": "Sujet",
+      "since": "Depuis",
+      "until": "Jusqu'au",
+      "unread": "Non lus uniquement"
+    },
     "mode": {
       "list": "Réponse : la liste de tous les résultats — sans rapport rédigé, plus rapide",
       "count": "Réponse : le nombre exact et la liste — sans rapport rédigé, plus rapide",

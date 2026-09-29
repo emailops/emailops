@@ -51,7 +51,7 @@
     reasons_include: [raw_ip_link, spf_fail]
 
 # NOTE: there is deliberately no hidden-text case. The signal was removed after
-# measuring it on a real mailbox, where the CSS it keyed on (display:none +
+# measuring it on real-world mail, where the CSS it keyed on (display:none +
 # font-size:0 + white text) turned out to be how essentially every HTML
 # newsletter renders its preheader. See `content::has_hidden_text`. The
 # behaviour that replaced it is pinned by `legit-newsletter-with-preheader`.
@@ -99,7 +99,7 @@
     URGENTE. Sus archivos serán eliminados.
     Acción requerida para conservar sus datos: https://unrelated-host.example/r/9f
   expect:
-    # REGRESSION, from a real mailbox. The pressure and credential lexicons were
+    # REGRESSION, from real-world mail. The pressure and credential lexicons were
     # English-only, so a Spanish-language attack scored zero on every content
     # signal. The app ships en/es/fr/de; the lexicons have to as well.
     #

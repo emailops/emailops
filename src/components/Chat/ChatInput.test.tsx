@@ -25,7 +25,7 @@ afterEach(() => {
 
 function renderInput() {
   act(() => {
-    root.render(<ChatInput onSend={() => {}} disabled={false} />);
+    root.render(<ChatInput onSend={() => {}} onClear={() => {}} disabled={false} />);
   });
   const textarea = container.querySelector('textarea');
   if (!textarea) throw new Error('textarea not rendered');
@@ -144,10 +144,74 @@ describe('ChatInput research confirmation', () => {
     expect(container.querySelector('[data-testid="research-start"]')).toBeNull();
   });
 
+  it('shows the search it ran even when nothing matches, so the user can judge it', () => {
+    useChatStore.setState({
+      pendingResearch: {
+        content: 'q',
+        opts: {},
+        status: 'ready',
+        estimate: { ...estimate, emails: 0, filter: { from: 'reports@example.com', since: '2026-03-28' } },
+        error: null,
+      },
+    });
+    renderInput();
+    const search = container.querySelector('[data-testid="research-filter"]')?.textContent ?? '';
+    expect(search).toContain('research.field.from');
+    expect(search).toContain('reports@example.com');
+    expect(search).toContain('research.field.since');
+    expect(search).toContain('28/03/2026');
+  });
+
+  it('says a filterless research is gathered by meaning', () => {
+    useChatStore.setState({
+      pendingResearch: { content: 'q', opts: {}, status: 'ready', estimate, error: null },
+    });
+    renderInput();
+    expect(container.querySelector('[data-testid="research-filter"]')?.textContent).toContain('research.byMeaning');
+  });
+
   it('puts a cancelled question back in the textarea', () => {
     useChatStore.setState({ pendingResearch: null, inputPrefill: null });
     const textarea = renderInput();
     act(() => useChatStore.setState({ inputPrefill: { text: 'themes?', nonce: 1 } }));
     expect(textarea.value).toBe('themes?');
+  });
+});
+
+describe('ChatInput /clear command', () => {
+  function renderWith(onSend: (c: string) => void, onClear: () => void) {
+    act(() => {
+      root.render(<ChatInput onSend={onSend} onClear={onClear} disabled={false} />);
+    });
+    const textarea = container.querySelector('textarea');
+    if (!textarea) throw new Error('textarea not rendered');
+    return textarea;
+  }
+
+  function pressEnter(textarea: HTMLTextAreaElement) {
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+  }
+
+  it('starts a new conversation without sending anything to the model', () => {
+    const onSend = vi.fn();
+    const onClear = vi.fn();
+    const textarea = renderWith(onSend, onClear);
+    typeInto(textarea, '  /CLEAR ');
+    pressEnter(textarea);
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea.value).toBe('');
+  });
+
+  it('sends a message that only mentions /clear as a normal question', () => {
+    const onSend = vi.fn();
+    const onClear = vi.fn();
+    const textarea = renderWith(onSend, onClear);
+    typeInto(textarea, 'what does /clear do?');
+    pressEnter(textarea);
+    expect(onSend).toHaveBeenCalledWith('what does /clear do?');
+    expect(onClear).not.toHaveBeenCalled();
   });
 });

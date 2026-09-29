@@ -642,7 +642,7 @@ export interface ResearchEstimate {
   /** How the answer will be delivered: a list or a count written from the
    *  matches (no report call), or a written report. */
   mode: ResearchMode;
-  /** The planner's filter as `search_emails` arguments; null when the
+  /** The filter the gather ran, as `search_emails` arguments; null when the
    *  question is gathered by meaning. */
   filter: Record<string, unknown> | null;
 }

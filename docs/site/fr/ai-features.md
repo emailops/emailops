@@ -123,6 +123,10 @@ provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conser
 conversation tant que l'application reste ouverte : changer de compte vous ramène là où vous
 en étiez, et non à un chat vide.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Tapez **/clear** puis Entrée pour démarrer une nouvelle conversation. L'application le
+traite elle-même — rien n'est envoyé au modèle, cela ne coûte donc ni temps ni tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 Le chat répond aussi aux questions sur EmailOps lui-même — *« comment connecter Ollama ? »*,
 *« où sont stockées mes données ? »*, *« que montre le tableau des étiquettes ? »* — à partir de ces
@@ -143,7 +147,9 @@ modèle avec sa durée et chaque appel d'outil avec ses arguments et son résult
 Le mode **Recherche** sert aux questions qui demandent tous les e-mails correspondants, et non
 les quelques-uns qu'une réponse normale lit : *« liste toutes les factures de cette année »*,
 *« combien de clients ont demandé un devis ? »*. Il estime d'abord combien d'e-mails il lirait
-et combien de temps cela prendrait, et demande confirmation avant une exécution importante. Il
+et combien de temps cela prendrait, et demande confirmation avant une exécution importante. L'estimation affiche aussi la
+recherche effectuée — expéditeur, dates, mots — pour que vous jugiez si elle a du sens, même
+quand elle ne trouve rien. Il
 les lit ensuite par lots, et les listes et les décomptes sont exacts, avec un lien vers chaque
 conversation. **Annuler la recherche** interrompt l'exécution.
 

@@ -40,6 +40,19 @@ says "Bandeja de entrada", "Lentes"; the buttons say "Nueva lente", "Con el
 chat", "Crear lente", "Ejecutar reproceso". A few stay English ("Send",
 "Reply", "Back"). Read the DOM before writing selectors for a localized take.
 
+**The inbox search ignores a synthetic Enter.** `wd keys Enter` or
+`browser.keys('Enter')` leaves the query typed and the list unfiltered. Set
+the value with the native setter, dispatch `input`, then call
+`form.requestSubmit()` on the input's form. Find the input by
+`placeholder*="from:"`: the placeholder is localized and starts with a real
+ellipsis ("Buscar…"), so `^="Buscar..."` matches nothing.
+
+**Rows deleted behind the app's back stay on screen.** Deleting an
+attachment rule with `sqlite3` while the app runs left it in the rules list,
+so the next take showed the new rule twice. For a retake, stop the instance,
+rebuild the scratch data dir and relaunch; never patch the DB under a running
+app.
+
 **The first inbox row is above `visibleRow`'s margin.** It sits at about 65 px
 and the helper wants 80, so it is never picked. Target the second or third
 row.
@@ -58,6 +71,25 @@ up in the next take. Rebuild the scratch data dir instead of deleting.
 **A dev build is linked to the checked-out branch.** Switching branches, or
 stashing a file, while the launcher runs makes Tauri rebuild the app under
 you. Finish the shoot first.
+
+**Screenshots come out 1x on an external monitor.** `saveScreenshot` gives
+the backing pixels of the screen the window sits on: 1800 wide on a 1x
+external display, 3600 on the Retina panel. The shorts composer assumes 2x,
+and zooms on a 1x capture are blurry. Check `devicePixelRatio`, and if it is
+1 move the window onto the Retina panel before the first shot:
+
+```bash
+# screens as x,y,w,h,scale (Cocoa, origin bottom-left)
+osascript -l JavaScript -e 'ObjC.import("AppKit"); const s=$.NSScreen.screens; let o=[];
+for (let i=0;i<s.count;i++){const f=s.objectAtIndex(i).frame;
+o.push([f.origin.x,f.origin.y,f.size.width,f.size.height,s.objectAtIndex(i).backingScaleFactor].join(","));} o.join(" | ")'
+```
+
+then `browser.setWindowRect(<panel left>, 0, 1800, 1150)` over WebDriver.
+The window may overhang the panel; macOS clamps its height to the panel
+(938 here, a 906 CSS px viewport, the same geometry the shorts were measured
+on) and the part on the panel decides the scale. `openApp` keeps that
+position.
 
 ## The launcher
 

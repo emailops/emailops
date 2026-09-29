@@ -7,7 +7,7 @@
 # implied silently narrows the lens to nothing), and typing (`currency` on an
 # amount column, not `string`).
 #
-# Synthetic requests only — no sender, subject or address from a real mailbox.
+# Synthetic requests only — no sender, subject or address from real-world mail.
 
 - id: lens_invoices_es
   form: lens.create

@@ -11,7 +11,7 @@ oracle checks, the eval cases and the recipes rot the moment the app changes. Th
 the upkeep loop. The unit of work is the **feature touched**, and every touched feature
 leaves with every layer it needs, or an explicit written reason it does not.
 
-Rules that apply throughout: TDD (failing test first, then code); no personal mailbox data
+Rules that apply throughout: TDD (failing test first, then code); no private data
 in anything tracked (demo persona only; personal cases go to `private-evals/` after asking);
 never weaken an assertion or mark a test n/a to make a run green; hooks green before commit.
 

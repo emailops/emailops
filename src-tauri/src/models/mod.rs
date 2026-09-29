@@ -1140,8 +1140,8 @@ pub struct ResearchEstimate {
     pub seconds: u64,
     /// How the answer will be delivered.
     pub mode: ReportMode,
-    /// The planner's filter, as `search_emails` arguments; `None` when the
-    /// question is gathered by meaning.
+    /// The filter the gather ran, as `search_emails` arguments; `None` when
+    /// the question is gathered by meaning.
     pub filter: Option<serde_json::Value>,
 }
 

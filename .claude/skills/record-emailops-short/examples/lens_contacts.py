@@ -56,8 +56,8 @@ def shots():
                      fx.cam([(0, V(840, 420, 1160, 900)), (3.6, V(760, 400, 960, 800))], t))
         for i, b in enumerate(INBOX_LEADS):
             fx.highlight(fr, p.rect_of(*b), t - 1.1 - 0.3 * i, pad=2)
-        fx.pill(fr, "POV", 60, 120, t, RED, size=40)
-        fx.text_block(fr, "Tu web te manda **clientes nuevos** cada día", 210, t - 0.2, size=72)
+        fx.pill(fr, "POV", 60, 120, 1, RED, size=40)          # on screen from frame 0: it is the thumbnail
+        fx.text_block(fr, "Tu web te manda **clientes nuevos** cada día", 210, 1, size=72)
         return fr
     shot(3.8, pov, "POV: tu web te manda clientes nuevos cada día")
 
@@ -80,8 +80,8 @@ def shots():
     def after(t):
         fr = fx.base()
         fx.pill(fr, "DESPUÉS", 60, 120, t, GREEN, size=40)
-        fx.text_block(fr, "Una **Lente** de EmailOps", 760, t - 0.1, size=92, hl=GREEN)
-        fx.text_block(fr, "La IA local lee tus correos y rellena una tabla", 1000, t - 0.5, size=54, color=fx.BLUE)
+        y = fx.text_block(fr, "Una **Lente** de EmailOps", 760, t - 0.1, size=92, hl=GREEN)
+        fx.text_block(fr, "La IA local lee tus correos y rellena una tabla", max(1000, y + 60), t - 0.5, size=54, color=fx.BLUE)
         return fr
     shot(2.6, after, "Después: una Lente de EmailOps. La IA local lee tus correos y rellena una tabla")
 

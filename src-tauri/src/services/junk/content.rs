@@ -382,7 +382,7 @@ fn caps_ratio(text: &str) -> f32 {
 /// <div style="display:none;font-size:0;color:#ffffff">Preview text…</div>
 /// ```
 ///
-/// Measured on a real mailbox, the previous check fired on 155 of 613 messages —
+/// Measured on real-world mail, the previous check fired on 155 of 613 messages —
 /// a quarter of everything, including Upwork, Substack and every ESP template.
 /// At a weight of 0.45 that was the single largest content signal, and it was
 /// wrong a quarter of the time.
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn a_newsletter_preheader_is_not_treated_as_hidden_text() {
-        // REGRESSION, measured on a real mailbox: this exact styling is how
+        // REGRESSION, measured on real-world mail: this exact styling is how
         // every modern HTML newsletter renders its preview line. The old check
         // fired on 155 of 613 messages — a quarter of everything, Upwork and
         // Substack included — at the largest content weight in the detector.
@@ -615,7 +615,7 @@ mod tests {
 
     #[test]
     fn a_body_containing_length_changing_characters_does_not_panic() {
-        // REGRESSION, found scoring a real mailbox: byte offsets were taken from
+        // REGRESSION, found scoring real-world mail: byte offsets were taken from
         // a `to_lowercase()` copy and used to slice the original. Full Unicode
         // lowercasing is not length-preserving — 'İ' (U+0130) lowercases to two
         // characters — so every offset past one shifted and the slice landed

@@ -37,7 +37,7 @@ pre-commit.
   "correo basura".
 - **Anchor ids are not translated.** `{#the-model-catalog}` stays identical in
   all four languages; only the heading text changes.
-- **No personal mailbox data** in anything tracked — demo persona only.
+- **No private data** in anything tracked — demo persona only.
 - **Everything lands uncommitted.** The developer reviews the diff before it is
   committed, and always before a tag.
 - **Never commit or push the website repo.** Report what its copy needs; stop

@@ -49,7 +49,7 @@
   expect:
     to: "ulises@emailopslabs.dev"
     since: "2026-09-17"
-    until: "2026-09-18"
+    until: "2026-09-17"
   absent: [from]
 
 - id: a_sender_question_needs_no_tag
@@ -97,7 +97,7 @@
 # The routing keyword list is English/Spanish only, so German questions never
 # had a fast path — the planner is the whole mechanism there. These pin that it
 # reads German dates, counts and directions as well as it reads Spanish.
-# `today` = Friday 2026-09-18, so "letzte Woche" is 07-09 → 14-09 (end-exclusive).
+# `today` = Friday 2026-09-18, so "letzte Woche" is 07-09 → 13-09 (until inclusive).
 
 - id: de_last_week_window
   question: "welche E-Mails habe ich letzte Woche bekommen?"
@@ -105,7 +105,7 @@
   today: "2026-09-18"
   expect:
     since: "2026-09-07"
-    until: "2026-09-14"
+    until: "2026-09-13"
   absent: [intent, topic]
   ignore: [to]
 
@@ -115,7 +115,7 @@
   today: "2026-09-18"
   expect:
     since: "2026-09-17"
-    until: "2026-09-18"
+    until: "2026-09-17"
   ignore: [to]
 
 
@@ -163,7 +163,7 @@
   today: "2026-09-18"
   expect:
     since: "2026-09-07"
-    until: "2026-09-14"
+    until: "2026-09-13"
   absent: [intent, topic]
   ignore: [to]
 
@@ -317,7 +317,7 @@
   expect:
     from: "stripe"
     since: "2026-09-21"
-    until: "2026-09-28"
+    until: "2026-09-27"
   ignore: [mode, to, query, intent, topic, order, limit]
 
 # A document the mail contains (a quote, an invoice…) is a word in the mail,
@@ -346,7 +346,7 @@
   ignore: [intent, topic, mode, to, limit, order]
 
 # "With X" names a person without a direction: X's mail AND the user's mail
-# to X. `from`/`to` would keep only one side (a real mailbox lost ~40% of the
+# to X. `from`/`to` would keep only one side (real-world mail lost ~40% of the
 # conversations to `from: X, to: me`).
 - id: with_a_person_is_both_directions_es
   question: "resume todos los correos con Marisol, uno por línea"
@@ -365,3 +365,30 @@
     with: "janos"
   absent: [from, to, since, until]
   ignore: [query, intent, topic, mode, limit, order]
+
+
+- id: a_window_up_to_now_has_no_end_es
+  question: "analiza cómo evolucionan los informes de metrics@emailopslabs.dev en los últimos 6 meses"
+  note: "a period up to now must include today: until = today (inclusive) or no until"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+  ignore: [to, query, mode, intent, topic, since, order, until]
+
+
+- id: a_window_up_to_now_has_no_end_en
+  question: "emails from metrics@emailopslabs.dev in the last 30 days"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    since: "2026-08-19"
+  ignore: [to, query, mode, intent, topic, until]
+
+
+- id: since_a_month_runs_up_to_now
+  question: "correos de metrics@emailopslabs.dev desde marzo"
+  today: "2026-09-18"
+  expect:
+    from: "metrics@emailopslabs.dev"
+    since: "2026-03-01"
+  ignore: [to, query, mode, intent, topic, until]

@@ -118,6 +118,10 @@ nunca sale en silencio del buzón equivocado. Cada cuenta mantiene su propia con
 mientras la aplicación siga abierta, así que cambiar de cuenta te devuelve donde lo dejaste
 y no a un chat en blanco.
 
+<!-- claim:ai-chat-mailbox-15 -->
+Escribe **/clear** y pulsa Enter para empezar una conversación nueva. Lo resuelve la propia
+aplicación — no se envía nada al modelo, así que no cuesta tiempo ni tokens.
+
 <!-- claim:ai-chat-mailbox-10 -->
 El chat también responde preguntas sobre el propio EmailOps — *"¿cómo conecto Ollama?"*,
 *"¿dónde se guardan mis datos?"*, *"¿qué muestra el Tablero de etiquetas?"* — a partir de estas guías, en
@@ -137,7 +141,9 @@ tiempos y cada llamada a herramientas con sus argumentos y su resultado.
 El modo **Research** sirve para preguntas que necesitan todos los correos que encajan, no
 solo los pocos que lee una respuesta normal: *"lista todas las facturas de este año"*,
 *"¿cuántos clientes pidieron presupuesto?"*. Primero estima cuántos correos leería y cuánto
-tardaría, y pregunta antes de una ejecución grande. Después los lee por lotes, y las listas y
+tardaría, y pregunta antes de una ejecución grande. La estimación muestra también la búsqueda que
+ha hecho —remitente, fechas, palabras— para que veas si tiene sentido, incluso cuando no
+encuentra nada. Después los lee por lotes, y las listas y
 los recuentos salen exactos, con un enlace a cada conversación. **Cancelar investigación**
 detiene la ejecución.
 

@@ -8,6 +8,7 @@ import {
   ALL_ACCOUNTS_ID,
   isUnifiedMode,
   planChatAccountChange,
+  planSignInAgain,
   reduceSyncProgress,
   type SyncProgress,
   selectAccountById,
@@ -18,6 +19,7 @@ import {
 } from './accountStore';
 
 vi.mock('@/lib/api', () => ({
+  addAccount: vi.fn(async () => ({})),
   listAccounts: vi.fn(async () => []),
   removeAccount: vi.fn(async () => {}),
   syncAccount: vi.fn(async () => {}),
@@ -61,6 +63,7 @@ beforeEach(() => {
     currentSyncId: 0,
     setupPendingAccountId: null,
     syncingAccountIds: new Set<string>(),
+    failedAdd: null,
   });
 });
 
@@ -233,6 +236,43 @@ describe('fetchAccounts', () => {
 });
 
 describe('removeAccount', () => {
+  // Regression: removing an account mid-sync stops its run without a terminal
+  // sync-progress event, so the account stayed in `syncingAccountIds` and the
+  // inbox spinner never cleared.
+  it('stops tracking the removed account as syncing', async () => {
+    useAccountStore.setState({
+      accounts: [makeAccount('a'), makeAccount('b')],
+      activeAccountId: 'a',
+      isSyncing: true,
+      syncProgress: makeProgress('a', 'syncing'),
+      syncingAccountIds: new Set(['a']),
+    });
+
+    await useAccountStore.getState().removeAccount('a');
+
+    const state = useAccountStore.getState();
+    expect(state.syncingAccountIds.has('a')).toBe(false);
+    expect(state.isSyncing).toBe(false);
+    expect(state.syncProgress).toBeNull();
+  });
+
+  it('keeps tracking another account that is still syncing', async () => {
+    useAccountStore.setState({
+      accounts: [makeAccount('a'), makeAccount('b')],
+      activeAccountId: 'a',
+      isSyncing: true,
+      syncProgress: makeProgress('b', 'syncing'),
+      syncingAccountIds: new Set(['a', 'b']),
+    });
+
+    await useAccountStore.getState().removeAccount('a');
+
+    const state = useAccountStore.getState();
+    expect([...state.syncingAccountIds]).toEqual(['b']);
+    expect(state.isSyncing).toBe(true);
+    expect(state.syncProgress?.accountId).toBe('b');
+  });
+
   it('keeps the sentinel active when a member account is removed', async () => {
     useAccountStore.setState({
       accounts: [makeAccount('a'), makeAccount('b')],
@@ -402,5 +442,65 @@ describe('account settings version', () => {
     const before = useAccountStore.getState().accountSettingsVersion;
     useAccountStore.getState().bumpAccountSettingsVersion();
     expect(useAccountStore.getState().accountSettingsVersion).toBe(before + 1);
+  });
+});
+
+describe('planSignInAgain', () => {
+  const timeout = 'Sign-in error: Timed out waiting for OAuth callback. Please try again.';
+  const failedGmailAdd = { provider: 'gmail' as const, error: timeout };
+
+  it.each([
+    {
+      name: 'retries the add when the first sign-in failed and no account exists (#107)',
+      input: { error: timeout, errorAccountId: null, failedAdd: failedGmailAdd, effectiveAccountId: null },
+      expected: { kind: 'add', provider: 'gmail' },
+    },
+    {
+      name: 'retries the add instead of re-authenticating the unrelated active account',
+      input: { error: timeout, errorAccountId: null, failedAdd: failedGmailAdd, effectiveAccountId: 'a' },
+      expected: { kind: 'add', provider: 'gmail' },
+    },
+    {
+      name: 're-authenticates the account an account-scoped error belongs to',
+      input: { error: 'Session expired', errorAccountId: 'b', failedAdd: null, effectiveAccountId: 'a' },
+      expected: { kind: 'reauth', accountId: 'b' },
+    },
+    {
+      name: 'falls back to the active account for a global auth error',
+      input: { error: 'Invalid token', errorAccountId: null, failedAdd: null, effectiveAccountId: 'a' },
+      expected: { kind: 'reauth', accountId: 'a' },
+    },
+    {
+      name: 'ignores a failed add once a different error replaced it',
+      input: { error: 'Invalid token', errorAccountId: null, failedAdd: failedGmailAdd, effectiveAccountId: 'a' },
+      expected: { kind: 'reauth', accountId: 'a' },
+    },
+    {
+      name: 'has nothing to do without a failed add or any account',
+      input: { error: 'Invalid token', errorAccountId: null, failedAdd: null, effectiveAccountId: null },
+      expected: { kind: 'none' },
+    },
+  ])('$name', ({ input, expected }) => {
+    expect(planSignInAgain(input)).toEqual(expected);
+  });
+});
+
+describe('addAccount', () => {
+  it('remembers which provider failed so "Sign in again" can retry the add (#107)', async () => {
+    vi.mocked(api.addAccount).mockRejectedValueOnce(new Error('Timed out waiting for OAuth callback.'));
+
+    await expect(useAccountStore.getState().addAccount('outlook', null)).rejects.toThrow();
+
+    const { error, failedAdd } = useAccountStore.getState();
+    expect(failedAdd).toEqual({ provider: 'outlook', error });
+  });
+
+  it('forgets the failed add when the error is dismissed', async () => {
+    vi.mocked(api.addAccount).mockRejectedValueOnce(new Error('Timed out waiting for OAuth callback.'));
+    await expect(useAccountStore.getState().addAccount('gmail', null)).rejects.toThrow();
+
+    useAccountStore.getState().clearError();
+
+    expect(useAccountStore.getState().failedAdd).toBeNull();
   });
 });

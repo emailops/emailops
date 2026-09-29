@@ -166,7 +166,8 @@ def main() -> int:
                 found.append((md, rel_md, candidate))
     # `../x.md` is relative to the quoting file and outside git's pathspec
     # rules; it is never a generated artefact, so it is not asked about.
-    generated = ignored_by_git({c for _, _, c in found if not c.startswith('.')})
+    # Dot-directories inside the repo (`.claude/settings.local.json`) are.
+    generated = ignored_by_git({c for _, _, c in found if not c.startswith('../')})
 
     for md, rel_md, candidate in found:
         if candidate in generated:

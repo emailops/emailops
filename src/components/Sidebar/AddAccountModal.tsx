@@ -129,6 +129,9 @@ export function AddAccountModal({
     setLocalSubmitting(true);
     try {
       await onConfirm(syncFromTimestamp);
+    } catch {
+      // The caller has already logged the failure and passes it back as
+      // `warningMessage`; the dialog stays open so the user can retry.
     } finally {
       setLocalSubmitting(false);
     }

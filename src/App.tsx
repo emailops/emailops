@@ -59,7 +59,13 @@ import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
-import { isUnifiedMode, planChatAccountChange, selectAccountById, useAccountStore } from '@/stores/accountStore';
+import {
+  isUnifiedMode,
+  planChatAccountChange,
+  planSignInAgain,
+  selectAccountById,
+  useAccountStore,
+} from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -225,6 +231,8 @@ function AppInner() {
   const [isComposeOpen, setIsComposeOpen] = useState(false);
   const [composePrefillTo, setComposePrefillTo] = useState<string[] | undefined>(undefined);
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false);
+  const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
+  const [addAccountError, setAddAccountError] = useState<string | null>(null);
   const [isAddAccountPickerOpen, setIsAddAccountPickerOpen] = useState(false);
   const [isAddImapAccountOpen, setIsAddImapAccountOpen] = useState(false);
   const [accountSettingsAccountId, setAccountSettingsAccountId] = useState<string | null>(null);
@@ -302,6 +310,7 @@ function AppInner() {
     isLoading: accountsLoading,
     error: accountError,
     errorAccountId: accountErrorAccountId,
+    failedAdd,
     clearError: clearAccountError,
     refetch: fetchAccounts,
   } = useAccounts();
@@ -583,13 +592,27 @@ function AppInner() {
     clearEmailError();
   }, [clearAccountError, clearEmailError]);
 
+  // What the banner's "Sign in again" does: retry a failed add, or re-auth the
+  // account the error belongs to (falling back to the active account).
+  const signInAgainPlan = useMemo(
+    () =>
+      planSignInAgain({ error: accountError, errorAccountId: accountErrorAccountId, failedAdd, effectiveAccountId }),
+    [accountError, accountErrorAccountId, failedAdd, effectiveAccountId],
+  );
+
   const handleReauthenticate = useCallback(async () => {
-    // Re-auth the account the error actually belongs to (if known), not
-    // whichever account happens to be active when the user clicks "Sign in
-    // again". For non-scoped errors fall back to the active account (first
-    // enabled account in unified mode — never the sentinel).
-    const targetAccountId = accountErrorAccountId ?? effectiveAccountId;
-    if (!targetAccountId) return;
+    // A failed add left no account behind: reopen the add dialog for the same
+    // provider so the user can pick the sync window and retry the sign-in.
+    if (signInAgainPlan.kind === 'add') {
+      clearError();
+      setAddAccountError(null);
+      setPendingOAuthProvider(signInAgainPlan.provider);
+      setIsAddAccountOpen(true);
+      return;
+    }
+    if (signInAgainPlan.kind === 'none') return;
+
+    const targetAccountId = signInAgainPlan.accountId;
 
     // IMAP accounts don't have OAuth — credentials live in the keychain and
     // typically need a fresh password (e.g. provider rotated the app
@@ -614,7 +637,7 @@ function AppInner() {
       addLog('error', 'account', `Re-authentication failed: ${error}`);
       console.error('Re-authentication failed:', error);
     }
-  }, [accountErrorAccountId, effectiveAccountId, accounts, reauthenticateAccount, clearError, syncAccount, addLog]);
+  }, [signInAgainPlan, accounts, reauthenticateAccount, clearError, syncAccount, addLog]);
 
   // Open a compose tab pre-filled with a feedback email in the current UI
   // language. Runtime facts (app version, OS, AI provider) are gathered here
@@ -1229,9 +1252,6 @@ function AppInner() {
     }
   }, [viewMode, effectiveAccountId, setIsChatPanelOpen, addLog]);
 
-  const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
-  const [addAccountError, setAddAccountError] = useState<string | null>(null);
-
   const handleAddAccount = async (syncFromTimestamp: number | null) => {
     const provider = pendingOAuthProvider;
     const providerLabel = provider === 'outlook' ? 'Outlook' : 'Gmail';
@@ -1300,7 +1320,7 @@ function AppInner() {
         message={displayError}
         accountEmail={displayErrorAccountEmail}
         onDismiss={clearError}
-        onReauthenticate={handleReauthenticate}
+        onReauthenticate={signInAgainPlan.kind === 'none' ? undefined : handleReauthenticate}
       />
 
       <div className="flex flex-1 overflow-hidden">

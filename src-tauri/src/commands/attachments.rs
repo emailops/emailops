@@ -276,7 +276,7 @@ pub async fn bulk_download_attachments(
         };
 
         // Get rule name for prefix (cached)
-        let rule_prefix = rule_names
+        let rule_name = rule_names
             .entry(attachment.rule_id.clone())
             .or_insert_with(|| {
                 state
@@ -284,39 +284,15 @@ pub async fn bulk_download_attachments(
                     .get_attachment_rule(&attachment.rule_id)
                     .ok()
                     .flatten()
-                    .map(|r| r.name.replace(' ', "_"))
+                    .map(|r| r.name)
                     .unwrap_or_default()
             })
             .clone();
 
-        // Build prefixed filename: RuleName_original.pdf
-        let download_name = if rule_prefix.is_empty() {
-            attachment.filename.clone()
-        } else {
-            format!("{}_{}", rule_prefix, attachment.filename)
-        };
-
-        // Build destination path, dedup with (1), (2), etc.
-        let mut dest = downloads_dir.join(&download_name);
-        if dest.exists() {
-            let stem = std::path::Path::new(&download_name)
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let ext = std::path::Path::new(&download_name)
-                .extension()
-                .map(|e| format!(".{}", e.to_string_lossy()))
-                .unwrap_or_default();
-            let mut n = 1u32;
-            loop {
-                dest = downloads_dir.join(format!("{} ({}){}", stem, n, ext));
-                if !dest.exists() {
-                    break;
-                }
-                n += 1;
-            }
-        }
+        // `RuleName_original.pdf`, sanitized to one path component, then
+        // deduped with (1), (2), etc.
+        let download_name = services::attachments::bulk_download_name(Some(&rule_name), &attachment.filename);
+        let dest = services::attachments::unique_download_path(&downloads_dir, &download_name);
 
         std::fs::copy(&src, &dest)
             .map_err(|e| AppError::IoError(format!("Failed to copy {}: {}", download_name, e)))?;

@@ -1,6 +1,6 @@
 [package]
 name = "emailops"
-version = "0.6.10"
+version = "0.6.11"
 description = "Privacy-first, AI-native email client"
 authors = ["Gero DP"]
 edition = "2021"
@@ -75,7 +75,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "7"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
 # so it never touches default/release desktop builds.
-reedline = { version = "0.51", optional = true }
+reedline = { version = "0.52", optional = true }
 # Secure (no-echo) password prompt for `emailops-cli accounts add imap` (cli
 # feature only). Optional so it never touches default/release desktop builds.
 rpassword = { version = "7", optional = true }

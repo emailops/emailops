@@ -52,7 +52,11 @@ const gmailOff = makeAccount('g-off', 'gmail');
 const gmailOther = makeAccount('g-other', 'gmail');
 
 function makeEvent(id: string, accountId: string, title: string): CalendarEvent {
-  const now = Math.floor(Date.now() / 1000);
+  // 10:00 today, local time: an event starting "now" crossed midnight when the
+  // suite ran after 23:00, and the week view then drew no title to assert on.
+  const tenAm = new Date();
+  tenAm.setHours(10, 0, 0, 0);
+  const start = Math.floor(tenAm.getTime() / 1000);
   return {
     id,
     accountId,
@@ -61,8 +65,8 @@ function makeEvent(id: string, accountId: string, title: string): CalendarEvent 
     title,
     description: '',
     location: '',
-    startTime: now,
-    endTime: now + 3600,
+    startTime: start,
+    endTime: start + 3600,
     isAllDay: false,
     timezone: '',
     organizer: '',
