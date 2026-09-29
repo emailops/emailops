@@ -35,6 +35,9 @@ const ATTACHMENT_RE = new RegExp(`(?<!\\p{L})(${ATTACHMENT_WORDS.join('|')})(?!\
 /** A short bracketed note, e.g. `[fecha]` or `[attach: signed contract]`. */
 const PLACEHOLDER_RE = /\[([^[\]\n]{1,60})\]/g;
 
+/** The `[image]` / `[image: alt]` marker `htmlToPlainText` writes for an inline image. */
+const IMAGE_MARKER_RE = /^image(:|$)/;
+
 /** The AI's note for a file the user still has to attach. */
 const ATTACH_NOTE_RE = /^\s*(attach|adjunt)/i;
 
@@ -43,7 +46,7 @@ export function findSendWarnings(text: string, attachmentCount: number): SendWar
   let attachNote = false;
   for (const match of text.matchAll(PLACEHOLDER_RE)) {
     const inner = match[1].trim();
-    if (!inner || /^(https?:|www\.)/i.test(inner)) continue;
+    if (!inner || /^(https?:|www\.)/i.test(inner) || IMAGE_MARKER_RE.test(inner)) continue;
     if (ATTACH_NOTE_RE.test(inner)) attachNote = true;
     if (!placeholders.includes(match[0])) placeholders.push(match[0]);
   }

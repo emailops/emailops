@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { htmlToPlainText } from './composeHtml';
 import { findSendWarnings } from './sendWarnings';
 
 describe('findSendWarnings — missing attachment', () => {
@@ -46,6 +47,11 @@ describe('findSendWarnings — unfilled placeholders', () => {
   it('ignores links and long bracketed text', () => {
     expect(findSendWarnings('See [https://example.com/docs] for details.', 0)).toEqual([]);
     expect(findSendWarnings(`Note [${'x'.repeat(80)}]`, 0)).toEqual([]);
+  });
+
+  it('ignores the markers htmlToPlainText writes for inline images', () => {
+    const plain = htmlToPlainText('<p>Mira la captura:</p><img src="cid:a" alt="captura.png"><img src="cid:b">');
+    expect(findSendWarnings(plain, 0)).toEqual([]);
   });
 
   it('reports each placeholder once', () => {
