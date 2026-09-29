@@ -351,7 +351,7 @@ impl OutlookClient {
         if !inline_images.is_empty() && email.body.contains("cid:") {
             for (cid, mime, b64) in &inline_images {
                 let data_uri = format!("data:{};base64,{}", mime, b64);
-                email.body = email.body.replace(&format!("cid:{}", cid), &data_uri);
+                email.body = crate::util::html::replace_cid_reference(&email.body, cid, &data_uri);
             }
         }
 

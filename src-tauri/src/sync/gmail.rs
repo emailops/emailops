@@ -996,7 +996,7 @@ impl GmailClient {
                     },
                 };
                 let data_uri = format!("data:{};base64,{}", r.mime_type, std_b64);
-                html = html.replace(&format!("cid:{}", r.content_id), &data_uri);
+                html = crate::util::html::replace_cid_reference(&html, &r.content_id, &data_uri);
             }
         }
 

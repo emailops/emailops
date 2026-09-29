@@ -704,7 +704,10 @@ impl ImapClient {
             &subject,
         );
 
-        let (body, snippet) = extract_body(&parsed);
+        let (mut body, snippet) = extract_body(&parsed);
+        if body.contains("cid:") {
+            body = inline_cid_images(&parsed, body);
+        }
         let attachments = extract_attachments(&parsed);
 
         // Preserve message order: `capture` depends on it for both the topmost
@@ -875,6 +878,32 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     }
 
     (html, plain)
+}
+
+/// Rewrite `cid:` references in `html` to data URIs built from the parts
+/// carrying the matching `Content-ID`, so inline images render (the same
+/// approach as the Gmail and Outlook adapters).
+fn inline_cid_images(msg: &mailparse::ParsedMail, mut html: String) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let content_id = msg
+        .headers
+        .get_first_value("Content-ID")
+        .map(|v| v.trim().trim_matches(|c| c == '<' || c == '>').to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(cid) = content_id {
+        match msg.get_body_raw() {
+            Ok(bytes) => {
+                let data_uri = format!("data:{};base64,{}", msg.ctype.mimetype, STANDARD.encode(bytes));
+                html = crate::util::html::replace_cid_reference(&html, &cid, &data_uri);
+            }
+            Err(e) => crate::services::logger::log("debug", "sync", format!("IMAP inline image {cid} unreadable: {e}")),
+        }
+    }
+    for sub in &msg.subparts {
+        html = inline_cid_images(sub, html);
+    }
+    html
 }
 
 /// A part the sender attached as a file: disposed as `attachment`, or named.
@@ -2375,6 +2404,25 @@ mod tests {
         let body = body_of(raw);
         assert!(body.contains("outer body"), "{body}");
         assert!(!body.contains("forwarded"), "{body}");
+    }
+
+    /// IMAP bodies referencing inline images by `cid:` rendered as broken
+    /// images; Gmail and Outlook already inline them as data URIs.
+    #[test]
+    fn inline_cid_images_are_rewritten_to_data_uris() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/related; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo1\"><img src=\"cid:logo10\">\r\n\
+            --XX\r\nContent-Type: image/png\r\nContent-ID: <logo1>\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw==\r\n\
+            --XX--\r\n";
+        let (email, _) = ImapClient::parse_message(1, &fetched(std::str::from_utf8(raw).unwrap(), Some(NOW))).unwrap();
+        assert!(
+            email
+                .body
+                .contains(r#"<img src="data:image/png;base64,iVBORw=="><img src="cid:logo10">"#),
+            "{}",
+            email.body
+        );
     }
 
     const NOW: i64 = 1_800_000_000;
