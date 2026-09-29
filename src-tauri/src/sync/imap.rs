@@ -1579,9 +1579,7 @@ impl EmailProvider for ImapClient {
                 // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
                 // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
                 // folder are left alone.
-                session
-                    .uid_copy(&uid_set, &target_for_select)
-                    .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{target_for_select}' failed: {e}")))?;
+                imap_search::uid_copy(&mut session, &uid_set, &target_for_select)?;
                 session
                     .uid_store(&uid_set, "+FLAGS (\\Deleted)")
                     .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;

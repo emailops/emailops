@@ -78,16 +78,39 @@ pub(crate) fn uid_search<T: Read + Write>(session: &mut imap::Session<T>, query:
 /// See the module docs for why this bypasses the crate's typed `Mailbox`
 /// parsing rather than making it lenient.
 pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_name: &str) -> Result<()> {
-    if mailbox_name.contains(['\r', '\n']) {
-        return Err(AppError::SyncError(
-            "IMAP SELECT rejected: mailbox name contains a line break".to_string(),
-        ));
-    }
-    let quoted = format!("\"{}\"", mailbox_name.replace('\\', "\\\\").replace('"', "\\\""));
+    let quoted = quote_mailbox("SELECT", mailbox_name)?;
     session
         .run_command_and_read_response(format!("SELECT {quoted}"))
         .map(|_| ())
         .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
+}
+
+/// `UID COPY <uid_set> <mailbox>` with the mailbox quoted. imap 2.4.1's own
+/// `uid_copy` sends the name raw (its `uid_mv` quotes it), so the COPY-based
+/// move fallback failed on any folder name with a space or quote.
+pub(crate) fn uid_copy<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uid_set: &str,
+    mailbox_name: &str,
+) -> Result<()> {
+    let quoted = quote_mailbox("COPY", mailbox_name)?;
+    session
+        .run_command_and_check_ok(format!("UID COPY {uid_set} {quoted}"))
+        .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {e}")))
+}
+
+/// Render a mailbox name as an IMAP quoted string. A raw line break would let
+/// the name inject a second command, so it is rejected before the wire.
+fn quote_mailbox(command: &str, mailbox_name: &str) -> Result<String> {
+    if mailbox_name.contains(['\r', '\n']) {
+        return Err(AppError::SyncError(format!(
+            "IMAP {command} rejected: mailbox name contains a line break"
+        )));
+    }
+    Ok(format!(
+        "\"{}\"",
+        mailbox_name.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
 }
 
 /// The FETCH attribute used for every body download.
@@ -494,6 +517,28 @@ mod tests {
         // IMAP's quoted-string escaping without breaking the command.
         let mut session = session_for("a2 OK done\r\n");
         assert!(select(&mut session, "Alice's \"Inbox\"").is_ok());
+    }
+
+    /// imap 2.4.1's `uid_copy` sends the mailbox name raw (unlike `uid_mv`),
+    /// so the non-MOVE fallback broke on any folder with a space or quote.
+    #[test]
+    fn uid_copy_quotes_and_escapes_the_target_mailbox() {
+        let (mut session, sent) = recorded_session_for("a2 OK Copy completed.\r\n");
+        assert!(uid_copy(&mut session, "7", "Projects/Q3 \"Plan\"").is_ok());
+        assert!(
+            sent.text().contains("UID COPY 7 \"Projects/Q3 \\\"Plan\\\"\"\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    #[test]
+    fn uid_copy_rejects_a_mailbox_name_with_a_line_break() {
+        let err = match uid_copy(&mut session_for("a2 OK done\r\n"), "7", "INBOX\r\nA2 LOGOUT") {
+            Ok(()) => panic!("expected a failure"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("line break"), "got: {err}");
     }
 
     /// The same bug class, reproduced against `Session::uid_fetch`: an
