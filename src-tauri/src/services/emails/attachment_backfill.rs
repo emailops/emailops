@@ -29,7 +29,7 @@ pub fn backfill_done_key(account_id: &str) -> String {
 pub enum BackfillOutcome {
     /// Already ran for this account.
     AlreadyDone,
-    /// The provider cannot list messages with attachments (IMAP).
+    /// The provider cannot list messages with attachments.
     Unsupported,
     /// The sync was cancelled between chunks; the next sync resumes.
     Aborted { recovered: usize },

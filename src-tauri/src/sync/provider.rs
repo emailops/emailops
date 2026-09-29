@@ -469,7 +469,8 @@ pub trait EmailProvider: Send + Sync {
 
     /// Ids of every message in the mailbox that carries attachments, when the
     /// provider can answer with a cheap server-side search (Gmail
-    /// `has:attachment`, Graph `hasAttachments eq true`). `None` when it cannot.
+    /// `has:attachment`, Graph `hasAttachments eq true`, an IMAP `HEADER
+    /// Content-Type` search per folder). `None` when it cannot.
     /// Drives the one-time attachment-metadata backfill, which then fetches
     /// only those messages instead of the whole mailbox.
     async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {

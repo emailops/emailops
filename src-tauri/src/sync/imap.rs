@@ -72,6 +72,33 @@ pub(crate) fn folder_email_id_prefix(account_id: &str, server_path: &str) -> Str
 /// oldest stored email.
 const MAX_INBOX_PAGES_PER_SYNC: u32 = 10;
 
+/// IMAP has no "has attachment" search key. A message carrying attachments is
+/// `multipart/mixed` at the top level in practice, and a message that *is*
+/// one document (a scanner mail) is `application/*`.
+const ATTACHMENT_SEARCH_QUERY: &str = r#"OR HEADER Content-Type "multipart/mixed" HEADER Content-Type "application/""#;
+
+/// The folders to search for messages with attachments, with the server path
+/// to `SELECT` for each: the inbox, the role folders and every filed folder —
+/// the same set the sync stores, so the ids found match stored rows.
+fn attachment_search_folders(plan: &folder_plan::FolderPlan) -> Vec<(ImapFolder, String)> {
+    let mut folders = vec![(ImapFolder::Inbox, "INBOX".to_string())];
+    for (role, folder) in [
+        (WellKnownFolder::Sent, ImapFolder::Sent),
+        (WellKnownFolder::Spam, ImapFolder::Spam),
+        (WellKnownFolder::Trash, ImapFolder::Trash),
+    ] {
+        if let Some(raw) = plan.roles.get(&role) {
+            folders.push((folder, raw.clone()));
+        }
+    }
+    folders.extend(
+        plan.custom
+            .iter()
+            .map(|c| (ImapFolder::Custom(c.raw_name.clone()), c.raw_name.clone())),
+    );
+    folders
+}
+
 /// Build the IMAP `SEARCH` query for a `[after, before]` window.
 ///
 /// `SINCE` / `BEFORE` are day-granular and compare the server's `INTERNALDATE`
@@ -344,6 +371,14 @@ impl ImapClient {
             ImapFolder::Trash => self.make_prefixed_email_id(TRASH_ID_PREFIX, uid),
             ImapFolder::Custom(path) => self.make_folder_email_id(path, uid),
         }
+    }
+
+    /// The stored-row ids of the messages an attachment search found.
+    fn attachment_hit_ids(&self, hits: Vec<(ImapFolder, Vec<u32>)>) -> Vec<String> {
+        hits.into_iter()
+            .flat_map(|(folder, uids)| uids.into_iter().map(move |uid| (folder.clone(), uid)))
+            .map(|(folder, uid)| self.located_id(&folder, uid))
+            .collect()
     }
 
     /// Parse a message_id and return `(folder, uid_str)` where folder is the
@@ -1161,6 +1196,36 @@ impl EmailProvider for ImapClient {
         Ok(refs)
     }
 
+    /// Search every stored folder for messages carrying attachments (see
+    /// [`ATTACHMENT_SEARCH_QUERY`]). A folder that cannot be selected is
+    /// skipped; a search the server rejects fails the listing, so the backfill
+    /// is retried next sync instead of being marked done on a partial answer.
+    async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
+        let creds = self.credentials.clone();
+        let hits = tokio::task::spawn_blocking(move || -> Result<Vec<(ImapFolder, Vec<u32>)>> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let entries = Self::list_folders_blocking(&mut session)
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+            let mut hits = Vec::new();
+            for (folder, path) in attachment_search_folders(&folder_plan::plan_folders(&entries)) {
+                if let Err(e) = imap_search::select(&mut session, &path) {
+                    eprintln!("[imap] attachment search skipped folder {path}: {e}");
+                    continue;
+                }
+                let uids = imap_search::uid_search(&mut session, ATTACHMENT_SEARCH_QUERY)?;
+                hits.push((folder, uids));
+            }
+            if let Err(e) = session.logout() {
+                eprintln!("[imap] logout after attachment search failed: {e}");
+            }
+            Ok(hits)
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        Ok(Some(self.attachment_hit_ids(hits)))
+    }
+
     async fn list_folders(&self) -> Result<Vec<ListedFolder>> {
         let creds = self.credentials.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<ListedFolder>> {
@@ -1852,6 +1917,79 @@ mod tests {
         let client = imap_client_synced_from(None);
         let plan = client.plan_batch_fetch(&[]);
         assert!(plan.groups.is_empty() && plan.invalid.is_empty());
+    }
+
+    fn listed(name: &str, attrs: &[&str]) -> ListedFolder {
+        ListedFolder {
+            raw_name: name.to_string(),
+            delimiter: Some(".".to_string()),
+            attributes: attrs.iter().map(|a| a.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn attachment_search_covers_inbox_roles_and_filed_folders_like_the_sync() {
+        let entries = vec![
+            listed("INBOX", &[]),
+            listed("Sent", &["\\Sent"]),
+            listed("Junk", &["\\Junk"]),
+            listed("Trash", &["\\Trash"]),
+            listed("Drafts", &["\\Drafts"]),
+            listed("Container", &["\\Noselect", "\\HasChildren"]),
+            listed("INBOX.Facturas", &[]),
+            listed("Archive", &["\\Archive"]),
+        ];
+
+        let folders = attachment_search_folders(&folder_plan::plan_folders(&entries));
+
+        assert_eq!(
+            folders,
+            vec![
+                (ImapFolder::Inbox, "INBOX".to_string()),
+                (ImapFolder::Sent, "Sent".to_string()),
+                (ImapFolder::Spam, "Junk".to_string()),
+                (ImapFolder::Trash, "Trash".to_string()),
+                (
+                    ImapFolder::Custom("INBOX.Facturas".into()),
+                    "INBOX.Facturas".to_string()
+                ),
+                (ImapFolder::Custom("Archive".into()), "Archive".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn attachment_search_still_covers_the_inbox_when_list_returns_nothing() {
+        let folders = attachment_search_folders(&folder_plan::plan_folders(&[]));
+
+        assert_eq!(folders, vec![(ImapFolder::Inbox, "INBOX".to_string())]);
+    }
+
+    #[test]
+    fn attachment_search_ids_match_the_ids_the_sync_stores() {
+        let client = imap_client_synced_from(None);
+        let hits = vec![
+            (ImapFolder::Inbox, vec![7]),
+            (ImapFolder::Custom("INBOX.Facturas".into()), vec![3]),
+        ];
+
+        let ids = client.attachment_hit_ids(hits);
+
+        assert_eq!(
+            ids,
+            vec![
+                client.make_email_id(7),
+                client.make_folder_email_id("INBOX.Facturas", 3)
+            ]
+        );
+    }
+
+    #[test]
+    fn attachment_search_asks_for_multipart_mixed_or_a_lone_document() {
+        assert_eq!(
+            ATTACHMENT_SEARCH_QUERY,
+            r#"OR HEADER Content-Type "multipart/mixed" HEADER Content-Type "application/""#
+        );
     }
 
     #[test]

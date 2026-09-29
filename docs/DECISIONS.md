@@ -1777,7 +1777,9 @@ check is no longer the test. Candidate keys are `identity|filename pattern`. Min
 covers filed folders (everything but sent, spam and trash), skips the user's own address
 and — on a corporate account — their own domain, needs the first and last email ≥20 days
 apart, and falls back to the most recurring extension (`*.pdf`) or to nothing, never to a
-pattern-less rule.
+pattern-less rule. IMAP accounts join the attachment backfill: with no "has attachment"
+search key, each stored folder is searched for `Content-Type` `multipart/mixed` or
+`application/*`, and a backfill with failed fetches is not marked done.
 **Context:** The key embedded the proposed patterns, which drift as mail arrives
 (`billing@acme.com` → `*@acme.com` when a second address sends; `*.pdf` → `Invoice_*.pdf`
 once a family recurs), so dismissed suggestions came back. A pattern-less fallback rule
