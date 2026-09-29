@@ -1801,3 +1801,16 @@ change.
 **Rejected:** Canonical English tags (they do not match the vocabulary the user types);
 translating at display time (tags are user data stored on rules and attachments, not UI
 strings).
+
+## 2026-09-29 — Attachment rules reach the inbox, Sent and filed folders, not Spam or Trash
+
+**Decision:** Attachment rules collect mail in the inbox, Sent and the user's own folders
+(IMAP custom folders), both when new mail syncs and when a rule is applied to existing
+mail; Spam, Trash and locally deleted mail are never collected.
+**Context:** Only the inbox pass applied rules at sync time, so an invoice an IMAP server
+filter moved into a folder never reached the attachments view unless the rule was
+re-applied by hand — while that manual apply collected from everywhere, Spam and Trash
+included.
+**Rejected:** Inbox only (misses server-side filing); every mailbox (a sender rule would
+pick up the junked or deleted copy of a message); leaving Sent out (the user wants the
+invoices they send collected too).

@@ -92,8 +92,9 @@ reglas** (o **Crear una regla** en la vista vacía) y rellena:
 <!-- claim:feat-attachments-view-7 -->
 Tienen que coincidir todos los patrones que rellenes. Las reglas se aplican al correo nuevo
 según se sincroniza; marca **Aplicar a los correos existentes después de crear** para recopilar
-también del correo que ya tienes. Selecciona adjuntos para descargarlos juntos en tu carpeta de
-Descargas.
+también del correo que ya tienes. Las reglas llegan a la bandeja de entrada, Enviados y tus
+propias carpetas, nunca a Spam ni a la Papelera. Selecciona adjuntos para descargarlos juntos en
+tu carpeta de Descargas.
 
 <!-- claim:feat-attachments-view-8 -->
 EmailOps también propone reglas por su cuenta. Cuando un mismo remitente te envía documentos una

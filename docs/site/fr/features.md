@@ -95,8 +95,9 @@ sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et rempli
 <!-- claim:feat-attachments-view-7 -->
 Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
 fil de la synchronisation ; cochez **Appliquer aux e-mails existants après la création** pour
-collecter aussi dans le courrier déjà présent. Sélectionnez des pièces jointes pour les
-télécharger ensemble dans votre dossier Téléchargements.
+collecter aussi dans le courrier déjà présent. Les règles s'appliquent à la boîte de réception, aux
+Éléments envoyés et à vos propres dossiers, jamais au Spam ni à la Corbeille. Sélectionnez des
+pièces jointes pour les télécharger ensemble dans votre dossier Téléchargements.
 
 <!-- claim:feat-attachments-view-8 -->
 EmailOps propose aussi des règles de lui-même. Quand un même expéditeur vous envoie régulièrement

@@ -5147,3 +5147,69 @@ async fn a_retried_download_is_collected_by_attachment_rules() {
 
     assert_eq!(db.get_attachments_for_rule(&rule.id).unwrap().len(), 1);
 }
+
+/// Rules collect new mail wherever the user keeps it — inbox, Sent and
+/// filed folders (an IMAP server filter moving invoices into a folder) —
+/// but not what sits in Spam or Trash.
+#[tokio::test]
+async fn a_sync_applies_attachment_rules_in_filed_folders_and_sent_not_spam_or_trash() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-fr", "fr@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-fr"), "1")
+        .unwrap();
+    let account = db.get_account("acc-fr").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-fr",
+        "Vendor",
+        Some("billing@vendor-synthetic.com"),
+        None,
+        None,
+        vec![],
+    )
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("fr@example.com", "Fr");
+    provider.set_folders(vec![
+        listed_folder("INBOX", &["\\HasChildren"]),
+        listed_folder("INBOX.Facturas", &[]),
+    ]);
+    let now = chrono::Utc::now().timestamp();
+    for (id, mailbox) in [
+        ("in-folder", "folder:INBOX.Facturas"),
+        ("in-sent", "sent"),
+        ("in-spam", "spam"),
+        ("in-trash", "trash"),
+    ] {
+        provider.add_message(
+            make_email_with(id, "acc-fr", now - 86_400, "billing@vendor-synthetic.com", mailbox),
+            EmailCategory::Primary,
+            vec![pdf_attachment(&format!("att-{id}"), &format!("{id}.pdf"))],
+        );
+        provider.set_attachment_bytes(id, format!("att-{id}"), b"%PDF".to_vec());
+    }
+    let data_dir = tempfile::tempdir().unwrap();
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    let mut collected: Vec<String> = db
+        .get_attachments_for_rule(&rule.id)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.email_id)
+        .collect();
+    collected.sort();
+    assert_eq!(collected, vec!["in-folder".to_string(), "in-sent".to_string()]);
+}

@@ -92,7 +92,8 @@ verwalten** (oder **Regel erstellen** in der leeren Ansicht) und füllen Sie aus
 <!-- claim:feat-attachments-view-7 -->
 Alle ausgefüllten Muster müssen zutreffen. Regeln greifen bei neuer Post während der
 Synchronisierung; setzen Sie **Nach dem Erstellen auf vorhandene E-Mails anwenden**, um auch aus
-der bereits vorhandenen Post zu sammeln. Markieren Sie Anhänge, um sie gemeinsam in Ihren
+der bereits vorhandenen Post zu sammeln. Regeln erfassen den Posteingang, Gesendete Elemente und
+Ihre eigenen Ordner, nie Spam oder Papierkorb. Markieren Sie Anhänge, um sie gemeinsam in Ihren
 Downloads-Ordner herunterzuladen.
 
 <!-- claim:feat-attachments-view-8 -->

@@ -84,8 +84,9 @@ The view collects attachments through **rules**, so it starts empty. Click **Man
 
 <!-- claim:feat-attachments-view-7 -->
 Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
-emails after creating** to collect from the mail you already have. Select attachments to download
-them together to your Downloads folder.
+emails after creating** to collect from the mail you already have. Rules reach the inbox, Sent and
+your own folders, never Spam or Trash. Select attachments to download them together to your
+Downloads folder.
 
 <!-- claim:feat-attachments-view-8 -->
 EmailOps also proposes rules on its own. When the same sender keeps mailing you documents

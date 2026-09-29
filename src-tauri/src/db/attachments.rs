@@ -552,10 +552,16 @@ impl Database {
         Ok(changed > 0)
     }
 
-    /// Get emails matching a rule's criteria for retroactive application.
+    /// The account's emails a rule can reach (see
+    /// `services::attachments::rules_apply_to_mailbox`): everything but Spam,
+    /// Trash and locally deleted mail. The rule's patterns are matched by the
+    /// caller.
     pub fn get_emails_matching_rule(&self, account_id: &str) -> Result<Vec<(String, String, String)>> {
         let conn = self.reader();
-        let mut stmt = conn.prepare("SELECT id, sender_email, subject FROM emails WHERE account_id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, sender_email, subject FROM emails
+             WHERE account_id = ?1 AND is_deleted = 0 AND mailbox NOT IN ('spam', 'trash')",
+        )?;
         let rows = stmt
             .query_map(params![account_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;

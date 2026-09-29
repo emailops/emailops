@@ -332,6 +332,13 @@ pub(crate) fn matches_glob(pattern: &str, value: &str) -> bool {
     }
 }
 
+/// Whether attachment rules collect mail filed in `mailbox`: the inbox,
+/// Sent and the user's own folders, never Spam or Trash — a sender rule must
+/// not pick up the copy of a message the user junked or deleted.
+pub fn rules_apply_to_mailbox(mailbox: &str) -> bool {
+    matches!(mailbox, "inbox" | "sent") || mailbox.starts_with("folder:")
+}
+
 /// Check if a filename matches a rule's filename pattern.
 pub fn matches_filename(rule: &AttachmentRule, filename: &str) -> bool {
     match &rule.filename_pattern {
@@ -2711,6 +2718,65 @@ mod tests {
             "{:?}",
             logger.events()
         );
+    }
+
+    // ── Which mailboxes rules reach ────────────────────────────────────────
+
+    #[test]
+    fn rules_reach_the_inbox_sent_and_filed_folders_not_spam_or_trash() {
+        for (mailbox, applies) in [
+            ("inbox", true),
+            ("sent", true),
+            ("folder:INBOX.Facturas", true),
+            ("folder:Archive", true),
+            ("spam", false),
+            ("trash", false),
+        ] {
+            assert_eq!(rules_apply_to_mailbox(mailbox), applies, "{mailbox}");
+        }
+    }
+
+    #[tokio::test]
+    async fn applying_a_rule_to_existing_mail_skips_spam_and_trash() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-mb", "imap", "me@example.com");
+        for mailbox in ["inbox", "sent", "folder:INBOX.Facturas", "spam", "trash"] {
+            let mut email = make_email("acc-mb", &format!("m-{mailbox}"), "billing@vendor.example", "Invoice");
+            email.mailbox = mailbox.into();
+            email.is_sent = mailbox == "sent";
+            db.insert_email(&email).expect("insert email");
+            store_local_attachment(
+                &db,
+                tmp.path(),
+                &email,
+                &format!("invoice-{}.pdf", email.id.len()),
+                b"%PDF",
+            );
+        }
+        let rule = create_rule(
+            &db,
+            "acc-mb",
+            "Vendor",
+            Some("billing@vendor.example"),
+            None,
+            None,
+            vec![],
+        )
+        .expect("rule");
+
+        apply_rule_with_provider(&db, &rule, "acc-mb", None, tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+
+        let mut collected: Vec<String> = db
+            .get_attachments_for_rule(&rule.id)
+            .expect("query")
+            .into_iter()
+            .map(|a| a.email_id)
+            .collect();
+        collected.sort();
+        assert_eq!(collected, vec!["m-folder:INBOX.Facturas", "m-inbox", "m-sent"]);
     }
 
     // ── Editing a rule drops what it no longer matches ─────────────────────
