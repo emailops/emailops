@@ -101,7 +101,8 @@
     "showDismissed_one": "Dismissed suggestions ({{count}})",
     "showDismissed_other": "Dismissed suggestions ({{count}})",
     "showDismissed_many": "Dismissed suggestions ({{count}})",
-    "restore": "Restore"
+    "restore": "Restore",
+    "patternHelp": "(numbers, dates and months in the names become *)"
   },
   "download": {
     "savedTo": "Saved \"{{filename}}\" to Downloads",

@@ -101,7 +101,8 @@
     "showDismissed_one": "Suggestions ignorées ({{count}})",
     "showDismissed_other": "Suggestions ignorées ({{count}})",
     "showDismissed_many": "Suggestions ignorées ({{count}})",
-    "restore": "Restaurer"
+    "restore": "Restaurer",
+    "patternHelp": "(les nombres, dates et mois des noms deviennent *)"
   },
   "download": {
     "savedTo": "« {{filename}} » enregistré dans Téléchargements",

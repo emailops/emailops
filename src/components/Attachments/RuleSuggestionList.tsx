@@ -97,7 +97,8 @@ export function RuleSuggestionList({
               {s.filenamePattern && (
                 <div>
                   {t('attachments:rules.rowFilename')}{' '}
-                  <code className="bg-gray-100 px-1 py-0.5 rounded">{s.filenamePattern}</code>
+                  <code className="bg-gray-100 px-1 py-0.5 rounded">{s.filenamePattern}</code>{' '}
+                  <span className="text-gray-400">{t('attachments:suggestions.patternHelp')}</span>
                 </div>
               )}
               <div>

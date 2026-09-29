@@ -189,6 +189,12 @@ describe('RuleManagementModal suggestions', () => {
     expect(container.textContent).toContain('Invoice_0042.pdf');
   });
 
+  it('explains how the filename pattern was derived', () => {
+    render([SUGGESTION]);
+
+    expect(container.textContent).toContain('attachments:suggestions.patternHelp');
+  });
+
   it('dismisses a suggestion', async () => {
     render([SUGGESTION]);
 

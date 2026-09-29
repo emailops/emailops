@@ -101,7 +101,8 @@
     "showDismissed_one": "Verworfene Vorschläge ({{count}})",
     "showDismissed_other": "Verworfene Vorschläge ({{count}})",
     "showDismissed_many": "Verworfene Vorschläge ({{count}})",
-    "restore": "Wiederherstellen"
+    "restore": "Wiederherstellen",
+    "patternHelp": "(Zahlen, Daten und Monate in den Namen werden zu *)"
   },
   "download": {
     "savedTo": "\"{{filename}}\" in Downloads gespeichert",

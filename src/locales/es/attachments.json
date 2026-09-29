@@ -101,7 +101,8 @@
     "showDismissed_one": "Sugerencias descartadas ({{count}})",
     "showDismissed_other": "Sugerencias descartadas ({{count}})",
     "showDismissed_many": "Sugerencias descartadas ({{count}})",
-    "restore": "Restaurar"
+    "restore": "Restaurar",
+    "patternHelp": "(los números, fechas y meses de los nombres pasan a ser *)"
   },
   "download": {
     "savedTo": "Se guardó \"{{filename}}\" en Descargas",
