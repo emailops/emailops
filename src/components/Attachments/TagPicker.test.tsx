@@ -169,6 +169,55 @@ describe('TagPicker', () => {
     expect(listId && container.querySelector(`#${CSS.escape(listId)}`)?.getAttribute('role')).toBe('listbox');
   });
 
+  it('Enter on a typed existing tag keeps its existing spelling', async () => {
+    render([], ['Facturas']);
+    await focus();
+    await type('facturas');
+    await key('Enter');
+    expect(latest).toEqual(['Facturas']);
+  });
+
+  it('Enter does not add a tag that is already selected', async () => {
+    render(['invoice'], ['invoice']);
+    await focus();
+    await type('invoice');
+    await key('Enter');
+    expect(latest).toEqual(['invoice']);
+  });
+
+  it('Backspace in an empty field removes the last tag', async () => {
+    render(['invoice', 'acme'], []);
+    await focus();
+    await key('Backspace');
+    expect(latest).toEqual(['invoice']);
+  });
+
+  it('leaving the field closes the list', async () => {
+    render([], ['receipt']);
+    await focus();
+    await act(async () => {
+      input().blur();
+      input().dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    });
+    expect(options()).toEqual([]);
+  });
+
+  it('arrow keys with nothing to offer do nothing', async () => {
+    render(['receipt'], ['receipt']);
+    await focus();
+    await key('ArrowDown');
+    expect(input().getAttribute('aria-activedescendant')).toBeNull();
+  });
+
+  it('the create option can be picked with the keyboard', async () => {
+    render([], ['invoice']);
+    await focus();
+    await type('hacienda');
+    await key('ArrowUp');
+    await key('Enter');
+    expect(latest).toEqual(['hacienda']);
+  });
+
   it('removes a selected tag', async () => {
     render(['invoice', 'acme'], []);
     const remove = container.querySelector<HTMLButtonElement>('button[aria-label="attachments:rules.removeTag:acme"]');

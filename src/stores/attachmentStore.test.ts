@@ -7,6 +7,10 @@ import type { AttachmentRuleSuggestion } from '@/types';
 import { selectSuggestionCount, useAttachmentStore } from './attachmentStore';
 
 vi.mock('@/lib/api', () => ({
+  listAttachmentRules: vi.fn(async () => []),
+  createAttachmentRule: vi.fn(),
+  updateAttachmentRule: vi.fn(),
+  deleteAttachmentRule: vi.fn(async () => {}),
   listDismissedAttachmentRuleSuggestions: vi.fn(async () => []),
   restoreAttachmentRuleSuggestion: vi.fn(async () => []),
   listAttachmentRuleSuggestions: vi.fn(async () => []),
@@ -287,5 +291,85 @@ describe('selectSuggestionCount', () => {
   it('counts pending suggestions for the badge', () => {
     useAttachmentStore.setState({ suggestions: [makeSuggestion('s1'), makeSuggestion('s2')] });
     expect(selectSuggestionCount(useAttachmentStore.getState())).toBe(2);
+  });
+});
+
+describe('rules', () => {
+  const rule = (id: string, name = 'Acme') => ({
+    id,
+    accountId: 'acc-1',
+    name,
+    senderEmailPattern: 'billing@acme.com',
+    subjectPattern: null,
+    filenamePattern: null,
+    tags: [],
+    enabled: true,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  beforeEach(() => {
+    useAttachmentStore.setState({ rules: [], isLoadingRules: false });
+  });
+
+  it('loads the account rules', async () => {
+    vi.mocked(api.listAttachmentRules).mockResolvedValueOnce([rule('r1')]);
+
+    await useAttachmentStore.getState().fetchRules('acc-1');
+
+    expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['r1']);
+    expect(useAttachmentStore.getState().isLoadingRules).toBe(false);
+  });
+
+  it('a failed rules load surfaces the error and stops loading', async () => {
+    vi.mocked(api.listAttachmentRules).mockRejectedValueOnce(new Error('db locked'));
+
+    await useAttachmentStore.getState().fetchRules('acc-1');
+
+    expect(useAttachmentStore.getState().error).toContain('db locked');
+    expect(useAttachmentStore.getState().isLoadingRules).toBe(false);
+  });
+
+  it('a created rule goes first', async () => {
+    useAttachmentStore.setState({ rules: [rule('old')] });
+    vi.mocked(api.createAttachmentRule).mockResolvedValueOnce(rule('new'));
+
+    await useAttachmentStore.getState().createRule('acc-1', 'Acme', 'billing@acme.com', null, null, []);
+
+    expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['new', 'old']);
+  });
+
+  it('an updated rule replaces its old version', async () => {
+    useAttachmentStore.setState({ rules: [rule('r1', 'Old name')] });
+    vi.mocked(api.updateAttachmentRule).mockResolvedValueOnce(rule('r1', 'New name'));
+
+    await useAttachmentStore.getState().updateRule('r1', 'New name', 'billing@acme.com', null, null, [], true);
+
+    expect(useAttachmentStore.getState().rules.map((r) => r.name)).toEqual(['New name']);
+  });
+
+  it('a deleted rule leaves the list', async () => {
+    useAttachmentStore.setState({ rules: [rule('r1'), rule('r2')] });
+
+    await useAttachmentStore.getState().deleteRule('r1', 'acc-1');
+
+    expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['r2']);
+  });
+});
+
+describe('suggestion failures', () => {
+  it('a failed load of dismissed suggestions rejects and surfaces the error', async () => {
+    vi.mocked(api.listDismissedAttachmentRuleSuggestions).mockRejectedValueOnce(new Error('offline'));
+
+    await expect(useAttachmentStore.getState().fetchDismissedSuggestions('acc-1')).rejects.toThrow('offline');
+    expect(useAttachmentStore.getState().error).toContain('offline');
+  });
+
+  it('a failed restore rejects and keeps the suggestion dismissed', async () => {
+    useAttachmentStore.setState({ dismissedSuggestions: [makeSuggestion('d1', { status: 'dismissed' })] });
+    vi.mocked(api.restoreAttachmentRuleSuggestion).mockRejectedValueOnce(new Error('gone'));
+
+    await expect(useAttachmentStore.getState().restoreSuggestion('acc-1', 'd1')).rejects.toThrow('gone');
+    expect(useAttachmentStore.getState().dismissedSuggestions.map((s) => s.id)).toEqual(['d1']);
   });
 });

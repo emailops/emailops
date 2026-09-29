@@ -1001,6 +1001,48 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    fn suggestion(id: &str) -> crate::models::AttachmentRuleSuggestion {
+        crate::models::AttachmentRuleSuggestion {
+            id: id.into(),
+            account_id: "a1".into(),
+            name: "Acme · invoice".into(),
+            sender_email_pattern: "billing@acme.com".into(),
+            filename_pattern: None,
+            tags: vec![],
+            email_count: 3,
+            first_seen: 0,
+            last_seen: 0,
+            sample_filenames: vec![],
+            status: crate::models::AttachmentRuleSuggestionStatus::Pending,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn attachment_suggestions_render_as_plain_text_and_json() {
+        use crate::services::attachment_suggestions::SuggestionCandidate;
+        let candidate = SuggestionCandidate {
+            key: "k".into(),
+            name: "Acme".into(),
+            sender_email_pattern: "billing@acme.com".into(),
+            filename_pattern: Some("Invoice_*.pdf".into()),
+            tags: vec![],
+            email_count: 3,
+            first_seen: 0,
+            last_seen: 0,
+            sample_filenames: vec![],
+        };
+        for style in [RenderStyle::Plain, RenderStyle::Rich, RenderStyle::Json] {
+            render_attachment_suggestions(&[], style).expect("empty preview");
+            render_attachment_suggestions(std::slice::from_ref(&candidate), style).expect("preview");
+            render_attachment_rule_suggestions(&[], style).expect("empty list");
+            render_attachment_rule_suggestions(&[suggestion("s1")], style).expect("list");
+            render_suggestion_status("s1", crate::models::AttachmentRuleSuggestionStatus::Dismissed, style)
+                .expect("status");
+        }
+    }
+
     #[test]
     fn truncate_leaves_short_strings_untouched() {
         assert_eq!(truncate("hello", 10), "hello");

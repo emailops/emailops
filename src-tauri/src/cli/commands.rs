@@ -1142,6 +1142,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_preview_refresh_and_dismissed_succeed() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        let id = seed_suggestion(&db, "a1");
+        db.set_attachment_rule_suggestion_status(
+            "a1",
+            &id,
+            crate::models::AttachmentRuleSuggestionStatus::Dismissed,
+            0,
+        )
+        .expect("dismiss");
+        let mut session = test_session(Arc::clone(&db), Some("a1"));
+
+        for action in [
+            None,
+            Some(SuggestionAction::Preview),
+            Some(SuggestionAction::Refresh),
+            Some(SuggestionAction::Dismissed),
+        ] {
+            dispatch(&mut session, Command::AttachmentSuggestions { action: action.clone() })
+                .await
+                .unwrap_or_else(|e| panic!("{action:?}: {e}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_accept_marks_a_persisted_suggestion_accepted() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "me@example.com", true);
+        let id = seed_suggestion(&db, "a1");
+        let mut session = test_session(Arc::clone(&db), Some("a1"));
+
+        dispatch(
+            &mut session,
+            Command::AttachmentSuggestions {
+                action: Some(SuggestionAction::Accept { id }),
+            },
+        )
+        .await
+        .expect("accept");
+
+        assert!(db
+            .get_pending_attachment_rule_suggestions("a1")
+            .expect("list")
+            .is_empty());
+        assert_eq!(
+            db.get_resolved_attachment_rule_suggestions("a1")
+                .expect("resolved")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn dispatch_accepting_an_unknown_suggestion_is_not_found() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         seed_account(&db, "a1", "me@example.com", true);

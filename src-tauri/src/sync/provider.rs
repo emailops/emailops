@@ -676,6 +676,9 @@ pub struct FakeEmailProvider {
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// When set, what `list_message_ids_with_attachments` answers instead of
+    /// the stored messages that have attachments (`None` = no search).
+    attachment_listing: std::sync::RwLock<Option<Option<Vec<String>>>>,
 }
 
 /// A mailbox-state call recorded by [`FakeEmailProvider`].
@@ -741,6 +744,7 @@ impl FakeEmailProvider {
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
+            attachment_listing: std::sync::RwLock::new(None),
         }
     }
 
@@ -765,6 +769,13 @@ impl FakeEmailProvider {
 
     pub fn mailbox_ops(&self) -> Vec<FakeMailboxOp> {
         self.mailbox_ops.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Fix what `list_message_ids_with_attachments` answers: `None` behaves
+    /// like a provider with no attachment search, `Some(ids)` lists exactly
+    /// those ids (which may disagree with what `get_message` returns).
+    pub fn set_attachment_listing(&self, listing: Option<Vec<String>>) {
+        *self.attachment_listing.write().unwrap_or_else(PoisonError::into_inner) = Some(listing);
     }
 
     /// Make `get_message` fail for `message_id` from now on.
@@ -927,6 +938,14 @@ impl EmailProvider for FakeEmailProvider {
 
     async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
         self.record_call("list_message_ids_with_attachments");
+        if let Some(listing) = self
+            .attachment_listing
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Ok(listing);
+        }
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         Ok(Some(
             guard

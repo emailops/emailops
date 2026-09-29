@@ -320,6 +320,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_provider_without_attachment_search_is_left_unmarked() {
+        let db = setup();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.set_attachment_listing(None);
+        stored_without_meta(&db, &provider, "m1");
+
+        let outcome = backfill_attachment_meta(&db, &provider, "acc", "me@example.com", &never)
+            .await
+            .expect("backfill");
+
+        assert_eq!(outcome, BackfillOutcome::Unsupported);
+        assert!(db.get_preference(&backfill_done_key("acc")).expect("pref").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_listed_message_that_comes_back_without_attachments_is_not_counted_recovered() {
+        let db = setup();
+        db.insert_email(&email("m1")).expect("insert");
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(email("m1"), EmailCategory::Updates, vec![]);
+        provider.set_attachment_listing(Some(vec!["m1".into()]));
+
+        let outcome = backfill_attachment_meta(&db, &provider, "acc", "me@example.com", &never)
+            .await
+            .expect("backfill");
+
+        assert_eq!(
+            outcome,
+            BackfillOutcome::Completed {
+                fetched: 1,
+                recovered: 0,
+                failed: 0
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn an_aborted_backfill_is_not_marked_done() {
         let db = setup();
         let provider = FakeEmailProvider::new("me@example.com", "Me");

@@ -296,6 +296,35 @@ mod tests {
         assert_eq!(dispatcher.queue_for(QueueKind::Db).snapshot().name, "db");
     }
 
+    #[tokio::test]
+    async fn the_real_dispatcher_runs_a_db_task() {
+        let dispatcher = RealDispatcher {
+            ai_queue: crate::services::task_queue::TaskQueue::new(1, "ai"),
+            ai_background: crate::services::task_queue::TaskQueue::new(1, "ai_bg"),
+            db_queue: crate::services::task_queue::TaskQueue::new(4, "db"),
+        };
+        let (done, ran) = tokio::sync::oneshot::channel();
+
+        dispatcher
+            .dispatch(
+                BackgroundTask::ApplyAttachmentRule {
+                    rule_id: "r1".into(),
+                    run_id: "run-1".into(),
+                },
+                Box::new(move || {
+                    Box::pin(async move {
+                        let _ = done.send(());
+                    })
+                }),
+            )
+            .await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), ran)
+            .await
+            .expect("the task ran")
+            .expect("sender kept");
+    }
+
     #[test]
     fn label_includes_key_ids() {
         let t = BackgroundTask::RunLens { lens_id: 7, run_id: 42 };

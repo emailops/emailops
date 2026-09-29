@@ -1620,6 +1620,42 @@ mod tests {
     }
 
     #[test]
+    fn a_document_without_an_extension_recurs_by_its_name() {
+        let o = vec![
+            obs("e1", "scanner@acme.com", JAN_15, "scan"),
+            obs("e2", "scanner@acme.com", JAN_15 + 40 * DAY, "scan"),
+        ];
+
+        assert_eq!(plan(&o)[0].filename_pattern.as_deref(), Some("scan"));
+    }
+
+    #[test]
+    fn a_resolved_suggestion_without_a_filename_pattern_hides_the_whole_sender() {
+        let o = monthly("billing@acme.com", "Factura", 3);
+
+        let resolved = [resolved("billing@acme.com", None)];
+        let out = plan_suggestions(&o, &[], &resolved, ACCOUNT, SuggestionParams::default());
+
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn without_an_account_address_nothing_counts_as_own_mail() {
+        let o = monthly("ana@example.org", "Report", 2);
+
+        let out = plan_suggestions(&o, &[], &[], "", SuggestionParams::default());
+
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_single_label_domain_names_the_candidate() {
+        let out = plan(&monthly("billing@intranet", "Invoice", 2));
+
+        assert_eq!(out[0].name, "Intranet · invoice");
+    }
+
+    #[test]
     fn candidates_are_ranked_by_email_count_and_capped() {
         let mut o = monthly("a@alpha.com", "Invoice", 3);
         o.extend(monthly("b@beta.com", "Invoice", 5));

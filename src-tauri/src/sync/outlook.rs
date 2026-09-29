@@ -1551,6 +1551,38 @@ mod tests {
     /// is `internetMessageId` (`<abc@host>`) — a different identifier for a
     /// different lookup. Graph rejects it, so replying from an Outlook account
     /// hit a resource that does not exist.
+    /// A message whose attachments cannot be listed is still stored — with
+    /// no attachment rows, and a log line saying so.
+    #[tokio::test]
+    async fn a_message_whose_attachments_cannot_be_listed_is_still_returned() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/m1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "m1",
+                "subject": "Invoice",
+                "hasAttachments": true,
+                "receivedDateTime": "2026-09-01T10:00:00Z",
+                "from": { "emailAddress": { "address": "billing@acme.com", "name": "Acme" } }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/m1/attachments"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let (email, _, attachments) = EmailProvider::get_message(&client, "m1").await.expect("message");
+
+        assert_eq!(email.id, "m1");
+        assert!(attachments.is_empty());
+    }
+
     #[tokio::test]
     async fn attachment_listing_follows_the_next_link_to_the_last_page() {
         use wiremock::matchers::{method, path};

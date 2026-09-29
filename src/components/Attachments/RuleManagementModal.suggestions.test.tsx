@@ -15,8 +15,10 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
+// A stable addLog, as the real store's is: effects depend on its identity.
+const logs = vi.hoisted(() => ({ addLog: vi.fn() }));
 vi.mock('@/stores/logStore', () => ({
-  useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
+  useLogStore: (selector: (s: { addLog: typeof logs.addLog }) => unknown) => selector({ addLog: logs.addLog }),
 }));
 
 const events = vi.hoisted(() => ({ handlers: {} as Record<string, (e: { payload: unknown }) => void> }));
@@ -460,5 +462,168 @@ describe('RuleManagementModal suggestions', () => {
       const labelled = (field.id && container.querySelector(`label[for="${field.id}"]`)) || field.closest('label');
       expect(labelled, field.outerHTML).toBeTruthy();
     }
+  });
+
+  // --- Form validation and failures ---
+
+  async function typeInto(el: HTMLInputElement, value: string) {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  function textInputs(): HTMLInputElement[] {
+    return Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'));
+  }
+
+  it('a rule needs a name', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(container.textContent).toContain('attachments:rules.nameRequired');
+    expect(handlers.onCreateRule).not.toHaveBeenCalled();
+  });
+
+  it('a rule needs at least one pattern', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+    await typeInto(textInputs()[0], 'Only a name');
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(container.textContent).toContain('attachments:rules.patternRequired');
+    expect(handlers.onCreateRule).not.toHaveBeenCalled();
+  });
+
+  it('a failed save keeps the form open with the error', async () => {
+    handlers.onCreateRule.mockRejectedValueOnce(new Error('duplicate rule'));
+    render([SUGGESTION]);
+    await click(button('attachments:suggestions.review'));
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(container.textContent).toContain('duplicate rule');
+    expect(inputValues()[0]).toBe('Acme · invoice');
+    expect(handlers.onAcceptSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('unticking "apply to existing emails" creates the rule without scanning', async () => {
+    render([SUGGESTION]);
+    await click(button('attachments:suggestions.review'));
+    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    await act(async () => {
+      checkbox?.click();
+    });
+
+    await click(button('attachments:rules.createRule'));
+
+    expect(handlers.onCreateRule).toHaveBeenCalled();
+    expect(api.applyRuleRetroactively).not.toHaveBeenCalled();
+  });
+
+  it('a failed enable/disable is shown', async () => {
+    handlers.onUpdateRule.mockRejectedValueOnce(new Error('db locked'));
+    render([], [makeRule('Acme')]);
+
+    await click(button('attachments:rules.disable'));
+
+    expect(container.textContent).toContain('db locked');
+  });
+
+  it('a failed restore is shown', async () => {
+    handlers.onRestoreSuggestion.mockRejectedValueOnce(new Error('restore failed'));
+    const dismissed = { ...SUGGESTION, id: 'sug-9', status: 'dismissed' as const };
+    render([], [], { dismissed: [dismissed] });
+
+    await click(button('attachments:suggestions.showDismissed'));
+    await click(button('attachments:suggestions.restore'));
+
+    expect(container.textContent).toContain('restore failed');
+  });
+
+  it('clicking outside the dialog closes it', async () => {
+    render([]);
+    const backdrop = container.firstElementChild as HTMLElement;
+
+    await act(async () => {
+      backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+
+    expect(handlers.onClose).toHaveBeenCalled();
+  });
+
+  it('clicking inside the dialog does not close it', async () => {
+    render([]);
+    const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+
+    await act(async () => {
+      dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+
+    expect(handlers.onClose).not.toHaveBeenCalled();
+  });
+
+  // --- Deleting a rule ---
+
+  it('deleting asks for confirmation, saying how many saved files go too', async () => {
+    vi.mocked(api.countAttachmentsForRule).mockResolvedValueOnce(4);
+    render([], [makeRule('Acme')]);
+
+    await click(button('common:actions.delete'));
+
+    expect(container.textContent).toContain('attachments:rules.deleteWithFiles{"count":4}');
+    expect(handlers.onDeleteRule).not.toHaveBeenCalled();
+  });
+
+  it('confirming deletes the rule', async () => {
+    vi.mocked(api.countAttachmentsForRule).mockResolvedValueOnce(0);
+    render([], [makeRule('Acme')]);
+    await click(button('common:actions.delete'));
+
+    await click(button('attachments:rules.deleteRule'));
+
+    expect(handlers.onDeleteRule).toHaveBeenCalledWith('rule-1');
+    expect(container.textContent).not.toContain('attachments:rules.deleteConfirm');
+  });
+
+  it('cancelling keeps the rule', async () => {
+    render([], [makeRule('Acme')]);
+    await click(button('common:actions.delete'));
+
+    await click(button('common:actions.cancel'));
+
+    expect(handlers.onDeleteRule).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('attachments:rules.deleteConfirm');
+  });
+
+  it('a failed delete is shown and the rule stays', async () => {
+    handlers.onDeleteRule.mockRejectedValueOnce(new Error('in use'));
+    render([], [makeRule('Acme')]);
+    await click(button('common:actions.delete'));
+
+    await click(button('attachments:rules.deleteRule'));
+
+    expect(container.textContent).toContain('in use');
+  });
+
+  it('when the file count cannot be read, deleting is still possible', async () => {
+    vi.mocked(api.countAttachmentsForRule).mockRejectedValueOnce(new Error('db locked'));
+    render([], [makeRule('Acme')]);
+
+    await click(button('common:actions.delete'));
+
+    expect(container.textContent).toContain('attachments:rules.deleteNoFiles');
+    expect(button('attachments:rules.deleteRule').disabled).toBe(false);
+  });
+
+  it("shows the rule's tags", () => {
+    render([], [{ ...makeRule('Acme'), tags: ['facturas', 'acme'] }]);
+
+    expect(container.textContent).toContain('facturas');
+    expect(container.textContent).toContain('acme');
   });
 });

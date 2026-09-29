@@ -117,4 +117,33 @@ describe('useRuleApplyEvents', () => {
     expect(events.handlers['attachment-rule-apply-finished']).toBeUndefined();
     await act(async () => root.render(<Probe />));
   });
+
+  it('a finished scan whose count cannot be read still finishes, and logs why', async () => {
+    vi.mocked(api.countAttachmentsForRule).mockRejectedValueOnce(new Error('db locked'));
+    const runId = useAttachmentStore.getState().beginRuleApply('r1');
+
+    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'done', saved: 2, error: null });
+
+    expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({ status: 'done', saved: 2 });
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
+  });
+
+  it('ignores malformed progress', async () => {
+    useAttachmentStore.getState().beginRuleApply('r1');
+
+    for (const payload of [null, 'r1', { ruleId: 'r1', processed: '1' }]) {
+      await emit('attachment-rule-apply-progress', payload);
+    }
+
+    expect(useAttachmentStore.getState().ruleApplies.r1.processed).toBe(0);
+  });
+
+  it('a failed scan without an error payload is still reported', async () => {
+    const runId = useAttachmentStore.getState().beginRuleApply('r1');
+
+    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'failed', saved: 0, error: null });
+
+    expect(useAttachmentStore.getState().ruleApplies.r1.status).toBe('failed');
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('unknown error'));
+  });
 });
