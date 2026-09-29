@@ -385,11 +385,23 @@ fn validate_against_schema(
                 serde_json::Value::String(s) => serde_json::Value::String(s),
                 other => serde_json::Value::String(other.to_string()),
             },
-            LensColumnType::Number => match val.as_f64() {
+            // A quoted plain number ("1200") is unambiguous; anything looser
+            // (separators, units, prose) still fails the row.
+            LensColumnType::Number => match val
+                .as_f64()
+                .or_else(|| val.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                .filter(|n| n.is_finite())
+            {
                 Some(n) => json!(n),
                 None => return Err(format!("column '{}' is not a number", col.key)),
             },
-            LensColumnType::Boolean => match val.as_bool() {
+            LensColumnType::Boolean => match val.as_bool().or_else(|| {
+                val.as_str().and_then(|s| match s.trim().to_ascii_lowercase().as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                })
+            }) {
                 Some(b) => json!(b),
                 None => return Err(format!("column '{}' is not a boolean", col.key)),
             },
@@ -397,15 +409,18 @@ fn validate_against_schema(
                 Some(s) => serde_json::Value::String(s.to_string()),
                 None => return Err(format!("column '{}' is not a date string", col.key)),
             },
+            // Matched case-insensitively and stored in the schema's spelling,
+            // so "Paid" and "paid" land in the same bucket.
             LensColumnType::Enum => match val.as_str() {
-                Some(s) => {
-                    if let Some(values) = col.enum_values.as_ref() {
-                        if !values.iter().any(|v| v == s) {
+                Some(s) => match col.enum_values.as_ref() {
+                    Some(values) => match values.iter().find(|v| v.trim().eq_ignore_ascii_case(s.trim())) {
+                        Some(canonical) => serde_json::Value::String(canonical.clone()),
+                        None => {
                             return Err(format!("column '{}' value '{s}' is not one of {values:?}", col.key));
                         }
-                    }
-                    serde_json::Value::String(s.to_string())
-                }
+                    },
+                    None => serde_json::Value::String(s.to_string()),
+                },
                 None => return Err(format!("column '{}' is not a string", col.key)),
             },
             LensColumnType::Currency => match val {
@@ -789,6 +804,57 @@ mod tests {
                     is_unique_key: false,
                 },
             ],
+        }
+    }
+
+    fn schema_with_flag() -> LensSchema {
+        let mut s = schema();
+        s.columns.push(LensColumn {
+            key: "recurring".into(),
+            label: "Recurring".into(),
+            column_type: LensColumnType::Boolean,
+            description: "Whether the invoice recurs".into(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        });
+        s
+    }
+
+    /// Models often quote scalars ("1200", "true") and capitalise enum
+    /// values ("Paid"); those are unambiguous and must not fail the row.
+    #[test]
+    fn quoted_scalars_and_enum_case_are_coerced_to_the_schema() {
+        let extracted = serde_json::json!({
+            "vendor": "Acme",
+            "amount": " 1200.5 ",
+            "status": "Paid",
+            "recurring": "TRUE",
+        });
+        let out = validate_against_schema(&extracted, &schema_with_flag()).expect("valid");
+        assert_eq!(out["amount"], serde_json::json!(1200.5));
+        assert_eq!(out["status"], "paid");
+        assert_eq!(out["recurring"], serde_json::json!(true));
+
+        let out = validate_against_schema(
+            &serde_json::json!({"vendor": "Acme", "recurring": "false"}),
+            &schema_with_flag(),
+        )
+        .expect("valid");
+        assert_eq!(out["recurring"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn ambiguous_strings_still_fail_the_row() {
+        for extracted in [
+            serde_json::json!({"vendor": "Acme", "amount": "about 1200"}),
+            serde_json::json!({"vendor": "Acme", "recurring": "maybe"}),
+            serde_json::json!({"vendor": "Acme", "status": "pending"}),
+        ] {
+            assert!(
+                validate_against_schema(&extracted, &schema_with_flag()).is_err(),
+                "{extracted}"
+            );
         }
     }
 
