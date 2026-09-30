@@ -2526,3 +2526,38 @@ cannot be nodes of their own without replacing the table plugin.
 in the app; attributes on `thead` / `tbody` / `tfoot` themselves are dropped (those on rows
 and cells are kept); several `colgroup`s are merged into one. A `div` wrapping other blocks
 is still unwrapped, and style strings are still rewritten in normalised form.
+
+## 2026-09-30 — Outlook attachments past one request go through a draft and upload sessions
+
+**Decision:** Outlook keeps sending everything in one Graph request while every attachment
+is under 3 MB and they stay under 3 MB together. Past that — for new mail, replies
+(`createReply`), and draft create/update — the message is created as a draft without
+attachments, each attachment is added on its own (one `POST …/attachments` under 3 MB, an
+upload session from 3 MB to Graph's 150 MB maximum, in 2,949,120-byte ranges), and the
+draft is sent with `POST …/send`. A file over 150 MB is refused with `InvalidInput`,
+naming it, before any request. No new scope: `Mail.ReadWrite` + `Mail.Send` cover it.
+- **Ranges** are idempotent and are re-sent up to five times (retryable status, transport
+  error, or an answer that does not move the upload forward); the upload continues from the
+  `nextExpectedRanges` Graph reports. The final send keeps the no-retry-after-send policy.
+- **Clean-up:** when an attachment cannot be added, the upload session is cancelled and the
+  draft this client created is deleted. When the final send fails, the draft is **kept**:
+  the send may have gone through, and if it did not the draft still holds the uploaded
+  attachments; the error says so.
+- **Draft updates** replace the provider draft's attachments (list, delete, add), because
+  an upload session can only add.
+- **Memory:** attachments reach the provider as base64 text; ranges are decoded from that
+  text one at a time instead of decoding the whole file next to it.
+**Context:** Every attachment was inlined as base64 in one JSON request, with no size check,
+so an attachment over about 3 MB failed with Graph's request-too-large error. Graph documents
+"under 3 MB" for an inline attachment, 3–150 MB for an upload session (which it refuses for a
+smaller file), ranges under 4 MB, and a request limit of about 4 MB.
+**Rejected:**
+- *Always using the draft route*: three requests instead of one for the common small
+  attachment, and a changed payload for a path that works.
+- *Sending the file's MIME through `sendMail`*: still one request under the same limit.
+- *Deleting the draft after a failed send*: a 5xx does not say whether the message left.
+- *Skipping attachments that look unchanged on a draft update* (same name): a replaced file
+  of the same name would stay stale in the provider's copy, and Graph does not report the
+  content size to compare with.
+**Limit:** a draft with large attachments is uploaded again on every push of that draft; the
+base64 text itself is still built in memory by the compose layer.

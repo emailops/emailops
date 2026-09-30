@@ -15,4 +15,5 @@ pub mod oauth;
 pub mod outlook;
 pub mod outlook_calendar;
 pub mod outlook_payload;
+pub mod outlook_upload;
 pub mod provider;
