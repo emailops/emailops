@@ -1469,6 +1469,111 @@ mod tests {
         assert!(!codes.contains(&ReasonCode::ReturnPathMismatch), "{codes:?}");
     }
 
+    /// Phishing reasons for a message failing authentication, with `tweak`
+    /// adding one identity signal.
+    fn failing_phishing_codes(from_and_more: &str, tweak: impl FnOnce(&mut JunkSignals)) -> Vec<ReasonCode> {
+        let mut s = signals(&format!("{FAILING}{from_and_more}"), "hello");
+        tweak(&mut s);
+        judged(&s).reason_codes_for(JunkAxis::Phishing)
+    }
+
+    // Each identity signal on its own is enough to let an authentication
+    // failure count as phishing evidence.
+    #[test]
+    fn each_identity_signal_alone_lets_an_authentication_failure_count() {
+        let cases: Vec<(&str, Vec<ReasonCode>)> = vec![
+            (
+                "reply-to elsewhere",
+                failing_phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", |_| {}),
+            ),
+            (
+                "dangerous attachment",
+                failing_phishing_codes("From: X <x@ordinary.example>\n", |s| {
+                    s.attachment_names = vec!["setup.exe".to_string()];
+                }),
+            ),
+            (
+                "invisible characters",
+                failing_phishing_codes("From: Ac\u{200B}me <x@ordinary.example>\n", |_| {}),
+            ),
+            (
+                "address in the display name",
+                failing_phishing_codes("From: \"billing@bank.example\" <x@ordinary.example>\n", |_| {}),
+            ),
+        ];
+        for (label, codes) in cases {
+            assert!(codes.contains(&ReasonCode::DmarcFail), "{label}: {codes:?}");
+        }
+    }
+
+    // A message with no Received hops is suspicious routing, unless
+    // authentication already vouches for it.
+    #[test]
+    fn no_received_hops_counts_only_without_full_alignment() {
+        let failing = failing_phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", |_| {});
+        assert!(failing.contains(&ReasonCode::NoReceivedHops), "{failing:?}");
+        let aligned = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", &[]);
+        assert!(!aligned.contains(&ReasonCode::NoReceivedHops), "{aligned:?}");
+    }
+
+    #[test]
+    fn a_server_spam_flag_counts_whether_decisive_or_marginal() {
+        for status in ["Yes, score=12.7 required=5.0", "Yes, score=5.4 required=5.0"] {
+            let s = signals(
+                &format!("{ALIGNED}X-Spam-Status: {status}\nFrom: X <x@ordinary.example>\n"),
+                "hello",
+            );
+            let codes = judged(&s).reason_codes_for(JunkAxis::Spam);
+            assert!(codes.contains(&ReasonCode::ServerSpamFlag), "{status}: {codes:?}");
+        }
+    }
+
+    // Bulk mail the user never answers is graymail only once the sender has
+    // written often enough for silence to mean something.
+    #[test]
+    fn no_engagement_needs_a_recurring_sender_the_user_never_answered() {
+        let bulk = |count: usize, engaged: bool| {
+            let mut s = signals(
+                &format!("{ALIGNED}From: News <news@shop.example>\nList-Unsubscribe: <https://shop.example/u>\n"),
+                "hello",
+            );
+            s.sender_message_count = count;
+            s.sender_engaged = engaged;
+            judged(&s).reason_codes_for(JunkAxis::Graymail)
+        };
+        assert!(bulk(MIN_RECURRENCE, false).contains(&ReasonCode::NoEngagement));
+        assert!(!bulk(MIN_RECURRENCE - 1, false).contains(&ReasonCode::NoEngagement));
+        assert!(!bulk(MIN_RECURRENCE, true).contains(&ReasonCode::NoEngagement));
+    }
+
+    #[test]
+    fn shouting_counts_as_excessive_caps() {
+        let mut s = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), "hello");
+        s.subject = "ACT NOW AND CLAIM YOUR PRIZE TODAY".to_string();
+        assert!(judged(&s)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::ExcessiveCaps));
+    }
+
+    // Links to four or more different domains, none of them the sender's, is
+    // the shape of a link farm.
+    #[test]
+    fn many_foreign_link_domains_count_only_from_four_and_without_the_senders_own() {
+        let links = |domains: &[&str]| {
+            let body: String = domains
+                .iter()
+                .map(|d| format!("<a href=\"https://{d}/x\">x</a> "))
+                .collect();
+            let s = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), &body);
+            judged(&s)
+                .reason_codes_for(JunkAxis::Spam)
+                .contains(&ReasonCode::HighLinkDensity)
+        };
+        assert!(links(&["a.example", "b.example", "c.example", "d.example"]));
+        assert!(!links(&["a.example", "b.example", "c.example"]));
+        assert!(!links(&["a.example", "b.example", "c.example", "ordinary.example"]));
+    }
+
     // A bounce domain that differs from From is how every ESP sends: recorded,
     // but not an identity claim, so a mailing list failing DMARC is not phishing.
     #[test]

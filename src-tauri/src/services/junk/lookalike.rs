@@ -333,6 +333,7 @@ mod tests {
     #[test]
     fn subdomains_reduce_to_the_registrable_domain() {
         assert_eq!(registrable_domain("mail.corp.acme.example"), "acme.example");
+        assert_eq!(registrable_domain("a.b.mail.corp.acme.example"), "acme.example");
         assert_eq!(registrable_domain("acme.example"), "acme.example");
     }
 
@@ -504,6 +505,12 @@ mod tests {
 
     // Short brands match tighter: at distance 2 almost every four-letter word
     // is "close" to every other.
+    #[test]
+    fn an_embedded_address_needs_a_real_looking_tld() {
+        assert_eq!(embedded_address_domain("billing@acme.xy"), Some("acme.xy".to_string()));
+        assert_eq!(embedded_address_domain("billing@acme.x"), None);
+    }
+
     #[test]
     fn the_edit_budget_grows_with_the_brand_length() {
         let budgets: Vec<usize> = [1, 4, 5, 8, 9, 20].iter().map(|n| distance_budget(*n)).collect();

@@ -674,4 +674,28 @@ mod tests {
             vec![("Your bank".to_string(), "http://a.example/x".to_string())]
         );
     }
+    #[test]
+    fn the_caps_ratio_is_upper_case_letters_over_all_letters_from_twelve_letters() {
+        assert_eq!(caps_ratio("ABCDEFGHIJKL"), 1.0);
+        assert_eq!(caps_ratio("ABCDEFabcdef"), 0.5);
+        assert_eq!(caps_ratio("ABCDEFGHIJK"), 0.0, "eleven letters are too few to judge");
+    }
+    #[test]
+    fn a_bare_domain_as_link_text_pointing_elsewhere_is_a_mismatch() {
+        let body = r#"<a href="https://other.example/login">bank.example</a>"#;
+        assert!(analyse("", body, &[]).link_text_href_mismatch);
+    }
+
+    #[test]
+    fn link_text_with_spaces_is_prose_not_a_shown_address() {
+        let body = r#"<a href="https://other.example/login">see bank.example today</a>"#;
+        assert!(!analyse("", body, &[]).link_text_href_mismatch);
+    }
+
+    #[test]
+    fn a_credential_request_needs_somewhere_to_send_them() {
+        assert!(!analyse("", "Please confirm your credentials.", &[]).credential_solicitation);
+        let with_link = r#"Please confirm your credentials <a href="https://other.example/x">here</a>."#;
+        assert!(analyse("", with_link, &[]).credential_solicitation);
+    }
 }
