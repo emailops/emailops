@@ -629,7 +629,14 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     );
 
     if !sender_domain.is_empty() {
-        if let Some((kind, matched)) = lookalike::detect(&sender_domain, &signals.known_contact_domains) {
+        // A domain the user already corresponds with is the real thing, not an
+        // imitation of some other domain they also know.
+        let lookalike = if sender_domain_known {
+            None
+        } else {
+            lookalike::detect(&sender_domain, &signals.known_contact_domains)
+        };
+        if let Some((kind, matched)) = lookalike {
             phishing.add(
                 ReasonCode::LookalikeDomain,
                 weights.lookalike_domain,
@@ -1129,6 +1136,19 @@ mod tests {
         assert!(verdict.all_reason_codes().contains(&ReasonCode::LookalikeDomain));
         assert!(verdict.all_reason_codes().contains(&ReasonCode::ReplyToMismatch));
         assert_eq!(verdict.primary, JunkKind::Phishing);
+    }
+
+    #[test]
+    fn a_sender_domain_the_user_already_knows_is_not_a_lookalike() {
+        // Two legitimate, similar domains the user corresponds with: mail from
+        // one must not read as imitating the other.
+        let mut s = signals(
+            &format!("{FAILING}From: Ops <ops@acmee.example>\n"),
+            "Weekly report attached.",
+        );
+        s.known_contact_domains = vec!["acme.example".to_string(), "acmee.example".to_string()];
+        let verdict = judged(&s);
+        assert!(!verdict.all_reason_codes().contains(&ReasonCode::LookalikeDomain));
     }
 
     #[test]

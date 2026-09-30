@@ -699,14 +699,25 @@ pub(crate) struct LabelRepairs {
 }
 
 /// Coerce a model response onto the configured taxonomy.
+///
+/// Case-insensitive, always returning the configured spelling. An empty value
+/// falls back: it is a substring of every label, so it would otherwise
+/// "match" whichever label happens to come first.
 fn normalise_one(value: String, allowed: &[String], fallback: &str) -> (String, Repair) {
     if allowed.contains(&value) {
         return (value, Repair::Exact);
     }
-    match allowed
-        .iter()
-        .find(|a| value.contains(a.as_str()) || a.contains(&value))
-    {
+    let needle = value.trim().to_lowercase();
+    if needle.is_empty() {
+        return (fallback.to_string(), Repair::Fallback);
+    }
+    let matched = allowed.iter().find(|a| a.to_lowercase() == needle).or_else(|| {
+        allowed.iter().find(|a| {
+            let label = a.to_lowercase();
+            !label.is_empty() && (needle.contains(&label) || label.contains(&needle))
+        })
+    });
+    match matched {
         Some(matched) => (matched.clone(), Repair::Matched),
         None => (fallback.to_string(), Repair::Fallback),
     }
@@ -719,7 +730,10 @@ fn normalise_labels(parsed: ClassificationResponse, config: &ClassificationConfi
     let (topic, topic_repair) = normalise_one(parsed.topic, &config.topics, "operations");
     let (urgency, urgency_repair) = match parsed.urgency.as_str() {
         "urgent" | "normal" | "low" => (parsed.urgency, Repair::Exact),
-        _ => ("normal".to_string(), Repair::Fallback),
+        other => match other.trim().to_lowercase().as_str() {
+            level @ ("urgent" | "normal" | "low") => (level.to_string(), Repair::Matched),
+            _ => ("normal".to_string(), Repair::Fallback),
+        },
     };
 
     (
@@ -1296,7 +1310,7 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
                 .map(|(i, p)| {
                     let like = glob_to_sql_like(p.trim());
                     params.push(Box::new(like));
-                    format!("LOWER(e.sender_email) LIKE ?{}", idx + i)
+                    format!("LOWER(e.sender_email) LIKE ?{} ESCAPE '\\'", idx + i)
                 })
                 .collect();
             idx += like_parts.len();
@@ -1307,7 +1321,7 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
     if let Some(ref pattern) = rule.subject_pattern {
         if !pattern.is_empty() {
             let like = glob_to_sql_like(pattern);
-            conditions.push(format!("LOWER(e.subject) LIKE ?{}", idx));
+            conditions.push(format!("LOWER(e.subject) LIKE ?{} ESCAPE '\\'", idx));
             params.push(Box::new(like));
         }
     }
@@ -1361,8 +1375,10 @@ fn glob_to_sql_like(pattern: &str) -> String {
         match ch {
             '*' => like.push('%'),
             '?' => like.push('_'),
+            // Escaped for the `ESCAPE '\'` clause at every call site.
             '%' => like.push_str("\\%"),
             '_' => like.push_str("\\_"),
+            '\\' => like.push_str("\\\\"),
             _ => like.push(ch),
         }
     }
@@ -1690,6 +1706,77 @@ mod tests {
     #[test]
     fn normalise_labels_falls_back_when_nothing_matches() {
         let (classified, repairs) = normalise_labels(response("banana", "zeppelin", "normal"), &taxonomy_config());
+
+        assert_eq!(classified.intent, "notification");
+        assert_eq!(classified.topic, "operations");
+        assert_eq!(repairs.intent, Repair::Fallback);
+        assert_eq!(repairs.topic, Repair::Fallback);
+    }
+
+    /// `_` and `%` in a rule pattern are literal characters; they must match
+    /// themselves, not act as LIKE wildcards (nor turn into a literal `\_`).
+    #[test]
+    fn rule_patterns_match_underscore_and_percent_literally() {
+        let db = Database::new_for_testing().unwrap();
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+            for (id, sender, subject) in [
+                ("u", "first_last@example.com", "Save 50% today"),
+                ("x", "firstxlast@example.com", "Save 50x today"),
+            ] {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct',?1,?3,'S',?2,'example.com','[]','[]',
+                             'a snippet long enough to pass the length filter',100,0,'primary',0)",
+                    rusqlite::params![id, sender, subject],
+                )
+                .unwrap();
+            }
+        }
+        let rule = |sender: Option<&str>, subject: Option<&str>| ClassificationRule {
+            id: "r".into(),
+            account_id: "acct".into(),
+            name: "r".into(),
+            sender_pattern: sender.map(str::to_string),
+            subject_pattern: subject.map(str::to_string),
+            priority: "normal".into(),
+            intent: "notification".into(),
+            topic: "operations".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        let by_sender = find_emails_matching_rule(&db, &rule(Some("first_last@example.com"), None)).unwrap();
+        assert_eq!(by_sender, vec!["u".to_string()]);
+        let by_subject = find_emails_matching_rule(&db, &rule(None, Some("*50%*"))).unwrap();
+        assert_eq!(by_subject, vec!["u".to_string()]);
+    }
+
+    #[test]
+    fn normalise_labels_maps_a_differently_cased_label_to_the_configured_one() {
+        let (classified, repairs) = normalise_labels(response("Request", "BILLING", "Urgent"), &taxonomy_config());
+
+        assert_eq!(classified.intent, "request");
+        assert_eq!(classified.topic, "billing");
+        assert_eq!(classified.urgency, "urgent");
+        assert_eq!(repairs.intent, Repair::Matched);
+        assert_eq!(repairs.topic, Repair::Matched);
+    }
+
+    #[test]
+    fn normalise_labels_falls_back_on_an_empty_label() {
+        // An empty string is a substring of every label; it used to "match"
+        // whichever configured label came first.
+        let (classified, repairs) = normalise_labels(response("", "  ", "normal"), &taxonomy_config());
 
         assert_eq!(classified.intent, "notification");
         assert_eq!(classified.topic, "operations");

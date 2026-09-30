@@ -260,7 +260,16 @@ pub async fn on_emails_synced(
         };
 
         for email_id in email_ids {
-            if email_matches_scope(&db, &lens, email_id)? {
+            let matches = match scope::email_matches(&db, &lens.scope, email_id) {
+                Ok(m) => m,
+                Err(e) => {
+                    // One broken Lens must not stop incremental extraction for
+                    // the others; skip the rest of its emails this sync.
+                    emit_log(app, "error", format!("Lens '{}': scope check failed: {e}", lens.name));
+                    break;
+                }
+            };
+            if matches {
                 if db.lens_row_exists(&lens.id, email_id).unwrap_or(false) {
                     continue;
                 }
@@ -277,84 +286,6 @@ pub async fn on_emails_synced(
         }
     }
     Ok(total)
-}
-
-/// Cheap per-email scope match — runs the same evaluator but limited to a
-/// single email. Implementation detail: we use a tiny in-memory check by
-/// inspecting the email's columns directly so we don't pay an FTS query
-/// per new email.
-fn email_matches_scope(db: &Database, lens: &Lens, email_id: &str) -> Result<bool> {
-    let email = match db.get_email_by_id(email_id)? {
-        Some(e) => e,
-        None => return Ok(false),
-    };
-
-    let scope = &lens.scope;
-    if let Some(account_ids) = scope.account_ids.as_ref() {
-        if !account_ids.contains(&email.account_id) {
-            return Ok(false);
-        }
-    }
-    if let Some(mailboxes) = scope.mailboxes.as_ref() {
-        if !mailboxes.contains(&email.mailbox) {
-            return Ok(false);
-        }
-    }
-    if let Some(categories) = scope.categories.as_ref() {
-        // Case-insensitive: the UI sends "Primary"/"Updates" (capitalized) but
-        // sync writes email.category lowercase ("primary"/"updates"). Without
-        // this normalization, on_emails_synced silently skips all inbox emails.
-        let cat_lower = email.category.to_lowercase();
-        if !categories.iter().any(|c| c.to_lowercase() == cat_lower) {
-            return Ok(false);
-        }
-    }
-    if let Some(senders) = scope.sender_emails.as_ref() {
-        let lower = email.sender_email.to_lowercase();
-        if !senders.iter().any(|s| s.to_lowercase() == lower) {
-            return Ok(false);
-        }
-    }
-    if let Some(domains) = scope.sender_domains.as_ref() {
-        // sender_domain is denormalised lowercase already.
-        let dom = email.sender_email.split('@').nth(1).unwrap_or("").to_lowercase();
-        if !domains.iter().any(|d| d.to_lowercase() == dom) {
-            return Ok(false);
-        }
-    }
-    if let Some(direction) = scope.direction {
-        use crate::models::lens::Direction;
-        match direction {
-            Direction::Inbound if email.mailbox == "sent" => return Ok(false),
-            Direction::Outbound if email.mailbox != "sent" => return Ok(false),
-            _ => {}
-        }
-    }
-    if let Some(range) = scope.date_range.as_ref() {
-        if let Some(days) = range.last_days {
-            let cutoff = now_secs().saturating_sub(days.saturating_mul(86_400));
-            if email.timestamp < cutoff {
-                return Ok(false);
-            }
-        }
-        if let Some(from) = range.from {
-            if email.timestamp < from {
-                return Ok(false);
-            }
-        }
-        if let Some(to) = range.to {
-            if email.timestamp > to {
-                return Ok(false);
-            }
-        }
-    }
-    // FTS-keyword and tag filters are not cheap to check inline; if the Lens
-    // uses them, fall back to the full scope evaluator scoped to this one id.
-    if scope.query.is_some() || scope.tags.is_some() {
-        let ids = scope::evaluate(db, scope)?;
-        return Ok(ids.iter().any(|id| id == email_id));
-    }
-    Ok(true)
 }
 
 /// Run extraction for one email and persist the row. Returns the resolved
@@ -406,6 +337,7 @@ async fn extract_one(
     Ok(result.status)
 }
 
+#[cfg(test)]
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -710,6 +642,102 @@ mod tests {
         assert_eq!(runs[0].status, "complete");
         assert_eq!(runs[0].succeeded, 1);
         assert_eq!(runs[0].failed, 0);
+    }
+
+    /// The sync hook must select exactly what `scope::evaluate` selects. When
+    /// `last_days` is set the evaluator ignores `from`/`to`; the hook used to
+    /// apply both and silently skipped emails the backfill would extract.
+    #[tokio::test]
+    async fn on_emails_synced_matches_scope_evaluate_on_last_days_with_stale_to() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let acct = "acct1";
+        insert_account(&db, acct, "owner@example.com");
+        let email_id = "e1";
+        insert_invoice_email(
+            &db,
+            email_id,
+            acct,
+            "Vendor",
+            "billing@example.com",
+            "Your invoice",
+            "Invoice INV-1 for 10,00 EUR.",
+            "inbox",
+            "Primary",
+            now_secs() - 60,
+        );
+        let mut input = invoices_lens_input(acct);
+        input.scope.date_range = Some(DateRange {
+            last_days: Some(30),
+            from: None,
+            to: Some(1),
+        });
+        let lens = db.create_lens(&input).expect("create lens");
+        let picks = scope::evaluate(&db, &lens.scope).expect("scope eval");
+        assert_eq!(picks, vec![email_id.to_string()]);
+
+        let provider = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Vendor",
+                "amount": { "amount": 10.0, "currency": "EUR" },
+                "status": "unpaid",
+            }),
+        });
+        let total = on_emails_synced(db.clone(), provider, &[email_id.to_string()], None)
+            .await
+            .expect("hook");
+        assert_eq!(total, 1, "hook must agree with scope::evaluate");
+    }
+
+    /// One Lens whose scope fails to evaluate must not stop incremental
+    /// extraction for the other Lenses on the same sync.
+    #[tokio::test]
+    async fn on_emails_synced_isolates_a_lens_whose_scope_fails() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let acct = "acct1";
+        insert_account(&db, acct, "owner@example.com");
+        let email_id = "e1";
+        insert_invoice_email(
+            &db,
+            email_id,
+            acct,
+            "Vendor",
+            "billing@example.com",
+            "Your invoice",
+            "Invoice INV-1 for 10,00 EUR.",
+            "inbox",
+            "Primary",
+            now_secs() - 60,
+        );
+
+        // Lens A (evaluated first) uses the FTS branch; Lens B does not.
+        let broken = db.create_lens(&invoices_lens_input(acct)).expect("create lens A");
+        let mut plain_input = invoices_lens_input(acct);
+        plain_input.name = "Plain".into();
+        plain_input.scope.query = None;
+        let plain = db.create_lens(&plain_input).expect("create lens B");
+        // Make Lens A's scope evaluation fail at the DB layer.
+        db.connection()
+            .execute_batch("DROP TABLE emails_fts")
+            .expect("drop fts");
+
+        let provider = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Vendor",
+                "amount": { "amount": 10.0, "currency": "EUR" },
+                "status": "unpaid",
+            }),
+        });
+        let total = on_emails_synced(db.clone(), provider, &[email_id.to_string()], None)
+            .await
+            .expect("a failing Lens must not fail the whole hook");
+
+        assert_eq!(total, 1);
+        assert_eq!(db.get_lens_rows(&plain.id, None, 50, 0).expect("rows B").rows.len(), 1);
+        assert!(db
+            .get_lens_rows(&broken.id, None, 50, 0)
+            .expect("rows A")
+            .rows
+            .is_empty());
     }
 
     /// Reproduces the user's mis-configuration: they put a full email address

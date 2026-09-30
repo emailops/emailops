@@ -294,6 +294,13 @@ pub fn detect(candidate_host: &str, references: &[String]) -> Option<(LookalikeK
             }
         }
 
+        // Same brand under another suffix (`brand.es` next to `brand.com`) is
+        // how organisations run national sites, not a misspelling. Telling a
+        // squatted TLD apart from a real one needs ownership data we do not have.
+        if candidate_brand == reference_brand {
+            continue;
+        }
+
         if edit_distance(&candidate_brand, &reference_brand) <= distance_budget(reference_brand.len()) {
             return Some((LookalikeKind::Typosquat, reference));
         }
@@ -383,6 +390,14 @@ mod tests {
         // edits from the real domain, yet instantly plausible to a human.
         let hit = detect("acme-payments.example", &refs(&["acme.example"]));
         assert_eq!(hit, Some((LookalikeKind::Cousin, "acme.example".to_string())));
+    }
+
+    #[test]
+    fn the_same_brand_under_another_tld_is_not_a_lookalike() {
+        // A company's national domain (brand.es next to brand.com) scored edit
+        // distance 0 on the brand token and was flagged as a typosquat.
+        assert_eq!(detect("brand.es", &refs(&["brand.com"])), None);
+        assert_eq!(detect("mail.brand.co.uk", &refs(&["brand.com"])), None);
     }
 
     #[test]

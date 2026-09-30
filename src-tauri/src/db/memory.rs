@@ -531,6 +531,16 @@ impl Database {
         Ok(())
     }
 
+    /// Titles of every task (any status) extracted from `source_email_id`.
+    pub fn list_task_titles_for_email(&self, source_email_id: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT title FROM pending_tasks WHERE source_email_id = ?1")?;
+        let titles = stmt
+            .query_map(params![source_email_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(titles)
+    }
+
     pub fn update_pending_task_status(
         &self,
         task_id: &str,
