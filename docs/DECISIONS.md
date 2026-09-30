@@ -2495,3 +2495,34 @@ reconciled. The developer chose the History API over polling.
   cap would leave pages half applied.
 - *An archive mailbox*: a product change (a new view and its sync pass), not part of
   following state.
+
+## 2026-09-30 — The compose editor also keeps table sections, captions, column widths and sub/sup/small/center
+
+**Decision:** Follow-up to "The compose editor carries tables and verbatim inline styles",
+which listed these as a limit. A formatted draft now keeps them through load → edit →
+save, with no new dependency:
+- **`thead` / `tfoot`:** each row remembers the section it was written in (a row attribute,
+  not rendered on the `<tr>`) and the table's serializer regroups the rows into `thead`,
+  `tbody`, `tfoot`, in that order. A table without body rows gets no empty `tbody`.
+- **`caption`:** an attribute of the table holding its text and its `style` / `align`,
+  written back as `<caption>` and shown read-only above the rows in the editor.
+- **`colgroup` / `col`:** an attribute of the table holding each column's `span`, `width`
+  and `style`, written back as one `<colgroup>` — and left out once it no longer adds up to
+  the table's columns.
+- **`sub`, `sup`, `small`:** three marks written with `Mark.create`.
+- **`center`:** a block node written back as `<center>`; text directly inside it becomes a
+  paragraph inside it.
+**Context:** ProseMirror's table model (`prosemirror-tables`, under Tiptap 3's table
+extension) requires a table's children to be rows, so sections, captions and column groups
+cannot be nodes of their own without replacing the table plugin.
+**Rejected:**
+- *`@tiptap/extension-subscript` / `-superscript`*: not installed; two five-line marks do
+  the same without a dependency.
+- *Turning `<center>` into a paragraph with `align="center"`*: it cannot hold a table, which
+  is what newsletters centre with it.
+- *Keeping the caption as HTML*: the editor would have to show markup it did not parse
+  through the schema.
+**Limit:** markup inside a caption is reduced to its text and the caption cannot be edited
+in the app; attributes on `thead` / `tbody` / `tfoot` themselves are dropped (those on rows
+and cells are kept); several `colgroup`s are merged into one. A `div` wrapping other blocks
+is still unwrapped, and style strings are still rewritten in normalised form.

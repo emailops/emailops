@@ -63,6 +63,23 @@ describe('prepareOutgoingHtml', () => {
 });
 
 describe('htmlToPlainText', () => {
+  it('renders a caption, header, body and footer of a table as one line each', () => {
+    const table =
+      '<p>Costs:</p><table><caption>Totals</caption><colgroup><col width="80"><col></colgroup>' +
+      '<thead><tr><th><p>Item</p></th><th><p>Cost</p></th></tr></thead>' +
+      '<tbody><tr><td><p>Hosting</p></td><td><p>120 EUR</p></td></tr></tbody>' +
+      '<tfoot><tr><td><p>Sum</p></td><td><p>120 EUR</p></td></tr></tfoot></table><p>Thanks</p>';
+    expect(htmlToPlainText(table)).toBe('Costs:\nTotals\nItem | Cost\nHosting | 120 EUR\nSum | 120 EUR\nThanks');
+  });
+
+  it('keeps centred, subscript, superscript and small text readable', () => {
+    expect(htmlToPlainText('<p>before</p><center><p>mid</p></center><p>H<sub>2</sub>O <small>fine</small></p>')).toBe(
+      // A block inside a block ends both, as a quoted paragraph does.
+      'before\nmid\n\nH2O fine',
+    );
+    expect(htmlToPlainText('<center>one</center><center>two</center>')).toBe('one\ntwo');
+  });
+
   it('renders a table as one line per row', () => {
     const table =
       '<p>Costs:</p><table><tbody><tr><th><p>Item</p></th><th><p>Cost</p></th></tr>' +
