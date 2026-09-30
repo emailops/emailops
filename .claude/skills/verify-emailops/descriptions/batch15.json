@@ -14,7 +14,17 @@
     "src-tauri/src/services/chat/research/plan.rs::any_who_or_subject_filter_drops_a_meaning_query": "Un filtro por destinatario, interlocutor o asunto, como el de remitente, quita la consulta por significado del filtro de la investigación.",
     "src-tauri/src/services/chat/research/plan.rs::a_recipient_filter_on_the_user_searches_every_address_the_user_receives_at": "Si la investigación filtra por destinatario = el usuario, se busca en cada una de sus direcciones.",
     "src-tauri/src/services/chat/research/plan.rs::an_oversized_first_item_does_not_leave_an_empty_batch_before_it": "Un primer correo más largo que el presupuesto va en su propio lote sin dejar un lote vacío delante.",
-    "src-tauri/src/services/chat/research/plan.rs::items_that_exactly_fill_the_budget_share_a_batch": "Correos que llenan exactamente el presupuesto de caracteres comparten lote."
+    "src-tauri/src/services/chat/research/plan.rs::items_that_exactly_fill_the_budget_share_a_batch": "Correos que llenan exactamente el presupuesto de caracteres comparten lote.",
+    "src-tauri/src/services/chat/research/notes.rs::the_condense_step_sees_each_note_labelled_with_its_tag": "El paso de condensar ve cada nota numerada (N1, N2…) con su etiqueta MATCH o CONTEXT.",
+    "src-tauri/src/services/chat/research/notes.rs::a_condense_reply_wrapped_in_prose_is_still_read": "Una respuesta de condensado con texto antes y después del JSON se sigue leyendo.",
+    "src-tauri/src/services/chat/research/notes.rs::a_reply_with_its_braces_the_wrong_way_round_is_an_error_not_a_panic": "Una respuesta con las llaves al revés es un error, no un cierre inesperado.",
+    "src-tauri/src/services/chat/research/notes.rs::a_label_past_the_group_is_ignored_and_the_note_kept": "Una etiqueta que no existe en el grupo se ignora y la nota no citada se conserva tal cual.",
+    "src-tauri/src/services/chat/research/notes.rs::a_batch_is_measured_by_its_note_text_plus_the_line_overhead": "El tamaño de un lote de notas es su texto más 24 caracteres por línea.",
+    "src-tauri/src/services/chat/research/notes.rs::notes_that_fit_are_all_kept": "Si las notas caben en el prompt del informe, se incluyen todas.",
+    "src-tauri/src/services/chat/research/notes.rs::overflowing_notes_give_each_non_empty_batch_an_equal_share": "Si las notas no caben, cada lote con notas recibe la misma parte y conserva sus primeras notas.",
+    "src-tauri/src/services/chat/research/notes.rs::a_long_subject_is_cut_to_sixty_chars_with_an_ellipsis": "Un asunto largo se recorta a 60 caracteres con puntos suspensivos al usarlo como texto de enlace.",
+    "src-tauri/src/services/chat/research/notes.rs::an_unmatched_conversation_links_the_email_its_own_note_cited": "Una conversación sin coincidencia enlaza el correo que citó su propia nota, no el de otra conversación.",
+    "src-tauri/src/services/chat/research/notes.rs::the_full_list_heading_is_in_the_report_language": "El encabezado de la lista completa está en francés o alemán cuando el informe lo está."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
