@@ -127,7 +127,7 @@ pub async fn get_calendar_invite(
     state: State<'_, AppState>,
     email_id: String,
 ) -> Result<Option<crate::services::calendar::invite::CalendarInvite>, AppError> {
-    crate::services::calendar::invite::get_calendar_invite(&state.db, &email_id).await
+    crate::services::calendar::invite::get_calendar_invite(&state.db, &state.app_data_dir, &email_id).await
 }
 
 /// RSVP to an invitation ("accepted" | "declined" | "tentative"). The event is

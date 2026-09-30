@@ -97,7 +97,24 @@ pub async fn delete_local_model(state: State<'_, AppState>, model_id: String, ki
         "embedding" => ModelKind::Embedding,
         _ => return Err(AppError::InvalidInput(format!("Unknown model kind: {}", kind))),
     };
+    validate_model_id(&model_id)?;
     model_manager::delete_local_model(&state.app_data_dir, model_kind, &model_id)
+}
+
+/// A model id names a `<id>.gguf` file inside the models dir, so it must be a
+/// plain file stem: ASCII letters, digits and `.`/`_`/`-`/`+`, not starting
+/// with a dot. Anything else (separators, `..`, a Windows drive prefix) could
+/// point the path outside the models dir.
+fn validate_model_id(id: &str) -> Result<(), AppError> {
+    let plain_stem = !id.is_empty()
+        && !id.starts_with('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+'));
+    if !plain_stem {
+        return Err(AppError::InvalidInput(format!("Invalid model id: {id:?}")));
+    }
+    Ok(())
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
@@ -411,3 +428,42 @@ pub async fn cancel_model_download(_state: State<'_, AppState>, model_id: String
 // on anything but macOS and disk space returned `Err` on anything but unix,
 // which silently disabled the pre-download guards on Windows. They now delegate
 // to the single portable implementation in `util::system`.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_ids_from_the_catalog_and_local_files_are_accepted() {
+        for id in ["qwen3.5-4b-q8_0", "nomic-embed-text-v1.5.Q8_0", "Gemma-4-12B+it"] {
+            assert!(validate_model_id(id).is_ok(), "should accept {id}");
+        }
+        for entry in CATALOG {
+            assert!(
+                validate_model_id(entry.id).is_ok(),
+                "catalog id {} must be deletable",
+                entry.id
+            );
+        }
+    }
+
+    // `delete_local_model` joined the raw id into the models dir, so an id
+    // with `../` could delete any `.gguf`-suffixed file the user can write.
+    #[test]
+    fn model_ids_that_could_leave_the_models_dir_are_rejected() {
+        for id in [
+            "",
+            "../../secret",
+            "..",
+            ".hidden",
+            "a/b",
+            r"a\b",
+            "C:evil",
+            "nul\0byte",
+            "sp ace",
+        ] {
+            let err = validate_model_id(id).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "should reject {id:?}");
+        }
+    }
+}

@@ -3,7 +3,8 @@
 //!
 //! [`CliSession::bootstrap`] is the single place that wires the CLI into the
 //! same seams the desktop app uses: it initialises the keychain, resolves the
-//! data directory, opens the DB (running migrations), and installs the CLI's
+//! data directory, opens the DB (running migrations, unless the command only
+//! reads — see [`opens_read_only`]), and installs the CLI's
 //! [`Logger`](crate::services::logger) + [`EventSink`](crate::services::events)
 //! backends. From that point on the command handlers call `services::*`
 //! directly — no `AppHandle` required.
@@ -67,6 +68,47 @@ pub(crate) fn startup_timing_enabled(command: Option<&Command>) -> bool {
     )
 }
 
+/// Whether this invocation only reads the DB, so it opens it read-only and
+/// never runs migrations. A CLI built from a newer branch must not be able to
+/// migrate the real DB (and lock the installed release out of it) through a
+/// `doctor` or `search`. The bare REPL (`None`) can run any command, writes
+/// included, so it opens read-write like every write command.
+pub(crate) fn opens_read_only(command: Option<&Command>) -> bool {
+    use super::accounts::AccountAction;
+    matches!(
+        command,
+        Some(
+            Command::Doctor
+                | Command::Stats
+                | Command::Skills
+                | Command::Drafts
+                | Command::Show { .. }
+                | Command::Emails { .. }
+                | Command::Search { .. }
+                | Command::Accounts {
+                    action: None | Some(AccountAction::List)
+                }
+                | Command::Draft { delete: false, .. }
+        )
+    )
+}
+
+/// Open the DB in `data_dir`: read-only (no migrations, no file creation) for
+/// read commands, otherwise the normal migrating open.
+pub(crate) fn open_db(data_dir: PathBuf, read_only: bool) -> Result<Database> {
+    if !read_only {
+        return Database::new(data_dir);
+    }
+    let db_path = data_dir.join("emailops.db");
+    if !db_path.exists() {
+        return Err(AppError::NotFound(format!(
+            "no database at {} — open the app or run a write command (e.g. `sync`) first",
+            db_path.display()
+        )));
+    }
+    Database::open_readonly(db_path)
+}
+
 impl CliSession {
     /// Wire up the process: keychain → data dir → DB → logger + event sink,
     /// then resolve the working account and model.
@@ -88,7 +130,7 @@ impl CliSession {
         );
 
         let data_dir = resolve_data_dir(cli.data_dir.clone());
-        let db = Arc::new(Database::new(data_dir.clone())?);
+        let db = Arc::new(open_db(data_dir.clone(), opens_read_only(cli.command.as_ref()))?);
 
         // Credential reads (sync auth, remote AI providers) resolve through a
         // process-global DB handle in dev builds. Bind it — but don't warm the
@@ -322,6 +364,117 @@ mod tests {
         assert!(!startup_timing_enabled(Some(&Command::Doctor)));
         // Bare invocation (REPL) → command is None → startup stays silent.
         assert!(!startup_timing_enabled(None));
+    }
+
+    #[test]
+    fn read_commands_open_the_db_read_only() {
+        use super::super::accounts::AccountAction;
+        for cmd in [
+            Command::Doctor,
+            Command::Stats,
+            Command::Skills,
+            Command::Drafts,
+            Command::Accounts { action: None },
+            Command::Accounts {
+                action: Some(AccountAction::List),
+            },
+            Command::Show { id: "e1".into() },
+            Command::Draft {
+                id: "d1".into(),
+                delete: false,
+            },
+            Command::Emails {
+                limit: 25,
+                offset: 0,
+                mailbox: None,
+                category: None,
+            },
+            Command::Search {
+                query: "q".into(),
+                limit: 25,
+                offset: 0,
+                trace: false,
+            },
+        ] {
+            assert!(opens_read_only(Some(&cmd)), "{cmd:?} only reads");
+        }
+    }
+
+    #[test]
+    fn write_commands_and_the_repl_open_the_db_read_write() {
+        for cmd in [
+            Command::Sync { account: None },
+            Command::Embed { batch: 50 },
+            Command::Classify { all: false, id: None },
+            Command::Draft {
+                id: "d1".into(),
+                delete: true,
+            },
+            Command::Chat {
+                questions: vec!["q".into()],
+                trace: false,
+                conversation: None,
+                fresh: false,
+                thread: None,
+                prewarm: false,
+                research: false,
+                estimate: false,
+            },
+        ] {
+            assert!(!opens_read_only(Some(&cmd)), "{cmd:?} writes");
+        }
+        // The REPL can run any command, writes included.
+        assert!(!opens_read_only(None));
+    }
+
+    // A CLI built from a newer branch ran `Database::new` — migrations
+    // included — for every command, so a `doctor` or `search` silently
+    // migrated the real DB and locked the installed release out of it.
+    #[test]
+    fn read_only_open_does_not_migrate_the_db() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        rusqlite::Connection::open(dir.path().join("emailops.db"))
+            .and_then(|c| c.execute_batch("CREATE TABLE pre_existing (x INTEGER);"))
+            .expect("seed db");
+
+        let db = open_db(dir.path().to_path_buf(), true).expect("open read-only");
+
+        let migrated: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'refinery_schema_history'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("query schema");
+        assert_eq!(migrated, 0, "a read-only open must not run migrations");
+    }
+
+    // The app runs the DB in WAL mode; once it closes, the -wal/-shm files are
+    // gone and a read-only open has to cope without them.
+    #[test]
+    fn read_only_open_reads_a_closed_migrated_db() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        {
+            let db = Database::new(dir.path().to_path_buf()).expect("create db");
+            db.set_preference("probe", "1").expect("write pref");
+        }
+
+        let db = open_db(dir.path().to_path_buf(), true).expect("open read-only");
+
+        assert_eq!(db.get_preference("probe").expect("read"), Some("1".into()));
+        assert!(db.set_preference("probe", "2").is_err(), "writes must be refused");
+    }
+
+    #[test]
+    fn read_only_open_of_a_missing_db_is_not_found() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = open_db(dir.path().to_path_buf(), true).err().expect("must fail");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+        assert!(
+            !dir.path().join("emailops.db").exists(),
+            "a read-only open must not create the DB"
+        );
     }
 
     #[test]
