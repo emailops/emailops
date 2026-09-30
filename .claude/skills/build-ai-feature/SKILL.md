@@ -66,19 +66,13 @@ file in one of these registries plus an eval case.
 | New chat tool the LLM can call (search, draft, recall, create…) | `Tool` trait impl + registry entry | new file in `src-tauri/src/services/chat/tools/`, registered in `tools/mod.rs` |
 | Route decision (RAG-first vs tools-first, intent → fast path) | pure heuristic / classifier planner | `src-tauri/src/services/chat/routing.rs` |
 | Prompt the user can edit (chat system, classify, memory, tasks) | `PromptDef` in the registry | `src-tauri/src/services/prompts/registry.rs` + `defaults.rs` |
-| Shortcut fast-path (fixed prompt → deterministic tool call, skipping the model) | shortcut definition + eval | `src-tauri/src/services/chat/` + `evals/shortcuts/`, cases in `private-evals/chat/shortcuts/` |
+| Shortcut fast-path (fixed prompt → deterministic tool call, skipping the model) | shortcut definition + eval | `src-tauri/src/services/chat/` + `src-tauri/src/evals/shortcuts/`; cases in `src-tauri/evals/chat/shortcuts/` (synthetic) or `private-evals/chat/shortcuts/` (private data) |
 | New classifier / extractor (classification, lens, memory, task, invoice) | pure prompt-assembly planner + executor + eval harness | `src-tauri/src/services/<area>/` + matching `examples/*_eval.rs` |
 | Retrieval / ranking change (FTS, hybrid, RRF) | planner in retrieval | `src-tauri/src/services/chat/retrieval.rs` |
-| Full user-facing AI feature (backend + command + settings UI) | command + service + eval + settings | see the draft-review vertical below |
+| Full user-facing AI feature (backend + command + settings UI) | command + service + eval + settings | see the note below |
 
-**Canonical full-vertical example — "Review with AI" (draft review).** A
-recent net-new AI feature touched every layer; read these together to see the
-shape an end-to-end feature takes here: `src-tauri/src/commands/review.rs`
-(thin command), `src-tauri/src/services/emails/review.rs` (service + planner),
-`src-tauri/src/evals/draft_review.rs` + `src-tauri/examples/draft_review_eval.rs`
-(eval), `src/components/Settings/AiReviewSettings.tsx` +
-`src/stores/featureToggleStore.ts` (UI toggle + gating),
-`private-evals/draft_review/cases.yaml` (private regression cases).
+For an end-to-end reference, pick a merged feature that has a command, a
+service, an eval and a Settings toggle, and follow its shape.
 
 **The user's example — "a planner that catches prompts that map to a simple
 tool call (search emails / contacts)"** — is a **route/planner** change in
@@ -280,10 +274,9 @@ TDD that, then the `Tool` trait impl is the thin executor.
   `MailProvider`, `Keychain`, `Logger`), never real clients.
 - **Feature gating** (user-facing): advertise `is_available(&db)` on a new tool
   so the registry hides it when the feature is off (the LLM never sees a tool
-  it can't use, and it doesn't tax the prompt budget). Add the toggle the way
-  the draft-review vertical does: a `featureToggleStore` entry + a Settings
-  panel like `AiReviewSettings.tsx`, persisted to **SQLite** (never
-  localStorage).
+  it can't use, and it doesn't tax the prompt budget). Add the toggle as a
+  `featureToggleStore` entry + a Settings panel, persisted to **SQLite**
+  (never localStorage).
 - **Logging:** emit `app-log` events for user-visible operations (levels
   info/success/error/debug, sources sync/embeddings/account/ai/system).
 - **i18n:** new user-facing strings get keys in all locales (`en`, `es`, `fr`,
@@ -301,7 +294,6 @@ run the matching eval **scoped to related cases**, not the full suite:
 | Chat / route / planner / tool | `chat_eval` (`make cli-eval ARGS="--case <id> --json"` or `cargo run --features eval --example chat_eval -- --case <id>`) |
 | Shortcut fast-path | `chat_shortcut_eval` |
 | Draft generation | `draft_eval` |
-| Draft review | `draft_review_eval` |
 | Classification (intent / topic / urgency) | `tag_classification_eval` (`make eval-classify`) |
 | Query planner (`chat.query_plan`) | `query_plan_eval` (`make eval-plan`) |
 | Lens / memory / task / invoice / agent-search | the matching `examples/*_eval.rs` |

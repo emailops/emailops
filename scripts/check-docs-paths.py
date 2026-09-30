@@ -30,13 +30,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWED_UNRESOLVED = {
     "docs/site/README.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
     "homebrew/README.md:../homebrew-tap/Casks/emailops.rb": "lives in the emailops/homebrew-tap repo",
-    # A worked example of adding a draft-review feature. The files are
-    # deliberately fictional; the skill teaches the shape, not these paths.
-    ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/commands/review.rs": "illustrative example",
-    ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/evals/draft_review.rs": "illustrative example",
-    ".claude/skills/build-ai-feature/SKILL.md:src-tauri/src/services/emails/review.rs": "illustrative example",
-    ".claude/skills/build-ai-feature/SKILL.md:src-tauri/examples/draft_review_eval.rs": "illustrative example",
-    ".claude/skills/build-ai-feature/SKILL.md:src/components/Settings/AiReviewSettings.tsx": "illustrative example",
 }
 
 # Source and config files only. Binary artefacts (png, icns, gguf) are

@@ -19,7 +19,7 @@ src-tauri/
 │   ├── ai/                # Ollama / llama.cpp integration
 │   ├── evals/             # Shared eval machinery (library)
 │   └── models/            # Data structures
-├── examples/              # Eval harnesses & ad-hoc tools — thin wrappers (~15 lines).
+├── examples/              # Eval harnesses & ad-hoc tools; shared machinery lives in src/evals/.
 │                          # Declared as Cargo `[[example]]` (not `[[bin]]`) so the
 │                          # tauri-bundler does NOT enumerate them. Invoke via
 │                          # `cargo run --features eval --example <name>`.
@@ -245,7 +245,7 @@ schema. Read it to understand the full table/index/trigger structure.
 ### Background Task Queue
 - **Heavy operations must never block the UI thread.** Any operation that touches Ollama, syncs email, or does large DB scans must run in a background task queue — never directly inside a Tauri command that the frontend awaits synchronously.
 - The pattern for user-triggered heavy work: return `Ok(())` immediately to the frontend, submit the task to the queue, and report progress/completion via `app-log` events. The frontend should show a loading indicator driven by those events, not by waiting on the command response.
-- Use separate queues for Ollama-dependent tasks (`ai_queue`, concurrency 2) vs. fast DB-only tasks (`db_queue`, concurrency 4) so a long AI job cannot starve lightweight operations.
+- Use separate queues for AI tasks (`ai_queue`, concurrency 1) vs. fast DB-only tasks (`db_queue`, concurrency 4) so a long AI job cannot starve lightweight operations.
 - Never use `let _ = sender.send(task)` — always handle the send error explicitly; log it and surface it in the output panel if the queue cannot accept the task.
 
 ### Backend Logging / Output Panel
@@ -267,8 +267,8 @@ These practices keep the codebase legible to both tests and AI agents. The same 
 ### Trait seams at every external boundary
 - Define a small trait at every I/O edge so the production type and a test fake are interchangeable. Inject the trait via `Arc<dyn …>` on `AppState`, never instantiate concrete clients inside services.
 - Required seams:
-  - `MailProvider` — Gmail / Outlook / IMAP / Fake (lives in `sync/provider.rs`)
-  - `AiProvider` — local llamacpp / Ollama / OpenRouter / Claude / Fake
+  - `EmailProvider` — Gmail / Outlook / IMAP / Fake (lives in `sync/provider.rs`)
+  - `AIProvider` — embedded llama.cpp / Ollama / OpenRouter / Fake (lives in `ai/provider.rs`)
   - `Clock` — never call `SystemTime::now()` or `chrono::Utc::now()` directly inside services; take a `&dyn Clock`
   - `Keychain` — wrap the `keyring` crate; tests use an in-memory keychain
   - `Logger` — abstracts `app.emit("app-log", …)`; tests use a `VecLogger` that records events
@@ -280,9 +280,7 @@ These practices keep the codebase legible to both tests and AI agents. The same 
 - If a function returns `Result<T, _>` and also calls the network or the DB, look for the planner that should be extracted from it.
 
 ### `AppState` is constructible from parts
-- `AppState` holds `Arc<dyn …>` for every trait above plus `Arc<Database>` and `Arc<TaskQueue>`. Provide two constructors:
-  - `AppState::for_production(cfg: &Config) -> Result<Self>` — wires real implementations
-  - `AppState::for_testing() -> Self` — wires fakes (in-memory DB via migrations, fake clock at a fixed instant, no-op keychain, VecLogger)
+- `AppState` wraps an `AppCore` that holds the trait objects, the `Database` and the task queues. `AppState::for_testing(db)` (and `AppCore::for_testing(db)`) wires fakes around a test DB.
 - This makes Tauri command tests possible, not just service tests.
 
 ### One source of truth for the test database
@@ -293,13 +291,12 @@ These practices keep the codebase legible to both tests and AI agents. The same 
 - `services/` and `db/` return their typed error enums. Do **not** call `.map_err(|e| e.to_string())` inside services — keep the structured error so tests can match on variants.
 - Only `commands/` performs the final `.map_err(|e| e.to_string())` at the Tauri boundary.
 
-### Background queue uses a typed Task enum, not closures
-- The task queue accepts an `enum Task { GenerateDraft { email_id }, ExtractLens { lens_id, email_id }, SyncAccount { account_id }, … }`, not `Box<dyn FnOnce()>`.
-- Tests assert which tasks were enqueued. Agents see the full menu of background work in one place.
-- Keep separate `ai_queue` (concurrency 2) and `db_queue` (concurrency 4) — see Background Task Queue guardrails.
+### Background queue tasks are named
+- Submit work with `TaskQueue::submit_named` / `submit_priority` and a stable name, so logs and tests can tell which task ran.
+- Keep separate `ai_queue` (concurrency 1) and `db_queue` (concurrency 4) — see Background Task Queue guardrails.
 
 ### Evals are a library, not 16 binaries
-- Shared eval machinery lives in `src-tauri/src/evals/` (report schema, judge harness, sampling, CLI flags, prod-DB connection). Each `examples/*_eval.rs` is a thin (~15 line) wrapper that configures + runs. Evals are Cargo `[[example]]` (not `[[bin]]`) so the tauri-bundler does not try to copy them into the packaged `.app`.
+- Shared eval machinery lives in `src-tauri/src/evals/` (report schema, judge harness, sampling, CLI flags, prod-DB connection). Each `examples/*_eval.rs` configures and runs a harness; keep reusable logic in `src/evals/`. Evals are Cargo `[[example]]` (not `[[bin]]`) so the tauri-bundler does not try to copy them into the packaged `.app`.
 - All eval reports share one JSON schema: `{ run_id, eval_name, model, timestamp, total, succeeded, failed, judge_scores, per_item_results }`.
 - LLM-as-judge prompts are calibrated against ~30 human labels before their scores are trusted in dashboards.
 
@@ -336,7 +333,7 @@ Keep iterative Rust compile times fast and `src-tauri/target/` from ballooning.
 - **`crate-type = ["lib", "cdylib"]`** — `staticlib` was removed because it added a ~590 MB archive to every desktop relink. If iOS/Android Tauri builds ever land, restore `staticlib` only for those targets.
 - **Watch for target/ bloat.** Healthy is ~5–15 GB on macOS for this project. If `du -sh src-tauri/target` exceeds ~30 GB, run `make clean`. Common bloat sources: stale per-feature artifacts (`llamacpp` on/off, `eval` on/off), abandoned `aarch64-apple-darwin/` or `universal-apple-darwin/` mac-release dirs, and the `doc/` output. Periodically inspect with `du -sh src-tauri/target/* | sort -rh`.
 - **`src-tauri/target` may be a symlink** into `/Volumes/Build` (an APFS volume excluded from Time Machine; `scripts/build_target.sh`, linked on checkout by lefthook or `make link-target`). Free space with `make clean`, never a bare `cargo clean`: on a symlinked target that deletes only the link, leaves every byte on the volume, and the next build recreates a real `target/` in the checkout.
-- **Don't add new binaries to `src-tauri/[[bin]]` without thinking.** Each binary relinks on every change to `services/` and contributes ~50–70 MB to `target/debug/`. Prefer extending an existing eval bin or graduating eval machinery into a shared library (see "Evals are a library, not 16 binaries" above). If you must add one, gate it behind a feature so it doesn't compile by default.
+- **Don't add new binaries to `src-tauri/[[bin]]` without thinking.** Each binary relinks on every change to `services/` and contributes ~50–70 MB to `target/debug/`. Prefer a Cargo `[[example]]`, extending an existing one, or graduating eval machinery into `src/evals/` (see "Evals are a library, not 16 binaries" above). If you must add one, gate it behind a feature so it doesn't compile by default.
 - **Don't introduce wide `tokio` / `reqwest` / `serde` feature surfaces** when a narrow one will do. Audit `Cargo.toml` features when adding deps — `features = ["full"]` on tokio drags in everything; pick what you need.
 
 ## Lessons Learned
@@ -359,8 +356,8 @@ Keep iterative Rust compile times fast and `src-tauri/target/` from ballooning.
 - Filter out already-existing emails before the download loop, not inside it. Show "Inbox up to date" immediately when nothing is new — don't make the user watch a "checking" progress bar.
 - Progress messages should describe what's actually happening ("Downloading 3 new emails") not internal mechanics ("Found 500 emails to check").
 
-### AI / Ollama Integration
-- Never hardcode model names. Users have different models installed. Query `/api/tags` for available models and let the user pick. Store the preference in the DB.
+### AI model selection
+- Never hardcode a model name in feature code. The embedded runtime picks from the catalog (`ai/model_catalog.rs`); Ollama and OpenRouter list what the user has. Store the user's choice in the DB.
 
 ### User Preferences
 - Store preferences in SQLite (`user_preferences` key-value table), not localStorage. The app is a desktop app — localStorage ties to webview state which can be cleared.

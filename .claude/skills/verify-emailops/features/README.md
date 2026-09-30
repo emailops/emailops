@@ -66,4 +66,4 @@ that says `n/a` and why.
 - [Contacts and Dashboard](./contacts-dashboard.md) — the two views.
 - [Settings, language and updates](./settings.md) — dialog, tabs, Escape.
 - [CLI and agents](./cli.md) — envelope, read-only open, exit codes (no window).
-- [Chat skills](./skills.md) — toggle, view, editor, `/` suggestions.
+- [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.

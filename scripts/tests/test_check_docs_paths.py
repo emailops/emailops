@@ -36,12 +36,18 @@ def test_a_gitignored_dotfile_gets_the_same_verdict_whether_or_not_it_exists(tmp
     # the developer's main checkout, absent in CI and in fresh worktrees. An
     # allowlist entry for it went "stale" wherever the file existed, so the
     # pre-commit hook failed in one checkout and passed in the next.
+    import os
     import subprocess
 
     root = tmp_path / "repo"
     (root / "docs").mkdir(parents=True)
     (root / ".gitignore").write_text(".claude/settings.local.json\n")
     (root / "docs" / "guide.md").write_text("Allow the command in `.claude/settings.local.json`.\n")
+    # A pre-commit hook exports GIT_INDEX_FILE / GIT_DIR for the real checkout;
+    # inherited, `git add` here would overwrite that index with this fixture
+    # and the checker would list the real repo's files under this root.
+    for name in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(name)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     monkeypatch.setattr(check_docs_paths, "ROOT", root)

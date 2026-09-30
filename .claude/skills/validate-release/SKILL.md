@@ -24,15 +24,20 @@ Don't silently retry a failed step more than twice — stop and report instead.
 ## Phase 0 — Resolve platform(s) and artifact
 
 Parse the argument: `linux`, `windows` (Vulkan path — the shipped default),
-`windows-cuda` (from-source CUDA build — see Phase W-CUDA below), `macos`, or
+`windows-cuda` (the CI-built CUDA installer — see Phase W-CUDA below), `macos`, or
 `all` (runs linux + windows in sequence; `windows-cuda` and `macos` are opt-in
-only, since they're respectively a 1-2 hr from-source build and a
+only, since they're respectively an extra GPU-VM session and a
 not-yet-automated path — never run them under `all` without being asked).
 
 ```bash
 RUN_ID="${2:-$(gh run list --workflow=release.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')}"
 gh run view "$RUN_ID" --json headSha,displayTitle
 ```
+
+Only `dry_run` runs upload the `emailops-*-dry-run` workflow artifacts; a real
+release run attaches its installers to the GitHub Release instead, so take
+them from there (`gh release download`, or the
+`releases/latest/download/<asset>` URL).
 
 Create the evidence directory for this run:
 `<scratchpad>/release-validation/<platform>-<date>/` (see
@@ -65,14 +70,15 @@ SKU. Confirming that (again) is a pass for this phase, not a failure — see
 `docs/RELEASE-TEST-PLAN.md`'s pass/fail criteria. Only run Phase W-CUDA below
 if you specifically need GPU offload confirmed.
 
-## Phase W-CUDA — Windows (CUDA, from source — expensive, ask first)
+## Phase W-CUDA — Windows (CUDA — ask first)
 
-**This is a 1-2 hr from-source build on the GPU VM, not an artifact
-install.** Confirm with the user before starting (VM billing + build time).
-The Vulkan-path CI artifact does not exist for CUDA — there's no
-`release.yml` CUDA leg — so this phase builds it locally on the VM, which
-already has the right driver/TCC mode for CUDA to actually work where Vulkan
-can't.
+Installs the CI-built `EmailOps-windows-cuda.msi` (the `release-windows-cuda`
+job in `release.yml`) on the GPU VM, following Phase W's install and test
+steps. The VM's TCC mode suits CUDA even though it blocks Vulkan. Confirm with
+the user before starting (VM billing).
+
+Build from source on the VM only when testing a change CI has not built yet
+(1-2 hr, ask first), with the steps below:
 
 ```bash
 bash scripts/testvm.sh status
@@ -110,20 +116,18 @@ make testvm-windows   # or testvm-start if it already exists, stopped
    the VM, no `.git` history, no local build artifacts along for the ride.
 3. **Build**: `DYNAMIC_BACKENDS=1 CARGO_FEATURES=cuda scripts/build_platform.sh
    windows`, run via Git for Windows' `bash.exe` (the Makefile needs a POSIX
-   shell). Expect this to surface *new* failures — nobody has built this
-   feature combination before. Don't assume the existing Vulkan-specific
+   shell). Don't assume the existing Vulkan-specific
    `/FS`/Ninja workarounds in `build_platform.sh` apply; let it fail on its
    own terms first.
 4. **Verify + install**: `scripts/verify_platform.sh windows`, then the VC++
    Redistributable + `.msi` install as in Phase W.
 5. **Test**: RDP session (Phase W's Docker/FreeRDP technique), send a
    message, poll `nvidia-smi`. Non-zero GPU utilization + tok/s well above
-   the 3.2 tok/s CPU baseline confirms real CUDA offload — the first time
-   this repo will have proven GPU offload on Windows at all.
+   the 3.2 tok/s CPU baseline confirms real CUDA offload.
 6. Append the result to `docs/TEST-VMS.md`'s verified-baseline table
    (pass or fail — a failure here is real information, not something to
-   hide) — this is a factual runbook update, do it regardless of Phase 8's
-   commit/push decision.
+   hide) — this is a factual runbook update, do it regardless of whether the run
+   passed.
 
 ## Phase M — macOS (proposed path, not yet automated)
 
