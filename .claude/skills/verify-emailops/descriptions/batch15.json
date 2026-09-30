@@ -7,7 +7,14 @@
     "src-tauri/src/services/chat/research/control.rs::an_earlier_estimate_survives_a_later_one_being_stored": "Guardar una nueva estimación de investigación no borra otra anterior que sigue vigente.",
     "src-tauri/src/services/chat/research/control.rs::every_registered_run_counts": "Cada investigación registrada cuenta como en marcha.",
     "src-tauri/src/services/chat/research/control.rs::confirming_the_exit_lets_it_through_while_research_runs": "Si el usuario confirma «salir igualmente», la app se cierra aunque haya una investigación en marcha.",
-    "src-tauri/src/services/chat/research/mode.rs::the_list_answer_is_written_in_each_supported_language": "La respuesta de lista/recuento de una investigación se escribe entera en español, francés o alemán según el idioma del usuario: con coincidencias, sin ellas y con lotes fallidos."
+    "src-tauri/src/services/chat/research/mode.rs::the_list_answer_is_written_in_each_supported_language": "La respuesta de lista/recuento de una investigación se escribe entera en español, francés o alemán según el idioma del usuario: con coincidencias, sin ellas y con lotes fallidos.",
+    "src-tauri/src/services/chat/research/plan.rs::a_small_window_sizes_its_batches_from_what_is_left": "Con una ventana pequeña (4096 tokens), cada lote de investigación lleva lo que queda tras prompt, respuesta y margen: 5820 caracteres, tres correos.",
+    "src-tauri/src/services/chat/research/plan.rs::the_notes_get_what_the_reduce_prompt_leaves_with_a_floor": "Las notas del paso de síntesis reciben lo que deja la ventana tras prompt, informe y margen, con un mínimo de 256 tokens en ventanas muy pequeñas.",
+    "src-tauri/src/services/chat/research/plan.rs::a_short_reduce_prompt_leaves_the_rest_of_the_window_to_the_report": "Con un prompt de síntesis corto, el informe puede usar el resto de la ventana (dentro de sus límites).",
+    "src-tauri/src/services/chat/research/plan.rs::any_who_or_subject_filter_drops_a_meaning_query": "Un filtro por destinatario, interlocutor o asunto, como el de remitente, quita la consulta por significado del filtro de la investigación.",
+    "src-tauri/src/services/chat/research/plan.rs::a_recipient_filter_on_the_user_searches_every_address_the_user_receives_at": "Si la investigación filtra por destinatario = el usuario, se busca en cada una de sus direcciones.",
+    "src-tauri/src/services/chat/research/plan.rs::an_oversized_first_item_does_not_leave_an_empty_batch_before_it": "Un primer correo más largo que el presupuesto va en su propio lote sin dejar un lote vacío delante.",
+    "src-tauri/src/services/chat/research/plan.rs::items_that_exactly_fill_the_budget_share_a_batch": "Correos que llenan exactamente el presupuesto de caracteres comparten lote."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
