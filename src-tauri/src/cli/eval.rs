@@ -473,6 +473,7 @@ pub async fn run_eval(
     _cases_dir: Option<std::path::PathBuf>,
     _judge: bool,
     _judge_model: Option<String>,
+    _n_ctx: Option<u32>,
 ) -> Result<()> {
     Err(crate::models::error::AppError::InvalidInput(
         "the `eval` subcommand requires the 'eval' feature — rebuild with: \

@@ -96,6 +96,12 @@ jobs:
       - name: Check
         run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
 
+      # `make cli-fast` builds the CLI without `eval`, which compiles the
+      # `cli/eval.rs` stub instead of the harness; no other step builds it, so
+      # a signature change that skipped the stub reached main (v0.6.13).
+      - name: Check (cli without eval)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features cli --bin emailops-cli
+
   test:
     name: Tests
     runs-on: ubuntu-latest
