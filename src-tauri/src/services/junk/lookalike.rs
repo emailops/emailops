@@ -502,6 +502,14 @@ mod tests {
         assert_eq!(edit_distance("abcdef", "abcdfe"), 1);
     }
 
+    // Short brands match tighter: at distance 2 almost every four-letter word
+    // is "close" to every other.
+    #[test]
+    fn the_edit_budget_grows_with_the_brand_length() {
+        let budgets: Vec<usize> = [1, 4, 5, 8, 9, 20].iter().map(|n| distance_budget(*n)).collect();
+        assert_eq!(budgets, vec![1, 1, 2, 2, 3, 3]);
+    }
+
     #[test]
     fn a_domain_with_any_punycode_label_is_punycode() {
         assert!(is_punycode("xn--acme-9db.example"));

@@ -165,3 +165,25 @@ pub fn materialize(db: &Arc<Database>, ctx: &AccountContext, email_id: &str) -> 
         sender_email: email.sender_email,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The base rates are configuration: a valid probability from the
+    // preferences replaces the default, anything else keeps it.
+    #[test]
+    fn a_configured_prior_replaces_the_default_only_when_it_is_a_probability() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acct");
+        let ctx = AccountContext::load(&db, "acct").unwrap();
+        assert_eq!(ctx.spam_prior, DEFAULT_SPAM_PRIOR);
+        assert_eq!(ctx.graymail_prior, DEFAULT_GRAYMAIL_PRIOR);
+
+        db.set_preference("junk_spam_prior", "0.05").unwrap();
+        db.set_preference("junk_graymail_prior", "1.5").unwrap();
+        let ctx = AccountContext::load(&db, "acct").unwrap();
+        assert_eq!(ctx.spam_prior, 0.05);
+        assert_eq!(ctx.graymail_prior, DEFAULT_GRAYMAIL_PRIOR, "out of range: default kept");
+    }
+}
