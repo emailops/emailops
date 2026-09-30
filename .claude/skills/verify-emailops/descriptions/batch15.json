@@ -33,7 +33,8 @@
     "src-tauri/src/sync/outlook_upload.rs::content_is_empty_only_when_it_decodes_to_no_bytes": "Un adjunto en base64 cuenta como vacío solo si no decodifica ningún byte (los saltos de línea no cuentan).",
     "src-tauri/src/services/emails/history_refresh.rs::a_label_change_that_leaves_a_sent_message_in_sent_moves_nothing": "Un cambio de etiquetas en Gmail que deja un correo enviado en Enviados no lo mueve de buzón.",
     "src-tauri/src/services/emails/history_refresh.rs::the_history_cursor_is_kept_per_account": "El cursor del historial de cambios de Gmail se guarda por cuenta.",
-    "src-tauri/src/services/emails/mailbox_state.rs::delete_on_an_account_without_mailbox_writes_stays_local": "Borrar un correo de una cuenta cuyo proveedor no admite cambios en el servidor lo borra en local sin intentar conectar con el proveedor."
+    "src-tauri/src/services/emails/mailbox_state.rs::delete_on_an_account_without_mailbox_writes_stays_local": "Borrar un correo de una cuenta cuyo proveedor no admite cambios en el servidor lo borra en local sin intentar conectar con el proveedor.",
+    "src-tauri/src/db/emails/mailbox_state.rs::stored_states_carry_each_rows_read_and_sent_flags": "El estado guardado que se compara con el proveedor lleva bien los indicadores de leído y enviado de cada fila."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",

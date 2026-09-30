@@ -371,6 +371,27 @@ mod tests {
     }
 
     #[test]
+    fn stored_states_carry_each_rows_read_and_sent_flags() {
+        let db = db_with(&["read-sent", "unread-received"]);
+        db.connection()
+            .execute_batch(
+                "UPDATE emails SET is_read = 1, is_sent = 1 WHERE id = 'read-sent';
+                 UPDATE emails SET is_read = 0, is_sent = 0 WHERE id = 'unread-received';",
+            )
+            .unwrap();
+        let ids = vec!["read-sent".to_string(), "unread-received".to_string()];
+
+        let mut rows = db.stored_states_for_ids("acc-1", &ids).unwrap();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let flags: Vec<(&str, bool, bool)> = rows.iter().map(|r| (r.id.as_str(), r.is_read, r.is_sent)).collect();
+        assert_eq!(
+            flags,
+            vec![("read-sent", true, true), ("unread-received", false, false)]
+        );
+    }
+
+    #[test]
     fn stored_states_for_ids_handles_more_ids_than_one_statement_binds() {
         let db = Database::new_for_testing().unwrap();
         let ids: Vec<String> = (0..1_000).map(|i| format!("m-{i:04}")).collect();
