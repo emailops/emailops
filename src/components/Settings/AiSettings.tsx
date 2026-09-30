@@ -618,6 +618,7 @@ export function AiSettings() {
               onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
               keepAliveMinutes={keepAliveMinutes}
               onKeepAliveChange={setKeepAliveMinutes}
+              showKeepAlive={config.provider !== 'openrouter'}
               aiMaxEmailCount={aiMaxEmailCount}
               onMaxEmailCountChange={setAiMaxEmailCount}
               aiMaxEmailAgeDays={aiMaxEmailAgeDays}
