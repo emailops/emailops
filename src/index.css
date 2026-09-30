@@ -79,6 +79,24 @@ body {
 .ProseMirror p {
   margin: 0.25rem 0;
 }
+/* Tables in the composer. Preflight collapses every table and zeroes every
+ * border, so a table written elsewhere would show as loose text. `separate`
+ * restores the browser default (the table's own inline style still wins),
+ * and cells get an outline, which marks them without changing the layout or
+ * covering a border the message really has. */
+.ProseMirror table {
+  border-collapse: separate;
+  max-width: 100%;
+}
+.ProseMirror td,
+.ProseMirror th {
+  outline: 1px dashed #d1d5db;
+  outline-offset: -1px;
+  min-width: 1.5rem;
+}
+.ProseMirror .selectedCell {
+  background-color: #e0f2fe;
+}
 /* Empty-editor placeholder. Tiptap doesn't ship one in StarterKit; we use a
  * data-placeholder attribute set on the editor host and CSS to surface it
  * only when the editor is empty. */

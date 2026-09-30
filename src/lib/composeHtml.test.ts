@@ -63,6 +63,13 @@ describe('prepareOutgoingHtml', () => {
 });
 
 describe('htmlToPlainText', () => {
+  it('renders a table as one line per row', () => {
+    const table =
+      '<p>Costs:</p><table><tbody><tr><th><p>Item</p></th><th><p>Cost</p></th></tr>' +
+      '<tr><td><p>Hosting</p></td><td><p>120 EUR</p></td></tr></tbody></table><p>Thanks</p>';
+    expect(htmlToPlainText(table)).toBe('Costs:\nItem | Cost\nHosting | 120 EUR\nThanks');
+  });
+
   it('replaces <br> with a single newline', () => {
     expect(htmlToPlainText('one<br>two')).toBe('one\ntwo');
   });
