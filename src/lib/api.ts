@@ -819,8 +819,17 @@ export async function applyRuleRetroactively(ruleId: string, accountId: string, 
   return invoke('apply_rule_retroactively', { ruleId, accountId, runId });
 }
 
-export async function openAttachmentExternally(accountId: string, attachmentId: string): Promise<void> {
-  return invoke('open_attachment_externally', { accountId, attachmentId });
+/**
+ * Open a collected attachment with the OS default app. A type that can run
+ * code is refused with `attachment_confirmation_required` until `confirmed`,
+ * which only `useOpenAttachment` sets, after its dialog.
+ */
+export async function openAttachmentExternally(
+  accountId: string,
+  attachmentId: string,
+  confirmed: boolean,
+): Promise<void> {
+  return invoke('open_attachment_externally', { accountId, attachmentId, confirmed });
 }
 
 export async function getEmailAttachmentMetas(accountId: string, emailId: string): Promise<EmailAttachmentMeta[]> {
@@ -836,9 +845,9 @@ export async function fetchEmailAttachmentBytes(
   return invoke('fetch_email_attachment_bytes', { accountId, emailId, providerAttachmentId });
 }
 
-/** Open a locally-cached email attachment with the OS default app. */
-export async function openEmailAttachmentMeta(accountId: string, metaId: string): Promise<void> {
-  return invoke('open_email_attachment_meta', { accountId, metaId });
+/** Open a locally-cached email attachment with the OS default app; `confirmed` as in `openAttachmentExternally`. */
+export async function openEmailAttachmentMeta(accountId: string, metaId: string, confirmed: boolean): Promise<void> {
+  return invoke('open_email_attachment_meta', { accountId, metaId, confirmed });
 }
 
 /** Save base64 attachment bytes into ~/Downloads; returns the saved file path. */

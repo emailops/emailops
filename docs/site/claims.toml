@@ -1065,6 +1065,13 @@ checks = [
   { manual = 'The frontend (DOMPurify) half of the sanitising is not exercised by a named test here.' },
 ]
 
+[priv-protection-from-6]
+checks = [
+  { tests = ['services::attachment_safety::tests::quarantine_writes_the_attribute_macos_reads_back', 'services::attachments::tests::an_attachment_collected_by_a_rule_is_quarantined', 'services::attachments::tests::an_auto_downloaded_attachment_is_quarantined', 'services::attachments::tests::a_file_saved_to_downloads_is_quarantined'], covers = ["every attachment EmailOps saves to disk is marked as received from outside (the quarantine flag on macOS, the Mark-of-the-Web on Windows)"] },
+  { tests = ['services::attachment_safety::tests::a_dangerous_attachment_is_refused_without_confirmation', 'services::attachment_safety::tests::classifies_types_that_act_when_opened'], covers = ["Opening an attachment that can run code — a program, a script, an installer, a shortcut or a local web page — asks for your confirmation first, naming the file."] },
+  { manual = 'The tests run on macOS only, so the Windows mark is not exercised; and the first-open prompt belongs to the operating system, which the docs check cannot drive.', covers = ["so the system's own checks apply the first time it is opened."] },
+]
+
 [priv-locking-app-1]
 checks = [
   { app = true },

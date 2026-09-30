@@ -107,5 +107,20 @@
   "download": {
     "savedTo": "Saved \"{{filename}}\" to Downloads",
     "showInFinder": "Show in Finder"
+  },
+  "openConfirm": {
+    "title": "Open this attachment?",
+    "fromEmail": "“{{filename}}” arrived as an email attachment.",
+    "kinds": {
+      "program": "It is a program: opening it runs it on this computer.",
+      "script": "It is a script: opening it can run commands on this computer.",
+      "installer": "It is an installer or a disk image: opening it can install software.",
+      "shortcut": "It is a shortcut: opening it can launch another file, app or address.",
+      "web_page": "It is a web page: it opens in your browser, outside the protections EmailOps applies to email content.",
+      "other": "It is a type of file that can run code when opened."
+    },
+    "advice": "Open it only if you trust the sender and were expecting this file.",
+    "open": "Open anyway",
+    "failed": "Could not open “{{filename}}”: {{error}}"
   }
 }

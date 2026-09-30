@@ -2427,3 +2427,33 @@ quick selector had to be disabled for nearly every switch to stay safe, and it w
 path that left an OpenRouter embedding model under the in-app provider.
 **Rejected:** *Keeping the selector with most options disabled* — a control that almost
 never works is worse than none.
+
+## 2026-09-30 — Attachments are quarantined one by one; dangerous types need confirmation
+
+**Decision:** Every attachment file the app writes (rule collection, auto-download, save to
+Downloads, bulk download) is marked as received from outside — `com.apple.quarantine` on
+macOS (`0081;<hex time>;EmailOps;<uuid>`), the `Zone.Identifier` stream on Windows, nothing on
+Linux — and "open in the default app" marks the file again before the hand-off, which also
+covers files stored before this. Types whose default action runs code or opens another
+location (one extension table in `services/attachment_safety.rs`, plus the declared MIME type)
+are opened only after a dialog that names the file, its kind and that it came by email; the
+backend enforces it with a `confirmed` argument and refuses with
+`attachment_confirmation_required` otherwise.
+- **When the mark cannot be written:** a save still succeeds and the failure is logged; an
+  open is refused with the error, for every type — the OS would launch the file unchecked.
+- **Reveal:** "Show in Finder" selects, never opens. A directory with a launchable name (an
+  app bundle) is selected in its folder instead of opened.
+**Context:** A security review found attachments stored under the sender's extension and
+handed to `open::that` with no quarantine attribute and no type check, so a `.terminal`,
+`.fileloc`, `.jar`, `.command` or local `.html` launched without the first-open prompt
+Mail.app would show.
+**Rejected:**
+- *`LSFileQuarantineEnabled` for the whole app*: it quarantines every file the app creates —
+  the database, models, exports, skills — not only what a sender controls.
+- *Refusing dangerous types outright*: people do receive installers and scripts they asked
+  for; the OS check plus an explicit confirmation is the Mail.app behaviour.
+- *Classifying in the frontend*: a second copy of the list, and a direct IPC call would
+  bypass it.
+- *Treating documents with a risky reader (PDF, Office macros, archives) as dangerous*: they
+  do not act on open by themselves; the quarantine mark lets their own apps apply Protected
+  View and similar.

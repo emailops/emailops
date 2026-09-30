@@ -56,6 +56,7 @@
     "io": "Error de archivo: {{detail}}",
     "budget_exceeded": "Presupuesto de IA superado: {{detail}}",
     "cancelled": "Cancelado.",
+    "attachment_confirmation_required": "«{{filename}}» necesita tu confirmación antes de abrirse.",
     "skill_no_frontmatter": "SKILL.md debe empezar con un bloque --- que contenga name y description.",
     "skill_unclosed_frontmatter": "El bloque de cabecera no se cierra con ---.",
     "skill_fence_not_on_own_line": "El --- que cierra la cabecera debe ir en su propia línea.",

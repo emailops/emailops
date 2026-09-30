@@ -292,10 +292,7 @@ pub async fn bulk_download_attachments(
         // `RuleName_original.pdf`, sanitized to one path component, then
         // deduped with (1), (2), etc.
         let download_name = services::attachments::bulk_download_name(Some(&rule_name), &attachment.filename);
-        let dest = services::attachments::unique_download_path(&downloads_dir, &download_name);
-
-        std::fs::copy(&src, &dest)
-            .map_err(|e| AppError::IoError(format!("Failed to copy {}: {}", download_name, e)))?;
+        services::attachments::copy_attachment_to_downloads(&src, &downloads_dir, &download_name)?;
         copied += 1;
     }
 
@@ -392,15 +389,26 @@ pub async fn get_attachment_data(
     Ok(b64)
 }
 
+/// Open a rule-collected attachment with the OS default application.
+/// `confirmed` is set by the frontend only after the user accepted the
+/// dangerous-type dialog; without it such a file is refused with
+/// `attachment_confirmation_required`.
 #[tauri::command]
 pub async fn open_attachment_externally(
     state: State<'_, AppState>,
     account_id: String,
     attachment_id: String,
+    confirmed: bool,
 ) -> Result<(), AppError> {
     let attachment = ensure_attachment_in_account(&state.db, &account_id, &attachment_id)?;
     let abs_path = services::attachments::safe_attachment_path(&state.app_data_dir, &attachment.file_path)?;
-    open::that(&abs_path).map_err(|e| AppError::IoError(format!("Failed to open file: {}", e)))
+    services::attachment_safety::open_attachment_file(
+        &abs_path,
+        &attachment.filename,
+        Some(&attachment.mime_type),
+        confirmed,
+        &|path| open::that(path),
+    )
 }
 
 /// Return all attachment metadata for an email (including non-rule-matched attachments).
@@ -473,17 +481,25 @@ pub async fn fetch_email_attachment_bytes(
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
-/// Open a locally-cached attachment by its meta ID using the OS default application.
+/// Open a locally-cached attachment by its meta ID using the OS default
+/// application. `confirmed` as in [`open_attachment_externally`].
 #[tauri::command]
 pub async fn open_email_attachment_meta(
     state: State<'_, AppState>,
     account_id: String,
     meta_id: String,
+    confirmed: bool,
 ) -> Result<(), AppError> {
     let meta = ensure_meta_in_account(&state.db, &account_id, &meta_id)?;
     let file_path = meta
         .file_path
         .ok_or_else(|| AppError::InvalidInput("Attachment has not been downloaded yet".to_string()))?;
     let abs_path = services::attachments::safe_attachment_path(&state.app_data_dir, &file_path)?;
-    open::that(&abs_path).map_err(|e| AppError::IoError(format!("Failed to open file: {}", e)))
+    services::attachment_safety::open_attachment_file(
+        &abs_path,
+        &meta.filename,
+        Some(&meta.mime_type),
+        confirmed,
+        &|path| open::that(path),
+    )
 }

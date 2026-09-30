@@ -107,5 +107,20 @@
   "download": {
     "savedTo": "\"{{filename}}\" in Downloads gespeichert",
     "showInFinder": "Im Finder zeigen"
+  },
+  "openConfirm": {
+    "title": "Diesen Anhang öffnen?",
+    "fromEmail": "„{{filename}}“ kam als E-Mail-Anhang.",
+    "kinds": {
+      "program": "Es ist ein Programm: Beim Öffnen wird es auf diesem Computer ausgeführt.",
+      "script": "Es ist ein Skript: Beim Öffnen kann es Befehle auf diesem Computer ausführen.",
+      "installer": "Es ist ein Installationsprogramm oder ein Disk-Image: Beim Öffnen kann Software installiert werden.",
+      "shortcut": "Es ist eine Verknüpfung: Beim Öffnen kann eine andere Datei, App oder Adresse gestartet werden.",
+      "web_page": "Es ist eine Webseite: Sie wird im Browser geöffnet, außerhalb der Schutzmaßnahmen, die EmailOps auf E-Mail-Inhalte anwendet.",
+      "other": "Es ist ein Dateityp, der beim Öffnen Code ausführen kann."
+    },
+    "advice": "Öffnen Sie ihn nur, wenn Sie dem Absender vertrauen und diese Datei erwartet haben.",
+    "open": "Trotzdem öffnen",
+    "failed": "„{{filename}}“ konnte nicht geöffnet werden: {{error}}"
   }
 }
