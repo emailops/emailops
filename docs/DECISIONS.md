@@ -2415,3 +2415,15 @@ everything. Nothing told the user.
 completes (one email, at most six chunk requests for Embeddings). A single-row Lens
 re-extract has no loop and finishes its one call. A task queued in the instant between
 the last poll and the save starts with the old settings for one batch.
+
+## 2026-09-30 — The AI backend is changed only in Settings
+
+**Decision:** The status bar of the Logs panel no longer has a backend selector. It names
+the backend in use and keeps the chat-model selector of that backend; the backend is
+changed in Settings → AI only.
+**Context:** A backend change can replace the Embeddings, needs a provider-valid chat and
+embedding model and may cut across running AI work. Settings asks about all three; the
+quick selector had to be disabled for nearly every switch to stay safe, and it was the
+path that left an OpenRouter embedding model under the in-app provider.
+**Rejected:** *Keeping the selector with most options disabled* — a control that almost
+never works is worse than none.

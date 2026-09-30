@@ -46,7 +46,6 @@
     "aiBackend": "KI-Backend",
     "aiModel": "KI-Modell",
     "aiSettings": "KI-Einstellungen",
-    "switchInSettings": "{{backend}} — in den KI-Einstellungen wechseln",
     "clearLogs": "Protokolle löschen",
     "minimizePanel": "Panel minimieren",
     "expandPanel": "Panel erweitern",

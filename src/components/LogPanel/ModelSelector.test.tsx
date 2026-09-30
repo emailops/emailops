@@ -1,7 +1,6 @@
-// The log panel's quick AI-backend switcher must follow the same rules as the
-// Settings pickers: Embedded is unavailable where the runtime cannot run, the
-// switch goes through setAiConfig (provider + model saved together), and a
-// failed switch puts the previous backend back on screen.
+// The log panel shows which AI backend is in use and lets the user pick the
+// chat model of that backend. Changing the backend itself happens only in AI
+// Settings, where the Embeddings warning and the provider checks live.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -98,102 +97,28 @@ async function mount() {
   });
 }
 
-const option = (value: string) =>
-  container.querySelector<HTMLButtonElement>(`[data-select="dashboard:log.aiBackend"] [data-option="${value}"]`);
-const backend = () => container.querySelector('[data-select="dashboard:log.aiBackend"]')?.getAttribute('data-value');
+const backendSelect = () => container.querySelector('[data-select="dashboard:log.aiBackend"]');
+const backendLabel = () => container.querySelector('[data-testid="ai-backend"]')?.textContent;
 
 describe('LogPanel ModelSelector', () => {
-  it('disables Embedded where the embedded runtime is unavailable', async () => {
-    vi.mocked(api.detectAiCapability).mockResolvedValue({ embeddedAiAvailable: false } as never);
+  it('names the backend in use without offering to change it', async () => {
     await mount();
-    expect(option('llamacpp')?.disabled).toBe(true);
-    expect(option('ollama')?.disabled).toBe(false);
+
+    expect(backendSelect()).toBeNull();
+    expect(backendLabel()).toBe('Ollama');
+    expect(container.querySelector('[data-select="dashboard:log.aiModel"]')).not.toBeNull();
   });
 
-  it('saves provider and model through setAiConfig, keeping the other settings', async () => {
-    await mount();
-    await act(async () => option('llamacpp')?.click());
-
-    expect(api.setAiConfig).toHaveBeenCalledWith('llamacpp', 'qwen-local', 'embed-small', null, 5, true);
-    expect(api.setPref).not.toHaveBeenCalledWith('ai_provider', expect.anything());
-  });
-
-  it('rolls back to the previous backend when the switch fails', async () => {
-    vi.mocked(api.setAiConfig).mockRejectedValueOnce(new Error('disk full'));
-    await mount();
-    await act(async () => option('llamacpp')?.click());
-
-    expect(backend()).toBe('ollama');
-    expect(container.querySelector('[data-select="dashboard:log.aiModel"]')?.getAttribute('data-value')).toBe(
-      'llama-small',
-    );
-    expect(useLogStore.getState().entries.some((e) => e.level === 'error')).toBe(true);
-  });
-
-  // The model preference is shared by every provider and OpenRouter has no
-  // list to pick from: switching to it here would send a local model id.
-  it('does not offer OpenRouter unless it is the saved backend', async () => {
-    await mount();
-    expect(option('openrouter')?.disabled).toBe(true);
-    await act(async () => option('openrouter')?.click());
-    expect(api.setAiConfig).not.toHaveBeenCalled();
-  });
-
-  it('keeps OpenRouter selectable while it is the saved backend', async () => {
+  it('names OpenRouter and offers no model list for it', async () => {
     vi.mocked(api.getAiConfig).mockResolvedValue({ ...config, provider: 'openrouter', model: 'vendor/model' } as never);
     await mount();
-    expect(backend()).toBe('openrouter');
-    expect(option('openrouter')?.disabled).toBe(false);
-  });
 
-  // A switch that changes who computes the Embeddings replaces the email
-  // index; only Settings asks before doing that.
-  it('does not switch to a backend whose embedding model differs from the one in use', async () => {
-    vi.mocked(api.getAiConfig).mockResolvedValue({
-      ...config,
-      remembered: { ...config.remembered, llamacpp: { model: 'qwen-local', embeddingModel: 'embed-gguf' } },
-    } as never);
-    await mount();
-
-    expect(option('llamacpp')?.disabled).toBe(true);
-    expect(option('llamacpp')?.textContent).toBe('dashboard:log.switchInSettings');
-    await act(async () => option('llamacpp')?.click());
+    expect(backendSelect()).toBeNull();
+    expect(backendLabel()).toBe('OpenRouter');
+    expect(container.querySelector('[data-select="dashboard:log.aiModel"]')).toBeNull();
     expect(api.setAiConfig).not.toHaveBeenCalled();
   });
 
-  it('does not switch to a backend that has no embedding model remembered', async () => {
-    vi.mocked(api.getAiConfig).mockResolvedValue({
-      ...config,
-      remembered: { ...config.remembered, llamacpp: { model: null, embeddingModel: null } },
-    } as never);
-    await mount();
-
-    expect(option('llamacpp')?.disabled).toBe(true);
-  });
-
-  it('does not leave OpenRouter for a local backend', async () => {
-    vi.mocked(api.getAiConfig).mockResolvedValue({
-      ...config,
-      provider: 'openrouter',
-      model: 'vendor/model',
-      embeddingModel: 'vendor/embed',
-    } as never);
-    await mount();
-
-    expect(option('llamacpp')?.disabled).toBe(true);
-    expect(option('ollama')?.disabled).toBe(true);
-  });
-
-  it('switches to the chat model remembered for the backend', async () => {
-    vi.mocked(api.listCatalogModels).mockResolvedValueOnce([
-      { id: 'other-local', kind: 'chat', isLocal: true },
-      { id: 'qwen-local', kind: 'chat', isLocal: true },
-    ] as never);
-    await mount();
-    await act(async () => option('llamacpp')?.click());
-
-    expect(vi.mocked(api.setAiConfig).mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'qwen-local', 'embed-small']);
-  });
   // ── Work in progress ───────────────────────────────────────────────────
 
   const modelOption = (value: string) =>
@@ -242,15 +167,5 @@ describe('LogPanel ModelSelector', () => {
     expect(api.cancelAiProviderWork).toHaveBeenCalledTimes(1);
     expect(api.setAiModel).toHaveBeenCalledWith('llama-big');
     expect(model()).toBe('llama-big');
-  });
-
-  it('asks before switching backend while AI work is in progress', async () => {
-    vi.mocked(api.getAiProviderActivity).mockResolvedValue(CLASSIFYING);
-    await mount();
-    await act(async () => option('llamacpp')?.click());
-
-    expect(container.textContent).toContain('settings:aiWork.title');
-    expect(api.setAiConfig).not.toHaveBeenCalled();
-    expect(backend()).toBe('ollama');
   });
 });

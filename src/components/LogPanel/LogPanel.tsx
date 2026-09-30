@@ -8,7 +8,7 @@ import { type AiChange, affectedWork } from '@/lib/aiProviderWork';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
-import type { AiConfig, AiProviderActivity, CatalogModel } from '@/types';
+import type { AiProviderActivity, CatalogModel } from '@/types';
 import { BackgroundActivityStatus } from './BackgroundActivityStatus';
 
 /** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
@@ -84,13 +84,6 @@ export function ModelSelector() {
   const [provider, setProvider] = useState<Provider>('ollama');
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState<string>('');
-  // Same probe as the Settings pickers: Embedded is offered only where its
-  // runtime can run (not on Intel Macs). A failed probe leaves it enabled and
-  // lets the backend's own guard report the real problem.
-  const [embeddedAvailable, setEmbeddedAvailable] = useState<boolean | null>(null);
-  // The saved config, for what a switch to each backend would do to the
-  // embedding model. Null until loaded (or when loading failed): no switch.
-  const [saved, setSaved] = useState<AiConfig | null>(null);
   // A change waiting for the user to stop, or wait for, the background AI
   // work it cuts across; `apply` makes the change once that work is gone.
   const [workInProgress, setWorkInProgress] = useState<{
@@ -115,7 +108,6 @@ export function ModelSelector() {
 
   const load = async () => {
     const cfg = await api.getAiConfig().catch(() => null);
-    setSaved(cfg);
     const prov = (cfg?.provider as Provider | undefined) ?? 'ollama';
     setProvider(prov);
     const list = await loadModels(prov);
@@ -127,10 +119,6 @@ export function ModelSelector() {
 
   useEffect(() => {
     void load();
-    api
-      .detectAiCapability()
-      .then((cap) => setEmbeddedAvailable(cap.embeddedAiAvailable))
-      .catch(() => setEmbeddedAvailable(null));
     // Refresh when AI Settings saves (provider/model may have changed)
     const unlistenConfig = listen('ai-config-updated', () => void load());
     // Refresh when any model download completes so newly-downloaded models
@@ -144,15 +132,6 @@ export function ModelSelector() {
       void unlistenDownload.then((u) => u());
     };
   }, []);
-
-  // A switch that changes the embedding model replaces the email index, and
-  // only AI Settings asks before doing that. Provider ids differ (OpenRouter,
-  // Ollama and the in-app runtime each name their models their own way), so
-  // this holds for a backend only when it is remembered with the very model
-  // in use. OpenRouter also has no model list to pick a chat model from here.
-  const needsSettings = (p: Provider) =>
-    p !== provider &&
-    (p === 'openrouter' || saved === null || saved.remembered[p].embeddingModel !== saved.embeddingModel);
 
   // Background AI work keeps the provider it started with until its batch
   // ends: ask whether to stop it or wait before changing what it uses.
@@ -168,46 +147,6 @@ export function ModelSelector() {
       addLog('error', 'ai', t('settings:aiWork.checkFailed', { error: errorText(err) }));
     }
     apply();
-  };
-
-  const handleProviderChange = async (newProv: Provider) => {
-    if (saved === null || needsSettings(newProv)) return;
-    // The switch keeps the embedding model (see needsSettings).
-    await applyUnlessWorkInProgress(
-      { provider: true, model: true, embeddingModel: false },
-      () => void switchProvider(newProv),
-    );
-  };
-
-  const switchProvider = async (newProv: Provider) => {
-    if (saved === null) return;
-    const previous = { provider, models, currentModel };
-    const remembered = saved.remembered[newProv];
-    setProvider(newProv);
-    const list = await loadModels(newProv);
-    setModels(list);
-    const newModel = list.find((m) => m === remembered.model) ?? list[0] ?? '';
-    setCurrentModel(newModel);
-    // Persist provider and models together through the same path AI Settings
-    // uses; the rest of the config (budget, thinking) is kept as stored.
-    try {
-      const cfg = await api.getAiConfig();
-      await api.setAiConfig(
-        newProv,
-        newModel,
-        remembered.embeddingModel,
-        null,
-        cfg.monthlyBudgetUsd,
-        cfg.thinkingEnabled,
-      );
-      addLog('info', 'ai', `AI backend → ${PROVIDER_LABELS[newProv]}${newModel ? ` · ${newModel}` : ''}`);
-    } catch (err) {
-      // Nothing was switched: show the backend that is still in use.
-      setProvider(previous.provider);
-      setModels(previous.models);
-      setCurrentModel(previous.currentModel);
-      addLog('error', 'ai', `Failed to switch provider: ${errorText(err)}`);
-    }
   };
 
   const handleModelChange = async (model: string) => {
@@ -230,20 +169,11 @@ export function ModelSelector() {
 
   return (
     <div className="flex items-center gap-1">
-      {/* Provider selector */}
-      <Select
-        value={provider}
-        onChange={(value) => void handleProviderChange(value)}
-        options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({
-          value: p,
-          label: needsSettings(p)
-            ? t('dashboard:log.switchInSettings', { backend: PROVIDER_LABELS[p] })
-            : PROVIDER_LABELS[p],
-          disabled: (p === 'llamacpp' && embeddedAvailable === false) || needsSettings(p),
-        }))}
-        ariaLabel={t('dashboard:log.aiBackend')}
-        size="xs"
-      />
+      {/* The backend in use. It is changed in AI Settings only: a backend
+          change can replace the Embeddings and needs the checks done there. */}
+      <span data-testid="ai-backend" title={t('dashboard:log.aiBackend')} className="text-[11px] text-gray-400 px-1">
+        {PROVIDER_LABELS[provider]}
+      </span>
 
       {/* Model selector — hidden for openrouter (free-form model configured in AI Settings). */}
       {provider !== 'openrouter' && models.length > 0 && (

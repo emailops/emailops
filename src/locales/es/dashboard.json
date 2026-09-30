@@ -46,7 +46,6 @@
     "aiBackend": "Motor de IA",
     "aiModel": "Modelo de IA",
     "aiSettings": "Ajustes de IA",
-    "switchInSettings": "{{backend}} — cámbialo en Ajustes de IA",
     "clearLogs": "Borrar registros",
     "minimizePanel": "Minimizar panel",
     "expandPanel": "Expandir panel",
