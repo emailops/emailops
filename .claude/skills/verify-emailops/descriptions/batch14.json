@@ -5,7 +5,12 @@
     "src-tauri/tests/integration.rs::a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed": "Una página web recogida por una regla de adjuntos se guarda como cualquier archivo, pero abrirla se rechaza hasta que el usuario confirma y antes no se lanza nada.",
     "src-tauri/tests/integration.rs::calendar_invite_card_comes_from_the_ics_part_kept_at_ingest": "La tarjeta de invitación se construye con la parte .ics guardada al recibir el correo, sin volver al proveedor; un correo que solo enlaza a una reunión no tiene tarjeta.",
     "src-tauri/src/db/mod.rs::a_draft_row_without_a_dirty_marker_is_clean": "Tras la migración V028, un borrador escrito sin marca (traído del proveedor) cuenta como limpio: solo una edición local puede dejarlo pendiente de enviar.",
-    "src-tauri/src/db/mod.rs::pending_read_pushes_are_looked_up_through_their_partial_index": "Los marcados como leído pendientes de enviar al proveedor (V029) se buscan por su índice parcial y no recorriendo todo el correo de la cuenta."
+    "src-tauri/src/db/mod.rs::pending_read_pushes_are_looked_up_through_their_partial_index": "Los marcados como leído pendientes de enviar al proveedor (V029) se buscan por su índice parcial y no recorriendo todo el correo de la cuenta.",
+    "src-tauri/src/cli/session.rs::read_commands_open_the_db_read_only": "Los comandos de la CLI que solo leen (doctor, stats, search, show, emails, drafts, accounts…) abren la base de datos en solo lectura.",
+    "src-tauri/src/cli/session.rs::write_commands_and_the_repl_open_the_db_read_write": "Los comandos que escriben (sync, embed, classify, chat, borrar un borrador) y el REPL abren la base de datos en lectura y escritura.",
+    "src-tauri/src/cli/session.rs::read_only_open_does_not_migrate_the_db": "Abrir la base de datos en solo lectura no ejecuta migraciones: un doctor o un search desde una rama nueva no deja fuera a la app instalada.",
+    "src-tauri/src/cli/session.rs::read_only_open_reads_a_closed_migrated_db": "Una base de datos en modo WAL ya cerrada por la app (sin ficheros -wal/-shm) se puede leer en solo lectura.",
+    "src-tauri/src/cli/session.rs::read_only_open_of_a_missing_db_is_not_found": "Pedir una lectura sobre una carpeta sin base de datos responde «no encontrado» en vez de crear una vacía."
   },
   "vitest": {
     "src/lib/apiContract/ajustes.api.test.ts::get_auto_n_ctx: api.ts sends the arguments the Rust command declares": "La llamada a `get_auto_n_ctx` desde api.ts envía los argumentos con los nombres que declara el comando en Rust, sin que falte ninguno obligatorio ni sobre uno desconocido.",
