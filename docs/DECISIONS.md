@@ -2001,8 +2001,10 @@ and `chat_with_tools` over `/chat/completions` with `stream: true`, and reports
 - **Same data policy:** chat requests carry the `provider` preferences of every other
   request (`data_collection: "deny"`, `zdr` when the user asked for it).
 - **Budget:** the chat loop's model calls go through `AiService::chat_stream` /
-  `chat_stream_with_tools`: refused before the call once the period's spend has reached
-  the budget, recorded after it with the `usage.cost` the stream reports.
+  `chat_stream_with_tools`, and a Lens extraction's tool call through
+  `AiService::chat_with_tools`: refused before the call once the period's spend has
+  reached the budget, recorded after it with the `usage.cost` the stream reports. A Lens
+  refused for budget does not fall back to its text prompt.
 - **Failures are shown, not retried:** a 429, a 5xx, a mid-stream `error` event or a
   stream silent for 60 s ends the turn with an error. Part of the reply may already be on
   screen, and a silent retry would bill the prompt twice.

@@ -608,6 +608,15 @@ impl AIProvider for OpenRouterClient {
         Ok(assistant_message(outcome))
     }
 
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        self.chat_stream_with_tools(messages.to_vec(), tools.to_vec(), Box::new(|_| true))
+            .await
+    }
+
     async fn chat_stream(
         &self,
         messages: Vec<AiMessage>,

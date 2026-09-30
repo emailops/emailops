@@ -745,11 +745,12 @@ impl AiService {
         Ok(())
     }
 
-    /// Record a streamed chat call the provider charged for. A backend that
-    /// reports no cost (the local ones) adds no row.
+    /// Record a chat call the provider charged for. A backend that reports no
+    /// cost (the local ones) adds no row.
     fn record_stream_usage(
         db: &Database,
         provider: &dyn AIProvider,
+        operation: &str,
         prompt_tokens: Option<u32>,
         completion_tokens: Option<u32>,
         cost_usd: Option<f64>,
@@ -761,7 +762,7 @@ impl AiService {
             db,
             provider,
             provider.model_name(),
-            "chat",
+            operation,
             prompt_tokens.unwrap_or(0),
             completion_tokens.unwrap_or(0),
             cost_usd,
@@ -784,11 +785,34 @@ impl AiService {
         Self::record_stream_usage(
             db,
             provider,
+            "chat",
             result.prompt_eval_count,
             result.eval_count,
             result.cost_usd,
         )?;
         Ok(result)
+    }
+
+    /// [`AIProvider::chat_with_tools`] under the budget, recorded as
+    /// `operation`; see [`Self::chat_stream_with_tools`].
+    pub async fn chat_with_tools(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+        operation: &str,
+    ) -> Result<AiMessage> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_with_tools_metered(messages, tools).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            operation,
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result.message)
     }
 
     /// [`AIProvider::chat_stream`] under the budget; see
@@ -804,6 +828,7 @@ impl AiService {
         Self::record_stream_usage(
             db,
             provider,
+            "chat",
             result.prompt_eval_count,
             result.eval_count,
             result.cost_usd,

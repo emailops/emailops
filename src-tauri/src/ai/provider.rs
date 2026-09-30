@@ -255,6 +255,31 @@ pub trait AIProvider: Send + Sync {
     /// assistant message (which may contain tool_calls the caller should resolve).
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage>;
 
+    /// [`chat_with_tools`](Self::chat_with_tools) together with what the call
+    /// used and cost, for callers that account for spend. The default reports
+    /// no usage, which is right for the local backends; a paid backend
+    /// overrides it.
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        Ok(ToolStreamResult {
+            message: self.chat_with_tools(messages, tools).await?,
+            eval_count: None,
+            prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            cost_usd: None,
+        })
+    }
+
     /// Streaming chat. `on_token` is called for each text chunk (owned String);
     /// returning `false` cancels the stream. Returns the full accumulated content.
     async fn chat_stream(
