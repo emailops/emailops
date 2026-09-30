@@ -723,6 +723,17 @@ impl OutlookClient {
 
                     let retry_after = retry_after_ms(response.headers());
                     let body = response.text().await.unwrap_or_default();
+                    // Typed so callers can tell "the resource is gone" from a
+                    // failure — a draft push re-creates a draft that was sent
+                    // or deleted elsewhere. Same message text as every other
+                    // failure.
+                    if status == StatusCode::NOT_FOUND {
+                        return Err(AppError::NotFound(format!(
+                            "Failed to {}: {}",
+                            operation,
+                            format_graph_error(status, &body)
+                        )));
+                    }
                     let should_retry = is_retryable_graph_status(status) && policy.may_retry_status(status.as_u16());
 
                     if should_retry && attempt < MAX_RETRIES {
@@ -1750,6 +1761,38 @@ mod tests {
         )
         .await
         .expect("a missing internetMessageId must not block a reply");
+    }
+
+    #[tokio::test]
+    async fn updating_a_draft_that_is_gone_reports_not_found() {
+        // A draft sent or deleted from another device 404s. The caller has to
+        // tell that apart from a transient failure to re-create the draft.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/gone-1"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .update_draft(
+                "gone-1",
+                &["dest@example.com".to_string()],
+                &[],
+                "Subject",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
     }
 
     #[tokio::test]

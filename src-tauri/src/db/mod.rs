@@ -1138,6 +1138,36 @@ mod schema_parity_tests {
         }
     }
 
+    /// Every child column that references `emails(id)` needs its own index:
+    /// SQLite looks the child rows up by that column on each parent delete, so
+    /// without one an account deletion full-scans the child table once per
+    /// deleted email while holding the write lock.
+    #[test]
+    fn email_foreign_key_child_columns_are_indexed() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        for (table, column, index) in [
+            ("drafts", "email_id", "idx_drafts_email"),
+            ("chat_message_sources", "email_id", "idx_chat_sources_email"),
+            ("memory_facts", "source_email_id", "idx_memory_facts_source_email"),
+            ("lens_rows", "email_id", "idx_lens_rows_email"),
+            ("lens_exclusions", "email_id", "idx_lens_exclusions_email"),
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE {column} = ?1"))
+                .expect("prepare explain");
+            let plan: Vec<String> = stmt
+                .query_map(["e-1"], |row| row.get::<_, String>(3))
+                .expect("explain")
+                .map(|r| r.expect("plan row"))
+                .collect();
+            assert!(
+                plan.iter().any(|step| step.contains("SEARCH") && step.contains(index)),
+                "`{table}.{column}` lookup must search `{index}`, got plan: {plan:?}"
+            );
+        }
+    }
+
     #[test]
     fn test_db_has_critical_tables() {
         let db = Database::new_for_testing().expect("create test db");
