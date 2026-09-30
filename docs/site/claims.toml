@@ -1246,6 +1246,7 @@ checks = [
 checks = [
   { tests = ['services::embeddings::tests::a_skipped_run_names_what_is_actually_wrong_for_each_provider', 'services::ai::budget_tests::the_loaded_openrouter_client_embeds_only_with_a_validated_model'], covers = ["semantic search stays off until you pick an Embedding Model"] },
   { manual = 'OpenRouter is not configured on the demo instance; the selector in Settings → AI Backend & Models is covered by OpenRouterPanel.test.tsx.', covers = ["in Settings → AI Backend & Models and save", "until then, keyword-only results are expected"] },
+  { manual = 'The wizard is not driven with OpenRouter by the docs check (it never calls the OpenRouter API): the check on Continue is covered by StepAiBackend.openrouter.test.tsx.', covers = ["or enter one in the first-run wizard, which checks it before moving on"] },
 ]
 
 [trbl-classification-tagging-1]

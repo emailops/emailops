@@ -234,6 +234,36 @@ describe('AiSettings — embedding model', () => {
     expect(container.textContent).toContain('settings:openRouter.embeddingCheckFailed: returns 1536-dimension vectors');
   });
 
+  const dataPolicyRejection = {
+    code: 'ai_data_policy',
+    params: { model: 'vendor/embed-large' },
+    message: 'The model vendor/embed-large is not available under the data policy',
+  };
+
+  it('says zero data retention is what blocks the model, and what the options are', async () => {
+    api.validateOpenRouterEmbeddingModel.mockRejectedValueOnce(dataPolicyRejection);
+    await mount({ zeroDataRetention: true });
+    await choose('vendor/embed-large');
+    await save();
+    await confirmReindex();
+
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed-large', null, true);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('settings:openRouter.embeddingZdrBlocked');
+    expect(container.textContent).not.toContain('settings:openRouter.embeddingCheckFailed');
+  });
+
+  it('keeps the general message for a data-policy refusal without zero data retention', async () => {
+    api.validateOpenRouterEmbeddingModel.mockRejectedValueOnce(dataPolicyRejection);
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+    await confirmReindex();
+
+    expect(container.textContent).toContain('settings:openRouter.embeddingCheckFailed');
+    expect(container.textContent).not.toContain('settings:openRouter.embeddingZdrBlocked');
+  });
+
   it('does not check again a model that is saved and already validated', async () => {
     await mount({});
     await save();

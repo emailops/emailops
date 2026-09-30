@@ -86,7 +86,8 @@ deliberately.
 
 <!-- claim:trbl-search-returns-3 -->
 With OpenRouter as the backend, semantic search stays off until you pick an **Embedding Model**
-in **Settings → AI Backend & Models** and save — until then, keyword-only results are expected.
+in **Settings → AI Backend & Models** and save, or enter one in the first-run wizard, which
+checks it before moving on — until then, keyword-only results are expected.
 
 ## Classification is not tagging anything {#classification-is-not-tagging-anything}
 

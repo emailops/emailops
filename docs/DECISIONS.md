@@ -2271,3 +2271,35 @@ and make that explicit.
 the probe, so semantic search stays off after onboarding until that model is saved once in
 Settings. The probe itself is a paid call (one short string); its cost is recorded but it
 is not refused for budget.
+
+## 2026-09-30 — Onboarding validates the OpenRouter embedding model; model ids never cross providers
+
+**Decision:** Follow-up to "OpenRouter embeddings are an explicit, validated choice"; its
+Limit about onboarding no longer holds.
+- **Onboarding validates:** the wizard's OpenRouter embedding field is optional and starts
+  empty (no built-in default model). Empty means keyword-only search and no probe. A typed
+  model is probed on Continue with the API key just typed; a failure is shown pinned at the
+  top of the step and nothing is saved. The wizard shows the same privacy/cost notice as
+  Settings.
+- **Chat model follows the provider too:** `ai_model` stays one shared preference, and a
+  provider switch in Settings replaces it like the embedding model — the saved model when
+  returning to the saved provider, the first available model for Ollama and in-app, empty
+  for OpenRouter. Save refuses an empty OpenRouter chat model, and the OpenRouter client
+  refuses a chat model that is not `vendor/model` before sending anything.
+- **Quick switcher:** the log panel's backend selector does not offer OpenRouter unless it
+  is already the saved backend, because it has no field to type a model in.
+- **Re-index is confirmed:** a Save that changes the embedding model (including through a
+  provider switch) asks first, naming what is deleted, that search is reduced meanwhile,
+  and — for OpenRouter — that every indexed email's text is sent there and billed.
+- **Zero data retention:** no routing change. When the probe is refused for data policy
+  with the ZDR toggle on, the message names that setting and the two ways out (turn it
+  off, or use no embedding model).
+**Context:** After onboarding with OpenRouter, semantic search stayed off until a Save in
+Settings; switching to OpenRouter showed and saved the in-app GGUF id as its chat model;
+and an embedding-model change wiped the index without warning.
+**Rejected:**
+- *Listing OpenRouter embedding models in the wizard*: the listing needs a saved key, and
+  the key is only saved on Continue; a free-text field checked by the probe is smaller.
+- *Remembering a last-used model per provider*: needs new stored state for a case the
+  Settings panel already covers.
+- *Warning about re-indexing in the wizard*: the wizard never triggers a re-index.

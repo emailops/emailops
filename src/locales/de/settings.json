@@ -179,6 +179,7 @@
     "embeddingNeedsKey": "Speichere deinen API-Schlüssel, um die Liste der Embeddings-Modelle zu laden.",
     "embeddingNeedsCheck": "Beim Speichern wird geprüft, ob dieses Modell die 768-dimensionalen Vektoren liefert, die der E-Mail-Index braucht.",
     "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
+    "embeddingZdrBlocked": "Es wurde nichts gespeichert – kein Anbieter des Embeddings-Modells {{model}} erfüllt die Einstellung ohne Datenspeicherung. Schalte „Nur ohne Datenspeicherung“ unter Einstellungen → KI → OpenRouter aus oder verwende kein Embeddings-Modell (nur Stichwortsuche).",
     "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
   },
   "confirmReindex": {

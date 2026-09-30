@@ -1830,6 +1830,30 @@ mod embedding_tests {
     }
 
     #[tokio::test]
+    async fn a_model_no_zero_retention_provider_serves_is_a_data_policy_refusal() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .and(body_partial_json(json!({ "provider": { "zdr": true } })))
+            .respond_with(ResponseTemplate::new(404).set_body_string(
+                r#"{"error":{"message":"No endpoints found matching your data policy (Zero data retention)","code":404}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let err = client(&server)
+            .with_zero_data_retention(true)
+            .probe_embedding()
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, AppError::AiDataPolicy { model } if model == "vendor/embed"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn an_outage_is_an_error_not_a_verdict_and_is_not_retried() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

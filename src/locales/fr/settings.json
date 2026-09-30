@@ -179,6 +179,7 @@
     "embeddingNeedsKey": "Enregistrez votre clé API pour charger la liste des modèles d'Embeddings.",
     "embeddingNeedsCheck": "L'enregistrement vérifie que ce modèle produit les vecteurs de 768 dimensions dont l'index des e-mails a besoin.",
     "embeddingCheckFailed": "Rien n'a été enregistré : le modèle d'Embeddings ne peut pas être utilisé : {{error}}",
+    "embeddingZdrBlocked": "Rien n'a été enregistré : aucun fournisseur du modèle d'Embeddings {{model}} ne respecte le réglage de rétention zéro. Désactivez « Rétention zéro uniquement » dans Paramètres → IA → OpenRouter, ou n'utilisez aucun modèle d'Embeddings (recherche par mots-clés uniquement).",
     "embeddingListFailed": "Échec du chargement des modèles d'Embeddings d'OpenRouter : {{error}}"
   },
   "confirmReindex": {

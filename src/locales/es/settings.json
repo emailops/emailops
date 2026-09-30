@@ -179,6 +179,7 @@
     "embeddingNeedsKey": "Guarda tu clave de API para cargar la lista de modelos de Embeddings.",
     "embeddingNeedsCheck": "Al guardar se comprueba que este modelo genera los vectores de 768 dimensiones que necesita el índice de correo.",
     "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
+    "embeddingZdrBlocked": "No se ha guardado nada: ningún proveedor del modelo de Embeddings {{model}} cumple el ajuste de retención cero. Desactiva «Solo retención cero» en Ajustes → IA → OpenRouter, o no uses ningún modelo de Embeddings (solo búsqueda por palabras clave).",
     "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
   },
   "confirmReindex": {

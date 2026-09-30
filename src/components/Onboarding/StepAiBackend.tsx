@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
-import { errorText } from '@/lib/errors';
+import { errorText, isDataPolicyError } from '@/lib/errors';
 import { credentialStoreKey } from '@/lib/platform';
 import { useLogStore } from '@/stores/logStore';
 import type { CatalogModel, ModelDownloadProgress } from '@/types';
@@ -15,10 +15,9 @@ const HUGGINGFACE_URL = 'https://huggingface.co';
 type Backend = 'llamacpp' | 'ollama' | 'openrouter';
 
 const OPENROUTER_DEFAULT_CHAT = 'openai/gpt-4o-mini';
-const OPENROUTER_DEFAULT_EMBED = 'openai/text-embedding-3-small';
 
 export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
-  const { t } = useTranslation(['auth']);
+  const { t } = useTranslation(['auth', 'settings']);
   const addLog = useLogStore((s) => s.addLog);
   const [backend, setBackend] = useState<Backend>('llamacpp');
   // See AiSettings: false on builds without llama.cpp and on Intel Macs, whose
@@ -34,7 +33,13 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   const [orApiKey, setOrApiKey] = useState<string>('');
   const [orHasSavedKey, setOrHasSavedKey] = useState<boolean>(false);
   const [orChatModel, setOrChatModel] = useState<string>(OPENROUTER_DEFAULT_CHAT);
-  const [orEmbedModel, setOrEmbedModel] = useState<string>(OPENROUTER_DEFAULT_EMBED);
+  // Optional: empty means keyword-only search. A typed model must pass the
+  // backend's dimension probe before it is saved (see handleContinue).
+  const [orEmbedModel, setOrEmbedModel] = useState<string>('');
+  // The saved OpenRouter embedding model that already passed the probe.
+  const [orValidatedEmbed, setOrValidatedEmbed] = useState<string>('');
+  // The saved zero-data-retention choice, which the probe runs under.
+  const [orZeroDataRetention, setOrZeroDataRetention] = useState(false);
   const [testStatus, setTestStatus] = useState<null | 'ok' | 'fail'>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -69,9 +74,11 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
         ) {
           setBackend(cfg.provider);
         }
+        setOrZeroDataRetention(!!cfg.zeroDataRetention);
         if (cfg.provider === 'openrouter') {
           setOrChatModel(cfg.model || OPENROUTER_DEFAULT_CHAT);
-          setOrEmbedModel(cfg.embeddingModel || OPENROUTER_DEFAULT_EMBED);
+          setOrEmbedModel(cfg.embeddingModel);
+          if (cfg.embeddingModelValidated) setOrValidatedEmbed(cfg.embeddingModel);
           setOrHasSavedKey(!!cfg.hasApiKey);
         } else {
           setChatModelId(cfg.model || '');
@@ -209,7 +216,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
     backend === 'llamacpp'
       ? hasLocalEmbed && hasLocalChat
       : backend === 'openrouter'
-        ? orHasKey && orChatModel.trim() !== '' && orEmbedModel.trim() !== ''
+        ? orHasKey && orChatModel.trim() !== ''
         : true;
 
   const handleTestConnection = async () => {
@@ -246,6 +253,22 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
         model = orChatModel.trim();
         embedding = orEmbedModel.trim();
         apiKey = orApiKey.trim() === '' ? null : orApiKey.trim();
+        // An embedding model must fit the email index before it is saved:
+        // nothing is written, and the wizard stays here, when the check fails.
+        if (embedding !== '' && embedding !== orValidatedEmbed) {
+          try {
+            await api.validateOpenRouterEmbeddingModel(embedding, apiKey);
+          } catch (err) {
+            const msg = errorText(err);
+            setError(
+              orZeroDataRetention && isDataPolicyError(err)
+                ? t('settings:openRouter.embeddingZdrBlocked', { model: embedding })
+                : t('settings:openRouter.embeddingCheckFailed', { error: msg }),
+            );
+            addLog('error', 'ai', `OpenRouter embedding model ${embedding} cannot be used: ${msg}`);
+            return;
+          }
+        }
       }
       await api.setAiConfig(backend, model, embedding, apiKey, 0, false);
       addLog('success', 'ai', `AI backend set to ${backend}`);
@@ -253,6 +276,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
     } catch (err) {
       const msg = errorText(err);
       setError(t('auth:onboarding.aiBackend.saveConfigFailed', { error: msg }));
+      addLog('error', 'ai', `Failed to save AI configuration: ${msg}`);
     } finally {
       setBusy(false);
     }
@@ -268,6 +292,16 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
 
   return (
     <div className="space-y-5">
+      {/* Pinned to the top of the wizard's scroll area so a failure is seen
+          without scrolling; opaque because the form scrolls underneath. */}
+      {error && (
+        <div
+          role="alert"
+          className="sticky top-0 z-10 p-3 bg-[#3b1d1d] border border-red-800 rounded text-red-300 text-sm"
+        >
+          {error}
+        </div>
+      )}
       <div className="space-y-2">
         <p className="text-sm text-gray-200 font-medium">{t('auth:onboarding.aiBackend.introPrivacy')}</p>
         <p className="text-xs text-gray-400">{t('auth:onboarding.aiBackend.introModels')}</p>
@@ -417,11 +451,15 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                   setOrEmbedModel(e.target.value);
                   invalidateTest();
                 }}
-                placeholder={OPENROUTER_DEFAULT_EMBED}
+                placeholder={t('auth:onboarding.aiBackend.embeddingModelPlaceholder')}
                 className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
               />
             </div>
           </div>
+          <p className="text-[11px] text-gray-500">{t('settings:openRouter.embeddingNotice')}</p>
+          {orEmbedModel.trim() !== '' && orEmbedModel.trim() !== orValidatedEmbed && (
+            <p className="text-[11px] text-amber-400">{t('auth:onboarding.aiBackend.embeddingNeedsCheck')}</p>
+          )}
 
           <div className="flex items-center gap-3">
             <button
@@ -446,8 +484,6 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
           </div>
         </div>
       )}
-
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
 
       <div className="flex justify-between">
         <button

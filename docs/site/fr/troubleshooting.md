@@ -94,7 +94,8 @@ cette fenêtre est délibérément ignoré.
 
 <!-- claim:trbl-search-returns-3 -->
 Avec OpenRouter comme backend, la recherche sémantique reste désactivée tant que vous n'avez pas
-choisi un **Modèle d'embeddings** dans **Paramètres → IA : backend et modèles** puis enregistré —
+choisi un **Modèle d'embeddings** dans **Paramètres → IA : backend et modèles** puis enregistré, ou
+saisi un modèle dans l'assistant de premier lancement, qui le vérifie avant de continuer —
 d'ici là, des résultats par mots-clés uniquement sont normaux.
 
 ## La classification n'étiquette rien {#classification-is-not-tagging-anything}

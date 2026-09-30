@@ -179,6 +179,7 @@
     "embeddingNeedsKey": "Save your API key to load the list of Embeddings models.",
     "embeddingNeedsCheck": "Saving checks that this model produces the 768-dimension vectors the email index needs.",
     "embeddingCheckFailed": "Nothing was saved — the Embeddings model cannot be used: {{error}}",
+    "embeddingZdrBlocked": "Nothing was saved — no provider for the Embeddings model {{model}} meets the zero-data-retention setting. Turn off “Zero data retention only” in Settings → AI → OpenRouter, or use no Embeddings model (keyword-only search).",
     "embeddingListFailed": "Failed to load the OpenRouter Embeddings models: {{error}}"
   },
   "confirmReindex": {

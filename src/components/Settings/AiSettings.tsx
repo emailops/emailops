@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
-import { errorText } from '@/lib/errors';
+import { errorText, isDataPolicyError } from '@/lib/errors';
 import { useAiStore } from '@/stores/aiStore';
 import { useHelpDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
@@ -424,7 +424,11 @@ export function AiSettings() {
         try {
           await api.validateOpenRouterEmbeddingModel(config.embeddingModel, key, config.zeroDataRetention);
         } catch (err) {
-          setError(t('settings:openRouter.embeddingCheckFailed', { error: errorText(err) }));
+          setError(
+            config.zeroDataRetention && isDataPolicyError(err)
+              ? t('settings:openRouter.embeddingZdrBlocked', { model: config.embeddingModel })
+              : t('settings:openRouter.embeddingCheckFailed', { error: errorText(err) }),
+          );
           return;
         }
       }

@@ -95,7 +95,8 @@ bewusst übersprungen.
 
 <!-- claim:trbl-search-returns-3 -->
 Mit OpenRouter als Backend bleibt die semantische Suche aus, bis Sie ein **Embedding-Modell**
-unter **Einstellungen → KI: Backend & Modelle** wählen und speichern — bis dahin sind reine
+unter **Einstellungen → KI: Backend & Modelle** wählen und speichern oder im Assistenten beim
+ersten Start eines eingeben, der es vor dem Fortfahren prüft — bis dahin sind reine
 Stichwort-Treffer zu erwarten.
 
 ## Die Klassifizierung kennzeichnet nichts {#classification-is-not-tagging-anything}
