@@ -172,7 +172,13 @@
     "contextBudgetHelp": "Wie viel vom Kontextfenster eines entfernten Modells ein Aufruf im Recherchemodus füllen darf. Das Fenster des Modells bleibt die Obergrenze. Ein größeres Budget bedeutet weniger, größere Aufrufe: mehr gesendete E-Mails pro Anfrage und höhere Kosten pro Aufruf.",
     "contextBudgetLoadFailed": "Kontextbudget konnte nicht geladen werden: {{error}}",
     "contextBudgetSaveFailed": "Kontextbudget konnte nicht gespeichert werden: {{error}}",
-    "chatModelPlaceholder": "z. B. google/gemma-3-27b-it"
+    "chatModelPlaceholder": "z. B. google/gemma-3-27b-it",
+    "embeddingNone": "Keines — nur Stichwortsuche",
+    "embeddingNotice": "Ist ein Embeddings-Modell ausgewählt, wird der Text jeder indizierten E-Mail sowie jeder Suche und Chat-Frage an OpenRouter gesendet und zählt zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern gesucht.",
+    "embeddingNeedsKey": "Speichere deinen API-Schlüssel, um die Liste der Embeddings-Modelle zu laden.",
+    "embeddingNeedsCheck": "Beim Speichern wird geprüft, ob dieses Modell die 768-dimensionalen Vektoren liefert, die der E-Mail-Index braucht.",
+    "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
+    "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "Prompt auf Standard zurücksetzen?",

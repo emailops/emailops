@@ -172,7 +172,13 @@
     "contextBudgetHelp": "How much of a remote model's context window a research run may fill per call. The model's own window still caps it. A larger budget means fewer, bigger calls: more mail sent per request and a higher cost per call.",
     "contextBudgetLoadFailed": "Failed to load context budget: {{error}}",
     "contextBudgetSaveFailed": "Failed to save context budget: {{error}}",
-    "chatModelPlaceholder": "e.g. google/gemma-3-27b-it"
+    "chatModelPlaceholder": "e.g. google/gemma-3-27b-it",
+    "embeddingNone": "None — keyword search only",
+    "embeddingNotice": "With an Embeddings model selected, the text of every email that gets indexed, and of every search and chat question, is sent to OpenRouter and counts against the monthly budget. With none selected, semantic search is off and search is keyword-only.",
+    "embeddingNeedsKey": "Save your API key to load the list of Embeddings models.",
+    "embeddingNeedsCheck": "Saving checks that this model produces the 768-dimension vectors the email index needs.",
+    "embeddingCheckFailed": "Nothing was saved — the Embeddings model cannot be used: {{error}}",
+    "embeddingListFailed": "Failed to load the OpenRouter Embeddings models: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "Reset prompt to default?",

@@ -332,6 +332,7 @@ export interface AiConfig {
   provider: 'ollama' | 'openrouter' | 'llamacpp';
   model: string;
   embeddingModel: string;
+  embeddingModelValidated: boolean;
   monthlyBudgetUsd: number;
   periodStart: number;
   hasApiKey: boolean;

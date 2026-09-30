@@ -6,12 +6,18 @@ import { errorText } from '@/lib/errors';
 import { useAiStore } from '@/stores/aiStore';
 import { useHelpDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
-import type { CatalogModel, ModelDownloadProgress } from '@/types';
+import type { AiModelInfo, CatalogModel, ModelDownloadProgress } from '@/types';
 import { AiSharedPreferences } from './AiSettings/AiSharedPreferences';
 import { ChatPromptsSection } from './AiSettings/ChatPromptsSection';
 import { ConfirmDisableDialog } from './AiSettings/ConfirmDisableDialog';
 import { EmbeddedPanel } from './AiSettings/EmbeddedPanel';
-import { contextBudgetFromPref, contextBudgetToPref, DEFAULT_CONTEXT_BUDGET } from './AiSettings/helpers';
+import {
+  contextBudgetFromPref,
+  contextBudgetToPref,
+  DEFAULT_CONTEXT_BUDGET,
+  embeddingModelForProvider,
+  needsEmbeddingProbe,
+} from './AiSettings/helpers';
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
@@ -36,6 +42,7 @@ export function AiSettings() {
   const [downloads, setDownloads] = useState<Record<string, ModelDownloadProgress>>({});
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaEmbedModels, setOllamaEmbedModels] = useState<string[]>([]);
+  const [openRouterEmbedModels, setOpenRouterEmbedModels] = useState<AiModelInfo[]>([]);
   const [apiKey, setApiKey] = useState('');
   const [routingMode, setRoutingMode] = useState<RoutingMode>(DEFAULT_ROUTING_MODE);
   const [aiOutputLanguage, setAiOutputLanguage] = useState<string>('Spanish');
@@ -81,6 +88,9 @@ export function AiSettings() {
   // Tracks the embedding model that was active when we last saved/loaded config.
   // Used to detect whether a provider switch requires a full re-index.
   const savedEmbedModelRef = useRef<string>('');
+  // The provider that was active when we last saved/loaded config: the saved
+  // embedding model only means something to it (see embeddingModelForProvider).
+  const savedProviderRef = useRef<string>('');
 
   // ── Load initial data ──────────────────────────────────────────────────────
 
@@ -133,6 +143,26 @@ export function AiSettings() {
     };
   }, []);
 
+  // OpenRouter's embedding models, once the OpenRouter tab is open and a key
+  // is saved to ask with. A failed listing leaves the saved model selectable.
+  const openRouterListable = config?.provider === 'openrouter' && config.hasApiKey;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload only when the tab or the saved key changes
+  useEffect(() => {
+    if (!openRouterListable) return;
+    let stale = false;
+    api
+      .listAiEmbeddingModels('openrouter')
+      .then((models) => {
+        if (!stale) setOpenRouterEmbedModels(models);
+      })
+      .catch((err) => {
+        if (!stale) addLog('error', 'ai', t('settings:openRouter.embeddingListFailed', { error: errorText(err) }));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [openRouterListable]);
+
   const loadCatalog = async () => {
     try {
       const models = await api.listCatalogModels();
@@ -151,12 +181,14 @@ export function AiSettings() {
         provider: cfg.provider as AiConfigState['provider'],
         model: cfg.model,
         embeddingModel: cfg.embeddingModel,
+        embeddingModelValidated: cfg.embeddingModelValidated,
         monthlyBudgetUsd: cfg.monthlyBudgetUsd,
         hasApiKey: cfg.hasApiKey,
         thinkingEnabled: cfg.thinkingEnabled,
         zeroDataRetention: cfg.zeroDataRetention,
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
+      savedProviderRef.current = cfg.provider;
 
       await loadCatalog();
 
@@ -278,7 +310,15 @@ export function AiSettings() {
 
   const handleProviderChange = (p: AiConfigState['provider']) => {
     if (!config) return;
-    setConfig({ ...config, provider: p });
+    setConfig({
+      ...config,
+      provider: p,
+      embeddingModel: embeddingModelForProvider(
+        p,
+        { provider: savedProviderRef.current, embeddingModel: savedEmbedModelRef.current },
+        { catalog, ollamaEmbedModels },
+      ),
+    });
     setError(null);
     setSuccess(null);
   };
@@ -348,6 +388,17 @@ export function AiSettings() {
       const prevEmbedModel = savedEmbedModelRef.current;
       const wantsApiKey = config.provider === 'openrouter';
       const key = wantsApiKey && apiKey ? apiKey : null;
+
+      // An OpenRouter embedding model must fit the email index before it is
+      // saved: nothing is written when the check fails.
+      if (needsEmbeddingProbe(config, prevEmbedModel)) {
+        try {
+          await api.validateOpenRouterEmbeddingModel(config.embeddingModel, key, config.zeroDataRetention);
+        } catch (err) {
+          setError(t('settings:openRouter.embeddingCheckFailed', { error: errorText(err) }));
+          return;
+        }
+      }
 
       await api.setAiConfig(
         config.provider,
@@ -609,6 +660,8 @@ export function AiSettings() {
                 setApiKey={setApiKey}
                 contextBudget={contextBudget}
                 onContextBudgetChange={setContextBudget}
+                embeddingModels={openRouterEmbedModels}
+                embeddingNeedsCheck={needsEmbeddingProbe(config, savedEmbedModelRef.current)}
               />
             )}
 

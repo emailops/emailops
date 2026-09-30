@@ -1,3 +1,6 @@
+import type { CatalogModel } from '@/types';
+import type { AiConfigState } from './types';
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const gb = bytes / 1e9;
@@ -27,4 +30,34 @@ export function contextBudgetFromPref(raw: string | null): number {
 export function contextBudgetToPref(tokens: number): string {
   if (!Number.isFinite(tokens)) return String(DEFAULT_CONTEXT_BUDGET);
   return String(Math.max(MIN_CONTEXT_BUDGET, Math.round(tokens)));
+}
+
+/**
+ * The embedding model to show after switching to `next`. The preference is
+ * shared by every provider, and an id only means something to the provider it
+ * came from: returning to the saved provider restores the saved model, any
+ * other provider gets a model it can run — or none, which for OpenRouter means
+ * keyword-only search until the user picks one.
+ */
+export function embeddingModelForProvider(
+  next: AiConfigState['provider'],
+  saved: { provider: string; embeddingModel: string },
+  available: { catalog: CatalogModel[]; ollamaEmbedModels: string[] },
+): string {
+  if (next === saved.provider) return saved.embeddingModel;
+  if (next === 'ollama') return available.ollamaEmbedModels[0] ?? '';
+  if (next === 'llamacpp') {
+    const models = available.catalog.filter((m) => m.kind === 'embedding');
+    return (models.find((m) => m.isLocal) ?? models.find((m) => m.recommended))?.id ?? '';
+  }
+  return '';
+}
+
+/**
+ * Whether Save must first ask the backend to check the OpenRouter embedding
+ * model: it is new, or it was saved without ever passing the check.
+ */
+export function needsEmbeddingProbe(config: AiConfigState, savedEmbeddingModel: string): boolean {
+  if (config.provider !== 'openrouter' || config.embeddingModel === '') return false;
+  return config.embeddingModel !== savedEmbeddingModel || !config.embeddingModelValidated;
 }

@@ -172,7 +172,13 @@
     "contextBudgetHelp": "Cuánto de la ventana de contexto de un modelo remoto puede ocupar cada llamada del modo investigación. La ventana del propio modelo sigue siendo el tope. Un presupuesto mayor significa menos llamadas y más grandes: más correo enviado por petición y más coste por llamada.",
     "contextBudgetLoadFailed": "No se pudo cargar el presupuesto de contexto: {{error}}",
     "contextBudgetSaveFailed": "No se pudo guardar el presupuesto de contexto: {{error}}",
-    "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it"
+    "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it",
+    "embeddingNone": "Ninguno — solo búsqueda por palabras clave",
+    "embeddingNotice": "Con un modelo de Embeddings seleccionado, el texto de cada correo que se indexa, y de cada búsqueda y pregunta del chat, se envía a OpenRouter y cuenta para el presupuesto mensual. Sin ninguno, la búsqueda semántica está desactivada y solo se busca por palabras clave.",
+    "embeddingNeedsKey": "Guarda tu clave de API para cargar la lista de modelos de Embeddings.",
+    "embeddingNeedsCheck": "Al guardar se comprueba que este modelo genera los vectores de 768 dimensiones que necesita el índice de correo.",
+    "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
+    "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "¿Restaurar el prompt por defecto?",

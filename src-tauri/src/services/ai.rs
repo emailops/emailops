@@ -392,6 +392,15 @@ impl AiService {
         ))
     }
 
+    /// Whether the configured embedding model may be used as it stands. Only
+    /// OpenRouter can hold a model that was saved without passing the probe.
+    pub fn embedding_model_validated(db: &Database, config: &AiConfig) -> Result<bool> {
+        if config.provider != "openrouter" {
+            return Ok(true);
+        }
+        Ok(Self::openrouter_embedding_dimensions(db, &config.embedding_model)?.is_some())
+    }
+
     /// Probe `client`'s embedding model against the email index and, when it
     /// fits, remember it (and how to ask it for vectors) so embedding requests
     /// are allowed for it. The probe is a paid call: what it cost is recorded.
@@ -1433,6 +1442,25 @@ mod budget_tests {
 
         db.set_preference("ai_embedding_model", "vendor/changed").unwrap();
         assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+    }
+
+    /// What Settings shows next to the embedding selector: only OpenRouter
+    /// has a model that can be saved without having been checked.
+    #[test]
+    fn only_an_unchecked_openrouter_model_is_reported_as_not_validated() {
+        let db = db_with_budget("0");
+        let config = |db: &Database| AiService::get_config(db).unwrap();
+        assert!(AiService::embedding_model_validated(&db, &config(&db)).unwrap());
+
+        db.set_preference("ai_provider", "openrouter").unwrap();
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        assert!(!AiService::embedding_model_validated(&db, &config(&db)).unwrap());
+
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "requested")
+            .unwrap();
+        assert!(AiService::embedding_model_validated(&db, &config(&db)).unwrap());
     }
 
     /// No budget (0) never refuses, whatever was spent.

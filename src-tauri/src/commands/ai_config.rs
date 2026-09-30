@@ -17,11 +17,13 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
 pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
     let has_api_key = services::ai::AiService::has_openrouter_api_key(&state.db)?;
+    let embedding_validated = AiService::embedding_model_validated(&state.db, &config)?;
 
     Ok(serde_json::json!({
         "provider": config.provider,
         "model": config.model,
         "embeddingModel": config.embedding_model,
+        "embeddingModelValidated": embedding_validated,
         "monthlyBudgetUsd": config.monthly_budget_usd,
         "periodStart": config.period_start,
         "hasApiKey": has_api_key,

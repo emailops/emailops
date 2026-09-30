@@ -918,8 +918,22 @@ export async function listAiModels(): Promise<AiModelInfo[]> {
   return invoke('list_ai_models');
 }
 
-export async function listAiEmbeddingModels(): Promise<AiModelInfo[]> {
-  return invoke('list_ai_embedding_models');
+/** Embedding models of `provider` (the saved provider when omitted). */
+export async function listAiEmbeddingModels(provider?: string): Promise<AiModelInfo[]> {
+  return invoke('list_ai_embedding_models', { provider });
+}
+
+/**
+ * Check that an OpenRouter embedding model produces vectors the email index
+ * can hold; rejects with the reason when it does not. `apiKey` and
+ * `zeroDataRetention` carry values typed in Settings but not saved yet.
+ */
+export async function validateOpenRouterEmbeddingModel(
+  model: string,
+  apiKey?: string | null,
+  zeroDataRetention?: boolean,
+): Promise<void> {
+  return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
 export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {

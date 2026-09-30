@@ -2,6 +2,9 @@ export interface AiConfigState {
   provider: 'llamacpp' | 'ollama' | 'openrouter';
   model: string;
   embeddingModel: string;
+  /** Whether the saved embedding model may be used as it stands. False only
+   *  for an OpenRouter model that never passed the dimension check. */
+  embeddingModelValidated: boolean;
   monthlyBudgetUsd: number;
   hasApiKey: boolean;
   thinkingEnabled: boolean;

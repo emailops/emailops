@@ -104,7 +104,7 @@ fn embedding_skip_reason(provider: &str, configured: bool) -> (&'static str, Str
     match (provider, configured) {
         ("openrouter", false) => (
             "info",
-            "Skipped: semantic search is off for OpenRouter — choose an embedding model in Settings → AI to turn it on"
+            "Skipped: semantic search is off for OpenRouter — choose an embedding model in Settings → AI and save to turn it on"
                 .to_string(),
         ),
         ("openrouter", true) => (

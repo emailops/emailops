@@ -1,0 +1,228 @@
+// The embedding model preference is shared by every provider, and an
+// OpenRouter embedding model must pass the backend's dimension probe before it
+// is saved: a model of another vector size cannot fill the email index, and a
+// local model id sent to OpenRouter fails on every email.
+
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, vars?: { error?: string }) => (vars?.error ? `${key}: ${vars.error}` : key),
+  }),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
+vi.mock('@/stores/aiStore', () => ({
+  useAiStore: () => ({ enabled: true, setEnabled: vi.fn() }),
+}));
+
+vi.mock('@/stores/logStore', () => ({
+  useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
+}));
+
+vi.mock('@/stores/featureToggleStore', () => ({
+  useHelpDocsEnabledStore: () => ({ enabled: true, setEnabled: vi.fn(() => Promise.resolve()) }),
+}));
+
+vi.mock('./AiSettings/UsageSummary', () => ({ UsageSummary: () => null }));
+vi.mock('./AiSettings/ChatPromptsSection', () => ({ ChatPromptsSection: () => null }));
+
+const api = vi.hoisted(() => ({
+  getAiConfig: vi.fn(),
+  detectAiCapability: vi.fn(() => Promise.resolve({ embeddedAiAvailable: true })),
+  listCatalogModels: vi.fn(() =>
+    Promise.resolve([
+      {
+        id: 'embed-local-gguf',
+        displayName: 'Local embed',
+        kind: 'embedding',
+        sizeBytes: 1,
+        contextWindow: 2048,
+        license: 'test',
+        minRamGb: 1,
+        recommended: true,
+        supportsTools: false,
+        isLocal: true,
+        isLinked: false,
+      },
+    ]),
+  ),
+  listOllamaModels: vi.fn(() => Promise.resolve([])),
+  listAiEmbeddingModels: vi.fn(() =>
+    Promise.resolve([
+      { id: 'vendor/embed', name: 'Vendor Embed', pricing: { prompt: 0, completion: 0, request: 0 } },
+      { id: 'vendor/embed-large', name: 'Vendor Embed Large', pricing: { prompt: 0, completion: 0, request: 0 } },
+    ]),
+  ),
+  validateOpenRouterEmbeddingModel: vi.fn(() => Promise.resolve()),
+  getAutoNCtx: vi.fn(() => Promise.resolve(8192)),
+  getPref: vi.fn(() => Promise.resolve(null)),
+  setPref: vi.fn(() => Promise.resolve()),
+  setAiConfig: vi.fn(() => Promise.resolve()),
+  regenerateEmbeddings: vi.fn(() => Promise.resolve()),
+  currentPlatform: vi.fn(() => 'macos'),
+}));
+vi.mock('@/lib/api', () => api);
+
+import { AiSettings } from './AiSettings';
+
+function savedConfig(over: Record<string, unknown>) {
+  return {
+    provider: 'openrouter',
+    model: 'vendor/model',
+    embeddingModel: 'vendor/embed',
+    embeddingModelValidated: true,
+    monthlyBudgetUsd: 0,
+    periodStart: 0,
+    hasApiKey: true,
+    thinkingEnabled: false,
+    zeroDataRetention: false,
+    ...over,
+  };
+}
+
+describe('AiSettings — embedding model', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  async function mount(config: Record<string, unknown>) {
+    api.getAiConfig.mockResolvedValue(savedConfig(config));
+    await act(async () => {
+      root.render(<AiSettings />);
+    });
+    await settle();
+  }
+
+  function embeddingSelect(): HTMLSelectElement {
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="settings:ai.embeddingModel"]');
+    if (!select) throw new Error('embedding model selector not rendered');
+    return select;
+  }
+
+  function button(label: string): HTMLButtonElement {
+    const found = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label));
+    if (!found) throw new Error(`button ${label} not rendered`);
+    return found;
+  }
+
+  async function choose(model: string) {
+    act(() => {
+      embeddingSelect().value = model;
+      embeddingSelect().dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+  }
+
+  async function save() {
+    await act(async () => {
+      button('common:actions.save').click();
+    });
+    await settle();
+  }
+
+  it('lists the OpenRouter embedding models in the selector', async () => {
+    await mount({});
+    expect(api.listAiEmbeddingModels).toHaveBeenCalledWith('openrouter');
+    expect(Array.from(embeddingSelect().options).map((o) => o.value)).toEqual([
+      '',
+      'vendor/embed',
+      'vendor/embed-large',
+    ]);
+  });
+
+  it('checks a newly chosen OpenRouter embedding model before saving it, then re-indexes', async () => {
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed-large', null, false);
+    expect(api.setAiConfig).toHaveBeenCalledWith(
+      'openrouter',
+      'vendor/model',
+      'vendor/embed-large',
+      null,
+      0,
+      false,
+      false,
+    );
+    expect(api.validateOpenRouterEmbeddingModel.mock.invocationCallOrder[0]).toBeLessThan(
+      api.setAiConfig.mock.invocationCallOrder[0],
+    );
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not save when the model fails the check, and shows why', async () => {
+    api.validateOpenRouterEmbeddingModel.mockRejectedValueOnce('returns 1536-dimension vectors');
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('settings:openRouter.embeddingCheckFailed: returns 1536-dimension vectors');
+  });
+
+  it('does not check again a model that is saved and already validated', async () => {
+    await mount({});
+    await save();
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig).toHaveBeenCalled();
+  });
+
+  it('checks on save a model that was saved without ever being validated', async () => {
+    await mount({ embeddingModelValidated: false });
+    await save();
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed', null, false);
+  });
+
+  it('switching to OpenRouter drops the local embedding model instead of sending its id', async () => {
+    await mount({ provider: 'llamacpp', model: 'chat-gguf', embeddingModel: 'embed-local-gguf' });
+    await act(async () => {
+      button('settings:ai.providerOpenRouterLabel').click();
+    });
+    await settle();
+
+    expect(embeddingSelect().value).toBe('');
+    await save();
+
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'chat-gguf', '']);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching away from OpenRouter picks a model the new provider can run', async () => {
+    await mount({});
+    await act(async () => {
+      button('settings:ai.providerEmbeddedLabel').click();
+    });
+    await settle();
+    await save();
+
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'vendor/model', 'embed-local-gguf']);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+});

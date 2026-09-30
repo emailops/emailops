@@ -17,10 +17,16 @@ vi.mock('./UsageSummary', () => ({
   UsageSummary: () => null,
 }));
 
+// 'macos' makes the shared Select render a native <select>.
+vi.mock('@/lib/api', () => ({
+  currentPlatform: () => 'macos',
+}));
+
 const baseConfig: AiConfigState = {
   provider: 'openrouter',
   model: 'vendor/model',
   embeddingModel: '',
+  embeddingModelValidated: false,
   monthlyBudgetUsd: 0,
   hasApiKey: true,
   thinkingEnabled: false,
@@ -43,6 +49,18 @@ describe('OpenRouterPanel', () => {
     container.remove();
   });
 
+  const embeddingModels = [
+    { id: 'vendor/embed', name: 'Vendor Embed', pricing: { prompt: 0, completion: 0, request: 0 } },
+    { id: 'vendor/embed-large', name: 'Vendor Embed Large', pricing: { prompt: 0, completion: 0, request: 0 } },
+  ];
+  let embeddingNeedsCheck = false;
+
+  function embeddingSelect(): HTMLSelectElement {
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="settings:ai.embeddingModel"]');
+    if (!select) throw new Error('embedding model selector not rendered');
+    return select;
+  }
+
   function render(config: AiConfigState, setConfig = vi.fn(), onContextBudgetChange = vi.fn()) {
     act(() => {
       root.render(
@@ -53,6 +71,8 @@ describe('OpenRouterPanel', () => {
           setApiKey={vi.fn()}
           contextBudget={32768}
           onContextBudgetChange={onContextBudgetChange}
+          embeddingModels={embeddingModels}
+          embeddingNeedsCheck={embeddingNeedsCheck}
         />,
       );
     });
@@ -97,6 +117,42 @@ describe('OpenRouterPanel', () => {
       budgetInput().dispatchEvent(new Event('input', { bubbles: true }));
     });
     expect(onContextBudgetChange).toHaveBeenCalledWith(65536);
+  });
+
+  it('offers no embedding model, the listed ones, and reports the choice', () => {
+    const setConfig = render(baseConfig);
+    const values = Array.from(embeddingSelect().options).map((o) => o.value);
+    expect(values).toEqual(['', 'vendor/embed', 'vendor/embed-large']);
+    expect(embeddingSelect().value).toBe('');
+
+    act(() => {
+      embeddingSelect().value = 'vendor/embed';
+      embeddingSelect().dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(setConfig).toHaveBeenCalledWith({ ...baseConfig, embeddingModel: 'vendor/embed' });
+  });
+
+  it('keeps a saved model selectable when the list does not have it', () => {
+    render({ ...baseConfig, embeddingModel: 'vendor/retired' });
+    expect(embeddingSelect().value).toBe('vendor/retired');
+  });
+
+  it('says what selecting an embedding model sends to OpenRouter', () => {
+    render(baseConfig);
+    expect(container.textContent).toContain('settings:openRouter.embeddingNotice');
+    expect(container.textContent).not.toContain('settings:openRouter.embeddingNeedsCheck');
+  });
+
+  it('says a model that was not checked yet is checked on save', () => {
+    embeddingNeedsCheck = true;
+    render({ ...baseConfig, embeddingModel: 'vendor/embed' });
+    expect(container.textContent).toContain('settings:openRouter.embeddingNeedsCheck');
+    embeddingNeedsCheck = false;
+  });
+
+  it('asks for a saved key before the list can load', () => {
+    render({ ...baseConfig, hasApiKey: false });
+    expect(container.textContent).toContain('settings:openRouter.embeddingNeedsKey');
   });
 
   it('states that providers may never train on mail', () => {
