@@ -68,6 +68,12 @@ qu'aucun fournisseur de ce type ne sert est refusé avec une erreur, jamais envo
 **Rétention zéro uniquement**, dans le même panneau, restreint cela aux fournisseurs qui ne
 conservent rien après la réponse.
 
+<!-- claim:priv-there-no-4 -->
+Il en va de même pour la recherche. OpenRouter n'indexe vos e-mails que si vous avez choisi un
+modèle d'embeddings dans ce panneau : le texte de chaque e-mail indexé, ainsi que de chaque
+recherche et question du chat, part alors selon les mêmes règles de fournisseur. Sans modèle,
+rien n'est envoyé pour l'indexation et la recherche se fait uniquement par mots-clés.
+
 ## Ce qu'EmailOps modifie dans votre boîte
 
 <!-- claim:priv-what-emailops-1 -->

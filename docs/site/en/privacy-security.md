@@ -65,6 +65,12 @@ nor train on what they receive; a model that no such provider serves is refused 
 error, never sent anyway. **Zero data retention only**, in the same panel, narrows that to
 providers that keep nothing at all after answering.
 
+<!-- claim:priv-there-no-4 -->
+The same goes for search. OpenRouter embeds your mail only if you have picked an embedding
+model in that panel: the text of every indexed email, and of every search and chat question,
+then goes out under the same provider rules. With none picked, nothing is sent for indexing and
+search is keyword-only.
+
 ## What EmailOps changes in your mailbox
 
 <!-- claim:priv-what-emailops-1 -->

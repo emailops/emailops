@@ -248,10 +248,18 @@ Le tableau a besoin de la classification : il reste vide tant que le courrier n'
 ## Recherche sémantique {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
-Les e-mails sont indexés localement pour que la recherche corresponde au sens et pas seulement
+Les e-mails sont indexés pour que la recherche corresponde au sens et pas seulement
 aux mots-clés — décrivez ce dont vous vous souvenez et EmailOps le retrouve. Cela alimente aussi l'étape de récupération du chat. Choisissez les
 catégories indexées et reconstruisez l'index de zéro après un changement de modèle
 d'embeddings, dans **Paramètres → Recherche IA**.
+
+<!-- claim:ai-semantic-search-2 -->
+Avec les deux backends locaux, l'indexation se fait sur votre machine. Avec OpenRouter, elle
+n'a lieu que si vous choisissez un **Modèle d'embeddings** dans son panneau : le texte de chaque
+e-mail indexé, ainsi que de chaque recherche et question du chat, est alors envoyé à OpenRouter
+et compte dans le budget mensuel. Sans modèle, la recherche sémantique est désactivée et la
+recherche se fait uniquement par mots-clés. Le modèle est vérifié à l'enregistrement, et celui
+qui ne produit pas les vecteurs de 768 dimensions dont l'index a besoin est refusé.
 
 ## Traduction {#translation}
 

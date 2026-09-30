@@ -93,6 +93,11 @@ Prüfen Sie außerdem **KI-Verarbeitung begrenzen** in den
 KI-Einstellungen — ältere E-Mails werden
 bewusst übersprungen.
 
+<!-- claim:trbl-search-returns-3 -->
+Mit OpenRouter als Backend bleibt die semantische Suche aus, bis Sie ein **Embedding-Modell**
+unter **Einstellungen → KI: Backend & Modelle** wählen und speichern — bis dahin sind reine
+Stichwort-Treffer zu erwarten.
+
 ## Die Klassifizierung kennzeichnet nichts {#classification-is-not-tagging-anything}
 
 - Prüfen Sie, ob **neue E-Mails automatisch klassifizieren** unter

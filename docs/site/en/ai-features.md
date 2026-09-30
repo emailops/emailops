@@ -229,9 +229,17 @@ while AI features are off.
 ## Semantic search {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
-Emails are embedded locally so search can match meaning, not just keywords — describe what
+Emails are embedded so search can match meaning, not just keywords — describe what
 you remember and EmailOps finds it. This also powers the retrieval step in chat. Pick which categories get embedded, and rebuild the index from scratch after
 changing the embedding model, in **Settings → AI Search**.
+
+<!-- claim:ai-semantic-search-2 -->
+With the two local backends, embedding happens on your machine. With OpenRouter it happens
+only if you pick an **Embedding Model** in its panel: the text of every email that gets
+indexed, and of every search and chat question, is then sent to OpenRouter and counts against
+the monthly budget. With none picked, semantic search is off and search is keyword-only. The
+model is checked when you save, and one that does not produce the 768-dimension vectors the
+index needs is refused.
 
 ## Translation {#translation}
 

@@ -67,6 +67,12 @@ reciben ni entrenen con ello; un modelo que ningún proveedor así sirva se rech
 nunca se envía igualmente. **Solo retención cero**, en el mismo panel, lo restringe a
 proveedores que no conservan nada tras responder.
 
+<!-- claim:priv-there-no-4 -->
+Lo mismo vale para la búsqueda. OpenRouter solo indexa tu correo si has elegido un modelo de
+embeddings en ese panel: el texto de cada correo indexado, y de cada búsqueda y pregunta del
+chat, sale entonces con las mismas reglas de proveedor. Sin ninguno, no se envía nada para
+indexar y solo se busca por palabras clave.
+
 ## Qué cambia EmailOps en tu buzón
 
 <!-- claim:priv-what-emailops-1 -->

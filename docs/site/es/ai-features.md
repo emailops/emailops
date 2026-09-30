@@ -238,10 +238,18 @@ muestra con las funciones de IA desactivadas.
 ## Búsqueda semántica {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
-Los correos se indexan localmente para que la búsqueda case por significado y no solo por
+Los correos se indexan para que la búsqueda case por significado y no solo por
 palabras clave — describe lo que recuerdas y EmailOps lo encuentra. Esto también impulsa el paso de recuperación del chat. Elige qué categorías se indexan y
 reconstruye el índice desde cero tras cambiar el modelo de embeddings, en
 **Ajustes → Búsqueda con IA**.
+
+<!-- claim:ai-semantic-search-2 -->
+Con los dos backends locales, la indexación se hace en tu equipo. Con OpenRouter solo se hace
+si eliges un **Modelo de embeddings** en su panel: el texto de cada correo que se indexa, y de
+cada búsqueda y pregunta del chat, se envía entonces a OpenRouter y cuenta para el presupuesto
+mensual. Sin ninguno, la búsqueda semántica está desactivada y solo se busca por palabras
+clave. El modelo se comprueba al guardar, y se rechaza el que no genere los vectores de 768
+dimensiones que necesita el índice.
 
 ## Traducción {#translation}
 

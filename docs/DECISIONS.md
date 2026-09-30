@@ -2231,3 +2231,43 @@ or style nodes.
 **Limit:** `thead`/`tfoot` fold into one `tbody`, `caption` becomes a row, `colgroup`
 widths, `center`/`sub`/`sup`/`small` and a `div` wrapping other blocks are lost, and
 style strings are rewritten in normalised form (`#ff0000` → `rgb(255, 0, 0)`).
+
+## 2026-09-30 — OpenRouter embeddings are an explicit, validated choice
+
+**Decision:** With OpenRouter as the provider, embeddings run on OpenRouter too, but only
+for an embedding model the user picked in the OpenRouter panel and that passed a probe.
+- **Selector + notice:** the panel lists `GET /embeddings/models`, starts at "none", and
+  says that with a model selected the text of every indexed email and of every search and
+  chat question is sent to OpenRouter and counts against the budget; with none, semantic
+  search is off and search is keyword-only.
+- **Probe on save:** the email index is `float[768]`. Before a new model is saved the
+  backend embeds one fixed neutral string asking for `dimensions: 768`; 768 floats back
+  means the model is usable with `dimensions` on every request. If that is refused (4xx)
+  or another length comes back, it asks once more without `dimensions`; 768 floats means
+  usable without it. Anything else refuses the model with the length it returned, and
+  nothing is saved. An outage is reported as an error, not as a verdict.
+- **No request without a validated model:** the validated model id and its mode are stored
+  (`openrouter_embedding_validated_model`, `openrouter_embedding_dimensions`), and the
+  client embeds only while `ai_embedding_model` equals that id. Indexing, chat retrieval,
+  research, memory and help lookups skip the vector path instead of sending a request.
+- **One preference, many providers:** `ai_embedding_model` stays shared. Switching the
+  provider tab in Settings replaces it with a model the new provider can run (none for
+  OpenRouter), and the existing "embedding model changed" re-index clears the old vectors.
+**Context:** OpenRouter was used for every embedding as soon as it was the provider, with
+the local GGUF id left in the shared preference as the model: each email was posted to
+OpenRouter, rejected, and retried on every sync, while the panel said embeddings ran
+locally and offered no model field. The developer decided to keep embeddings on OpenRouter
+and make that explicit.
+**Rejected:**
+- *Always embedding locally while chat is remote*: OpenRouter is what an Intel Mac is
+  pointed to precisely because the embedded runtime cannot run there, so there would be no
+  embedder at all; elsewhere it would need a second provider loaded behind a "remote" one.
+- *Disabling embeddings under OpenRouter*: leaves those users with keyword search only and
+  chat without retrieval by meaning, with no way to opt in.
+- *Reading the vector size from the model catalogue*: `/embeddings/models` publishes no
+  output dimension and an empty `supported_parameters`, so compatibility can only be found
+  by asking the model.
+**Limit:** the onboarding wizard still saves its OpenRouter embedding model without running
+the probe, so semantic search stays off after onboarding until that model is saved once in
+Settings. The probe itself is a paid call (one short string); its cost is recorded but it
+is not refused for budget.

@@ -69,6 +69,12 @@ bereitstellt, wird mit einem Fehler abgelehnt und nie trotzdem gesendet. **Nur o
 Datenspeicherung** im selben Bereich beschränkt das auf Anbieter, die nach der Antwort nichts
 aufbewahren.
 
+<!-- claim:priv-there-no-4 -->
+Dasselbe gilt für die Suche. OpenRouter bettet Ihre E-Mails nur ein, wenn Sie in diesem Bereich
+ein Embedding-Modell gewählt haben: Der Text jeder indizierten E-Mail sowie jeder Suche und
+Chat-Frage geht dann nach denselben Anbieterregeln hinaus. Ohne Modell wird zum Indizieren
+nichts gesendet und es wird nur nach Stichwörtern gesucht.
+
 ## Was EmailOps in Ihrem Postfach verändert
 
 <!-- claim:priv-what-emailops-1 -->
