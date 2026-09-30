@@ -89,22 +89,14 @@ verdict. These are the failure signatures and what they actually mean:
 
 | Symptom | Almost certainly | Where to look |
 |---|---|---|
-| `call failed: empty reply`, every case | The model is a reasoning model that never got the no-think primer, so it spent the whole generation budget inside `<think>` and `strip_reasoning` collapsed the reply to `""` | `no_think_priming` / `is_qwen3_model_path` (`ai/llama_cpp/runtime.rs`) — the primer is chosen by **file name** (`starts_with("qwen3")`), not by architecture |
+| `call failed: empty reply`, every case | The model is a reasoning model that never got the no-think primer, so it spent the whole generation budget inside `<think>` and `strip_reasoning` collapsed the reply to `""` | `no_think_priming` (`ai/llama_cpp/runtime.rs`) → `think_priming::no_think_priming_for_model`, which reads the GGUF architecture (the file name is only a fallback) |
 | Load fails with `ffi error -1` on the template | The GGUF's chat template uses delimiters `llama_chat_apply_template` does not know | `looks_like_gemma4_template` + the hand-rolled render in `runtime.rs` |
 | Loads, answers fluent nonsense | An unsupported quant read as a known one, or a missing activation transform | The vendor's model card — quant ids and any required fork |
 | `Decode Error -3` on every turn | Embedded runtime on hardware it cannot use | `ai::gpu_plan::embedded_runtime_supported` |
 
-For the priming case the workaround costs nothing and keeps the comparison
-fair — hard-link the file under a name the heuristic recognises, and say in
-the report that you did:
-
-```bash
-ln -f <id>.gguf qwen35-<id>.gguf   # same inode, no extra disk
-```
-
-Report the wiring gap as a finding in its own right. "Any Qwen-family GGUF not
-named `qwen3*` returns empty replies" is a product bug worth more than the
-benchmark that uncovered it.
+If the primer is off for a reasoning model, check that its GGUF header
+declares an architecture `think_priming` recognises, and report the gap as a
+finding in its own right.
 
 ## Phase 3 — Sweep
 
@@ -156,10 +148,11 @@ These are properties of the evals, not bugs to fix mid-benchmark:
 
 - **`chat_eval` writes no JSON** — only an HTML report and `[eval] OK/FAIL`
   lines on stderr. The harness counts those lines.
-- **`draft_eval` judges with the same model that generated**, and takes the
-  model from `EMAILOPS_EVAL_MODEL` rather than `--model`. Each model therefore
-  grades its own homework: report only its deterministic metrics (word
-  overlap, latency, errors) and say why the judge scores are absent.
+- **`draft_eval` takes the model from `EMAILOPS_EVAL_MODEL`** rather than
+  `--model`, and judges with the generating model unless `--judge-model` is
+  passed. Pass one fixed judge for every column, or report only its
+  deterministic metrics (word overlap, latency, errors) and say why the judge
+  scores are absent.
 - **Eval binaries must exit through `services::ai::shutdown_and_exit`** or
   ggml's Metal destructor aborts at teardown and a finished run reports
   failure. `chat_eval` and `draft_eval` still return from `main`, so ignore

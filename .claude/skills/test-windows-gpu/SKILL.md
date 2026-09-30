@@ -117,13 +117,20 @@ happens once per VM lifetime, not on every RDP reconnect.
 
 Prefer downloading the already-CI-built `.msi` over rebuilding from source on
 the VM (a full `DYNAMIC_BACKENDS=1 CARGO_FEATURES=vulkan` Windows build takes
-~45 min even when it succeeds). Find the latest successful `release.yml` run
-(or use `$0` if the user passed a specific run id) and generate a short-lived
-signed URL — same reasoning as the Linux flow in `docs/TEST-VMS.md`: avoids
-putting a GitHub token on the VM:
+~45 min even when it succeeds). Without a run id, take the installer from the
+latest GitHub release — a public URL, so no GitHub token reaches the VM:
 
 ```bash
-RUN_ID="${0:-$(gh run list --workflow=release.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')}"
+ssh -i private-scripts/emailops_gpu_test_key azureuser@"$IP" \
+  "New-Item -ItemType Directory -Force C:\art | Out-Null; Invoke-WebRequest -Uri 'https://github.com/emailops/emailops/releases/latest/download/EmailOps-windows.msi' -OutFile C:\art\EmailOps-windows.msi"
+```
+
+If the user passed a run id (`$0`) from a `dry_run` build of `release.yml`,
+use its `emailops-windows-dry-run` artifact instead, through a short-lived
+signed URL (same reasoning as the Linux flow in `docs/TEST-VMS.md`):
+
+```bash
+RUN_ID="$0"
 ARTIFACT_ID=$(gh api "repos/emailops/emailops/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name=="emailops-windows-dry-run") | .id')
 URL=$(curl -s -o /dev/null -D - -H "Authorization: token $(gh auth token)" \
   "https://api.github.com/repos/emailops/emailops/actions/artifacts/$ARTIFACT_ID/zip" \

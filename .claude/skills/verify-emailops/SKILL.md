@@ -22,7 +22,7 @@ then the file for the feature you are proving.
 ## Launch
 
 ```bash
-$V launch      # ~10 s warm, several minutes on a cold Rust build
+$V launch      # ~20 s warm, several minutes on a cold Rust build
 ```
 
 What it does, and why each part exists:
@@ -35,7 +35,8 @@ What it does, and why each part exists:
   `VERIFY_PORT` / `VERIFY_DATA_DIR` if you need another pair.
 - Builds the demo DB + embeddings first if missing, and rebuilds them when `scripts/generate_demo_db.py` is newer than the DB (`scripts/ensure_demo_db.sh`). The demo
   persona is synthetic: two IMAP accounts, `ulises@emailopslabs.dev` (id `demo-acct-work`)
-  and `ulises@fastmail.com` (`demo-acct-personal`), 79 emails, onboarding already completed.
+  and `ulises@fastmail.com` (`demo-acct-personal`), plus a credential-less Gmail account
+  `demo-acct-calendar` that owns the demo calendar, 79 emails, onboarding already completed.
 - Refuses to start if port 1421 is taken, if another `emailops` process already holds the
   demo DB, or if `VERIFY_DATA_DIR` points at `~/Library/Application Support/com.emailops.app`
   (the production mailbox). Refusing beats double-driving a shared instance.
@@ -49,8 +50,8 @@ What it does, and why each part exists:
 Ready signal in the log: `App running` / Vite `ready in`. A failure shows as the launcher
 exiting (`launcher exited before the app came up`, log tail printed) or a timeout.
 
-Expected on screen after launch: the inbox of `ulises@emailopslabs.dev` and a yellow
-**"Authentication required for demo-acct-work"** banner. The banner is normal: the demo
+Expected on screen after launch: the inbox of `ulises@emailopslabs.dev` and red
+**"Authentication required for account …"** banners, one per demo account. The banners are normal: the demo
 accounts have no keychain credentials, so sync cannot run. Everything read-only works.
 
 **Spaces gotcha (seen 11/09/2026):** if the terminal that runs `launch` is in a
@@ -134,7 +135,7 @@ Stable handles (from `src/locales/en/*.json`; the AX label is the visible text o
 |---|---|
 | Sidebar, Views | `AXButton "Inbox"`, `"Tag Board"`, `"Attachments"`, `"Drafts"`, `"Sent"`, `"Calendar"` |
 | Sidebar, Other Views | `"Spam"`, `"Deleted"`, `"Contacts"`, `"Dashboard"` |
-| Sidebar, AI Features | `AXCheckBox "Chat"` (toggles the right chat panel), `"Tasks"`, `"Lenses"`, `"Memory"` |
+| Sidebar, AI Features | `"Chat"` (opens the full-screen chat view), `"Tasks"`, `"Lenses"`, `"Memory"` |
 | Sidebar, top | `AXButton "Compose"`, `AXButton "Search emails…"`, account rows by address, `"All accounts"` |
 | Inbox | category tabs `"Primary" / "Social" / "Updates" / "Forums" / "Promotions"` (group aria `Email categories`); rows are `AXButton` whose label starts with the sender name |
 | Email row hover | `"More actions"`, `"Chat about this thread"`, `"Open in new tab"` |
@@ -253,4 +254,4 @@ for `wd`; it can also run alone with `TAURI_WEBDRIVER_PORT=… node scripts/wd.m
 `VERIFY_DATA_DIR`, `VERIFY_RUN_DIR`, `VERIFY_LAUNCH_TIMEOUT`, `VERIFY_SETTLE`
 (seconds to wait between an action and its after-snapshot, default 1.5).
 
-Keep the feature map honest with `/maintain-verification-skill` when the UI changes.
+Keep the feature map honest with the `maintain-verification` skill when the UI changes.
