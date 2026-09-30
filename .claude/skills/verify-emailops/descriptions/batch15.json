@@ -86,7 +86,11 @@
     "src-tauri/src/services/junk/content.rs::a_bare_domain_as_link_text_pointing_elsewhere_is_a_mismatch": "Un enlace cuyo texto es un dominio y que lleva a otro dominio cuenta como engaño.",
     "src-tauri/src/services/junk/content.rs::link_text_with_spaces_is_prose_not_a_shown_address": "Un texto de enlace con espacios es prosa, no una dirección mostrada.",
     "src-tauri/src/services/junk/content.rs::a_credential_request_needs_somewhere_to_send_them": "Pedir credenciales solo cuenta como ataque si el mensaje tiene dónde enviarlas (un enlace).",
-    "src-tauri/src/services/junk/lookalike.rs::an_embedded_address_needs_a_real_looking_tld": "Una dirección dentro del nombre visible necesita un TLD plausible (dos letras o más)."
+    "src-tauri/src/services/junk/lookalike.rs::an_embedded_address_needs_a_real_looking_tld": "Una dirección dentro del nombre visible necesita un TLD plausible (dos letras o más).",
+    "src-tauri/src/services/classification.rs::a_glob_becomes_an_anchored_case_insensitive_regex": "Un patrón de regla con comodines (* y ?) se convierte en una expresión regular anclada, sin distinguir mayúsculas y escapando los caracteres especiales.",
+    "src-tauri/src/services/classification.rs::a_glob_becomes_an_escaped_like_pattern": "Un patrón de regla se convierte en un LIKE de SQL con %, _ y \\\\ escapados.",
+    "src-tauri/src/services/classification.rs::a_rule_matches_on_every_pattern_it_sets": "Una regla de clasificación solo se aplica si coinciden el remitente y el asunto que define.",
+    "src-tauri/src/services/classification.rs::a_disabled_rule_or_an_empty_pattern_behaves_as_documented": "Una regla desactivada no se aplica y un patrón vacío equivale a «cualquiera»."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
