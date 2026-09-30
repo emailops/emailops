@@ -24,7 +24,10 @@
     "src-tauri/src/services/chat/research/notes.rs::overflowing_notes_give_each_non_empty_batch_an_equal_share": "Si las notas no caben, cada lote con notas recibe la misma parte y conserva sus primeras notas.",
     "src-tauri/src/services/chat/research/notes.rs::a_long_subject_is_cut_to_sixty_chars_with_an_ellipsis": "Un asunto largo se recorta a 60 caracteres con puntos suspensivos al usarlo como texto de enlace.",
     "src-tauri/src/services/chat/research/notes.rs::an_unmatched_conversation_links_the_email_its_own_note_cited": "Una conversación sin coincidencia enlaza el correo que citó su propia nota, no el de otra conversación.",
-    "src-tauri/src/services/chat/research/notes.rs::the_full_list_heading_is_in_the_report_language": "El encabezado de la lista completa está en francés o alemán cuando el informe lo está."
+    "src-tauri/src/services/chat/research/notes.rs::the_full_list_heading_is_in_the_report_language": "El encabezado de la lista completa está en francés o alemán cuando el informe lo está.",
+    "src-tauri/src/services/chat/research/reading.rs::a_conversation_label_past_the_batch_is_ignored": "En la lectura de un lote, un hallazgo que cita una conversación fuera del lote (C3 de 2) se ignora; los demás se conservan.",
+    "src-tauri/src/services/chat/research/reading.rs::a_sent_match_citing_no_email_is_background_that_says_why": "Una coincidencia sobre correo enviado que no cita ningún correo del usuario pasa a contexto y lo explica.",
+    "src-tauri/src/services/chat/research/reading.rs::a_received_match_links_the_email_the_user_received": "En preguntas sobre correo recibido, la coincidencia enlaza el correo que recibió el usuario, no el suyo propio."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
