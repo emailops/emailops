@@ -1,0 +1,42 @@
+# cargo-mutants settings for this crate. Run through `make mutants` (scripts/mutants.sh),
+# which adds --in-place, --no-default-features, the worktree and the output dir.
+# Guide and equivalent-mutant ledger: docs/testing/COVERAGE-AND-MUTATION.md.
+
+# Files with no logic worth mutating, or not compiled in the --no-default-features
+# build (a mutant in uncompiled code would be reported as missed).
+exclude_globs = [
+    "src/main.rs",
+    "src/cli_main.rs",
+    "src/lib.rs",                 # desktop wiring: run(), plugin setup
+    "src/commands/**",            # thin Tauri wrappers; desktop feature only
+    "src/cli/**",                 # CLI argument plumbing and terminal rendering; cli feature only
+    "src/evals/**",               # eval harness; eval feature only
+    "src/webdriver.rs",           # dev-only WebDriver server
+    "src/docs_sourcegen.rs",      # test-only docs generator
+    "src/**/test_helpers.rs",
+    "src/**/tests.rs",
+    "src/**/architecture_tests.rs",
+    "src/sync/mock/**",           # test fakes
+    "src/ai/tracing.rs",          # OpenTelemetry export; tracing feature only
+    "src/services/logger.rs",     # log fan-out to the UI
+    "src/services/events.rs",     # event emission seam
+    "src/services/app_handle.rs", # AppHandle stub/seam
+    "src/runtime/spawn.rs",       # task spawning glue
+    "src/util/startup_dialog.rs", # native dialog at startup
+]
+
+# Mutations whose only effect is diagnostic output.
+exclude_re = [
+    "<impl (std::)?(fmt::)?Debug for ",
+]
+
+# Integration tests (tests/) and doctests are left out: every mutant would pay a
+# second full link of the crate plus the doctest pass. The planners targeted here
+# are covered by their inline unit tests; a mutant missed only because of this is
+# re-checked against the integration suite before it is written down (see the guide).
+additional_cargo_test_args = ["--lib"]
+
+# Timeouts: baseline test time x3, never under 60 s; builds x3 of the baseline build.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60.0
+build_timeout_multiplier = 3.0
