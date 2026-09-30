@@ -168,6 +168,17 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
     Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
 }
 
+/// Most tool calls one generation may carry. The model can ask for more in
+/// the next round, once it has read these results.
+///
+/// A round has no other bound than the generation budget: greedy decoding can
+/// tip into listing one distinct search after another and never emit the
+/// end-of-turn token (observed on Qwen 3.6 35B: 106 `search_emails` calls in
+/// one round). Every call was executed and the results overflowed the context
+/// window, which dropped the system prompt and the question from the front.
+/// 8 is the largest batch seen in a round of a passing verified run.
+pub(super) const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
+
 /// True when the raw generation `text` has just completed a tool call that
 /// repeats (same name, same arguments) one already emitted earlier in it.
 ///
@@ -189,6 +200,18 @@ pub(super) fn ends_with_repeated_tool_call(text: &str) -> bool {
             .any(|c| c.function.name == last.function.name && c.function.arguments == last.function.arguments),
         None => false,
     }
+}
+
+/// True when the raw generation `text` has just completed the last tool call
+/// a round may carry ([`MAX_TOOL_CALLS_PER_ROUND`]); the runtime ends the
+/// round there. Like [`ends_with_repeated_tool_call`] it only does work at a
+/// block boundary. Pure.
+pub(super) fn tool_round_is_full(text: &str) -> bool {
+    let tail = text.trim_end();
+    if !(tail.ends_with(CLOSE_TAG) || tail.ends_with(OPEN_TAG)) {
+        return false;
+    }
+    parse_qwen_tool_calls(text).len() >= MAX_TOOL_CALLS_PER_ROUND
 }
 
 #[cfg(test)]
@@ -214,6 +237,44 @@ mod tests {
         let names: Vec<&str> = calls.iter().map(|c| c.function.name.as_str()).collect();
         assert_eq!(names, ["search_emails", "get_email_body"]);
         assert_eq!(calls[0].function.arguments, json!({"from":"kelvo","limit":25}));
+    }
+
+    /// `count` distinct calls, one per line, each ending with `close`.
+    fn distinct_calls(count: usize, close: &str) -> String {
+        (0..count)
+            .map(|i| {
+                format!("<tool_call>{{\"name\":\"search_emails\",\"arguments\":{{\"query\":\"topic {i}\"}}}}{close}\n")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_round_is_full_when_its_last_allowed_call_closes() {
+        assert!(!tool_round_is_full(&distinct_calls(
+            MAX_TOOL_CALLS_PER_ROUND - 1,
+            CLOSE_TAG
+        )));
+        assert!(tool_round_is_full(&distinct_calls(MAX_TOOL_CALLS_PER_ROUND, CLOSE_TAG)));
+    }
+
+    #[test]
+    fn a_call_still_being_written_does_not_fill_the_round() {
+        let full = distinct_calls(MAX_TOOL_CALLS_PER_ROUND, CLOSE_TAG);
+        let unfinished = &full[..full.trim_end().len() - CLOSE_TAG.len() - 3];
+        assert!(!tool_round_is_full(unfinished));
+    }
+
+    #[test]
+    fn unclosed_newline_batches_fill_the_round_when_the_next_block_opens() {
+        let batch = distinct_calls(MAX_TOOL_CALLS_PER_ROUND, "");
+        assert!(!tool_round_is_full(&batch), "the last line may still be growing");
+        assert!(tool_round_is_full(&format!("{batch}<tool_call>")));
+    }
+
+    #[test]
+    fn prose_and_empty_text_never_fill_a_round() {
+        assert!(!tool_round_is_full(""));
+        assert!(!tool_round_is_full("plain prose answer"));
     }
 
     #[test]

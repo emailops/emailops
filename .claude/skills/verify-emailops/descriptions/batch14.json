@@ -10,7 +10,13 @@
     "src-tauri/src/cli/session.rs::write_commands_and_the_repl_open_the_db_read_write": "Los comandos que escriben (sync, embed, classify, chat, borrar un borrador) y el REPL abren la base de datos en lectura y escritura.",
     "src-tauri/src/cli/session.rs::read_only_open_does_not_migrate_the_db": "Abrir la base de datos en solo lectura no ejecuta migraciones: un doctor o un search desde una rama nueva no deja fuera a la app instalada.",
     "src-tauri/src/cli/session.rs::read_only_open_reads_a_closed_migrated_db": "Una base de datos en modo WAL ya cerrada por la app (sin ficheros -wal/-shm) se puede leer en solo lectura.",
-    "src-tauri/src/cli/session.rs::read_only_open_of_a_missing_db_is_not_found": "Pedir una lectura sobre una carpeta sin base de datos responde «no encontrado» en vez de crear una vacía."
+    "src-tauri/src/cli/session.rs::read_only_open_of_a_missing_db_is_not_found": "Pedir una lectura sobre una carpeta sin base de datos responde «no encontrado» en vez de crear una vacía.",
+    "src-tauri/src/ai/llama_cpp/runtime.rs::a_tool_round_ends_once_it_carries_the_most_calls_a_round_may": "Una ronda en la que el modelo encadena cien búsquedas distintas sin cerrar su turno se corta en cuanto completa la octava llamada, y esa última llamada queda entera.",
+    "src-tauri/src/ai/llama_cpp/runtime.rs::a_tool_round_within_the_limit_runs_to_its_end": "Una ronda con tres llamadas a herramientas, por debajo del tope, se genera completa sin cortarse.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_round_is_full_when_its_last_allowed_call_closes": "La ronda se da por llena justo cuando se cierra la última llamada permitida, no una antes.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_call_still_being_written_does_not_fill_the_round": "Una llamada que todavía se está escribiendo no cuenta para llenar la ronda.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::unclosed_newline_batches_fill_the_round_when_the_next_block_opens": "Cuando el modelo emite las llamadas una por línea sin etiqueta de cierre, la ronda se da por llena al abrirse el bloque siguiente.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::prose_and_empty_text_never_fill_a_round": "Un texto vacío o una respuesta en prosa nunca llenan la ronda de herramientas."
   },
   "vitest": {
     "src/lib/apiContract/ajustes.api.test.ts::get_auto_n_ctx: api.ts sends the arguments the Rust command declares": "La llamada a `get_auto_n_ctx` desde api.ts envía los argumentos con los nombres que declara el comando en Rust, sin que falte ninguno obligatorio ni sobre uno desconocido.",
