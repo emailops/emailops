@@ -64,11 +64,14 @@ prepare_worktree() {
     git -C "$wt" checkout --quiet --detach "$(git rev-parse HEAD)"
   fi
   (cd "$wt" && bash scripts/build_target.sh link > /dev/null)
-  # Each incremental rebuild leaves the crate's codegen objects in deps/ (about
-  # 1 GB per 15 minutes of mutants); the linked test binary does not need them.
-  if [[ -d "$wt/src-tauri/target/debug/deps" ]]; then
-    find "$(cd "$wt/src-tauri/target/debug/deps" && pwd -P)" -maxdepth 1 \
-      -name 'emailops_lib-*.rcgu.o' -mmin +10 -delete
+  # Incremental rebuilds leave the crate's codegen objects in deps/ (about 1 GB
+  # per 15 minutes of mutants). They cannot be pruned one by one — the next
+  # incremental build links against them — so drop the crate's incremental
+  # cache and artifacts together: dependencies stay, the crate rebuilds once.
+  local target="$wt/src-tauri/target/debug"
+  if [[ -d "$target/deps" ]]; then
+    target="$(cd "$target" && pwd -P)"
+    rm -rf "$target"/incremental/emailops_lib-* "$target"/deps/emailops_lib-*
   fi
 }
 
@@ -83,10 +86,15 @@ if [[ ",$FEATURES," != *,llamacpp,* ]]; then
 fi
 if [[ -n "${RECHECK:-}" ]]; then
   # One anchored --re per missed mutant; the integration tests join the lib tests.
+  # --re does not filter struct-field deletions (cargo-mutants 27), so the
+  # missed mutants' files are passed with --file as well.
+  missed="$(find "$REPORTS/$RECHECK" -name missed.txt -exec cat {} +)"
   while IFS= read -r re; do
     args+=(--re "$re")
-  done < <(find "$REPORTS/$RECHECK" -name missed.txt -exec cat {} + |
-    sed -e 's/[][\\.+*?(){}|^$]/\\&/g' -e 's/^/^/' -e 's/$/$/')
+  done < <(sed -e 's/[][\\.+*?(){}|^$]/\\&/g' -e 's/^/^/' -e 's/$/$/' <<< "$missed")
+  while IFS= read -r file; do
+    args+=(--file "$file")
+  done < <(cut -d: -f1 <<< "$missed" | sort -u)
   args+=(--cargo-test-arg=--tests)
 fi
 
