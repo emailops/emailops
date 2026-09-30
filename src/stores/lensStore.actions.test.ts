@@ -373,3 +373,28 @@ describe('lensStore rows', () => {
     expect(useLensStore.getState().rows.map((r) => r.emailId)).toEqual(['e1', 'e2']);
   });
 });
+
+// Regression: the excluded-rows toggle and the column sort are fired as
+// `void setShowExcluded(…)` / `void setSort(…)` from LensesView. A failed fetch
+// became an unhandled rejection: the toggle left `isLoadingRows` on for good
+// (the table kept its spinner) and neither failure reached the error banner.
+describe('lensStore row reloads that fail', () => {
+  it('stop the spinner and surface the error when the excluded rows cannot be loaded', async () => {
+    useLensStore.setState({ activeLensId: 'lens-1' });
+    api.getExcludedLensRows.mockRejectedValue(new Error('db locked'));
+
+    await useLensStore.getState().setShowExcluded(true);
+
+    expect(useLensStore.getState().isLoadingRows).toBe(false);
+    expect(useLensStore.getState().error).toContain('db locked');
+  });
+
+  it('surface the error when a sorted page cannot be loaded', async () => {
+    useLensStore.setState({ activeLensId: 'lens-1' });
+    api.getLensRows.mockRejectedValue(new Error('db locked'));
+
+    await useLensStore.getState().setSort({ columnKey: 'total', direction: 'asc' });
+
+    expect(useLensStore.getState().error).toContain('db locked');
+  });
+});
