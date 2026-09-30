@@ -1385,6 +1385,117 @@ mod tests {
             .contains(&ReasonCode::StatisticalSpam));
     }
 
+    // A confident clearance by the receiving server takes a fixed amount off
+    // the spam score (0.30 by default), never below zero.
+    #[test]
+    fn a_confident_server_clearance_discounts_the_spam_score() {
+        let mut base = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), "hello");
+        base.statistical_spam = Some(0.95);
+        let mut cleared = signals(
+            &format!("{ALIGNED}X-Spam-Status: No, score=-2.0 required=5.0\nFrom: X <x@ordinary.example>\n"),
+            "hello",
+        );
+        cleared.statistical_spam = Some(0.95);
+        let before = judged(&base).spam.score;
+        assert!(
+            before > 0.30,
+            "the fixture needs a score the discount can show on: {before}"
+        );
+        let after = judged(&cleared).spam.score;
+        assert!((after - (before - 0.30)).abs() < 1e-4, "{before} -> {after}");
+    }
+
+    fn phishing_codes(raw_headers: &str, known: &[&str]) -> Vec<ReasonCode> {
+        let mut s = signals(&format!("{ALIGNED}{raw_headers}"), "hello");
+        s.known_contact_domains = known.iter().map(|d| d.to_string()).collect();
+        judged(&s).reason_codes_for(JunkAxis::Phishing)
+    }
+
+    // No authentication header, so correspondence does not vouch for the
+    // sender and clear the spam axis: what is left is first contact itself.
+    #[test]
+    fn first_contact_counts_only_for_a_stranger() {
+        let stranger = signals("From: X <x@ordinary.example>\n", "hello");
+        assert!(judged(&stranger)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+
+        let mut engaged = stranger.clone();
+        engaged.sender_engaged = true;
+        assert!(!judged(&engaged)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+
+        let mut known = stranger.clone();
+        known.known_contact_domains = vec!["ordinary.example".to_string()];
+        assert!(!judged(&known)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+    }
+
+    #[test]
+    fn an_address_in_the_display_name_counts_only_when_it_names_another_domain() {
+        let other = phishing_codes("From: \"billing@bank.example\" <x@ordinary.example>\n", &[]);
+        assert!(other.contains(&ReasonCode::DisplayNameContainsAddress), "{other:?}");
+        let same = phishing_codes("From: \"billing@ordinary.example\" <x@ordinary.example>\n", &[]);
+        assert!(!same.contains(&ReasonCode::DisplayNameContainsAddress), "{same:?}");
+    }
+
+    #[test]
+    fn invisible_characters_in_the_display_name_count_like_mixed_scripts() {
+        let codes = phishing_codes("From: Ac\u{200B}me <x@ordinary.example>\n", &[]);
+        assert!(codes.contains(&ReasonCode::MixedScriptDisplayName), "{codes:?}");
+    }
+
+    #[test]
+    fn a_reply_to_on_the_senders_own_or_a_known_domain_is_not_a_mismatch() {
+        let own = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@ordinary.example\n", &[]);
+        assert!(!own.contains(&ReasonCode::ReplyToMismatch), "{own:?}");
+        let known = phishing_codes(
+            "From: X <x@ordinary.example>\nReply-To: y@partner.example\n",
+            &["partner.example"],
+        );
+        assert!(!known.contains(&ReasonCode::ReplyToMismatch), "{known:?}");
+        let third = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", &[]);
+        assert!(third.contains(&ReasonCode::ReplyToMismatch), "{third:?}");
+    }
+
+    #[test]
+    fn a_return_path_on_the_senders_own_domain_is_not_a_mismatch() {
+        let codes = phishing_codes(
+            "From: X <x@ordinary.example>\nReturn-Path: <bounce@ordinary.example>\n",
+            &[],
+        );
+        assert!(!codes.contains(&ReasonCode::ReturnPathMismatch), "{codes:?}");
+    }
+
+    // A bounce domain that differs from From is how every ESP sends: recorded,
+    // but not an identity claim, so a mailing list failing DMARC is not phishing.
+    #[test]
+    fn a_return_path_mismatch_alone_does_not_let_an_authentication_failure_count() {
+        let s = signals(
+            &format!("{FAILING}From: News <news@shop.example>\nReturn-Path: <bounce@esp-mail.example>\n"),
+            "hello",
+        );
+        let codes = judged(&s).reason_codes_for(JunkAxis::Phishing);
+        assert!(codes.contains(&ReasonCode::ReturnPathMismatch), "{codes:?}");
+        assert!(!codes.contains(&ReasonCode::DmarcFail), "{codes:?}");
+    }
+
+    // A lookalike domain is an identity claim on its own: with it, a DMARC
+    // failure counts as phishing evidence even without a Reply-To mismatch.
+    #[test]
+    fn a_lookalike_domain_alone_lets_an_authentication_failure_count() {
+        let mut s = signals(
+            &format!("{FAILING}From: Billing <billing@acme-payments.example>\n"),
+            "hello",
+        );
+        s.known_contact_domains = vec!["acme.example".to_string()];
+        let codes = judged(&s).reason_codes_for(JunkAxis::Phishing);
+        assert!(codes.contains(&ReasonCode::LookalikeDomain), "{codes:?}");
+        assert!(codes.contains(&ReasonCode::DmarcFail), "{codes:?}");
+    }
+
     #[test]
     fn a_model_with_no_opinion_contributes_nothing() {
         // 0.5 is "I do not know". It must add exactly zero rather than half a

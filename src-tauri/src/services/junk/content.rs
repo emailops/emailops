@@ -640,4 +640,38 @@ mod tests {
     fn an_empty_body_produces_no_signals() {
         assert_eq!(analyse("", "", &[]), ContentSignals::default());
     }
+    #[test]
+    fn a_quoted_href_is_read_without_its_quotes() {
+        assert_eq!(
+            extract_hrefs(r#"<a href="http://a.example/x">x</a> <a href='https://b.example/y'>y</a>"#),
+            vec!["http://a.example/x".to_string(), "https://b.example/y".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_word_starting_with_http_does_not_hide_a_later_url() {
+        let text = "a fairly long preamble here: httpd was restarted, see http://a.example/x";
+        assert_eq!(extract_bare_urls(text), vec!["http://a.example/x".to_string()]);
+    }
+    #[test]
+    fn a_raw_ip_host_is_four_numeric_octets_with_an_optional_port() {
+        assert!(is_raw_ip_host("192.0.2.10"));
+        assert!(is_raw_ip_host("192.0.2.10:8080"));
+        assert!(!is_raw_ip_host("192.0.2"));
+        assert!(!is_raw_ip_host("192..2.10"));
+        assert!(!is_raw_ip_host("a.b.c.d"));
+    }
+
+    #[test]
+    fn tags_are_stripped_and_their_text_kept() {
+        assert_eq!(strip_tags("<p>Pay <b>now</b></p>"), "Pay now");
+    }
+
+    #[test]
+    fn an_anchor_pairs_its_visible_text_with_its_href() {
+        assert_eq!(
+            extract_anchor_pairs(r#"<p>x</p><a href="http://a.example/x">Your bank</a> tail"#),
+            vec![("Your bank".to_string(), "http://a.example/x".to_string())]
+        );
+    }
 }

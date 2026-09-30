@@ -62,7 +62,20 @@
     "src-tauri/src/services/junk/auth.rs::decimals_in_the_score_count": "Los decimales de la puntuación del antispam cuentan: 2,6 sobre 5,0 es un aprobado por los pelos.",
     "src-tauri/src/services/junk/tokens.rs::the_token_hash_does_not_change": "El hash de las palabras no cambia: los modelos entrenados guardados dependen de él.",
     "src-tauri/src/services/junk/mod.rs::marking_a_scored_message_as_junk_keeps_the_kind_it_was_scored_as": "Marcar como no deseado un mensaje ya puntuado conserva su tipo (p. ej. phishing) en la etiqueta.",
-    "src-tauri/src/services/junk/mod.rs::a_message_marked_not_junk_stays_clear_when_it_is_scored_again": "Un mensaje marcado como «no es junk» sigue limpio al volver a puntuarlo."
+    "src-tauri/src/services/junk/mod.rs::a_message_marked_not_junk_stays_clear_when_it_is_scored_again": "Un mensaje marcado como «no es junk» sigue limpio al volver a puntuarlo.",
+    "src-tauri/src/services/junk/verdict.rs::a_confident_server_clearance_discounts_the_spam_score": "Un aprobado holgado del antispam del servidor resta una cantidad fija (0,30) a la puntuación de spam.",
+    "src-tauri/src/services/junk/verdict.rs::a_lookalike_domain_alone_lets_an_authentication_failure_count": "Un dominio que imita a un contacto conocido basta como pretensión de identidad: con él, un fallo de DMARC cuenta como indicio de phishing.",
+    "src-tauri/src/services/junk/verdict.rs::a_return_path_mismatch_alone_does_not_let_an_authentication_failure_count": "Un Return-Path de otro dominio (lo normal en envíos masivos) no basta: un fallo de DMARC de una lista de correo no se trata como phishing.",
+    "src-tauri/src/services/junk/verdict.rs::first_contact_counts_only_for_a_stranger": "«Primer contacto» solo suma para un remitente desconocido: no si el usuario ya le respondió ni si conoce su dominio.",
+    "src-tauri/src/services/junk/verdict.rs::an_address_in_the_display_name_counts_only_when_it_names_another_domain": "Una dirección en el nombre visible solo cuenta si nombra un dominio distinto del remitente real.",
+    "src-tauri/src/services/junk/verdict.rs::invisible_characters_in_the_display_name_count_like_mixed_scripts": "Los caracteres invisibles en el nombre visible cuentan igual que mezclar alfabetos.",
+    "src-tauri/src/services/junk/verdict.rs::a_reply_to_on_the_senders_own_or_a_known_domain_is_not_a_mismatch": "Un Reply-To al propio dominio del remitente o a un dominio conocido no es sospechoso; a un tercero, sí.",
+    "src-tauri/src/services/junk/verdict.rs::a_return_path_on_the_senders_own_domain_is_not_a_mismatch": "Un Return-Path del propio dominio del remitente no se anota como discrepancia.",
+    "src-tauri/src/services/junk/content.rs::a_quoted_href_is_read_without_its_quotes": "Los enlaces entre comillas simples o dobles se leen sin las comillas.",
+    "src-tauri/src/services/junk/content.rs::a_word_starting_with_http_does_not_hide_a_later_url": "Una palabra que empieza por «http» no oculta una URL que aparece después.",
+    "src-tauri/src/services/junk/content.rs::a_raw_ip_host_is_four_numeric_octets_with_an_optional_port": "Un enlace a una IP desnuda son cuatro octetos numéricos, con puerto opcional.",
+    "src-tauri/src/services/junk/content.rs::tags_are_stripped_and_their_text_kept": "Al quitar etiquetas HTML se conserva su texto.",
+    "src-tauri/src/services/junk/content.rs::an_anchor_pairs_its_visible_text_with_its_href": "Cada enlace empareja su texto visible con su destino para detectar discrepancias."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
