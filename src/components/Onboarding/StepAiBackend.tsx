@@ -3,6 +3,7 @@ import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DEFAULT_OPENROUTER_CHAT_MODEL } from '@/components/Settings/AiSettings/helpers';
 import * as api from '@/lib/api';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isDataPolicyError } from '@/lib/errors';
@@ -13,8 +14,6 @@ import type { CatalogModel, ModelDownloadProgress } from '@/types';
 const HUGGINGFACE_URL = 'https://huggingface.co';
 
 type Backend = 'llamacpp' | 'ollama' | 'openrouter';
-
-const OPENROUTER_DEFAULT_CHAT = 'openai/gpt-4o-mini';
 
 export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
   const { t } = useTranslation(['auth', 'settings']);
@@ -32,7 +31,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   const [error, setError] = useState<string | null>(null);
   const [orApiKey, setOrApiKey] = useState<string>('');
   const [orHasSavedKey, setOrHasSavedKey] = useState<boolean>(false);
-  const [orChatModel, setOrChatModel] = useState<string>(OPENROUTER_DEFAULT_CHAT);
+  const [orChatModel, setOrChatModel] = useState<string>(DEFAULT_OPENROUTER_CHAT_MODEL);
   // Optional: empty means keyword-only search. A typed model must pass the
   // backend's dimension probe before it is saved (see handleContinue).
   const [orEmbedModel, setOrEmbedModel] = useState<string>('');
@@ -76,7 +75,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
         }
         setOrZeroDataRetention(!!cfg.zeroDataRetention);
         if (cfg.provider === 'openrouter') {
-          setOrChatModel(cfg.model || OPENROUTER_DEFAULT_CHAT);
+          setOrChatModel(cfg.model || DEFAULT_OPENROUTER_CHAT_MODEL);
           setOrEmbedModel(cfg.embeddingModel);
           if (cfg.embeddingModelValidated) setOrValidatedEmbed(cfg.embeddingModel);
           setOrHasSavedKey(!!cfg.hasApiKey);
@@ -436,7 +435,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                   setOrChatModel(e.target.value);
                   invalidateTest();
                 }}
-                placeholder={OPENROUTER_DEFAULT_CHAT}
+                placeholder={DEFAULT_OPENROUTER_CHAT_MODEL}
                 className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
               />
             </div>

@@ -85,6 +85,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => api);
 
 import { AiSettings } from './AiSettings';
+import { DEFAULT_OPENROUTER_CHAT_MODEL } from './AiSettings/helpers';
 
 function savedConfig(over: Record<string, unknown>) {
   return {
@@ -305,11 +306,11 @@ describe('AiSettings — embedding model', () => {
     expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
   });
 
-  it('switching to OpenRouter empties the chat model instead of showing the in-app one', async () => {
+  it('switching to OpenRouter offers its default chat model instead of the in-app one', async () => {
     await mount({ provider: 'llamacpp', model: 'chat-local-gguf', embeddingModel: 'embed-local-gguf' });
     await switchTo('settings:ai.providerOpenRouterLabel');
 
-    expect(chatModelInput().value).toBe('');
+    expect(chatModelInput().value).toBe(DEFAULT_OPENROUTER_CHAT_MODEL);
   });
 
   it('returning to the saved provider restores its chat model', async () => {
@@ -333,6 +334,11 @@ describe('AiSettings — embedding model', () => {
   it('does not save OpenRouter without a chat model, and says so', async () => {
     await mount({ provider: 'llamacpp', model: 'chat-local-gguf', embeddingModel: 'embed-local-gguf' });
     await switchTo('settings:ai.providerOpenRouterLabel');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setValue?.call(chatModelInput(), '');
+      chatModelInput().dispatchEvent(new Event('input', { bubbles: true }));
+    });
     await save();
 
     expect(api.setAiConfig).not.toHaveBeenCalled();

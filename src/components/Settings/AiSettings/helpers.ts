@@ -54,11 +54,19 @@ export function embeddingModelForProvider(
 }
 
 /**
+ * The OpenRouter chat model offered when none was chosen yet (Settings and
+ * onboarding). Picked by the developer on 30/09/2026 from the public
+ * catalogue: it supports tool calls and has a zero-data-retention endpoint.
+ * The user can type any other model id.
+ */
+export const DEFAULT_OPENROUTER_CHAT_MODEL = 'google/gemini-3.5-flash-lite';
+
+/**
  * The chat model to show after switching to `next`. Like the embedding model,
  * the preference is shared by every provider: returning to the saved provider
  * restores the saved model, Ollama and the in-app runtime get the first model
- * they can run, and OpenRouter — which has no list to pick from — gets none,
- * so its field shows the placeholder instead of another provider's id.
+ * they can run, and OpenRouter — which has no list to pick from — gets its
+ * default, never another provider's id.
  */
 export function chatModelForProvider(
   next: AiConfigState['provider'],
@@ -68,7 +76,7 @@ export function chatModelForProvider(
   if (next === saved.provider) return saved.model;
   if (next === 'ollama') return available.ollamaModels[0] ?? '';
   if (next === 'llamacpp') return available.catalog.find((m) => m.kind === 'chat' && m.isLocal)?.id ?? '';
-  return '';
+  return DEFAULT_OPENROUTER_CHAT_MODEL;
 }
 
 /**

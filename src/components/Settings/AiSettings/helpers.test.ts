@@ -5,6 +5,7 @@ import {
   contextBudgetFromPref,
   contextBudgetToPref,
   DEFAULT_CONTEXT_BUDGET,
+  DEFAULT_OPENROUTER_CHAT_MODEL,
   embeddingModelChanged,
   embeddingModelForProvider,
   MIN_CONTEXT_BUDGET,
@@ -92,7 +93,7 @@ describe('chatModelForProvider', () => {
 
   it('never carries the chat model of one provider over to another', () => {
     const saved = { provider: 'llamacpp', model: 'chat-local-gguf' } as const;
-    expect(chatModelForProvider('openrouter', saved, lists)).toBe('');
+    expect(chatModelForProvider('openrouter', saved, lists)).toBe(DEFAULT_OPENROUTER_CHAT_MODEL);
     expect(chatModelForProvider('ollama', saved, lists)).toBe('ollama-chat');
 
     const remote = { provider: 'openrouter', model: 'vendor/model' } as const;

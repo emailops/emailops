@@ -2319,3 +2319,18 @@ and the six chosen also answered with zero data retention on.
   vector tables, and the catalogue changes.
 - *Recommending from the catalogue descriptions*: they omit the dimension for most models
   and say nothing of data policy; only a live probe shows both.
+
+## 2026-09-30 — OpenRouter's default chat model is `google/gemini-3.5-flash-lite`
+
+**Decision:** When no OpenRouter chat model was chosen yet, Settings and onboarding offer
+`google/gemini-3.5-flash-lite` (one constant, `DEFAULT_OPENROUTER_CHAT_MODEL`). The field
+stays free text.
+**Context:** Switching to OpenRouter left the chat field empty (after the fix that stopped
+it showing the in-app model), and onboarding defaulted to `openai/gpt-4o-mini`, a 2024
+model with no zero-data-retention endpoint, so chat failed with that setting on. The
+developer picked the default from the public catalogue: tool calls supported, a
+zero-data-retention endpoint, 1M context.
+**Rejected:** `openai/gpt-6-luna` (cheaper, offered first) and
+`anthropic/claude-haiku-4.5` — the developer's choice; `openai/gpt-4o-mini` — no
+zero-data-retention endpoint.
+**Limit:** not measured on the app's chat eval; chosen on catalogue data only.
