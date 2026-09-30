@@ -1683,6 +1683,62 @@ impl EmailProvider for ImapClient {
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
     }
 
+    /// One connection; per folder, one `SELECT` and one `UID FETCH (UID FLAGS)`
+    /// over the stored UIDs. A UID the folder no longer returns is `Missing`.
+    /// A folder that cannot be selected, or whose fetch the server refuses,
+    /// contributes nothing: its rows are not known to be gone.
+    async fn fetch_message_states(
+        &self,
+        message_ids: &[String],
+    ) -> Result<Option<std::collections::HashMap<String, provider::RemoteMessageState>>> {
+        let ids: Vec<&str> = message_ids.iter().map(String::as_str).collect();
+        let groups = self.plan_batch_fetch(&ids).groups;
+        if groups.is_empty() {
+            return Ok(Some(std::collections::HashMap::new()));
+        }
+
+        let creds = self.credentials.clone();
+        let checked: Vec<(usize, Option<bool>)> =
+            tokio::task::spawn_blocking(move || -> Result<Vec<(usize, Option<bool>)>> {
+                let mut session =
+                    Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+                let mut checked = Vec::new();
+                for (folder, items) in &groups {
+                    if !Self::select_folder_blocking(&mut session, folder) {
+                        continue;
+                    }
+                    let uids: Vec<u32> = items.iter().map(|(_, uid)| *uid).collect();
+                    match imap_search::uid_fetch_flags(&mut session, &uids) {
+                        Ok(seen_by_uid) => {
+                            checked.extend(items.iter().map(|(index, uid)| (*index, seen_by_uid.get(uid).copied())));
+                        }
+                        Err(e) => crate::services::logger::log(
+                            "debug",
+                            "sync",
+                            format!("IMAP flags refresh skipped {folder:?}: {e}"),
+                        ),
+                    }
+                }
+                let _ = session.logout();
+                Ok(checked)
+            })
+            .await
+            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+
+        Ok(Some(
+            checked
+                .into_iter()
+                .map(|(index, seen)| {
+                    let state = match seen {
+                        Some(is_read) => provider::RemoteMessageState::Present { is_read },
+                        None => provider::RemoteMessageState::Missing,
+                    };
+                    (message_ids[index].clone(), state)
+                })
+                .collect(),
+        ))
+    }
+
     /// Find a message the app already stores: still at its own UID, or — after
     /// the user moved it in another client — under a new UID in INBOX or Trash,
     /// which only its Message-ID header can find. One connection either way.

@@ -298,6 +298,17 @@ pub struct MessageLocation {
     pub mailbox: String,
 }
 
+/// What the provider reports, right now, for a message the app already stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteMessageState {
+    /// Still addressable under the stored id.
+    Present { is_read: bool },
+    /// Nothing answers to the stored id any more: the message was deleted, or
+    /// moved — which re-keys it on IMAP and Graph. [`EmailProvider::locate_message`]
+    /// tells the two apart.
+    Missing,
+}
+
 /// Everything a reply needs to know about the message it answers.
 ///
 /// Grouped rather than passed loose because the fields are easy to confuse and
@@ -572,6 +583,23 @@ pub trait EmailProvider: Send + Sync {
         ))
     }
 
+    /// The provider's current state for messages the app already stores, so a
+    /// sync can pick up what the user did in another client (read/unread,
+    /// delete, move) — the fetch passes skip every id they already know.
+    ///
+    /// The map holds an entry only for ids the provider actually checked. An id
+    /// it could not check (its folder would not open, its sub-request was
+    /// throttled) is left out, and the caller must leave that row alone: only
+    /// an explicit [`RemoteMessageState::Missing`] means the message is gone.
+    ///
+    /// `Ok(None)` means the provider has no such refresh.
+    async fn fetch_message_states(
+        &self,
+        _message_ids: &[String],
+    ) -> Result<Option<HashMap<String, RemoteMessageState>>> {
+        Ok(None)
+    }
+
     // ── Drafts ────────────────────────────────────────────────────────────
     //
     // Providers that support server-side drafts (Gmail, Outlook) override
@@ -688,6 +716,13 @@ pub struct FakeEmailProvider {
     /// When set, what `list_message_ids_with_attachments` answers instead of
     /// the stored messages that have attachments (`None` = no search).
     attachment_listing: std::sync::RwLock<Option<Option<Vec<String>>>>,
+    /// Whether `fetch_message_states` answers from the stored messages. Off by
+    /// default so a sync test that seeds local rows the fake never heard of
+    /// does not see them reported as deleted upstream.
+    reports_message_states: std::sync::atomic::AtomicBool,
+    /// Ids `fetch_message_states` leaves out of its answer — a folder that
+    /// would not open, a throttled sub-request.
+    unverifiable_messages: std::sync::RwLock<std::collections::HashSet<String>>,
 }
 
 /// How [`FakeEmailProvider`] fails a mailbox-state write.
@@ -770,6 +805,59 @@ impl FakeEmailProvider {
             mailbox_write_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
+            reports_message_states: std::sync::atomic::AtomicBool::new(false),
+            unverifiable_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Make `fetch_message_states` answer from the fake mailbox: a stored
+    /// message is `Present` with its read flag, anything else is `Missing`.
+    pub fn report_message_states(&self) {
+        self.reports_message_states
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Leave `message_id` out of what `fetch_message_states` answers.
+    pub fn make_state_unverifiable(&self, message_id: impl Into<String>) {
+        self.unverifiable_messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.into());
+    }
+
+    /// Change a message the way another client would: flip its read flag.
+    pub fn set_remote_read(&self, message_id: &str, read: bool) {
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.is_read = read;
+        }
+    }
+
+    /// Delete a message the way another client would: it is simply gone.
+    pub fn remove_message(&self, message_id: &str) {
+        self.messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|m| m.email.id != message_id);
+    }
+
+    /// Move a message the way another client would on IMAP or Graph: it lands
+    /// in `mailbox` under a new id, and the old id stops resolving.
+    pub fn relocate_message(&self, message_id: &str, new_id: &str, mailbox: &str) {
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.id = new_id.to_string();
+            stored.email.mailbox = mailbox.to_string();
         }
     }
 
@@ -1303,6 +1391,36 @@ impl EmailProvider for FakeEmailProvider {
         }))
     }
 
+    async fn fetch_message_states(
+        &self,
+        message_ids: &[String],
+    ) -> Result<Option<HashMap<String, RemoteMessageState>>> {
+        if !self.reports_message_states.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        self.record_call("fetch_message_states");
+        let unverifiable = self
+            .unverifiable_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Some(
+            message_ids
+                .iter()
+                .filter(|id| !unverifiable.contains(*id))
+                .map(|id| {
+                    let state = match guard.iter().find(|m| &m.email.id == id) {
+                        Some(m) => RemoteMessageState::Present {
+                            is_read: m.email.is_read,
+                        },
+                        None => RemoteMessageState::Missing,
+                    };
+                    (id.clone(), state)
+                })
+                .collect(),
+        ))
+    }
+
     async fn create_draft(
         &self,
         _from_email: &str,
@@ -1808,6 +1926,54 @@ mod tests {
         let err = p.trash_message("m-1", None).await.unwrap_err();
         assert!(err.to_string().contains("over quota"), "unexpected error: {err}");
         assert!(p.mailbox_ops().is_empty(), "a failed write must not be recorded");
+    }
+
+    #[tokio::test]
+    async fn providers_without_a_state_refresh_answer_none() {
+        assert_eq!(
+            BareProvider.fetch_message_states(&["m".to_string()]).await.unwrap(),
+            None
+        );
+        // The fake is opt-in, so sync tests that seed local-only rows are safe.
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert_eq!(p.fetch_message_states(&["m".to_string()]).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn fake_provider_reports_flags_vanished_and_unverifiable_messages() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.report_message_states();
+        for id in ["read", "unread", "moved", "deleted", "unknown"] {
+            let mut email = sample_email(id, 1_000);
+            email.message_id = Some(format!("<{id}@example.com>"));
+            p.add_message(email, EmailCategory::Primary, vec![]);
+        }
+        p.set_remote_read("read", true);
+        p.relocate_message("moved", "moved-2", "trash");
+        p.remove_message("deleted");
+        p.make_state_unverifiable("unknown");
+
+        let ids: Vec<String> = ["read", "unread", "moved", "deleted", "unknown"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let states = p.fetch_message_states(&ids).await.unwrap().unwrap();
+
+        assert_eq!(states.get("read"), Some(&RemoteMessageState::Present { is_read: true }));
+        assert_eq!(
+            states.get("unread"),
+            Some(&RemoteMessageState::Present { is_read: false })
+        );
+        assert_eq!(states.get("moved"), Some(&RemoteMessageState::Missing));
+        assert_eq!(states.get("deleted"), Some(&RemoteMessageState::Missing));
+        assert_eq!(states.get("unknown"), None, "unverifiable ids are left out");
+        assert_eq!(
+            p.locate_message("moved", Some("<moved@example.com>")).await.unwrap(),
+            Some(MessageLocation {
+                id: "moved-2".to_string(),
+                mailbox: "trash".to_string()
+            })
+        );
     }
 
     #[tokio::test]

@@ -2098,6 +2098,12 @@ async fn sync_extra_mailboxes(
         .await;
     }
 
+    // ── What the user did to stored mail in the provider's own clients ──────
+    // Last, so a message moved into a folder is followed after that folder's
+    // own pass has had the chance to ingest it.
+    super::state_refresh::refresh_stored_mail_state(db, account, email_provider, crate::services::clock::now_secs())
+        .await;
+
     Ok(())
 }
 
