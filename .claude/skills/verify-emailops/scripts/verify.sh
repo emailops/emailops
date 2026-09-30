@@ -90,7 +90,11 @@ cmd_launch() {
   echo "$WD_PORT" > "$RUN_DIR/wd_port"
   # Start npm in its own session (setsid) so that whatever invoked launch — a
   # monitor, a tool timeout, a closed terminal — cannot take the app down with it.
-  EMAILOPS_DATA_DIR="$DATA_DIR" TAURI_WEBDRIVER_PORT="$WD_PORT" python3 - "$REPO" "$RUN_DIR" "$cfg" <<'PY'
+  # OPENROUTER_API_KEY is set, and empty: a debug build loads `.env.local`, where the
+  # developer keeps a real key, and with a key the AI settings call OpenRouter (model
+  # list, probes). dotenv never overrides a variable that is already set, and the app
+  # treats an empty one as "no key", so this instance cannot reach a remote provider.
+  EMAILOPS_DATA_DIR="$DATA_DIR" TAURI_WEBDRIVER_PORT="$WD_PORT" OPENROUTER_API_KEY="" python3 - "$REPO" "$RUN_DIR" "$cfg" <<'PY'
 import os, subprocess, sys
 repo, run_dir, cfg = sys.argv[1:4]
 log = open(os.path.join(run_dir, "app.log"), "ab")
