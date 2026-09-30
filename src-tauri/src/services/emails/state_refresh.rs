@@ -26,6 +26,7 @@ use crate::models::Account;
 use crate::sync::provider::{EmailProvider, RemoteMessageState};
 
 use super::emit_account_log;
+use super::optimistic::LOCAL_SENT_ID_PREFIX;
 
 /// How far back the refresh looks. State changes made elsewhere are
 /// overwhelmingly about recent mail, and the pass has to stay cheap enough to
@@ -109,8 +110,7 @@ pub(super) async fn refresh_stored_mail_state(
         return;
     }
 
-    let stored = match db.state_refresh_candidates(&account.id, now - REFRESH_WINDOW_SECS, MAX_REFRESH_ROWS) {
-        Ok(rows) if rows.is_empty() => return,
+    let mut stored = match db.state_refresh_candidates(&account.id, now - REFRESH_WINDOW_SECS, MAX_REFRESH_ROWS) {
         Ok(rows) => rows,
         Err(e) => {
             warn(
@@ -120,6 +120,13 @@ pub(super) async fn refresh_stored_mail_state(
             return;
         }
     };
+    // An optimistic Sent row the reconciler never matched keeps its synthetic
+    // id for good. No provider knows that id, and "unknown id" there must not
+    // be read as "deleted upstream" — the row may be the only copy.
+    stored.retain(|row| !row.id.starts_with(LOCAL_SENT_ID_PREFIX));
+    if stored.is_empty() {
+        return;
+    }
     let ids: Vec<String> = stored.iter().map(|row| row.id.clone()).collect();
     let remote = match email_provider.fetch_message_states(&ids).await {
         Ok(Some(remote)) => remote,
@@ -528,6 +535,21 @@ mod tests {
             provider.calls().is_empty(),
             "nothing in the window, so no provider call"
         );
+    }
+
+    #[tokio::test]
+    async fn a_locally_composed_sent_row_is_never_taken_for_a_deleted_message() {
+        // An optimistic Sent row the reconciler never matched keeps its
+        // synthetic id for good. No provider knows that id, and "unknown id"
+        // must not be read as "deleted upstream" — it may be the only copy.
+        let (db, _) = synced(&[email("local-sent-abc", "sent", true)]);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.report_message_states();
+
+        refresh_stored_mail_state(&db, &account("outlook"), &provider, NOW).await;
+
+        assert!(row(&db, "local-sent-abc").is_some());
+        assert!(provider.calls().is_empty(), "nothing the provider could know about");
     }
 
     #[tokio::test]
