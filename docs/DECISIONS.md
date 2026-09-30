@@ -2616,3 +2616,26 @@ smaller file), ranges under 4 MB, and a request limit of about 4 MB.
   content size to compare with.
 **Limit:** a draft with large attachments is uploaded again on every push of that draft; the
 base64 text itself is still built in memory by the compose layer.
+
+## 2026-09-30 — Coverage with cargo-llvm-cov and vitest v8; mutation testing for Rust only
+
+**Decision:** Test-suite quality is measured with three local tools, run by hand and not in CI
+or the gates: `cargo-llvm-cov` for Rust coverage (`make coverage-rust`, measured with
+`--no-default-features`, the feature set CI tests), `@vitest/coverage-v8` for TypeScript
+coverage (`make coverage-ts`), and `cargo-mutants` for Rust mutation testing
+(`make mutants`, run `--in-place` in dedicated detached worktrees, each with its own target
+dir). Mutation testing of TypeScript is deferred. Equivalent mutants are recorded in
+`docs/testing/MUTANTS-LEDGER.md`; the workflow is in `docs/testing/COVERAGE-AND-MUTATION.md`.
+**Context:** Line coverage alone overstates how well the planners are guarded: a covered line
+can have no assertion on it. Mutation testing measures that directly, and the pure
+planner/executor split makes most planners cheap to mutate. A full-crate run is about 14,000
+mutants, so it is run per module with a test-name filter, then the misses are re-checked
+against the whole suite.
+**Rejected:**
+- *Stryker for TypeScript now*: its Vitest runner reports false survivors on Vitest 5, which
+  would bury real gaps in noise. Revisit when the runner supports Vitest 5.
+- *cargo-mutants' default scratch copies*: each copy builds every dependency cold.
+- *Running mutants in the main checkout's target dir*: cargo names the crate's artifacts
+  without the checkout path, so two checkouts overwrite each other's incremental cache
+  (43 s per mutant build instead of 4–6 s).
+- *cargo-nextest*: not needed at this scale, and no new tool beyond the three above.
