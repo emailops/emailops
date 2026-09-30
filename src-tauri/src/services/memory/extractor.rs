@@ -90,11 +90,11 @@ pub async fn extract_batch(
 
     let mut ok = 0;
     for email_id in &ids {
-        if let Some(c) = cancel {
-            if c.load(Ordering::SeqCst) {
-                emit_log(app, "info", "memory", "Memory extraction cancelled mid-batch");
-                break;
-            }
+        // Stopped by its own Cancel button, or from the queue because the AI
+        // provider or model is about to change.
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) || crate::services::task_queue::cancel_requested() {
+            emit_log(app, "info", "memory", "Memory extraction cancelled mid-batch");
+            break;
         }
         match process_email(db, &ai, &owner_email, email_id, cfg).await {
             Ok(true) => ok += 1,

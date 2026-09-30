@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod agent_search;
 pub mod ai;
+pub mod ai_activity;
 pub mod app_handle;
 pub mod attachment_suggestions;
 pub mod attachments;

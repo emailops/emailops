@@ -386,6 +386,10 @@ pub trait AIProvider: Send + Sync {
 
 use std::sync::{PoisonError, RwLock};
 
+/// What [`FakeAiProvider::on_embed`] runs: it receives the number of `embed`
+/// calls made so far.
+type EmbedHook = Box<dyn Fn(usize) + Send + Sync>;
+
 /// Deterministic in-memory `AIProvider` for tests. By default returns a fixed
 /// canned response for every completion call; tests can pre-load specific
 /// responses via [`push_completion`] / [`push_chat_response`].
@@ -421,6 +425,8 @@ pub struct FakeAiProvider {
     completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     embed_calls: RwLock<Vec<String>>,
+    /// Called at the end of each `embed` with the number of calls so far.
+    embed_hook: RwLock<Option<EmbedHook>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
 }
 
@@ -452,6 +458,7 @@ impl FakeAiProvider {
             completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             embed_calls: RwLock::new(Vec::new()),
+            embed_hook: RwLock::new(None),
             prewarm_calls: RwLock::new(Vec::new()),
         }
     }
@@ -503,6 +510,12 @@ impl FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push_back(result);
+    }
+
+    /// Run `hook` at the end of every `embed` call, with the number of calls
+    /// made so far — for tests that act while a run is in flight.
+    pub fn on_embed(&self, hook: impl Fn(usize) + Send + Sync + 'static) {
+        *self.embed_hook.write().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
     }
 
     /// Report `cost_usd` as charged on every `embed` call.
@@ -731,10 +744,14 @@ impl AIProvider for FakeAiProvider {
     }
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
-        self.embed_calls
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(text.to_string());
+        let calls = {
+            let mut calls = self.embed_calls.write().unwrap_or_else(PoisonError::into_inner);
+            calls.push(text.to_string());
+            calls.len()
+        };
+        if let Some(hook) = self.embed_hook.read().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            hook(calls);
+        }
         Ok(EmbeddingResult {
             embedding: self.deterministic_embedding(text),
             tokens: 0,

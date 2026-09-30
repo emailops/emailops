@@ -54,6 +54,11 @@ pub async fn embed_pending_facts(db: &Arc<Database>, app: &AppHandle, account_id
 
     let mut ok: u32 = 0;
     for (fact_id, text) in &rows {
+        // Stopped from the queue because the AI provider is about to change:
+        // the facts left stay pending for the next run.
+        if crate::services::task_queue::cancel_requested() {
+            break;
+        }
         match ai.embed(text).await {
             Ok(vec) => {
                 if let Err(e) = db.upsert_fact_embedding(fact_id, &vec, &model) {
