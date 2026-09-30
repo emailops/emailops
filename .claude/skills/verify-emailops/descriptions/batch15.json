@@ -3,7 +3,10 @@
     "src-tauri/src/services/chat/planner.rs::each_guide_page_lists_its_own_english_sections_once": "En el prompt del planificador, cada página de la guía lista sus propias secciones en inglés, una vez y en orden: sin la intro, sin repetir las partes de una sección larga y sin secciones de otras páginas o idiomas.",
     "src-tauri/src/services/emails/state_refresh.rs::mail_from_three_weeks_ago_is_still_refreshed": "El repaso del estado leído/movido alcanza al correo de hace tres semanas (la ventana es de 30 días).",
     "src-tauri/src/services/emails/state_refresh.rs::a_pass_ninety_seconds_after_the_last_one_is_skipped": "Un segundo repaso del estado 90 segundos después del anterior se salta (el intervalo mínimo es de 2 minutos).",
-    "src-tauri/src/services/emails/state_refresh.rs::refreshing_one_account_does_not_hold_back_another": "La marca de «último repaso» es por cuenta: repasar una cuenta no retrasa el repaso de otra."
+    "src-tauri/src/services/emails/state_refresh.rs::refreshing_one_account_does_not_hold_back_another": "La marca de «último repaso» es por cuenta: repasar una cuenta no retrasa el repaso de otra.",
+    "src-tauri/src/services/chat/research/control.rs::an_earlier_estimate_survives_a_later_one_being_stored": "Guardar una nueva estimación de investigación no borra otra anterior que sigue vigente.",
+    "src-tauri/src/services/chat/research/control.rs::every_registered_run_counts": "Cada investigación registrada cuenta como en marcha.",
+    "src-tauri/src/services/chat/research/control.rs::confirming_the_exit_lets_it_through_while_research_runs": "Si el usuario confirma «salir igualmente», la app se cierra aunque haya una investigación en marcha."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
