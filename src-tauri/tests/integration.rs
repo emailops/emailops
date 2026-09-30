@@ -3218,6 +3218,45 @@ async fn mark_as_read_is_idempotent() {
     assert!(db.get_email_by_id("e-r2").unwrap().unwrap().is_read);
 }
 
+// A read-state push that failed (offline, 5xx) used to be lost: the row was
+// read locally and unread in every other client, forever.
+#[tokio::test]
+async fn a_failed_read_push_is_delivered_by_the_next_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rp", "rp@example.com")).unwrap();
+    let account = db.get_account("acc-rp").unwrap().unwrap();
+    db.insert_email(&make_email("e-rp", "acc-rp", 1000)).unwrap();
+
+    let offline = FakeEmailProvider::new("rp@example.com", "Rp");
+    offline.fail_mailbox_writes("network unreachable");
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-rp", Some(&offline))
+        .await
+        .unwrap();
+    assert_eq!(db.pending_read_pushes("acc-rp", 10).unwrap().len(), 1);
+
+    let online = FakeEmailProvider::new("rp@example.com", "Rp");
+    let calls = online.call_log();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(online),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        calls.read().unwrap().iter().any(|c| c == "set_read_state"),
+        "the sync must retry the push"
+    );
+    assert!(db.pending_read_pushes("acc-rp", 10).unwrap().is_empty());
+}
+
 #[test]
 fn delete_email_hides_it_from_get_emails() {
     let db = test_db();

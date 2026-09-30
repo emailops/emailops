@@ -1247,6 +1247,7 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        self.record_call("set_read_state");
         self.mailbox_write_gate()?;
         if let Some(stored) = self
             .messages

@@ -350,6 +350,16 @@ pub async fn sync_account_with_provider(
     // is the first point at which applying it is safe — see the function docs.
     apply_pending_extra_mailbox_backfill_reset(db, account_id);
 
+    // Read-state changes a previous push could not deliver (offline, a 5xx)
+    // go out before anything is read back from the provider.
+    super::mailbox_state::retry_pending_read_pushes(
+        db,
+        account,
+        email_provider.as_ref(),
+        crate::services::clock::now_secs(),
+    )
+    .await;
+
     // Gmail accounts connected before the app read the "Send mail as" name
     // have none; fill it in once so outgoing mail carries it.
     if let Err(e) = crate::services::accounts::backfill_send_as_name(db, account, email_provider.as_ref()).await {
