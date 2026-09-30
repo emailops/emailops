@@ -3810,4 +3810,86 @@ mod tests {
             results.iter().map(|e| &e.id).collect::<Vec<_>>()
         );
     }
+    // The tag path skips COUNT(*) for the infinite-scroll list and says so
+    // with -1, which the frontend reads as "unknown", not as a count.
+    #[test]
+    fn a_tag_filter_reports_its_total_as_unknown() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "e1", "acc1", "thread-a", 100);
+        tag_email(&db, "e1", "priority", "urgent");
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account("acc1"),
+                None,
+                None,
+                Some("priority"),
+                Some("urgent"),
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(result.emails.len(), 1);
+        assert_eq!(result.total_count, -1);
+    }
+
+    #[test]
+    fn a_sender_or_domain_filter_reports_its_total_as_unknown() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "e1", "acc1", "thread-a", 100);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account("acc1"),
+                Some("s.com"),
+                None,
+                None,
+                None,
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(result.emails.len(), 1);
+        assert_eq!(result.total_count, -1);
+    }
+
+    // The category placeholders shift every later bind: the date bound must
+    // still land on its own placeholder.
+    #[test]
+    fn a_date_search_combines_categories_with_the_date_window() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email_with_category(&db, "old", "acc1", "t1", 100, "primary");
+        insert_email_with_category(&db, "promo", "acc1", "t2", 200, "promotions");
+        insert_email_with_category(&db, "new", "acc1", "t3", 300, "primary");
+        let primary = vec!["primary".to_string()];
+
+        let found = db
+            .search_emails_by_date("acc1", Some(&primary), Some(150), None, 50, false, false, false, false)
+            .unwrap();
+
+        let ids: Vec<&str> = found.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["new"]);
+    }
+
+    #[test]
+    fn an_addressee_splits_into_its_display_name_and_address() {
+        assert_eq!(
+            super::split_addressee(r#" "Ada L" <ada@x.example> "#),
+            ("Ada L".to_string(), "ada@x.example".to_string())
+        );
+        assert_eq!(
+            super::split_addressee("b@y.example"),
+            (String::new(), "b@y.example".to_string())
+        );
+        assert_eq!(
+            super::split_addressee("Ada <ada@x.example"),
+            (String::new(), "Ada <ada@x.example".to_string())
+        );
+    }
 }

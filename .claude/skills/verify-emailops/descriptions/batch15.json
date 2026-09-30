@@ -90,7 +90,11 @@
     "src-tauri/src/services/classification.rs::a_glob_becomes_an_anchored_case_insensitive_regex": "Un patrón de regla con comodines (* y ?) se convierte en una expresión regular anclada, sin distinguir mayúsculas y escapando los caracteres especiales.",
     "src-tauri/src/services/classification.rs::a_glob_becomes_an_escaped_like_pattern": "Un patrón de regla se convierte en un LIKE de SQL con %, _ y \\\\ escapados.",
     "src-tauri/src/services/classification.rs::a_rule_matches_on_every_pattern_it_sets": "Una regla de clasificación solo se aplica si coinciden el remitente y el asunto que define.",
-    "src-tauri/src/services/classification.rs::a_disabled_rule_or_an_empty_pattern_behaves_as_documented": "Una regla desactivada no se aplica y un patrón vacío equivale a «cualquiera»."
+    "src-tauri/src/services/classification.rs::a_disabled_rule_or_an_empty_pattern_behaves_as_documented": "Una regla desactivada no se aplica y un patrón vacío equivale a «cualquiera».",
+    "src-tauri/src/db/emails/search.rs::a_tag_filter_reports_its_total_as_unknown": "El filtro por etiqueta no cuenta el total (lista infinita) y lo indica con -1.",
+    "src-tauri/src/db/emails/search.rs::a_sender_or_domain_filter_reports_its_total_as_unknown": "El filtro por remitente o dominio tampoco cuenta el total y lo indica con -1.",
+    "src-tauri/src/db/emails/search.rs::a_date_search_combines_categories_with_the_date_window": "Una búsqueda solo por fechas combina bien las categorías con la ventana de fechas.",
+    "src-tauri/src/db/emails/search.rs::an_addressee_splits_into_its_display_name_and_address": "Un destinatario «Nombre <dirección>» se separa en nombre visible y dirección; una dirección sola deja el nombre vacío."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
