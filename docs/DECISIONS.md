@@ -2176,3 +2176,21 @@ it rather than hide the chat for that provider.
 - *Sending `reasoning: {effort: "none"}` when thinking is off in Settings*: models whose
   reasoning is mandatory reject it, which would turn a preference into a failed turn.
 - *Retrying a failed stream automatically*: see above.
+
+## 2026-09-30 — Outgoing HTML keeps tables and safe inline styles
+
+**Decision:** `sanitize_outgoing_html` allows table markup with its layout attributes and
+an inline `style` reduced to a fixed property list (colour, font, alignment, spacing,
+borders, size). `<style>` blocks, the `background` attribute and any declaration
+containing `url(`, `expression(`, an escape or an at-rule are still removed.
+**Context:** Drafts are now sanitized on save and on send, and the compose-editor
+allowlist flattened a draft written in the provider's own client (tables, colours) when
+it was sent from EmailOps. The developer chose to keep that formatting.
+**Rejected:**
+- *Passing provider drafts through unsanitized*: the backend is the security boundary;
+  a draft pulled from the provider is as untrusted as one built over IPC.
+- *Allowing `<style>` blocks or `background`*: both fetch remote resources when the
+  recipient opens the message, and most mail clients drop `<style>` anyway.
+**Limit:** this covers a draft sent without editing its body. The compose editor (Tiptap
+StarterKit) has no table or style nodes, so editing such a draft in the app still
+flattens it before the sanitizer sees it.

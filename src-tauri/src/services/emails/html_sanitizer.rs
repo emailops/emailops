@@ -7,27 +7,93 @@
 //! is the security boundary.
 //!
 //! The policy here is intentionally narrower than incoming email rendering
-//! (`sanitizeEmailHtml` on the frontend) — we only need to support the tags
-//! the compose editor can produce, plus inline images via `cid:` URIs.
+//! (`sanitizeEmailHtml` on the frontend): what the compose editor can produce,
+//! inline images via `cid:` URIs, and the table/inline-style formatting a
+//! draft written in the provider's own client carries, so sending that draft
+//! from here does not flatten it.
 
 use ammonia::Builder;
+use std::borrow::Cow;
 use std::collections::HashSet;
+
+/// Inline-style properties that survive. None of them can take a `url()`, so
+/// a kept declaration cannot load or run anything.
+const STYLE_PROPERTIES: &[&str] = &[
+    "color",
+    "background-color",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "text-align",
+    "text-decoration",
+    "text-indent",
+    "line-height",
+    "letter-spacing",
+    "white-space",
+    "vertical-align",
+    "width",
+    "max-width",
+    "height",
+    "padding",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "margin",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "border",
+    "border-top",
+    "border-right",
+    "border-bottom",
+    "border-left",
+    "border-color",
+    "border-style",
+    "border-width",
+    "border-collapse",
+    "border-spacing",
+    "list-style-type",
+];
+
+/// Drop the declarations of a `style` attribute whose value could fetch or
+/// execute something (`url(`, `expression(`, CSS escapes, at-rules), whatever
+/// the property. The property allowlist runs on what is left.
+fn drop_unsafe_style_declarations(style: &str) -> String {
+    style
+        .split(';')
+        .filter(|declaration| {
+            let lower = declaration.to_ascii_lowercase();
+            !["url(", "expression(", "\\", "@", "javascript:"]
+                .iter()
+                .any(|needle| lower.contains(needle))
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
 
 /// Strip every tag / attribute / URL scheme not on the compose allowlist.
 ///
 /// Allowlist rationale:
-/// - Formatting: `p`, `br`, `strong`, `em`, `u`, `s`, `code`, `pre`, `blockquote`
+/// - Formatting: `p`, `br`, `strong`, `em`, `u`, `s`, `code`, `pre`, `blockquote`,
+///   `sub`, `sup`, `small`, `font`, `center`
 /// - Lists: `ul`, `ol`, `li`
 /// - Headings: `h1`-`h6` (Tiptap StarterKit emits these)
 /// - Links: `a` with `href` only — schemes restricted to `http`, `https`, `mailto`
 /// - Images: `img` with `src` / `alt` / `title` — `src` may be `cid:<id>` for
 ///   inline pasted images, plus `http`/`https`/`data` for compatibility
+/// - Tables: `table`, `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `caption`,
+///   `colgroup`, `col` with their layout attributes
+/// - Inline `style`, reduced to [`STYLE_PROPERTIES`] and to declarations that
+///   cannot load or run anything (`expression()`, `url(javascript:)` and the
+///   like are dropped)
 ///
-/// Style attributes are dropped — the editor doesn't need them and they're a
-/// common smuggling vector (`expression()`, `behavior:`, `url(javascript:)`).
+/// `<style>` blocks and the `background` attribute stay out: both can fetch a
+/// remote resource when the recipient opens the message.
 pub fn sanitize_outgoing_html(html: &str) -> String {
-    let mut tags: HashSet<&str> = HashSet::new();
-    for t in &[
+    let tags: HashSet<&str> = HashSet::from_iter([
         "p",
         "br",
         "strong",
@@ -37,6 +103,11 @@ pub fn sanitize_outgoing_html(html: &str) -> String {
         "u",
         "s",
         "strike",
+        "sub",
+        "sup",
+        "small",
+        "font",
+        "center",
         "code",
         "pre",
         "blockquote",
@@ -54,21 +125,55 @@ pub fn sanitize_outgoing_html(html: &str) -> String {
         "span",
         "div",
         "hr",
-    ] {
-        tags.insert(*t);
-    }
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "th",
+        "td",
+        "caption",
+        "colgroup",
+        "col",
+    ]);
 
-    let mut url_schemes: HashSet<&str> = HashSet::new();
-    for s in &["http", "https", "mailto", "cid", "data"] {
-        url_schemes.insert(*s);
-    }
+    let url_schemes: HashSet<&str> = HashSet::from_iter(["http", "https", "mailto", "cid", "data"]);
 
     Builder::default()
         .tags(tags)
         .url_schemes(url_schemes)
-        // Allow href on <a>, src/alt/title on <img>.
-        .generic_attributes(HashSet::from_iter(["href", "src", "alt", "title"]))
-        // No inline `style` — see module docstring.
+        // href on <a>, src/alt/title on <img>, layout attributes on tables and
+        // legacy formatting tags. None of the added ones carries a URL.
+        .generic_attributes(HashSet::from_iter([
+            "href",
+            "src",
+            "alt",
+            "title",
+            "style",
+            "align",
+            "valign",
+            "width",
+            "height",
+            "bgcolor",
+            "color",
+            "face",
+            "size",
+            "border",
+            "cellpadding",
+            "cellspacing",
+            "colspan",
+            "rowspan",
+            "span",
+            "dir",
+        ]))
+        .attribute_filter(|_element, attribute, value| {
+            if attribute == "style" {
+                Some(Cow::Owned(drop_unsafe_style_declarations(value)))
+            } else {
+                Some(Cow::Borrowed(value))
+            }
+        })
+        .filter_style_properties(HashSet::from_iter(STYLE_PROPERTIES.iter().copied()))
         .strip_comments(true)
         .link_rel(Some("noopener noreferrer"))
         .clean(html)
@@ -143,10 +248,68 @@ mod tests {
     }
 
     #[test]
-    fn strips_inline_style_attribute() {
-        let out = sanitize_outgoing_html(r#"<p style="color:red;background:url(javascript:alert(1))">x</p>"#);
-        assert!(!out.contains("style="), "style attribute should be stripped, got {out}");
-        assert!(!out.contains("javascript"));
+    fn keeps_tables_and_their_layout_attributes() {
+        let html = r##"<table border="1" cellpadding="4" width="600"><thead><tr><th align="left">Item</th></tr></thead><tbody><tr><td colspan="2" bgcolor="#eeeeee" valign="top">x</td></tr></tbody></table>"##;
+        let out = sanitize_outgoing_html(html);
+        for kept in [
+            "<table",
+            "<thead>",
+            "<tbody>",
+            "<tr>",
+            "<th",
+            "<td",
+            r#"border="1""#,
+            r#"cellpadding="4""#,
+            r#"width="600""#,
+            r#"align="left""#,
+            r#"colspan="2""#,
+            r##"bgcolor="#eeeeee""##,
+            r#"valign="top""#,
+        ] {
+            assert!(out.contains(kept), "expected {kept} to survive, got {out}");
+        }
+    }
+
+    #[test]
+    fn keeps_safe_inline_styles() {
+        let out = sanitize_outgoing_html(
+            r##"<p style="color: red; text-align: center; font-size: 14px">x</p><span style="background-color:#ff0">y</span>"##,
+        );
+        for kept in [
+            "color:red",
+            "text-align:center",
+            "font-size:14px",
+            "background-color:#ff0",
+        ] {
+            assert!(
+                out.replace(' ', "").contains(kept),
+                "expected {kept} to survive, got {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn drops_style_declarations_that_can_load_or_run_something() {
+        let out = sanitize_outgoing_html(
+            r#"<p style="color:red;background:url(javascript:alert(1));background-image:url(https://example.com/t.png);width:expression(alert(2));position:fixed">x</p>"#,
+        );
+        assert!(
+            out.replace(' ', "").contains("color:red"),
+            "safe declaration lost: {out}"
+        );
+        for gone in ["javascript", "url(", "expression", "position", "example.com"] {
+            assert!(!out.contains(gone), "{gone} should be stripped, got {out}");
+        }
+    }
+
+    #[test]
+    fn strips_style_blocks_and_background_attributes() {
+        let out = sanitize_outgoing_html(
+            r#"<style>p { background: url(https://example.com/a.png) }</style><table><tr><td background="https://example.com/b.png">x</td></tr></table>"#,
+        );
+        assert!(!out.contains("<style"), "style block should be dropped, got {out}");
+        assert!(!out.contains("example.com"), "remote background survived: {out}");
+        assert!(out.contains("<td>x</td>"), "cell content should stay, got {out}");
     }
 
     #[test]
