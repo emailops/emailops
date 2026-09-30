@@ -192,6 +192,28 @@
     "confirm": "Save and regenerate",
     "confirmNone": "Save and delete"
   },
+  "aiWork": {
+    "title": "AI work in progress",
+    "body": "This change affects background AI work that is running or queued with the current settings:",
+    "kinds": {
+      "embeddingsRebuild": "Regenerating all Embeddings",
+      "embeddingsGeneration": "Generating Embeddings",
+      "classification": "Classifying emails",
+      "memoryExtraction": "Memory extraction",
+      "taskExtraction": "Task extraction",
+      "lensExtraction": "Lens extraction"
+    },
+    "queued": "{{n}} queued",
+    "moreQueued": "+{{n}} queued",
+    "openRouter": "This work is sending the text of your emails to OpenRouter. Stopping ends those requests now; waiting lets them continue, and be billed, until the work is done.",
+    "help": "Stop and apply ends the work at the email in hand and then applies the change; what is already done is kept. Wait and apply applies the change when the work finishes on its own.",
+    "stopping": "Stopping… The change is applied as soon as the work has ended.",
+    "waiting": "Waiting for the work to finish. The change is applied as soon as it does.",
+    "stop": "Stop and apply",
+    "wait": "Wait and apply",
+    "failed": "Could not stop or follow the AI work in progress: {{error}}",
+    "checkFailed": "Could not check for AI work in progress: {{error}}"
+  },
   "promptEditor": {
     "resetTitle": "Reset prompt to default?",
     "resetBody": "“{{label}}” will be restored to its built-in default. Your customisations will be lost.",

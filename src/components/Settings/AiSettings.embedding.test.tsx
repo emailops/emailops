@@ -21,8 +21,9 @@ vi.mock('@/stores/aiStore', () => ({
   useAiStore: () => ({ enabled: true, setEnabled: vi.fn() }),
 }));
 
+const addLog = vi.hoisted(() => vi.fn());
 vi.mock('@/stores/logStore', () => ({
-  useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
+  useLogStore: (selector: (s: { addLog: typeof addLog }) => unknown) => selector({ addLog }),
 }));
 
 vi.mock('@/stores/featureToggleStore', () => ({
@@ -80,6 +81,10 @@ const api = vi.hoisted(() => ({
   setPref: vi.fn(() => Promise.resolve()),
   setAiConfig: vi.fn(() => Promise.resolve()),
   regenerateEmbeddings: vi.fn(() => Promise.resolve()),
+  getAiProviderActivity: vi.fn(
+    (): Promise<{ provider: string; items: unknown[] }> => Promise.resolve({ provider: 'openrouter', items: [] }),
+  ),
+  cancelAiProviderWork: vi.fn(() => Promise.resolve(1)),
   currentPlatform: vi.fn(() => 'macos'),
 }));
 vi.mock('@/lib/api', () => api);
@@ -505,5 +510,83 @@ describe('AiSettings — embedding model', () => {
     await confirmReindex();
     expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'chat-local-gguf', 'embed-local-gguf']);
     expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+  // ── Work in progress ───────────────────────────────────────────────────
+
+  const REBUILD_RUNNING = {
+    provider: 'openrouter',
+    items: [{ kind: 'embeddingsRebuild', running: true, stopping: false, progress: { current: 40, total: 500 } }],
+  };
+  const workDialogShown = () => container.textContent?.includes('settings:aiWork.title') ?? false;
+
+  it('asks about the work in progress first, and about the re-index only after it', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+
+    expect(workDialogShown()).toBe(true);
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+
+    // Stopping ends the rebuild; the queue is empty on the next read.
+    await act(async () => {
+      button('settings:aiWork.stop').click();
+    });
+    await settle();
+
+    expect(api.cancelAiProviderWork).toHaveBeenCalledTimes(1);
+    expect(workDialogShown()).toBe(false);
+    expect(reindexDialogShown()).toBe(true);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+
+    await confirmReindex();
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves nothing and keeps the form when the work-in-progress dialog is cancelled', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+    await act(async () => {
+      button('common:actions.cancel').click();
+    });
+    await settle();
+
+    expect(workDialogShown()).toBe(false);
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.cancelAiProviderWork).not.toHaveBeenCalled();
+    expect(embeddingSelect().value).toBe('vendor/embed-large');
+  });
+
+  it('does not ask when the work in progress does not use what changes', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await typeChatModel('vendor/other-model');
+    await save();
+
+    expect(workDialogShown()).toBe(false);
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not look for work in progress when neither the provider nor a model changes', async () => {
+    await mount({});
+    await save();
+
+    expect(api.getAiProviderActivity).not.toHaveBeenCalled();
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('still saves, and logs why, when the work in progress cannot be read', async () => {
+    api.getAiProviderActivity.mockRejectedValueOnce('queue unavailable');
+    await mount({});
+    await typeChatModel('vendor/other-model');
+    await save();
+
+    expect(addLog).toHaveBeenCalledWith('error', 'ai', 'settings:aiWork.checkFailed: queue unavailable');
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
   });
 });

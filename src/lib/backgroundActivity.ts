@@ -67,6 +67,12 @@ export function classifyTask(name: string): { kind: ActivityKind; target: string
   }
 }
 
+/** Whether an `embedding-progress` status ends the run: done, failed, or
+ *  stopped by the user before an AI provider or model change. */
+export function embeddingRunEnded(status: string): boolean {
+  return status === 'complete' || status === 'error' || status === 'cancelled';
+}
+
 /** The running expensive processes, one per process, with their progress. */
 export function summarizeActivities(queues: AllQueuesState, progress: Record<string, ActivityProgress>): Activity[] {
   const out: Activity[] = [];

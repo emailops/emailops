@@ -46,6 +46,8 @@ vi.mock('@/lib/api', () => ({
   setAiConfig: vi.fn(async () => {}),
   setAiModel: vi.fn(async () => {}),
   setPref: vi.fn(async () => {}),
+  getAiProviderActivity: vi.fn(),
+  cancelAiProviderWork: vi.fn(async () => 1),
 }));
 
 import * as api from '@/lib/api';
@@ -80,6 +82,7 @@ beforeEach(() => {
   root = createRoot(container);
   vi.mocked(api.getAiConfig).mockResolvedValue(config as never);
   vi.mocked(api.detectAiCapability).mockResolvedValue({ embeddedAiAvailable: true } as never);
+  vi.mocked(api.getAiProviderActivity).mockResolvedValue({ provider: 'ollama', items: [] });
   useLogStore.setState({ entries: [] });
 });
 
@@ -190,5 +193,64 @@ describe('LogPanel ModelSelector', () => {
     await act(async () => option('llamacpp')?.click());
 
     expect(vi.mocked(api.setAiConfig).mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'qwen-local', 'embed-small']);
+  });
+  // ── Work in progress ───────────────────────────────────────────────────
+
+  const modelOption = (value: string) =>
+    container.querySelector<HTMLButtonElement>(`[data-select="dashboard:log.aiModel"] [data-option="${value}"]`);
+  const model = () => container.querySelector('[data-select="dashboard:log.aiModel"]')?.getAttribute('data-value');
+  const dialogButton = (label: string) =>
+    Array.from(container.querySelectorAll('button')).find((b) => b.textContent === label);
+  const CLASSIFYING = {
+    provider: 'ollama',
+    items: [{ kind: 'classification' as const, running: true, stopping: false, progress: null }],
+  };
+
+  it('changes the chat model straight away when no AI work uses it', async () => {
+    vi.mocked(api.listOllamaModels).mockResolvedValue(['llama-small', 'llama-big']);
+    await mount();
+    await act(async () => modelOption('llama-big')?.click());
+
+    expect(api.setAiModel).toHaveBeenCalledWith('llama-big');
+    expect(container.textContent).not.toContain('settings:aiWork.title');
+  });
+
+  it('asks before changing the chat model while AI work uses it, and changes nothing on cancel', async () => {
+    vi.mocked(api.listOllamaModels).mockResolvedValue(['llama-small', 'llama-big']);
+    vi.mocked(api.getAiProviderActivity).mockResolvedValue(CLASSIFYING);
+    await mount();
+    await act(async () => modelOption('llama-big')?.click());
+
+    expect(container.textContent).toContain('settings:aiWork.title');
+    expect(api.setAiModel).not.toHaveBeenCalled();
+
+    await act(async () => dialogButton('common:actions.cancel')?.click());
+    expect(container.textContent).not.toContain('settings:aiWork.title');
+    expect(api.setAiModel).not.toHaveBeenCalled();
+    expect(model()).toBe('llama-small');
+  });
+
+  it('changes the chat model once the work was stopped', async () => {
+    vi.mocked(api.listOllamaModels).mockResolvedValue(['llama-small', 'llama-big']);
+    vi.mocked(api.getAiProviderActivity)
+      .mockResolvedValueOnce(CLASSIFYING)
+      .mockResolvedValue({ provider: 'ollama', items: [] });
+    await mount();
+    await act(async () => modelOption('llama-big')?.click());
+    await act(async () => dialogButton('settings:aiWork.stop')?.click());
+
+    expect(api.cancelAiProviderWork).toHaveBeenCalledTimes(1);
+    expect(api.setAiModel).toHaveBeenCalledWith('llama-big');
+    expect(model()).toBe('llama-big');
+  });
+
+  it('asks before switching backend while AI work is in progress', async () => {
+    vi.mocked(api.getAiProviderActivity).mockResolvedValue(CLASSIFYING);
+    await mount();
+    await act(async () => option('llamacpp')?.click());
+
+    expect(container.textContent).toContain('settings:aiWork.title');
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(backend()).toBe('ollama');
   });
 });

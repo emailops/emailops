@@ -192,6 +192,28 @@
     "confirm": "Enregistrer et régénérer",
     "confirmNone": "Enregistrer et supprimer"
   },
+  "aiWork": {
+    "title": "Travail d’IA en cours",
+    "body": "Ce changement touche un travail d’IA en arrière-plan en cours ou en file d’attente avec les réglages actuels :",
+    "kinds": {
+      "embeddingsRebuild": "Régénération de tous les Embeddings",
+      "embeddingsGeneration": "Génération des Embeddings",
+      "classification": "Classification des e-mails",
+      "memoryExtraction": "Extraction de la mémoire",
+      "taskExtraction": "Extraction des tâches",
+      "lensExtraction": "Extraction des filtres dynamiques"
+    },
+    "queued": "{{n}} en file d’attente",
+    "moreQueued": "+{{n}} en file d’attente",
+    "openRouter": "Ce travail envoie le texte de vos e-mails à OpenRouter. L’arrêter met fin à ces requêtes maintenant ; attendre les laisse se poursuivre, et être facturées, jusqu’à la fin du travail.",
+    "help": "Arrêter et appliquer termine le travail à l’e-mail en cours, puis applique le changement ; ce qui est déjà fait est conservé. Attendre et appliquer applique le changement quand le travail se termine de lui-même.",
+    "stopping": "Arrêt en cours… Le changement est appliqué dès que le travail est terminé.",
+    "waiting": "En attente de la fin du travail. Le changement est appliqué dès qu’il se termine.",
+    "stop": "Arrêter et appliquer",
+    "wait": "Attendre et appliquer",
+    "failed": "Impossible d’arrêter ou de suivre le travail d’IA en cours : {{error}}",
+    "checkFailed": "Impossible de vérifier si un travail d’IA est en cours : {{error}}"
+  },
   "promptEditor": {
     "resetTitle": "Réinitialiser le prompt par défaut ?",
     "resetBody": "« {{label}} » sera restauré à sa valeur par défaut. Vos personnalisations seront perdues.",

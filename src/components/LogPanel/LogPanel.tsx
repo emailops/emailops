@@ -1,12 +1,14 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AiWorkInProgressDialog } from '@/components/shared/AiWorkInProgressDialog';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
+import { type AiChange, affectedWork } from '@/lib/aiProviderWork';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
-import type { AiConfig, CatalogModel } from '@/types';
+import type { AiConfig, AiProviderActivity, CatalogModel } from '@/types';
 import { BackgroundActivityStatus } from './BackgroundActivityStatus';
 
 /** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
@@ -78,7 +80,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
 };
 
 export function ModelSelector() {
-  const { t } = useTranslation(['dashboard']);
+  const { t } = useTranslation(['dashboard', 'settings']);
   const [provider, setProvider] = useState<Provider>('ollama');
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState<string>('');
@@ -89,6 +91,13 @@ export function ModelSelector() {
   // The saved config, for what a switch to each backend would do to the
   // embedding model. Null until loaded (or when loading failed): no switch.
   const [saved, setSaved] = useState<AiConfig | null>(null);
+  // A change waiting for the user to stop, or wait for, the background AI
+  // work it cuts across; `apply` makes the change once that work is gone.
+  const [workInProgress, setWorkInProgress] = useState<{
+    change: AiChange;
+    activity: AiProviderActivity;
+    apply: () => void;
+  } | null>(null);
   const addLog = useLogStore((s) => s.addLog);
 
   const loadModels = async (prov: Provider): Promise<string[]> => {
@@ -145,8 +154,33 @@ export function ModelSelector() {
     p !== provider &&
     (p === 'openrouter' || saved === null || saved.remembered[p].embeddingModel !== saved.embeddingModel);
 
+  // Background AI work keeps the provider it started with until its batch
+  // ends: ask whether to stop it or wait before changing what it uses.
+  const applyUnlessWorkInProgress = async (change: AiChange, apply: () => void) => {
+    try {
+      const activity = await api.getAiProviderActivity();
+      if (affectedWork(change, activity.items).length > 0) {
+        setWorkInProgress({ change, activity, apply });
+        return;
+      }
+    } catch (err) {
+      // The check is a courtesy: failing to read the queue must not block the change.
+      addLog('error', 'ai', t('settings:aiWork.checkFailed', { error: errorText(err) }));
+    }
+    apply();
+  };
+
   const handleProviderChange = async (newProv: Provider) => {
     if (saved === null || needsSettings(newProv)) return;
+    // The switch keeps the embedding model (see needsSettings).
+    await applyUnlessWorkInProgress(
+      { provider: true, model: true, embeddingModel: false },
+      () => void switchProvider(newProv),
+    );
+  };
+
+  const switchProvider = async (newProv: Provider) => {
+    if (saved === null) return;
     const previous = { provider, models, currentModel };
     const remembered = saved.remembered[newProv];
     setProvider(newProv);
@@ -177,6 +211,14 @@ export function ModelSelector() {
   };
 
   const handleModelChange = async (model: string) => {
+    if (model === currentModel) return;
+    await applyUnlessWorkInProgress(
+      { provider: false, model: true, embeddingModel: false },
+      () => void changeModel(model),
+    );
+  };
+
+  const changeModel = async (model: string) => {
     setCurrentModel(model);
     try {
       await api.setAiModel(model);
@@ -211,6 +253,18 @@ export function ModelSelector() {
           options={models.map((m) => ({ value: m, label: m }))}
           ariaLabel={t('dashboard:log.aiModel')}
           size="xs"
+        />
+      )}
+
+      {workInProgress && (
+        <AiWorkInProgressDialog
+          change={workInProgress.change}
+          activity={workInProgress.activity}
+          onCancel={() => setWorkInProgress(null)}
+          onProceed={() => {
+            setWorkInProgress(null);
+            workInProgress.apply();
+          }}
         />
       )}
     </div>

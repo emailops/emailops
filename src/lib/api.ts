@@ -8,7 +8,9 @@ import type {
   AccountSettings,
   AiConfig,
   AiModelInfo,
+  AiProviderActivity,
   AiUsageSummary,
+  AiWorkKind,
   AllQueuesState,
   Attachment,
   AttachmentRule,
@@ -883,6 +885,17 @@ export async function getAppDiagnostics(): Promise<AppDiagnostics> {
     arch: osArch(),
     translated: await invoke<boolean>('is_rosetta_translated').catch(() => false),
   };
+}
+
+/** The AI background work that uses the configured provider right now. */
+export async function getAiProviderActivity(): Promise<AiProviderActivity> {
+  return invoke('get_ai_provider_activity');
+}
+
+/** Ask the running and queued work of these kinds to stop; each ends at its
+ *  next email. Returns how many tasks were asked. */
+export async function cancelAiProviderWork(kinds: AiWorkKind[]): Promise<number> {
+  return invoke('cancel_ai_provider_work', { kinds });
 }
 
 export async function setAiConfig(

@@ -2371,3 +2371,47 @@ could not run. Onboarding with Ollama likewise saved the in-app GGUF id for Olla
 **Limit:** the in-app runtime and Ollama name the same nomic model differently, so the
 quick switcher no longer switches between them either unless the ids happen to match; in
 practice every backend change now goes through AI Settings.
+
+## 2026-09-30 — Changing the AI provider or a model asks about background AI work first
+
+**Decision:** Before a change to the AI provider, the chat model or the embedding model is
+saved — in Settings → AI and in the log panel's quick selector — the app reads the AI
+background queue. If work the change cuts across is running or queued, one dialog lists it
+and offers **Stop and apply**, **Wait and apply** or **Cancel**; with nothing affected there
+is no dialog. The re-index confirmation stays a separate, later step.
+- **What counts:** tasks on the AI background queue that call the provider, by the kind
+  their name maps to (`services::ai_activity::work_kind`): Embeddings rebuild and
+  generation, classification, memory extraction, task extraction, Lens extraction. A chat
+  model change cuts across the kinds that write with it, an embedding model change across
+  the ones that embed, a provider change across all. Junk scoring (no model) and unknown
+  tasks are never listed or stopped. Chat turns, drafts, translations and searches run on
+  the interactive queue or inline, finish with the provider they started with and have their
+  own controls: they do not block the change.
+- **Stopping is cooperative:** `TaskQueue::cancel_matching` raises a per-task flag that the
+  loops read between emails (`task_queue::cancel_requested`). The task leaves through its
+  normal exit, so its terminal events and clean-up run; Embeddings emit
+  `embedding-progress` with status `cancelled`. A queued task is not dropped either: it
+  starts already cancelled and exits at its first check — a rebuild before deleting the
+  index.
+- **Waiting is polled:** while stopping or waiting the dialog re-reads the queue every
+  second and applies the change when nothing affected is left, so work a sync queues
+  meanwhile is waited for (or stopped) too.
+**Context:** An embedding run loaded its provider once per batch of up to 500 emails. After
+switching away from OpenRouter, the batch in hand kept sending email text there, billed;
+the rest of the task continued with the new provider and the rebuild the save queued redid
+everything. Nothing told the user.
+**Rejected:**
+- *Aborting the task's future at the queue*: simpler, but a dropped future skips what the
+  task does on its way out — the Lens run registry, the memory and task backfill "running"
+  flags, `lens_runs` rows left `running`, progress indicators waiting for a terminal event.
+  The same holds for dropping queued futures unpolled.
+- *Reloading the provider for every email*: fixes which provider is used, not that the
+  user is never asked, and the rebuild queued by the save would still redo the work.
+- *One dialog for the work in progress and the re-index*: they are two decisions; the
+  second only exists when the embedding model changes.
+- *A drain event from the queue*: a poll of the same snapshot is robust to tasks queued
+  between the event and the save, and needs no new event.
+**Limit:** a task stops at its next email, so the request in flight when the user stops
+completes (one email, at most six chunk requests for Embeddings). A single-row Lens
+re-extract has no loop and finishes its one call. A task queued in the instant between
+the last poll and the save starts with the old settings for one batch.
