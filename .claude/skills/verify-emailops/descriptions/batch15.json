@@ -29,7 +29,8 @@
     "src-tauri/src/services/chat/research/reading.rs::a_sent_match_citing_no_email_is_background_that_says_why": "Una coincidencia sobre correo enviado que no cita ningún correo del usuario pasa a contexto y lo explica.",
     "src-tauri/src/services/chat/research/reading.rs::a_received_match_links_the_email_the_user_received": "En preguntas sobre correo recibido, la coincidencia enlaza el correo que recibió el usuario, no el suyo propio.",
     "src-tauri/src/sync/folder_plan.rs::each_well_known_folder_maps_to_its_mailbox_key": "Enviados, spam y papelera se guardan con las claves de buzón «sent», «spam» y «trash».",
-    "src-tauri/src/sync/folder_plan.rs::a_bare_inbox_prefix_is_not_a_folder_under_inbox": "Una ruta que es solo «INBOX.» no cuenta como carpeta dentro de INBOX: la carpeta nueva se crea en la raíz."
+    "src-tauri/src/sync/folder_plan.rs::a_bare_inbox_prefix_is_not_a_folder_under_inbox": "Una ruta que es solo «INBOX.» no cuenta como carpeta dentro de INBOX: la carpeta nueva se crea en la raíz.",
+    "src-tauri/src/sync/outlook_upload.rs::content_is_empty_only_when_it_decodes_to_no_bytes": "Un adjunto en base64 cuenta como vacío solo si no decodifica ningún byte (los saltos de línea no cuentan)."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",

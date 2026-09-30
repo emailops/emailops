@@ -382,4 +382,10 @@ mod tests {
         assert_eq!(payload["AttachmentItem"]["isInline"], true);
         assert!(payload["AttachmentItem"].get("contentId").is_none());
     }
+    #[test]
+    fn content_is_empty_only_when_it_decodes_to_no_bytes() {
+        assert!(EncodedContent::new("").is_empty());
+        assert!(EncodedContent::new("\r\n").is_empty());
+        assert!(!EncodedContent::new("QUJD").is_empty());
+    }
 }
