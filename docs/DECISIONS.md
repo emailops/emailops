@@ -2374,7 +2374,7 @@ same function. A `chat.system` the user customised is kept at any window.
 machine under 16 GB, and on Ollama, the system prompt did not fit even in an empty
 conversation and the budget above had nothing left to cut. The compact message is pinned
 under 16 000 chars by a test. On the demo mailbox a retrieval turn at 8 192 went from
-11 961 prompt tokens with 4 793 dropped to 5 981 with none.
+11 961 prompt tokens with 4 793 dropped to 6 112 with none.
 **Rejected:**
 - *Raising the smallest tier to 16k*: the KV cache for 16k costs memory on exactly the
   machines that get 8k because they have none to spare, and it does nothing for Ollama.
@@ -2382,5 +2382,10 @@ under 16 000 chars by a test. On the demo mailbox a retrieval turn at 8 192 went
   catalogue the message was still ~5 800 tokens, leaving about 1 000 for everything else.
 - *A per-turn choice of prompt* (compact only when the turn is large): the system prefix
   would change between turns and cold-prefill the KV cache each time it did.
-**Limit:** the compact prompt drops three of the four examples and the long-form rules;
-its answers at 8k were checked on the smoke tier and the context-budget cases only.
+**Limit:** the compact prompt keeps the email-link contract and three examples whole (a
+first version with one-line link rules lost the links on tool-result answers) and states
+the other rules in one line each. Checked on the embedded runtime only, with
+`qwen3.5-4b-q4_k_m`: the smoke tier at 8 192 passes 36 of 41 with no prompt truncated,
+against 36 of 41 with 39 prompts truncated before; three of the five failures also fail at
+the default window, and which other cases fail moved between runs of near-identical
+prompts. Ollama and OpenRouter were not run.

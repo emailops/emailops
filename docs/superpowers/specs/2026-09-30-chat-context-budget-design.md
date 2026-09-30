@@ -89,15 +89,17 @@ it through the same function (`turn::system_prompt_inputs`). Target: a system me
 at most 16 000 chars, about 4 096 tokens; a unit test pins it.
 
 - **Template:** `chat.system_compact` (`CHAT_SYSTEM_COMPACT`), a second entry in the
-  prompt registry: the same contracts as `chat.system`, one line each, one example
-  instead of four. Under half the size. A `chat.system` the user customised is kept
-  whatever the window — it is the prompt they asked for.
+  prompt registry: the tool rules of `chat.system` in one line each, with the email-link
+  contract and three of its four examples kept whole (a first version with one-line link
+  rules lost the links on tool-result answers at 8k). About 6 300 chars against 11 400. A
+  `chat.system` the user customised is kept whatever the window — it is the prompt they
+  asked for.
 - **Tool catalogue:** `CatalogDetail::Compact`. Each tool is described by its
   `prompt_summary()` and the first sentence of every parameter description, and stated
   once: as its schema in the `<tools>` block on the embedded runtime, or as its summary
   line on a provider that is sent the schemas through its API (those schemas are compact
   too).
-- **Measured** on the demo mailbox at 8 192 tokens: a retrieval turn sends 5 981 prompt
+- **Measured** on the demo mailbox at 8 192 tokens: a retrieval turn sends 6 112 prompt
   tokens with 0 dropped, against 11 961 with 4 793 dropped before.
 
 ## What the user sees
@@ -123,6 +125,24 @@ at most 16 000 chars, about 4 096 tokens; a unit test pins it.
   questions lose their emails).
 - Gate: the smoke tier at the default window is unchanged; the smoke tier at 8k is
   compared before and after.
+
+Results on 2026-09-30, embedded runtime, `qwen3.5-4b-q4_k_m`, demo mailbox, smoke tier
+(41 cases), `emailops-cli eval --tier smoke [--n-ctx 8192]`:
+
+| Window | Build | Passed | Cases with a truncated prompt | Tokens dropped |
+|---|---|---|---|---|
+| default (32 768) | before | 38 | 0 | 0 |
+| default (32 768) | after | 38 | 0 | 0 |
+| 8 192 | before | 36 | 39 | 107 876 |
+| 8 192 | after | 36 | 0 | 0 |
+
+The default-window runs fail the same three cases before and after
+(`app_help_add_account_es`, `sf_hetzner_may_servers`, `at_flyio_march_invoice`). At 8 192
+the new build also fails `app_help_mailbox_question_stays_mailbox` (the answer names the
+email without its link) and `partial_list_states_the_total_es`. The 8k result is not
+stable at this model size: three runs of the compact prompt with small wording changes
+passed 34, 37 and 36, with different cases failing each time. What is stable is that no
+prompt was truncated in any of them.
 
 ## Known limits
 

@@ -263,7 +263,7 @@ mod tests {
     /// The compact prompt is what an 8k window gets: it must keep every
     /// contract the runtime and the UI depend on, and every variable.
     #[test]
-    fn chat_system_compact_keeps_the_contracts_in_less_than_half_the_size() {
+    fn chat_system_compact_keeps_the_contracts_in_two_thirds_of_the_size() {
         let tpl = defaults::CHAT_SYSTEM_COMPACT;
         for needle in [
             "{{language_instruction}}",
@@ -279,11 +279,13 @@ mod tests {
             "RELEVANT REGION",
             "next_page",
             "(email://eml-k)",
+            "EMAIL LINKS",
+            "allowlist",
         ] {
             assert!(tpl.contains(needle), "CHAT_SYSTEM_COMPACT lost {needle}");
         }
         assert!(
-            tpl.len() * 2 <= defaults::CHAT_SYSTEM.len(),
+            tpl.len() * 3 <= defaults::CHAT_SYSTEM.len() * 2,
             "{} chars against {} for the full prompt",
             tpl.len(),
             defaults::CHAT_SYSTEM.len()
