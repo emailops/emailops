@@ -85,6 +85,17 @@ fn request_error(status: u16, body: &str, model: &str, context: &str) -> AppErro
     AppError::AiError(format!("{context}: {body}"))
 }
 
+/// Whether `model` has the shape of an OpenRouter model id (`vendor/model`).
+/// The chat-model preference is shared by every provider, so after a provider
+/// switch it can still hold an in-app or Ollama id, which OpenRouter can only
+/// answer with an opaque "not a valid model" body.
+pub fn is_openrouter_model_id(model: &str) -> bool {
+    !model.contains(char::is_whitespace)
+        && model
+            .split_once('/')
+            .is_some_and(|(vendor, name)| !vendor.is_empty() && !name.is_empty())
+}
+
 /// The error for a chat turn OpenRouter refused before streaming anything.
 /// Says what the status means, so a rate limit or an outage does not reach
 /// the user as a bare JSON body.
@@ -405,6 +416,19 @@ impl OpenRouterClient {
         self
     }
 
+    /// Refuse a chat model OpenRouter cannot know (see
+    /// [`is_openrouter_model_id`]) with what to do about it, before a request
+    /// carrying mail content is sent.
+    fn ensure_chat_model(&self) -> Result<()> {
+        if is_openrouter_model_id(&self.model) {
+            return Ok(());
+        }
+        Err(AppError::AiError(format!(
+            "\"{}\" is not an OpenRouter chat model — enter one (vendor/model) in Settings → AI → OpenRouter",
+            self.model
+        )))
+    }
+
     fn chat_request(&self, prompt: &str, options: &CompletionOptions) -> OpenRouterChatRequest {
         OpenRouterChatRequest {
             model: self.model.clone(),
@@ -577,6 +601,7 @@ impl OpenRouterClient {
         tools: &[serde_json::Value],
         mut on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<StreamOutcome> {
+        self.ensure_chat_model()?;
         let idle = self.stream_idle_timeout;
         let send = self
             .client
@@ -776,6 +801,7 @@ impl AIProvider for OpenRouterClient {
     }
 
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
+        self.ensure_chat_model()?;
         let url = format!("{}/chat/completions", self.base_url);
 
         let request = self.chat_request(prompt, &options);
@@ -1461,6 +1487,46 @@ mod chat_stream_tests {
         assert!(
             matches!(&result, Err(AppError::AiDataPolicy { model }) if model == "vendor/model"),
             "{result:?}"
+        );
+    }
+
+    #[test]
+    fn only_a_vendor_slash_model_id_is_an_openrouter_model() {
+        for id in ["vendor/model", "vendor/model:free", "vendor/family/model-1.5"] {
+            assert!(is_openrouter_model_id(id), "{id}");
+        }
+        for id in [
+            "",
+            "  ",
+            "local-model-q4_k_m",
+            "local-model:latest",
+            "/model",
+            "vendor/",
+            "vendor/ model",
+        ] {
+            assert!(!is_openrouter_model_id(id), "{id:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_local_model_id_is_refused_before_anything_is_sent() {
+        let server = MockServer::start().await;
+        let client =
+            OpenRouterClient::new("key".into(), "local-model-q4_k_m".into(), String::new()).with_base_url(server.uri());
+
+        let streamed = client.chat_stream(vec![user("Hi")], Box::new(|_| true)).await;
+        let completed = client.complete("Hi", CompletionOptions::default()).await;
+
+        for result in [streamed.map(|_| ()), completed.map(|_| ())] {
+            assert!(
+                matches!(&result, Err(AppError::AiError(msg))
+                    if msg.contains("local-model-q4_k_m") && msg.contains("Settings")),
+                "{result:?}"
+            );
+        }
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "no request may leave the machine"
         );
     }
 

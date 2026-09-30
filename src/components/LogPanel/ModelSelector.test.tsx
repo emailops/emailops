@@ -118,4 +118,20 @@ describe('LogPanel ModelSelector', () => {
     );
     expect(useLogStore.getState().entries.some((e) => e.level === 'error')).toBe(true);
   });
+
+  // The model preference is shared by every provider and OpenRouter has no
+  // list to pick from: switching to it here would send a local model id.
+  it('does not offer OpenRouter unless it is the saved backend', async () => {
+    await mount();
+    expect(option('openrouter')?.disabled).toBe(true);
+    await act(async () => option('openrouter')?.click());
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+  });
+
+  it('keeps OpenRouter selectable while it is the saved backend', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({ ...config, provider: 'openrouter', model: 'vendor/model' } as never);
+    await mount();
+    expect(backend()).toBe('openrouter');
+    expect(option('openrouter')?.disabled).toBe(false);
+  });
 });

@@ -54,6 +54,24 @@ export function embeddingModelForProvider(
 }
 
 /**
+ * The chat model to show after switching to `next`. Like the embedding model,
+ * the preference is shared by every provider: returning to the saved provider
+ * restores the saved model, Ollama and the in-app runtime get the first model
+ * they can run, and OpenRouter — which has no list to pick from — gets none,
+ * so its field shows the placeholder instead of another provider's id.
+ */
+export function chatModelForProvider(
+  next: AiConfigState['provider'],
+  saved: { provider: string; model: string },
+  available: { catalog: CatalogModel[]; ollamaModels: string[] },
+): string {
+  if (next === saved.provider) return saved.model;
+  if (next === 'ollama') return available.ollamaModels[0] ?? '';
+  if (next === 'llamacpp') return available.catalog.find((m) => m.kind === 'chat' && m.isLocal)?.id ?? '';
+  return '';
+}
+
+/**
  * Whether Save must first ask the backend to check the OpenRouter embedding
  * model: it is new, or it was saved without ever passing the check.
  */

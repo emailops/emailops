@@ -38,6 +38,19 @@ const api = vi.hoisted(() => ({
   listCatalogModels: vi.fn(() =>
     Promise.resolve([
       {
+        id: 'chat-local-gguf',
+        displayName: 'Local chat',
+        kind: 'chat',
+        sizeBytes: 1,
+        contextWindow: 2048,
+        license: 'test',
+        minRamGb: 1,
+        recommended: true,
+        supportsTools: true,
+        isLocal: true,
+        isLinked: false,
+      },
+      {
         id: 'embed-local-gguf',
         displayName: 'Local embed',
         kind: 'embedding',
@@ -52,7 +65,7 @@ const api = vi.hoisted(() => ({
       },
     ]),
   ),
-  listOllamaModels: vi.fn(() => Promise.resolve([])),
+  listOllamaModels: vi.fn((): Promise<string[]> => Promise.resolve([])),
   listAiEmbeddingModels: vi.fn(() =>
     Promise.resolve([
       { id: 'vendor/embed', name: 'Vendor Embed', pricing: { prompt: 0, completion: 0, request: 0 } },
@@ -129,6 +142,30 @@ describe('AiSettings — embedding model', () => {
     return found;
   }
 
+  function chatModelInput(): HTMLInputElement {
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="settings:openRouter.chatModelPlaceholder"]',
+    );
+    if (!input) throw new Error('OpenRouter chat model field not rendered');
+    return input;
+  }
+
+  async function typeChatModel(model: string) {
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    act(() => {
+      setValue?.call(chatModelInput(), model);
+      chatModelInput().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await settle();
+  }
+
+  async function switchTo(providerLabel: string) {
+    await act(async () => {
+      button(providerLabel).click();
+    });
+    await settle();
+  }
+
   async function choose(model: string) {
     act(() => {
       embeddingSelect().value = model;
@@ -200,29 +237,58 @@ describe('AiSettings — embedding model', () => {
   });
 
   it('switching to OpenRouter drops the local embedding model instead of sending its id', async () => {
-    await mount({ provider: 'llamacpp', model: 'chat-gguf', embeddingModel: 'embed-local-gguf' });
-    await act(async () => {
-      button('settings:ai.providerOpenRouterLabel').click();
-    });
-    await settle();
+    await mount({ provider: 'llamacpp', model: 'chat-local-gguf', embeddingModel: 'embed-local-gguf' });
+    await switchTo('settings:ai.providerOpenRouterLabel');
 
     expect(embeddingSelect().value).toBe('');
+    await typeChatModel('vendor/model');
     await save();
 
     expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
-    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'chat-gguf', '']);
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', '']);
     expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
   });
 
   it('switching away from OpenRouter picks a model the new provider can run', async () => {
     await mount({});
-    await act(async () => {
-      button('settings:ai.providerEmbeddedLabel').click();
-    });
-    await settle();
+    await switchTo('settings:ai.providerEmbeddedLabel');
     await save();
 
-    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'vendor/model', 'embed-local-gguf']);
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'chat-local-gguf', 'embed-local-gguf']);
     expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('switching to OpenRouter empties the chat model instead of showing the in-app one', async () => {
+    await mount({ provider: 'llamacpp', model: 'chat-local-gguf', embeddingModel: 'embed-local-gguf' });
+    await switchTo('settings:ai.providerOpenRouterLabel');
+
+    expect(chatModelInput().value).toBe('');
+  });
+
+  it('returning to the saved provider restores its chat model', async () => {
+    await mount({});
+    await switchTo('settings:ai.providerEmbeddedLabel');
+    await switchTo('settings:ai.providerOpenRouterLabel');
+
+    expect(chatModelInput().value).toBe('vendor/model');
+  });
+
+  it('switching to Ollama picks the first chat model Ollama has', async () => {
+    api.listOllamaModels.mockResolvedValueOnce(['ollama-chat', 'nomic-embed-text']);
+    await mount({});
+    await switchTo('settings:ai.providerOllamaLabel');
+    await save();
+
+    expect(api.setAiConfig.mock.calls[0].slice(0, 2)).toEqual(['ollama', 'ollama-chat']);
+  });
+
+  it('does not save OpenRouter without a chat model, and says so', async () => {
+    await mount({ provider: 'llamacpp', model: 'chat-local-gguf', embeddingModel: 'embed-local-gguf' });
+    await switchTo('settings:ai.providerOpenRouterLabel');
+    await save();
+
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('settings:openRouter.chatModelRequired');
   });
 });

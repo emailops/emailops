@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CatalogModel } from '@/types';
 import {
+  chatModelForProvider,
   contextBudgetFromPref,
   contextBudgetToPref,
   DEFAULT_CONTEXT_BUDGET,
@@ -77,6 +78,37 @@ describe('embeddingModelForProvider', () => {
     expect(embeddingModelForProvider('llamacpp', remote, notDownloaded)).toBe('embed-recommended-gguf');
     expect(embeddingModelForProvider('llamacpp', remote, { catalog: [], ollamaEmbedModels: [] })).toBe('');
     expect(embeddingModelForProvider('ollama', remote, notDownloaded)).toBe('');
+  });
+});
+
+describe('chatModelForProvider', () => {
+  const catalog = [
+    catalogModel('chat-recommended-gguf', { kind: 'chat', recommended: true }),
+    catalogModel('chat-local-gguf', { kind: 'chat', isLocal: true }),
+    catalogModel('embed-local-gguf', { isLocal: true }),
+  ];
+  const lists = { catalog, ollamaModels: ['ollama-chat', 'ollama-chat-2'] };
+
+  it('never carries the chat model of one provider over to another', () => {
+    const saved = { provider: 'llamacpp', model: 'chat-local-gguf' } as const;
+    expect(chatModelForProvider('openrouter', saved, lists)).toBe('');
+    expect(chatModelForProvider('ollama', saved, lists)).toBe('ollama-chat');
+
+    const remote = { provider: 'openrouter', model: 'vendor/model' } as const;
+    expect(chatModelForProvider('llamacpp', remote, lists)).toBe('chat-local-gguf');
+    expect(chatModelForProvider('ollama', remote, lists)).toBe('ollama-chat');
+  });
+
+  it('restores the saved model when returning to the saved provider', () => {
+    const saved = { provider: 'openrouter', model: 'vendor/model' } as const;
+    expect(chatModelForProvider('openrouter', saved, lists)).toBe('vendor/model');
+  });
+
+  it('picks nothing when the target provider has no model to run', () => {
+    const remote = { provider: 'openrouter', model: 'vendor/model' } as const;
+    const nothingLocal = { catalog: catalog.slice(0, 1), ollamaModels: [] };
+    expect(chatModelForProvider('llamacpp', remote, nothingLocal)).toBe('');
+    expect(chatModelForProvider('ollama', remote, nothingLocal)).toBe('');
   });
 });
 

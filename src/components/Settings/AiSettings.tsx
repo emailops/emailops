@@ -12,6 +12,7 @@ import { ChatPromptsSection } from './AiSettings/ChatPromptsSection';
 import { ConfirmDisableDialog } from './AiSettings/ConfirmDisableDialog';
 import { EmbeddedPanel } from './AiSettings/EmbeddedPanel';
 import {
+  chatModelForProvider,
   contextBudgetFromPref,
   contextBudgetToPref,
   DEFAULT_CONTEXT_BUDGET,
@@ -89,8 +90,10 @@ export function AiSettings() {
   // Used to detect whether a provider switch requires a full re-index.
   const savedEmbedModelRef = useRef<string>('');
   // The provider that was active when we last saved/loaded config: the saved
-  // embedding model only means something to it (see embeddingModelForProvider).
+  // chat and embedding models only mean something to it (see
+  // chatModelForProvider / embeddingModelForProvider).
   const savedProviderRef = useRef<string>('');
+  const savedModelRef = useRef<string>('');
 
   // ── Load initial data ──────────────────────────────────────────────────────
 
@@ -189,6 +192,7 @@ export function AiSettings() {
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
       savedProviderRef.current = cfg.provider;
+      savedModelRef.current = cfg.model;
 
       await loadCatalog();
 
@@ -313,6 +317,11 @@ export function AiSettings() {
     setConfig({
       ...config,
       provider: p,
+      model: chatModelForProvider(
+        p,
+        { provider: savedProviderRef.current, model: savedModelRef.current },
+        { catalog, ollamaModels },
+      ),
       embeddingModel: embeddingModelForProvider(
         p,
         { provider: savedProviderRef.current, embeddingModel: savedEmbedModelRef.current },
@@ -381,9 +390,15 @@ export function AiSettings() {
 
   const handleSave = async () => {
     if (!config) return;
-    setSaving(true);
     setError(null);
     setSuccess(null);
+    // OpenRouter has no model to fall back to: an empty id would be saved as
+    // it is and every request would fail.
+    if (config.provider === 'openrouter' && config.model.trim() === '') {
+      setError(t('settings:openRouter.chatModelRequired'));
+      return;
+    }
+    setSaving(true);
     try {
       const prevEmbedModel = savedEmbedModelRef.current;
       const wantsApiKey = config.provider === 'openrouter';

@@ -173,6 +173,7 @@
     "contextBudgetLoadFailed": "Échec du chargement du budget de contexte : {{error}}",
     "contextBudgetSaveFailed": "Échec de l'enregistrement du budget de contexte : {{error}}",
     "chatModelPlaceholder": "ex. google/gemma-3-27b-it",
+    "chatModelRequired": "Saisissez l'ID d'un modèle de chat OpenRouter avant d'enregistrer : rien n'a été enregistré.",
     "embeddingNone": "Aucun — recherche par mots-clés uniquement",
     "embeddingNotice": "Avec un modèle d'Embeddings sélectionné, le texte de chaque e-mail indexé, ainsi que de chaque recherche et question du chat, est envoyé à OpenRouter et compte dans le budget mensuel. Sans modèle, la recherche sémantique est désactivée et la recherche se fait uniquement par mots-clés.",
     "embeddingNeedsKey": "Enregistrez votre clé API pour charger la liste des modèles d'Embeddings.",

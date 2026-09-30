@@ -173,7 +173,11 @@ export function ModelSelector() {
         options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({
           value: p,
           label: PROVIDER_LABELS[p],
-          disabled: p === 'llamacpp' && embeddedAvailable === false,
+          // OpenRouter has no model list to pick from and the model preference
+          // is shared by every provider, so switching to it here would send a
+          // local model id: it is set up in AI Settings, where its model is typed.
+          disabled:
+            (p === 'llamacpp' && embeddedAvailable === false) || (p === 'openrouter' && provider !== 'openrouter'),
         }))}
         ariaLabel={t('dashboard:log.aiBackend')}
         size="xs"
