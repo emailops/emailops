@@ -31,6 +31,8 @@ vi.mock('@/stores/featureToggleStore', () => ({
 
 vi.mock('./AiSettings/UsageSummary', () => ({ UsageSummary: () => null }));
 vi.mock('./AiSettings/ChatPromptsSection', () => ({ ChatPromptsSection: () => null }));
+// The recommended list is the panel's own concern (OpenRouterPanel.test).
+vi.mock('./AiSettings/openRouterEmbeddingModels', () => ({ RECOMMENDED_OPENROUTER_EMBEDDING_MODELS: [] }));
 
 const api = vi.hoisted(() => ({
   getAiConfig: vi.fn(),

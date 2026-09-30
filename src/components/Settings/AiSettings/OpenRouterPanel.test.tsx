@@ -13,6 +13,13 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock('./openRouterEmbeddingModels', () => ({
+  RECOMMENDED_OPENROUTER_EMBEDDING_MODELS: [
+    { id: 'vendor/pick-multi', languages: 'multilingual' },
+    { id: 'vendor/embed-large', languages: 'english' },
+  ],
+}));
+
 vi.mock('./UsageSummary', () => ({
   UsageSummary: () => null,
 }));
@@ -122,7 +129,7 @@ describe('OpenRouterPanel', () => {
   it('offers no embedding model, the listed ones, and reports the choice', () => {
     const setConfig = render(baseConfig);
     const values = Array.from(embeddingSelect().options).map((o) => o.value);
-    expect(values).toEqual(['', 'vendor/embed', 'vendor/embed-large']);
+    expect(values).toEqual(['', 'vendor/pick-multi', 'vendor/embed-large', 'vendor/embed']);
     expect(embeddingSelect().value).toBe('');
 
     act(() => {
@@ -130,6 +137,15 @@ describe('OpenRouterPanel', () => {
       embeddingSelect().dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(setConfig).toHaveBeenCalledWith({ ...baseConfig, embeddingModel: 'vendor/embed' });
+  });
+
+  it('puts the recommended models first, labelled, and lists each model once', () => {
+    render(baseConfig);
+    const options = Array.from(embeddingSelect().options);
+    expect(options[1].textContent).toBe('vendor/pick-multi — settings:openRouter.embeddingRecommendedMultilingual');
+    expect(options[2].textContent).toBe('vendor/embed-large — settings:openRouter.embeddingRecommendedEnglish');
+    expect(options[3].textContent).toBe('vendor/embed');
+    expect(options.filter((o) => o.value === 'vendor/embed-large')).toHaveLength(1);
   });
 
   it('keeps a saved model selectable when the list does not have it', () => {

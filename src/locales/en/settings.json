@@ -175,6 +175,8 @@
     "chatModelPlaceholder": "e.g. google/gemma-3-27b-it",
     "chatModelRequired": "Enter an OpenRouter chat model ID before saving — nothing was saved.",
     "embeddingNone": "None — keyword search only",
+    "embeddingRecommendedMultilingual": "recommended, multilingual",
+    "embeddingRecommendedEnglish": "recommended, English only",
     "embeddingNotice": "With an Embeddings model selected, the text of every email that gets indexed, and of every search and chat question, is sent to OpenRouter and counts against the monthly budget. With none selected, semantic search is off and search is keyword-only.",
     "embeddingNeedsKey": "Save your API key to load the list of Embeddings models.",
     "embeddingNeedsCheck": "Saving checks that this model produces the 768-dimension vectors the email index needs.",

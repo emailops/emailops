@@ -2303,3 +2303,19 @@ and an embedding-model change wiped the index without warning.
 - *Remembering a last-used model per provider*: needs new stored state for a case the
   Settings panel already covers.
 - *Warning about re-indexing in the wizard*: the wizard never triggers a re-index.
+
+## 2026-09-30 — Settings recommends six measured OpenRouter embedding models
+
+**Decision:** The OpenRouter embedding selector lists six recommended models first
+(`openRouterEmbeddingModels.ts`), each labelled multilingual or English-only; the rest of
+the catalogue follows and every model is still checked on save.
+**Context:** The catalogue publishes neither the vector dimension nor the data policy of a
+model's endpoints, so a user could only find a usable model by trial. On 30/09/2026
+`scripts/probe_openrouter_embeddings.sh` probed all 33 catalogue models with
+`data_collection: "deny"`: 15 returned 768 dimensions (through `dimensions` or natively),
+and the six chosen also answered with zero data retention on.
+**Rejected:**
+- *Restricting the selector to the recommended models*: the probe already protects the
+  vector tables, and the catalogue changes.
+- *Recommending from the catalogue descriptions*: they omit the dimension for most models
+  and say nothing of data policy; only a live probe shows both.
