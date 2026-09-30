@@ -493,4 +493,19 @@ mod tests {
         assert_eq!(edit_distance("", "acme"), 4);
         assert_eq!(edit_distance("acme", ""), 4);
     }
+    #[test]
+    fn an_inserted_or_dropped_letter_is_one_edit() {
+        assert_eq!(edit_distance("acme", "acmes"), 1);
+        assert_eq!(edit_distance("acmes", "acme"), 1);
+        assert_eq!(edit_distance("acme", "xacme"), 1);
+        // A swap late in a longer word is still one edit.
+        assert_eq!(edit_distance("abcdef", "abcdfe"), 1);
+    }
+
+    #[test]
+    fn a_domain_with_any_punycode_label_is_punycode() {
+        assert!(is_punycode("xn--acme-9db.example"));
+        assert!(is_punycode("mail.xn--80ak6aa92e.example"));
+        assert!(!is_punycode("acme.example"));
+    }
 }

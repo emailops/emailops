@@ -36,7 +36,17 @@
     "src-tauri/src/services/emails/mailbox_state.rs::delete_on_an_account_without_mailbox_writes_stays_local": "Borrar un correo de una cuenta cuyo proveedor no admite cambios en el servidor lo borra en local sin intentar conectar con el proveedor.",
     "src-tauri/src/db/emails/mailbox_state.rs::stored_states_carry_each_rows_read_and_sent_flags": "El estado guardado que se compara con el proveedor lleva bien los indicadores de leído y enviado de cada fila.",
     "src-tauri/src/services/emails/reconcile.rs::a_pending_row_with_a_message_id_is_not_matched_by_the_heuristic": "Una copia enviada pendiente que tiene Message-ID solo se concilia por Message-ID exacto, nunca por asunto y destinatarios.",
-    "src-tauri/src/services/emails/reconcile.rs::brackets_the_wrong_way_round_are_not_a_display_form": "Un destinatario con los signos < y > al revés no se trata como «Nombre <dirección>» (y no provoca un cierre inesperado)."
+    "src-tauri/src/services/emails/reconcile.rs::brackets_the_wrong_way_round_are_not_a_display_form": "Un destinatario con los signos < y > al revés no se trata como «Nombre <dirección>» (y no provoca un cierre inesperado).",
+    "src-tauri/src/services/junk/mod.rs::scoring_writes_a_verdict_for_each_new_message": "Puntuar el correo nuevo guarda un veredicto de correo no deseado por mensaje y no vuelve a puntuar lo ya puntuado.",
+    "src-tauri/src/services/junk/mod.rs::nothing_is_scored_while_junk_detection_is_off": "Con la detección de correo no deseado apagada no se puntúa nada.",
+    "src-tauri/src/services/junk/mod.rs::scoring_one_message_by_id_writes_its_verdict": "Puntuar un mensaje concreto guarda su veredicto.",
+    "src-tauri/src/services/junk/mod.rs::backfill_scores_every_unscored_message_across_batches": "El repaso inicial puntúa todo el correo pendiente aunque ocupe más de un lote de 500, y nada si la función está apagada.",
+    "src-tauri/src/services/junk/mod.rs::scoring_with_a_loaded_context_writes_the_verdicts": "La sincronización puntúa cada bloque con el contexto de la cuenta cargado una vez y guarda los veredictos.",
+    "src-tauri/src/services/junk/mod.rs::a_phishing_verdict_reaches_the_user_only_when_the_axis_is_on": "Un correo que suplanta a un contacto conocido solo lleva la etiqueta de phishing si el eje de phishing está activado (está apagado por defecto).",
+    "src-tauri/src/services/junk/mod.rs::training_saves_a_model_for_each_axis": "Reentrenar guarda un modelo para spam y otro para correo masivo.",
+    "src-tauri/src/services/junk/mod.rs::the_phishing_axis_follows_its_own_switch": "El eje de phishing sigue su propio interruptor y viene apagado.",
+    "src-tauri/src/services/junk/lookalike.rs::an_inserted_or_dropped_letter_is_one_edit": "Añadir, quitar o intercambiar una letra de un dominio cuenta como una sola edición al buscar imitaciones.",
+    "src-tauri/src/services/junk/lookalike.rs::a_domain_with_any_punycode_label_is_punycode": "Un dominio con cualquier etiqueta xn-- se reconoce como punycode."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
