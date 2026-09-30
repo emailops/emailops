@@ -165,3 +165,110 @@ class InvoiceReadStateDoesNotDependOnDrawOrder(unittest.TestCase):
                 "BorgBase invoice for April 2026",
             },
         )
+
+
+class VerificationFixturesAreSeeded(unittest.TestCase):
+    """Rows the verification sweep and the chat evals drive: a trashed email and
+    a junk-marked one that retrieval must leave out, an email with a remote
+    image, a stored attachment of a type that can run code, and a draft with a
+    table. They must survive a rebuild with the same ids and be addable to an
+    existing demo DB without duplicating anything."""
+
+    def _db(self):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            """
+            CREATE TABLE emails (id TEXT PRIMARY KEY, account_id TEXT, thread_id TEXT, message_id TEXT,
+                subject TEXT, sender TEXT, sender_email TEXT, sender_domain TEXT, recipients_json TEXT,
+                cc_json TEXT, snippet TEXT, timestamp INTEGER, is_read INTEGER, is_deleted INTEGER,
+                triage_status TEXT, category TEXT, mailbox TEXT, raw_json TEXT, created_at INTEGER);
+            CREATE TABLE email_bodies (email_id TEXT PRIMARY KEY, body TEXT);
+            CREATE VIRTUAL TABLE emails_fts USING fts5(email_id UNINDEXED, subject, sender, body);
+            CREATE TABLE email_tags (email_id TEXT, tag_type TEXT, tag_value TEXT, confidence REAL,
+                created_at INTEGER, PRIMARY KEY (email_id, tag_type));
+            CREATE TABLE email_junk (email_id TEXT PRIMARY KEY, account_id TEXT, spam_score REAL,
+                phish_score REAL, gray_score REAL, band TEXT, primary_kind TEXT, reasons_json TEXT,
+                method TEXT, model_version INTEGER, scored_at INTEGER, user_override TEXT, overridden_at INTEGER);
+            CREATE TABLE email_attachment_meta (id TEXT PRIMARY KEY, email_id TEXT, account_id TEXT,
+                provider_attachment_id TEXT, filename TEXT, mime_type TEXT, file_size INTEGER,
+                file_path TEXT, inline_data TEXT);
+            CREATE TABLE drafts (id TEXT PRIMARY KEY, email_id TEXT, account_id TEXT, to_addresses_json TEXT,
+                subject TEXT, body TEXT, ai_generated INTEGER, status TEXT, created_at INTEGER,
+                updated_at INTEGER, provider_draft_id TEXT, cc_addresses_json TEXT, body_html TEXT,
+                provider_message_id TEXT, dirty INTEGER);
+            """
+        )
+        return conn
+
+    def _seeded(self):
+        import tempfile
+
+        conn = self._db()
+        demo_dir = pathlib.Path(tempfile.mkdtemp())
+        gen.insert_verification_fixtures(conn, gen.LOCALE_EN, demo_dir)
+        return conn, demo_dir
+
+    def _one(self, conn, sql, *params):
+        return conn.execute(sql, params).fetchone()
+
+    def test_the_trashed_quote_is_deleted_but_still_indexed(self):
+        conn, _ = self._seeded()
+        deleted = conn.execute("SELECT id, subject FROM emails WHERE is_deleted = 1").fetchall()
+        self.assertEqual([subject for _, subject in deleted], ["Larkspur Freight renewal quote"])
+        # Still in the keyword index, as after a delete in the app: retrieval has
+        # to filter it out, the index does not do it for free.
+        self.assertIsNotNone(self._one(conn, "SELECT 1 FROM emails_fts WHERE email_id = ?", deleted[0][0]))
+        self.assertIn("3100 EUR", self._one(conn, "SELECT body FROM emails_fts WHERE email_id = ?", deleted[0][0])[0])
+        live = self._one(conn, "SELECT b.body FROM emails e JOIN email_bodies b ON b.email_id = e.id "
+                               "WHERE e.is_deleted = 0 AND e.subject = 'Corrected Larkspur Freight renewal quote'")
+        self.assertIn("4200 EUR", live[0])
+
+    def test_the_lookalike_billing_notice_is_marked_as_junk_by_the_user(self):
+        conn, _ = self._seeded()
+        row = self._one(conn, "SELECT j.band, j.primary_kind, j.user_override, e.mailbox, e.is_deleted "
+                              "FROM email_junk j JOIN emails e ON e.id = j.email_id")
+        # Scored below the junk band: only the user's own mark hides it, which is
+        # the branch of the exclusion rule a scored-junk row would not exercise.
+        self.assertEqual(row, ("uncertain", "phishing", "junk", "inbox", 0))
+        chip = self._one(conn, "SELECT t.tag_value FROM email_tags t JOIN email_junk j ON j.email_id = t.email_id "
+                               "WHERE t.tag_type = 'junk'")
+        self.assertEqual(chip, ("phishing",))
+
+    def test_one_email_carries_a_remote_image(self):
+        conn, _ = self._seeded()
+        bodies = [b for (b,) in conn.execute("SELECT body FROM email_bodies") if '<img src="https://' in b]
+        self.assertEqual(len(bodies), 1)
+
+    def test_the_attachments_that_can_run_code_are_stored_the_way_sync_stores_them(self):
+        # A web page, kept inline as IMAP sync keeps small parts (the app previews
+        # it itself, in a sandbox), and a shortcut stored on disk, which only the
+        # OS can open: the one that asks for confirmation.
+        import base64
+
+        conn, demo_dir = self._seeded()
+        rows = conn.execute(
+            "SELECT filename, mime_type, provider_attachment_id, file_path, inline_data "
+            "FROM email_attachment_meta ORDER BY filename").fetchall()
+        shortcut, page = rows
+        self.assertEqual(shortcut[:3], ("larkspur-client-portal.webloc", "application/octet-stream", ""))
+        self.assertFalse(pathlib.PurePosixPath(shortcut[3]).is_absolute(), "stored paths are relative to the data dir")
+        self.assertIn("https://example.com/", (demo_dir / shortcut[3]).read_text(encoding="utf-8"))
+        self.assertEqual(page[:4], ("larkspur-renewal-terms.html", "text/html", "INLINE::larkspur-renewal-terms.html", None))
+        self.assertIn("renewal terms", base64.b64decode(page[4]).decode("utf-8"))
+
+    def test_one_draft_holds_a_table(self):
+        conn, _ = self._seeded()
+        subject, html, status, dirty = self._one(conn, "SELECT subject, body_html, status, dirty FROM drafts")
+        self.assertEqual((subject, status, dirty), ("Milestone dates (table)", "draft", 0))
+        self.assertEqual(html.count("<tr>"), 3)
+
+    def test_seeding_twice_changes_nothing(self):
+        conn, demo_dir = self._seeded()
+        counts = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                          for t in ("emails", "emails_fts", "email_junk", "email_attachment_meta", "drafts")]
+        ids = lambda: sorted(r[0] for r in conn.execute("SELECT id FROM emails"))
+        before, before_ids = counts(), ids()
+        gen.insert_verification_fixtures(conn, gen.LOCALE_EN, demo_dir)
+        self.assertEqual((counts(), ids()), (before, before_ids))

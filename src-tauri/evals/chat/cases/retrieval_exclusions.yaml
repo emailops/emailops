@@ -1,0 +1,57 @@
+# Mail the user trashed or marked as junk must not feed a chat answer.
+#
+# WHAT BROKE
+# Keyword and vector retrieval read `emails_fts` / `vec_emails` without looking
+# at the row behind the hit: a trashed message stays in the keyword index, and
+# a junk-marked one keeps its embedding. Both came back as sources, so the chat
+# could quote a figure from an email the user had deleted, or a payment demand
+# from a phishing lookalike the user had already marked as junk.
+#
+# WHY THESE CASES WORK ON THE DEMO DB
+# `scripts/generate_demo_db.py` (`insert_verification_fixtures`) seeds two pairs
+# in the work account, all on the reserved `.example` TLD:
+#   - Larkspur Freight: a quote with the wrong figure (3100 EUR), TRASHED, and
+#     its correction (4200 EUR), live.
+#   - Tessellate Hosting: the real renewal notice (89 EUR per month, 14 March),
+#     live, and a lookalike "payment failed, pay 640 EUR" notice the user
+#     MARKED AS JUNK (it has an embedding, so the vector path is exercised).
+# In each pair both emails match the question; only the live one may be used.
+#
+# WHAT THIS ASSERTS
+# The figure of the live email is in the answer and the figure that exists only
+# in the trashed / junk email is not.
+- id: retrieval_trashed_quote_not_cited
+  question: "What renewal quote did Larkspur Freight send me for the support retainer?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  expected_answer_contains_any:
+    - "4200"
+    - "4,200"
+    - "4.200"
+    - "4 200"
+  expected_answer_not_contains:
+    - "3100"
+    - "3,100"
+    - "3.100"
+    - "3 100"
+  expected_output: "Larkspur Freight (Ines Okafor) quoted 4200 EUR for twelve months of the support retainer, in the corrected renewal quote, with an email:// link to it."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: retrieval_excludes_junk_lookalike
+  question: "How much does my Tessellate Hosting plan cost and when does it renew?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  expected_answer_contains:
+    - "89"
+  expected_answer_not_contains:
+    - "640"
+    - "suspended"
+    - "tessellate-hosting-secure"
+  expected_output: "The Tessellate Hosting Studio plan costs 89 EUR per month and renews on 14 March; no action is needed."
+  metrics:
+    - answer_relevancy
+    - faithfulness
