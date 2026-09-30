@@ -95,8 +95,9 @@ def rust_desc(path):
         if mod and path.startswith(mod): return d
     return cands[0][1] if cands else humanize(fn)
 VITEST_HEADER = {}
-def vitest_desc(rel, full_name, title=None):
-    gen = GEN["vitest"].get(f"{rel}::{title}") if title else None
+def vitest_desc(rel, full_name, title=None, ancestors=None):
+    # Keyed by the leaf title; older batches wrote `describe > title`, so try that too.
+    gen = (GEN["vitest"].get(f"{rel}::{title}") or GEN["vitest"].get(f"{rel}::{' > '.join([*(ancestors or []), title])}")) if title else None
     if gen: return gen
     if rel not in VITEST_HEADER:
         text = (REPO / rel).read_text(errors="replace")
@@ -108,10 +109,13 @@ def vitest_desc(rel, full_name, title=None):
 # ---------- attribution ----------
 FEATURES = MANIFEST["features"]
 def feature_for_rust(path):
+    # Longest prefix wins (as for vitest), so `db::emails::search` can belong to a
+    # different feature than `db::emails` whatever the order of the manifest.
+    best = None
     for f in FEATURES:
         for pref in f.get("rust", []):
-            if path.startswith(pref + "::") or path == pref: return f["name"]
-    return "Transversal"
+            if (path.startswith(pref + "::") or path == pref) and (best is None or len(pref) > len(best[0])): best = (pref, f["name"])
+    return best[1] if best else "Transversal"
 def feature_for_integration(name):
     low = name.lower()
     for f in FEATURES:
@@ -188,7 +192,9 @@ RUST_TEST = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)")
 def layer_rust():
     # Merge the streams in order: the "Running unittests/tests/…" headers go to stderr
     # and are what tells a unit test from an integration test.
-    rc, out, err = sh("cargo test --manifest-path src-tauri/Cargo.toml 2>&1", timeout=3600)
+    # `--features cli`: the CLI module (and its own tests) only compiles with it, and
+    # it is the feature set `make cli-demo` builds for the contract and eval layers.
+    rc, out, err = sh("cargo test --manifest-path src-tauri/Cargo.toml --features cli 2>&1", timeout=3600)
     text = out; (LAYERS / "rust.raw").write_text(text)
     # failure traces: "---- name stdout ----" blocks
     traces = {}
@@ -222,7 +228,7 @@ def layer_vitest():
         for a in f.get("assertionResults", []):
             status = {"passed": "ok", "failed": "fail", "skipped": "skip", "pending": "skip", "todo": "skip"}.get(a["status"], a["status"])
             typ = "contract" if is_contract("vitest", rel) else "unit"
-            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), desc=vitest_desc(rel, a["fullName"], a.get("title")), trace="\n".join(a.get("failureMessages", []))[:6000])
+            add(feature_for_vitest(rel), typ, f"{rel} › {a['fullName']}", status, "" if status != "fail" else "assertion failed (ver traza)", a.get("duration"), desc=vitest_desc(rel, a["fullName"], a.get("title"), a.get("ancestorTitles")), trace="\n".join(a.get("failureMessages", []))[:6000])
     if rc != 0 and not any(r["status"] == "fail" and r["name"].startswith("src/") for r in records):
         add("Transversal", "static", "vitest (arranque)", "fail", (out + err)[-3000:])
 
@@ -230,14 +236,31 @@ def layer_contract():
     # The CLI's --json envelope is the contract agents script against.
     # cli-demo: the same data dir the sweep and the evals use, so the AI config in the
     # report is the one that was actually exercised (cli-fast would read the real install).
+    CLI = "CLI y agentes"
     rc, out, err = sh('make cli-demo ARGS="doctor --json"', timeout=1800)
     body = out[out.find("{"):] if "{" in out else ""
     try:
         d = json.loads(body); okshape = set(d) == {"ok", "data", "error"} and isinstance(d["ok"], bool)
         if okshape and d.get("data"): meta["ai"] = {k: d["data"].get(k) for k in ("provider", "model", "embeddingModel", "aiEnabled")}
-        add("Transversal", "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "ok" if okshape else "fail", "" if okshape else f"claves: {sorted(d)}", desc="La CLI devuelve siempre el mismo sobre JSON {ok, data, error} para que un agente pueda parsear éxito y fallo con una sola forma", trace=body[:2000] if not okshape else "")
+        add(CLI, "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "ok" if okshape else "fail", "" if okshape else f"claves: {sorted(d)}", desc="La CLI devuelve siempre el mismo sobre JSON {ok, data, error} para que un agente pueda parsear éxito y fallo con una sola forma", trace=body[:2000] if not okshape else "")
     except Exception as e:
-        add("Transversal", "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "fail", f"sin JSON: {e}", trace=(out + err)[-2000:])
+        add(CLI, "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "fail", f"sin JSON: {e}", trace=(out + err)[-2000:])
+        return
+    # The binary `make cli-demo` just built, run directly: make would replace the exit code.
+    cli = REPO / "src-tauri/target/debug/emailops-cli"
+    def run_cli(*argv):
+        p = subprocess.run([str(cli), *argv], cwd=REPO, capture_output=True, text=True, timeout=300, env=dict(ENV, EMAILOPS_DATA_DIR=str(DEMO_DIR)))
+        try: return p.returncode, json.loads(p.stdout), p.stdout + p.stderr
+        except Exception: return p.returncode, None, p.stdout + p.stderr
+    demo = DEMO_DIR / "emailops.db"
+    def db_state(): return subprocess.run(["sqlite3", str(demo), "select count(*), max(version) from refinery_schema_history; select count(*) from emails"], capture_output=True, text=True).stdout
+    before = db_state(); rc, d, raw = run_cli("search", "Ollama", "--json")
+    good = bool(before.strip()) and rc == 0 and isinstance(d, dict) and d.get("ok") is True and d.get("error") is None and isinstance(d.get("data"), list) and any("Ollama" in (e.get("subject") or "") for e in d["data"]) and db_state() == before
+    add(CLI, "contract", "emailops-cli search --json: lectura con sobre ok y código 0", "ok" if good else "fail", "" if good else f"rc={rc}, ok={d.get('ok') if isinstance(d, dict) else None}", desc="Un comando de solo lectura responde con {ok:true, data:[…], error:null} y código 0, encuentra el correo sintético sobre Ollama y no toca el esquema de la BD demo", trace="" if good else raw[-2000:])
+    rc, d, raw = run_cli("show", "no-such-id", "--json")
+    e = (d or {}).get("error") or {}
+    good = rc == 3 and isinstance(d, dict) and d.get("ok") is False and d.get("data") is None and e.get("code") == "not_found" and set(e) == {"code", "params", "message"}
+    add(CLI, "contract", "emailops-cli show --json: fallo con sobre de error y código 3", "ok" if good else "fail", "" if good else f"rc={rc}, error={e}", desc="Un id inexistente responde {ok:false, data:null, error:{code:'not_found', params, message}} y sale con código 3, la clase «no encontrado»", trace="" if good else raw[-2000:])
 
 APP = RUN / "app"
 V = SKILL / "scripts/verify.sh"

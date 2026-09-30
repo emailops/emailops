@@ -42,5 +42,6 @@ Preconditions: demo instance (`$V launch`); the demo DB has no skills and the fe
 | index placement, `load_skill` schema, trace step, history note | unit (`services::chat::*`) |
 | full lifecycle on disk | integration (`skill_lifecycle_through_the_service`) |
 | view, toggle, editor races, `/` suggestions | vitest (`SkillsView`, `ChatInput.slash`, `slashSkills`) |
+| skill command arguments | contract (`src/lib/apiContract/skills.api.test.ts`) |
 | sidebar entry and view | e2e (`Skills/activar`, `Skills/vista` in `sweep.mjs`) |
 | selection, `/name`, negatives on the demo mailbox | eval (`skill_*` in `src-tauri/evals/chat/cases/skills.yaml`) |

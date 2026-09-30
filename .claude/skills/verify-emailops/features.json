@@ -1,5 +1,5 @@
 {
-  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes that count as contract tests instead of unit tests. Unmatched tests land in `Transversal`.",
+  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule; the longest matching prefix across features wins, as for `vitest`), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes (vitest: matched against the file path; `src/lib/apiContract/<feature>.api.test.ts` holds each feature's api.ts ↔ Rust command contract) that count as contract tests instead of unit tests. `integration_names` = keywords looked up in an integration test's name, first feature in file order wins. Unmatched tests land in `Transversal`.",
   "types": [
     "unit",
     "integration",
@@ -39,13 +39,20 @@
         "commands::system",
         "util::instance_lock",
         "db::folders",
-        "services::sync_error_dedup"
+        "services::sync_error_dedup",
+        "sync",
+        "db::accounts"
       ],
       "vitest": [
         "src/stores/accountStore",
         "src/components/Onboarding",
         "src/components/Sidebar",
-        "src/lib/accountSettings"
+        "src/lib/accountSettings",
+        "src/components/AddImapAccountModal",
+        "src/components/shared/AccountScopeChip",
+        "src/stores/folderStore",
+        "src/stores/connectivityStore",
+        "src/lib/apiContract/cuentas.api.test"
       ],
       "e2e": [
         "Cuentas"
@@ -56,7 +63,9 @@
         "imap",
         "gmail",
         "outlook",
-        "backfill"
+        "backfill",
+        "watermark",
+        "role_folders"
       ]
     },
     {
@@ -69,7 +78,8 @@
         "services::search",
         "util::html",
         "services::email_company",
-        "db::trusted_senders"
+        "db::trusted_senders",
+        "util::email_addr"
       ],
       "vitest": [
         "src/components/Inbox",
@@ -78,7 +88,18 @@
         "src/lib/mailboxTitle",
         "src/lib/inbox",
         "src/lib/threadOrder",
-        "src/components/shared/EmailHtmlFrame"
+        "src/components/shared/EmailHtmlFrame",
+        "src/lib/emailFormatting",
+        "src/lib/threadSearch",
+        "src/lib/threadCollapse",
+        "src/lib/scrollRestore",
+        "src/lib/matchScroll",
+        "src/lib/rowMeasure",
+        "src/lib/emailDrag",
+        "src/lib/categories",
+        "src/lib/viewNavigation",
+        "src/components/shared/EmailPreviewById",
+        "src/lib/apiContract/inbox.api.test"
       ],
       "e2e": [
         "Inbox",
@@ -91,7 +112,10 @@
         "thread",
         "email",
         "search",
-        "filtered"
+        "filtered",
+        "mailbox",
+        "mark_as_read",
+        "redownload"
       ]
     },
     {
@@ -102,17 +126,26 @@
         "services::retrieval",
         "services::embeddings",
         "db::embeddings",
-        "services::agent_search"
+        "services::agent_search",
+        "services::search"
       ],
       "vitest": [
         "src/components/Inbox/InboxSearchBox",
-        "src/lib/searchQuery"
+        "src/lib/searchQuery",
+        "src/components/Search",
+        "src/lib/apiContract/busqueda.api.test"
       ],
       "e2e": [
         "Búsqueda"
       ],
       "evals": [
-        "agent_search"
+        "agent_search",
+        "retrieval_"
+      ],
+      "integration_names": [
+        "retrieval",
+        "embedding",
+        "semantic"
       ]
     },
     {
@@ -133,7 +166,12 @@
         "src/components/DraftsView",
         "src/components/ComposeModal",
         "src/components/shared/RichTextEditor",
-        "src/components/EmailView/ComposeTabView"
+        "src/components/EmailView/ComposeTabView",
+        "src/lib/composeEditorExtensions",
+        "src/lib/draftRequest",
+        "src/lib/sendWarnings",
+        "src/stores/translationStore",
+        "src/lib/apiContract/compose.api.test"
       ],
       "e2e": [
         "Compose",
@@ -145,7 +183,9 @@
       ],
       "integration_names": [
         "draft",
-        "reply"
+        "reply",
+        "send",
+        "sent_copy"
       ]
     },
     {
@@ -161,7 +201,8 @@
         "src/components/Skills",
         "src/components/Settings/SkillsSettings",
         "src/components/Chat/ChatInput.slash",
-        "src/lib/slashSkills"
+        "src/lib/slashSkills",
+        "src/lib/apiContract/skills.api.test"
       ],
       "e2e": [
         "Skills"
@@ -181,18 +222,12 @@
         "services::prompts",
         "services::memory",
         "db::memory",
-        "services::ai",
-        "ai::llama_cpp",
-        "ai::stream_gate",
-        "ai::thinking_filter",
-        "ai::model_catalog",
-        "ai::model_manager",
-        "ai::gpu_plan",
-        "ai::ollama",
         "db::chat",
         "commands::chat",
-        "ai::provider",
-        "services::forms"
+        "services::forms",
+        "services::help_docs",
+        "db::help_docs",
+        "services::thread_reader"
       ],
       "vitest": [
         "src/components/Chat",
@@ -202,7 +237,12 @@
         "src/stores/chatStore",
         "src/lib/reasoning",
         "src/stores/formFillStore",
-        "src/stores/viewContextStore"
+        "src/stores/viewContextStore",
+        "src/lib/helpLinks",
+        "src/lib/traceFlow",
+        "src/lib/researchFilter",
+        "src/lib/researchTime",
+        "src/lib/apiContract/chat.api.test"
       ],
       "e2e": [
         "Chat",
@@ -211,7 +251,6 @@
       ],
       "evals": [
         "demo_",
-        "calendar_",
         "memory_",
         "thread_"
       ],
@@ -219,6 +258,37 @@
         "chat",
         "turn",
         "planner"
+      ]
+    },
+    {
+      "id": "ia-proveedores",
+      "name": "IA: proveedores y modelos",
+      "rust": [
+        "ai",
+        "services::ai",
+        "services::ai_activity",
+        "commands::ai_models",
+        "commands::ai_config",
+        "db::ai_processing_cutoff_tests",
+        "util::fs_link"
+      ],
+      "vitest": [
+        "src/components/Settings/AiSettings",
+        "src/components/Onboarding/StepAi",
+        "src/components/LogPanel",
+        "src/components/shared/AiWorkInProgressDialog",
+        "src/lib/aiProviderWork",
+        "src/lib/backgroundActivity",
+        "src/stores/aiStore",
+        "src/lib/apiContract/ia.api.test"
+      ],
+      "e2e": [
+        "IA"
+      ],
+      "integration_names": [
+        "ai_provider",
+        "ai_work",
+        "openrouter"
       ]
     },
     {
@@ -237,7 +307,8 @@
         "src/lib/colors",
         "src/stores/tagStore",
         "src/stores/filterStore",
-        "src/components/common/TagChips"
+        "src/components/common/TagChips",
+        "src/lib/apiContract/tagboard.api.test"
       ],
       "e2e": [
         "Tag Board",
@@ -258,17 +329,22 @@
       "name": "Correo no deseado",
       "rust": [
         "services::junk",
-        "db::junk"
+        "db::junk",
+        "db::exclude_junk_sql_tests"
       ],
       "vitest": [
         "src/stores/junkStore",
         "src/components/Settings/JunkSettings",
-        "src/components/Inbox/hideJunkLabel"
+        "src/components/Inbox/hideJunkLabel",
+        "src/lib/apiContract/junk.api.test"
       ],
       "e2e": [
-        "Vistas/Spam"
+        "Junk"
       ],
       "evals": [
+        "junk"
+      ],
+      "integration_names": [
         "junk"
       ]
     },
@@ -285,13 +361,19 @@
       ],
       "vitest": [
         "src/components/Calendar",
-        "src/lib/calendar"
+        "src/lib/calendar",
+        "src/stores/calendarIntegrationStore",
+        "src/lib/apiContract/calendario.api.test"
       ],
       "e2e": [
         "Vistas/Calendar"
       ],
       "evals": [
-        "calendar_routing"
+        "^cal"
+      ],
+      "integration_names": [
+        "calendar",
+        "invite"
       ]
     },
     {
@@ -303,22 +385,42 @@
         "services::tasks",
         "db::tasks",
         "services::attachments",
-        "db::attachments"
+        "db::attachments",
+        "services::attachment_suggestions",
+        "services::attachment_safety",
+        "commands::lenses",
+        "commands::attachments"
       ],
       "vitest": [
         "src/components/Lenses",
         "src/lib/lens",
         "src/stores/lensStore",
-        "src/components/Tasks"
+        "src/components/Tasks",
+        "src/components/Attachments",
+        "src/stores/attachmentStore",
+        "src/hooks/useAttachments",
+        "src/hooks/useRuleApplyEvents",
+        "src/hooks/useOpenAttachment",
+        "src/components/shared/DangerousAttachmentDialog",
+        "src/components/EmailView/AttachmentTabView",
+        "src/components/EmailView/EmailAttachments",
+        "src/lib/mimeType",
+        "src/lib/apiContract/lenses.api.test"
       ],
       "e2e": [
         "Vistas/Tasks",
-        "Vistas/Lenses"
+        "Vistas/Lenses",
+        "Adjuntos"
       ],
       "evals": [
         "lens",
         "task",
         "invoice"
+      ],
+      "integration_names": [
+        "lens",
+        "attachment",
+        "download"
       ]
     },
     {
@@ -337,11 +439,17 @@
       ],
       "vitest": [
         "src/components/Dashboard",
-        "src/components/Contacts"
+        "src/components/Contacts",
+        "src/lib/apiContract/contactos.api.test"
       ],
       "e2e": [
         "Vistas/Contacts",
         "Vistas/Dashboard"
+      ],
+      "integration_names": [
+        "dispatcher",
+        "contacts",
+        "queue"
       ]
     },
     {
@@ -365,12 +473,20 @@
         "src/hooks",
         "src/lib/appUpdate",
         "src/stores/updateStore",
-        "src/stores/aiStore",
         "src/components/common/ToastHost",
-        "src/components/ErrorBanner"
+        "src/components/ErrorBanner",
+        "src/lib/intl",
+        "src/components/shared/LanguageSelect",
+        "src/stores/featureToggleStore",
+        "src/lib/privacyPolicy",
+        "src/lib/version",
+        "src/lib/apiContract/ajustes.api.test"
       ],
       "e2e": [
         "Ajustes"
+      ],
+      "integration_names": [
+        "preference"
       ]
     },
     {
