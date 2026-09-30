@@ -673,6 +673,9 @@ pub struct FakeEmailProvider {
     /// When `Some`, every mailbox-state write fails with this message instead
     /// of being recorded — simulates an offline or refusing provider.
     mailbox_write_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, `create_draft` / `update_draft` fail with this message —
+    /// simulates a provider that is reachable but refusing draft writes.
+    draft_write_failure: std::sync::RwLock<Option<String>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
@@ -743,6 +746,7 @@ impl FakeEmailProvider {
             mailbox_ops: std::sync::RwLock::new(Vec::new()),
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
+            draft_write_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
         }
@@ -784,6 +788,24 @@ impl FakeEmailProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(message_id.into());
+    }
+
+    /// Make every subsequent draft create/update fail with `message`, or let
+    /// them through again with `None`.
+    pub fn fail_draft_writes(&self, message: Option<&str>) {
+        *self.draft_write_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
+    fn draft_write_result(&self) -> Result<()> {
+        match self
+            .draft_write_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            Some(message) => Err(AppError::SyncError(message.to_string())),
+            None => Ok(()),
+        }
     }
 
     /// Make every subsequent mailbox-state write fail with `message`.
@@ -1267,6 +1289,7 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         _attachments: &[EmailAttachment],
     ) -> Result<String> {
+        self.draft_write_result()?;
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let id = format!("fake-draft-{seq}");
         let draft = ProviderDraft {
@@ -1296,6 +1319,17 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         _attachments: &[EmailAttachment],
     ) -> Result<String> {
+        self.draft_write_result()?;
+        // A draft sent or deleted from another device is gone: real providers
+        // answer 404, which their clients surface as `NotFound`.
+        if !self
+            .drafts
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(provider_draft_id)
+        {
+            return Err(AppError::NotFound(format!("Fake draft not found: {provider_draft_id}")));
+        }
         // Saving a draft mints a fresh change token, mirroring Gmail replacing
         // the underlying message id on every `drafts.update`.
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;

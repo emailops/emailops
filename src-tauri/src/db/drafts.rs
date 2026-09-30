@@ -54,6 +54,16 @@ fn attachments_for(conn: &Connection, draft_id: &str) -> rusqlite::Result<Vec<Dr
     Ok(rows)
 }
 
+/// One local draft as the provider sync sees it. Feeds
+/// `sync::draft_plan::plan_draft_sync`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftSyncState {
+    pub id: String,
+    pub provider_draft_id: Option<String>,
+    /// The row holds user edits the provider has not received.
+    pub dirty: bool,
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -99,7 +109,22 @@ impl Database {
         }
     }
 
+    /// Insert or upsert a draft row without touching its `dirty` marker. For
+    /// writes that are not the user editing a draft the provider should
+    /// receive (the chat draft tool, fixtures); the composer's save goes
+    /// through [`Self::save_user_draft`].
     pub fn save_draft(&self, req: &SaveDraftRequest) -> Result<Draft> {
+        self.save_draft_row(req, false)
+    }
+
+    /// Save a draft the user edited and, in the same statement, mark it dirty:
+    /// it now holds text the provider has not received, so the sync must push
+    /// it and must never prune or overwrite it until that push succeeds.
+    pub fn save_user_draft(&self, req: &SaveDraftRequest) -> Result<Draft> {
+        self.save_draft_row(req, true)
+    }
+
+    fn save_draft_row(&self, req: &SaveDraftRequest, mark_dirty: bool) -> Result<Draft> {
         let conn = self.connection();
         let now = now_secs();
 
@@ -110,9 +135,9 @@ impl Database {
         conn.execute(
             "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                                  subject, body, body_html, ai_generated, status,
-                                 provider_draft_id, created_at, updated_at)
+                                 provider_draft_id, created_at, updated_at, dirty)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 'draft', ?9,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10)
+                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET
                 email_id = excluded.email_id,
                 to_addresses_json = excluded.to_addresses_json,
@@ -122,7 +147,9 @@ impl Database {
                 body_html = excluded.body_html,
                 -- keep an existing provider link when the save omits one
                 provider_draft_id = COALESCE(excluded.provider_draft_id, drafts.provider_draft_id),
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                -- one more unpushed save; a plain save leaves the count alone
+                dirty = drafts.dirty + excluded.dirty",
             params![
                 id,
                 req.email_id,
@@ -134,6 +161,7 @@ impl Database {
                 req.body_html,
                 req.provider_draft_id,
                 now,
+                i64::from(mark_dirty),
             ],
         )?;
 
@@ -149,14 +177,59 @@ impl Database {
         Ok(draft)
     }
 
-    /// Record the provider-side draft id for a local draft after a push.
-    pub fn set_provider_draft_id(&self, draft_id: &str, provider_draft_id: Option<&str>) -> Result<()> {
+    /// A draft together with its `dirty` revision, read in one go so a push
+    /// knows exactly which revision of the content it is sending. `None` when
+    /// the draft no longer exists.
+    pub fn draft_for_push(&self, draft_id: &str) -> Result<Option<(Draft, i64)>> {
+        let conn = self.connection();
+        let found = conn
+            .query_row(
+                &format!("SELECT {DRAFT_COLUMNS}, dirty FROM drafts WHERE id = ?1"),
+                params![draft_id],
+                |row| Ok((row_to_draft(row)?, row.get::<_, i64>(13)?)),
+            )
+            .optional()?;
+        match found {
+            Some((mut draft, dirty)) => {
+                draft.attachments = attachments_for(&conn, &draft.id)?;
+                Ok(Some((draft, dirty)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Record a successful push: link the local draft to `provider_draft_id`
+    /// (replacing a stale id when the draft was re-created upstream) and mark
+    /// it clean — but only if it is still at `pushed_revision`. A save that
+    /// landed while the push was in flight keeps the row dirty, so the next
+    /// sync pushes that newer text. The stored change token is dropped: the
+    /// push minted a new one upstream that this row has not seen.
+    pub fn mark_draft_pushed(&self, draft_id: &str, provider_draft_id: &str, pushed_revision: i64) -> Result<()> {
         let conn = self.connection();
         conn.execute(
-            "UPDATE drafts SET provider_draft_id = ?2, updated_at = ?3 WHERE id = ?1",
-            params![draft_id, provider_draft_id, now_secs()],
+            "UPDATE drafts SET provider_draft_id = ?2, provider_message_id = NULL,
+                    dirty = CASE WHEN dirty = ?3 THEN 0 ELSE dirty END
+             WHERE id = ?1",
+            params![draft_id, provider_draft_id, pushed_revision],
         )?;
         Ok(())
+    }
+
+    /// Every draft of an account as the provider sync needs to see it.
+    pub fn draft_sync_states(&self, account_id: &str) -> Result<Vec<DraftSyncState>> {
+        let conn = self.reader();
+        let mut stmt =
+            conn.prepare("SELECT id, provider_draft_id, dirty FROM drafts WHERE account_id = ?1 ORDER BY id")?;
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                Ok(DraftSyncState {
+                    id: row.get(0)?,
+                    provider_draft_id: row.get(1)?,
+                    dirty: row.get::<_, i64>(2)? != 0,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// Replace the attachment set for a draft (delete-all then insert) in one
@@ -191,6 +264,10 @@ impl Database {
     /// Upsert a draft pulled from the provider, keyed by `(account_id,
     /// provider_draft_id)`. Updates an existing local row in place (preserving
     /// its local id and `created_at`) or inserts a new one. Returns the local id.
+    ///
+    /// A dirty row is left exactly as it is: it holds text the provider has
+    /// not received, and the local draft wins that conflict. The guard lives
+    /// in the statement so a save racing the pull cannot be overwritten either.
     pub fn upsert_provider_draft(&self, account_id: &str, draft: &ProviderDraft) -> Result<String> {
         let conn = self.connection();
         let now = now_secs();
@@ -224,7 +301,8 @@ impl Database {
                 body_html = excluded.body_html,
                 provider_draft_id = excluded.provider_draft_id,
                 provider_message_id = excluded.provider_message_id,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at
+             WHERE drafts.dirty = 0",
             params![
                 id,
                 account_id,
@@ -260,29 +338,21 @@ impl Database {
         Ok(rows)
     }
 
-    /// Delete provider-linked local drafts for an account whose provider id is
-    /// no longer present upstream (sent or deleted elsewhere). Local-only drafts
-    /// (`provider_draft_id IS NULL`) are never touched.
-    pub fn prune_provider_drafts(&self, account_id: &str, keep_provider_ids: &[String]) -> Result<usize> {
+    /// Delete the given local drafts of an account — the ones the sync planned
+    /// to prune because their provider copy was sent or deleted elsewhere.
+    /// Only clean, provider-linked rows go: a draft that turned dirty since it
+    /// was planned holds unpushed text and is kept, and local-only drafts are
+    /// never touched. Returns how many rows were removed.
+    pub fn prune_provider_drafts(&self, account_id: &str, draft_ids: &[String]) -> Result<usize> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
         let mut removed = 0usize;
-        {
-            let mut stmt = tx.prepare(
-                "SELECT id, provider_draft_id FROM drafts
-                 WHERE account_id = ?1 AND provider_draft_id IS NOT NULL",
+        for draft_id in draft_ids {
+            removed += tx.execute(
+                "DELETE FROM drafts
+                 WHERE id = ?1 AND account_id = ?2 AND provider_draft_id IS NOT NULL AND dirty = 0",
+                params![draft_id, account_id],
             )?;
-            let rows = stmt
-                .query_map(params![account_id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            for (local_id, provider_id) in rows {
-                if !keep_provider_ids.iter().any(|k| k == &provider_id) {
-                    tx.execute("DELETE FROM drafts WHERE id = ?1", params![local_id])?;
-                    removed += 1;
-                }
-            }
         }
         tx.commit()?;
         Ok(removed)
@@ -353,11 +423,10 @@ mod tests {
     }
 
     #[test]
-    fn set_provider_draft_id_links_and_save_preserves_it() {
+    fn mark_draft_pushed_links_and_save_preserves_it() {
         let db = Database::new_for_testing().expect("test db");
         save(&db, "draft-1");
-        db.set_provider_draft_id("draft-1", Some("gmail-draft-42"))
-            .expect("set link");
+        db.mark_draft_pushed("draft-1", "gmail-draft-42", 0).expect("set link");
 
         let got = db.get_draft("draft-1").expect("ok").expect("present");
         assert_eq!(got.provider_draft_id.as_deref(), Some("gmail-draft-42"));
@@ -554,25 +623,172 @@ mod tests {
         );
     }
 
+    fn sync_state(db: &Database, id: &str) -> DraftSyncState {
+        db.draft_sync_states("acct-1")
+            .expect("states")
+            .into_iter()
+            .find(|s| s.id == id)
+            .expect("draft listed")
+    }
+
+    fn user_save(db: &Database, id: &str, body: &str) {
+        seed_account(db, "acct-1");
+        db.save_user_draft(&SaveDraftRequest {
+            id: Some(id.to_string()),
+            email_id: None,
+            account_id: "acct-1".to_string(),
+            to_addresses: vec!["dest@example.com".to_string()],
+            cc_addresses: Vec::new(),
+            subject: "Subject".to_string(),
+            body: body.to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
+        })
+        .expect("user save");
+    }
+
     #[test]
-    fn prune_removes_absent_provider_drafts_only() {
+    fn a_user_save_marks_the_draft_dirty_and_a_plain_save_does_not() {
+        let db = Database::new_for_testing().expect("test db");
+        save(&db, "plain");
+        user_save(&db, "edited", "v1");
+
+        assert!(!sync_state(&db, "plain").dirty);
+        assert!(sync_state(&db, "edited").dirty);
+
+        // A plain save over a dirty draft must not launder it clean.
+        db.save_draft(&SaveDraftRequest {
+            id: Some("edited".to_string()),
+            email_id: None,
+            account_id: "acct-1".to_string(),
+            to_addresses: Vec::new(),
+            cc_addresses: Vec::new(),
+            subject: "Subject".to_string(),
+            body: "v2".to_string(),
+            body_html: None,
+            provider_draft_id: None,
+            attachments: None,
+        })
+        .expect("plain save");
+        assert!(sync_state(&db, "edited").dirty);
+    }
+
+    #[test]
+    fn mark_draft_pushed_cleans_the_revision_it_pushed() {
+        let db = Database::new_for_testing().expect("test db");
+        user_save(&db, "d-1", "v1");
+        let (draft, revision) = db.draft_for_push("d-1").expect("ok").expect("present");
+        assert_eq!(draft.body, "v1");
+
+        db.mark_draft_pushed("d-1", "p-1", revision).expect("mark");
+
+        let state = sync_state(&db, "d-1");
+        assert!(!state.dirty);
+        assert_eq!(state.provider_draft_id.as_deref(), Some("p-1"));
+    }
+
+    #[test]
+    fn a_save_during_a_push_keeps_the_draft_dirty() {
+        // The push sent v1; the user saved v2 before it returned. Clearing the
+        // marker now would strand v2 on this device.
+        let db = Database::new_for_testing().expect("test db");
+        user_save(&db, "d-1", "v1");
+        let (_, pushed_revision) = db.draft_for_push("d-1").expect("ok").expect("present");
+        user_save(&db, "d-1", "v2");
+
+        db.mark_draft_pushed("d-1", "p-1", pushed_revision).expect("mark");
+
+        let state = sync_state(&db, "d-1");
+        assert!(state.dirty, "the newer save still has to be pushed");
+        assert_eq!(state.provider_draft_id.as_deref(), Some("p-1"), "the link is kept");
+    }
+
+    #[test]
+    fn mark_draft_pushed_drops_the_stale_change_token() {
         let db = Database::new_for_testing().expect("test db");
         seed_account(&db, "acct-1");
-        db.upsert_provider_draft("acct-1", &provider_draft("p-1", "keep"))
+        let mut pd = provider_draft("p-1", "Pulled");
+        pd.provider_message_id = Some("msg-1".to_string());
+        let id = db.upsert_provider_draft("acct-1", &pd).expect("insert");
+
+        db.mark_draft_pushed(&id, "p-1", 0).expect("mark");
+
+        let tokens = db.provider_draft_change_tokens("acct-1").expect("tokens");
+        assert!(tokens.is_empty(), "the push minted a token this row has not seen");
+    }
+
+    #[test]
+    fn draft_for_push_unknown_id_is_none() {
+        let db = Database::new_for_testing().expect("test db");
+        assert!(db.draft_for_push("ghost").expect("ok").is_none());
+    }
+
+    #[test]
+    fn upsert_provider_draft_leaves_a_dirty_draft_untouched() {
+        let db = Database::new_for_testing().expect("test db");
+        user_save(&db, "d-1", "written here");
+        let (_, revision) = db.draft_for_push("d-1").expect("ok").expect("present");
+        db.mark_draft_pushed("d-1", "p-1", revision).expect("link");
+        user_save(&db, "d-1", "edited here");
+
+        let id = db
+            .upsert_provider_draft("acct-1", &provider_draft("p-1", "Edited elsewhere"))
+            .expect("upsert");
+
+        assert_eq!(id, "d-1");
+        let draft = db.get_draft("d-1").expect("ok").expect("present");
+        assert_eq!(draft.body, "edited here");
+        assert_eq!(draft.subject, "Subject");
+        assert!(sync_state(&db, "d-1").dirty);
+    }
+
+    #[test]
+    fn prune_removes_only_the_clean_linked_drafts_it_is_given() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        let keep = db
+            .upsert_provider_draft("acct-1", &provider_draft("p-1", "keep"))
             .expect("p1");
-        db.upsert_provider_draft("acct-1", &provider_draft("p-2", "gone"))
+        let gone = db
+            .upsert_provider_draft("acct-1", &provider_draft("p-2", "gone"))
             .expect("p2");
+        // Linked but edited since: must survive even when asked to go.
+        user_save(&db, "dirty-1", "unpushed");
+        db.mark_draft_pushed("dirty-1", "p-3", 0).expect("link");
         // A local-only draft must survive pruning.
         save(&db, "local-1");
 
-        let removed = db.prune_provider_drafts("acct-1", &["p-1".to_string()]).expect("prune");
+        let removed = db
+            .prune_provider_drafts("acct-1", &[gone.clone(), "dirty-1".to_string(), "local-1".to_string()])
+            .expect("prune");
         assert_eq!(removed, 1);
 
-        let drafts = db.list_drafts("acct-1").expect("list");
-        let subjects: Vec<_> = drafts.iter().map(|d| d.subject.as_str()).collect();
-        assert!(subjects.contains(&"keep"));
-        assert!(subjects.contains(&"Confirmar reunión")); // the local-only draft
-        assert!(!subjects.contains(&"gone"));
+        let ids: Vec<String> = db
+            .list_drafts("acct-1")
+            .expect("list")
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        assert!(ids.contains(&keep));
+        assert!(ids.contains(&"dirty-1".to_string()));
+        assert!(ids.contains(&"local-1".to_string()));
+        assert!(!ids.contains(&gone));
+    }
+
+    #[test]
+    fn prune_is_scoped_to_the_account() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        seed_account(&db, "acct-2");
+        let id = db
+            .upsert_provider_draft("acct-1", &provider_draft("p-1", "mine"))
+            .expect("p1");
+
+        let removed = db.prune_provider_drafts("acct-2", &[id]).expect("prune");
+
+        assert_eq!(removed, 0);
+        assert_eq!(db.list_drafts("acct-1").expect("list").len(), 1);
     }
 
     #[test]

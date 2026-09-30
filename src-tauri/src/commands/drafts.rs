@@ -45,7 +45,7 @@ pub async fn refresh_drafts(state: State<'_, AppState>, app: AppHandle, account_
     };
     match emails::refresh_provider_drafts(
         &state.db,
-        &account_id,
+        &account,
         provider.as_ref(),
         crate::services::clock::now_secs(),
     )
@@ -68,9 +68,10 @@ pub async fn list_draft_attachments(
 }
 
 /// Save (create/upsert) a draft. When the account's provider supports
-/// server-side drafts, the draft is also pushed to the Drafts folder. The push
-/// is best-effort: if the provider can't be built (e.g. offline), the draft
-/// still saves locally and a later sync reconciles it.
+/// server-side drafts, the draft is also pushed to the Drafts folder. If the
+/// provider can't be built (e.g. offline), the draft still saves locally,
+/// marked as holding unpushed edits: the next sync pushes it, and until then
+/// no sync prunes or overwrites it.
 #[tauri::command]
 pub async fn save_draft(state: State<'_, AppState>, app: AppHandle, req: SaveDraftRequest) -> Result<Draft, AppError> {
     let account = state

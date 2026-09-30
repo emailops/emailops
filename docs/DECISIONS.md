@@ -1992,3 +1992,44 @@ synthetic "Apply the skill" question steered routing, retrieval and titles (a ba
   just pasted the name they want.
 - *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
   against 9–14 s turns) — no measured problem, so no cache.
+
+## 2026-09-30 — A draft with unpushed local edits always wins: pushed on sync, re-created if gone upstream
+
+**Decision:** Every composer save marks the draft dirty (`drafts.dirty`, the number of
+saves since the last successful push). The draft sync never prunes or overwrites a
+dirty draft: it pushes it, and if the provider copy was sent or deleted from another
+device it creates the draft again upstream and replaces the stale provider id. When
+both sides changed, the local draft wins and the upstream edit is overwritten. Only
+clean drafts are pruned or replaced by a pull. The per-draft decision is the pure
+planner `sync::draft_plan::plan_draft_sync`.
+**Context:** Editing one draft on two devices lost text three ways: a save against a
+provider draft that no longer existed failed forever and kept the stale id; the next
+sync then deleted the local draft, unpushed edits included; and a draft saved offline
+was never pushed and was overwritten by any upstream change. Unsent text the user
+typed here exists nowhere else, so losing it is worse than any other outcome.
+**Rejected:** *Last-writer-wins by timestamp* — provider and local clocks are not
+comparable, and the pull already rewrites `updated_at` with the provider's time.
+*Keeping both as two drafts on a conflict* — no data loss at all, but it leaves the
+user to work out which copy is current after every offline edit; the upstream edit
+that loses is still recoverable on the other device until the push lands.
+*Honouring the upstream delete for a dirty draft* — a draft sent from another device
+comes back as a draft here, which is visible and one click to discard, whereas a
+discarded edit is gone. *Marking every local write dirty* — the chat draft tool's
+drafts would start appearing in the provider's Drafts folder unasked; they stay
+local until the user saves them in the composer.
+
+## 2026-09-30 — V026 (email FK child indexes) and V028 (draft dirty marker) are release-coupled
+
+**Decision:** V026 indexes the five child columns that reference `emails(id)`; V028
+adds `drafts.dirty`. Both ship in the next release; existing drafts start clean (a
+draft saved offline before V028 stays local until its next save).
+**Context:** A dev build applies pending migrations to whatever database it opens.
+Released binaries do not contain V026/V028 and refuse a database that has them, so
+running this build against the production data dir blocks the installed release until
+a release that ships both is out. V027 and V029 belong to parallel work, so a
+database this build opens before that work is merged ends at V028 without V027, and
+a later build that contains V027 refuses it (refinery aborts on a migration file
+older than the highest applied version). Keep such builds on throwaway data dirs.
+**Rejected:** *Backfilling `dirty = 1` on existing local-only drafts* — it cannot tell
+an offline save from an AI-generated draft never meant for the provider, and would
+push all of them on the first sync after upgrade.

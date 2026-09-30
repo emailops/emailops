@@ -1033,7 +1033,7 @@ pub async fn sync_account_with_provider(
             );
         }
         sweep_stale_pending_sent(db, account);
-        pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
+        pull_drafts_if_supported(db, account, email_provider.as_ref()).await;
 
         db.upsert_sync_status(account_id, "idle", Some(chrono::Utc::now().timestamp()), None)?;
         // Terminal progress event clears the UI spinner. No output-panel log
@@ -1141,7 +1141,7 @@ pub async fn sync_account_with_provider(
         );
     }
     sweep_stale_pending_sent(db, account);
-    pull_drafts_if_supported(db, account, account_id, email_provider.as_ref()).await;
+    pull_drafts_if_supported(db, account, email_provider.as_ref()).await;
 
     // Classify, extract memory, and generate embeddings on a final pass.
     if let Some(ref a) = app {
@@ -2332,16 +2332,11 @@ async fn reconcile_spam_moves(
 /// Pull the provider's Drafts folder into the local `drafts` table, for
 /// providers that support server-side drafts (Gmail/Outlook). Non-fatal: logs
 /// and returns on error so a drafts hiccup never fails the overall sync.
-async fn pull_drafts_if_supported(
-    db: &Arc<Database>,
-    account: &Account,
-    account_id: &str,
-    email_provider: &dyn EmailProvider,
-) {
+async fn pull_drafts_if_supported(db: &Arc<Database>, account: &Account, email_provider: &dyn EmailProvider) {
     if !crate::sync::provider::provider_supports_drafts(&account.provider) {
         return;
     }
-    match super::compose::pull_provider_drafts(db, account_id, email_provider).await {
+    match super::compose::pull_provider_drafts(db, account, email_provider).await {
         Ok(count) if count > 0 => emit_account_log(
             "debug",
             "sync",

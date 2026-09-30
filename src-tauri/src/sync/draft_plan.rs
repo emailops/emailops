@@ -72,9 +72,179 @@ pub fn plan_draft_fetches(listed: &[ListedDraft], known: &HashMap<String, String
     DraftFetchPlan { to_fetch, present_ids }
 }
 
+/// What the sync knows about one local draft row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalDraftState {
+    /// The row carries a provider draft id (it was pushed or pulled before).
+    pub linked: bool,
+    /// The row holds user edits that have not reached the provider.
+    pub dirty: bool,
+}
+
+/// Where the provider copy of a draft stands in the listing just fetched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpstreamDraftState {
+    /// Not in the provider's Drafts folder: never pushed, or sent / deleted
+    /// from another device.
+    Absent,
+    /// Listed, and its change token matches the one stored at the last pull.
+    Unchanged,
+    /// Listed with content the local row has not seen.
+    Changed,
+}
+
+/// What the sync does with one draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftSyncAction {
+    /// Send the local content to the provider (create when unlinked, update
+    /// otherwise) and mark the row clean.
+    Push,
+    /// Write the provider's content over the local row, or insert it.
+    Pull,
+    /// The linked provider draft is gone but the local row has unpushed edits:
+    /// create it again upstream and re-link, dropping the stale id.
+    Recreate,
+    /// Delete the local row: it was sent or deleted elsewhere and holds nothing
+    /// the provider did not already have.
+    Prune,
+    /// Leave both sides alone.
+    Keep,
+}
+
+/// Decide what to do with one draft, given its local row (`None` when the
+/// provider lists a draft this device has never stored) and its upstream state.
+///
+/// The rule the whole table follows: **a dirty local draft is never discarded
+/// or overwritten**. It wins a conflict and is pushed; if its provider copy
+/// vanished it is created again. Only clean rows are pruned or replaced.
+pub fn plan_draft_sync(local: Option<LocalDraftState>, upstream: UpstreamDraftState) -> DraftSyncAction {
+    use DraftSyncAction::{Keep, Prune, Pull, Push, Recreate};
+    use UpstreamDraftState::{Absent, Changed, Unchanged};
+    let Some(local) = local else {
+        return if upstream == Changed { Pull } else { Keep };
+    };
+    match (local.linked, local.dirty, upstream) {
+        // A local-only row has no provider copy; the listing says nothing about it.
+        (false, false, _) => Keep,
+        (false, true, _) => Push,
+        (true, false, Absent) => Prune,
+        (true, false, Unchanged) => Keep,
+        (true, false, Changed) => Pull,
+        (true, true, Absent) => Recreate,
+        (true, true, Unchanged | Changed) => Push,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn local(linked: bool, dirty: bool) -> Option<LocalDraftState> {
+        Some(LocalDraftState { linked, dirty })
+    }
+
+    #[test]
+    fn plan_draft_sync_covers_every_local_and_upstream_combination() {
+        use DraftSyncAction::{Keep, Prune, Pull, Push, Recreate};
+        use UpstreamDraftState::{Absent, Changed, Unchanged};
+        let table = [
+            // A draft this device has never stored.
+            (None, Absent, Keep, "nothing on either side"),
+            (None, Unchanged, Keep, "no local row to refresh and no content was read"),
+            (None, Changed, Pull, "a draft written elsewhere is imported"),
+            // Local-only rows have no provider copy, whatever the listing says.
+            (
+                local(false, false),
+                Absent,
+                Keep,
+                "a clean local-only draft stays local",
+            ),
+            (
+                local(false, false),
+                Unchanged,
+                Keep,
+                "a clean local-only draft stays local",
+            ),
+            (
+                local(false, false),
+                Changed,
+                Keep,
+                "a clean local-only draft stays local",
+            ),
+            (
+                local(false, true),
+                Absent,
+                Push,
+                "an offline save is pushed on the next sync",
+            ),
+            (
+                local(false, true),
+                Unchanged,
+                Push,
+                "an offline save is pushed on the next sync",
+            ),
+            (
+                local(false, true),
+                Changed,
+                Push,
+                "an offline save is pushed on the next sync",
+            ),
+            // Linked and in step with the last push/pull.
+            (
+                local(true, false),
+                Absent,
+                Prune,
+                "sent or deleted elsewhere, nothing local to lose",
+            ),
+            (local(true, false), Unchanged, Keep, "steady state"),
+            (
+                local(true, false),
+                Changed,
+                Pull,
+                "edited elsewhere, no local edits to protect",
+            ),
+            // Linked with unpushed local edits: never discarded.
+            (
+                local(true, true),
+                Absent,
+                Recreate,
+                "unpushed edits survive an upstream delete",
+            ),
+            (local(true, true), Unchanged, Push, "local edits reach the provider"),
+            (
+                local(true, true),
+                Changed,
+                Push,
+                "both sides edited: the local draft wins",
+            ),
+        ];
+        for (local_state, upstream, expected, why) in table {
+            assert_eq!(
+                plan_draft_sync(local_state, upstream),
+                expected,
+                "{local_state:?} / {upstream:?}: {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dirty_draft_is_never_pruned_or_overwritten() {
+        // The invariant behind the table, stated on its own so a future row
+        // cannot quietly break it.
+        for linked in [false, true] {
+            for upstream in [
+                UpstreamDraftState::Absent,
+                UpstreamDraftState::Unchanged,
+                UpstreamDraftState::Changed,
+            ] {
+                let action = plan_draft_sync(local(linked, true), upstream);
+                assert!(
+                    matches!(action, DraftSyncAction::Push | DraftSyncAction::Recreate),
+                    "dirty draft (linked={linked}, {upstream:?}) planned {action:?}"
+                );
+            }
+        }
+    }
 
     fn listed(id: &str, token: Option<&str>) -> ListedDraft {
         ListedDraft {

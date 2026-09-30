@@ -1,0 +1,13 @@
+-- Durable "this draft has edits the provider has not received" marker.
+--
+-- `dirty` counts the user's saves since the last successful push; 0 means the
+-- row matches what was last pushed to, or pulled from, the provider. The sync
+-- only prunes or overwrites rows at 0, pushes the rest, and re-creates a dirty
+-- draft whose provider copy was sent or deleted from another device. It is a
+-- counter rather than a flag so a push can clear exactly the revision it sent:
+-- a save that lands while the push is in flight leaves the row dirty.
+--
+-- Existing rows start clean. A draft saved offline before this migration is
+-- indistinguishable from one that was never meant to be pushed, so it stays
+-- local until its next save.
+ALTER TABLE drafts ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0;

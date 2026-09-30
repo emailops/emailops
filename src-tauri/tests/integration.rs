@@ -19,6 +19,7 @@ use emailops_lib::models::error::AppError;
 use emailops_lib::models::lens::{CreateLensInput, LensColumn, LensColumnType, LensSchema, LensScope};
 use emailops_lib::models::{Account, Email, SaveDraftRequest};
 use emailops_lib::services::background_tasks::{BackgroundTask, FakeDispatcher, TaskDispatcher};
+use emailops_lib::services::emails::{compose_draft, pull_provider_drafts, ComposeInput};
 use emailops_lib::services::task_queue::TaskQueue;
 use emailops_lib::sync::provider::{
     AttachmentInfo, EmailAttachment, EmailCategory, EmailProvider, ExtraMailbox, FakeEmailProvider, MessageRef,
@@ -810,6 +811,300 @@ fn delete_draft_wrong_account_does_not_delete() {
         1,
         "draft must still exist after wrong-account delete attempt"
     );
+}
+
+// ── Drafts edited on two devices ───────────────────────────────────────────
+//
+// The rule under test: a local draft with edits the provider has not received
+// is never pruned or overwritten. It wins a conflict and is pushed; if its
+// provider copy is gone it is created again.
+
+fn compose_input(account_id: &str, draft_id: Option<&str>, subject: &str, body: &str) -> ComposeInput {
+    ComposeInput {
+        draft_id: draft_id.map(String::from),
+        account_id: account_id.to_string(),
+        email_id: None,
+        to: vec!["recipient@example.com".to_string()],
+        cc: Vec::new(),
+        subject: subject.to_string(),
+        body: body.to_string(),
+        body_html: None,
+        attachments: None,
+    }
+}
+
+fn draft_account(db: &Database) -> Account {
+    let account = make_account("acc-d", "d@example.com");
+    db.insert_account(&account).unwrap();
+    account
+}
+
+#[tokio::test]
+async fn saving_a_draft_deleted_upstream_recreates_it_instead_of_failing() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let stale_id = draft.provider_draft_id.clone().expect("pushed");
+
+    // Another device sends or deletes the draft.
+    provider.delete_draft(&stale_id).await.unwrap();
+
+    let saved = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2"),
+        Some(&provider),
+    )
+    .await
+    .expect("a save must not fail because the provider copy is gone");
+
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "re-created upstream");
+    assert_eq!(upstream[0].body, "v2");
+    assert_ne!(
+        saved.provider_draft_id.as_deref(),
+        Some(stale_id.as_str()),
+        "stale id dropped"
+    );
+    assert_eq!(
+        saved.provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn unpushed_edits_survive_an_upstream_delete_and_are_recreated_on_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let stale_id = draft.provider_draft_id.clone().expect("pushed");
+
+    // Edited offline here while another device deletes the provider copy.
+    compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2 offline"),
+        None,
+    )
+    .await
+    .unwrap();
+    provider.delete_draft(&stale_id).await.unwrap();
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    let local = db
+        .get_draft(&draft.id)
+        .unwrap()
+        .expect("the local draft must not be pruned");
+    assert_eq!(local.body, "v2 offline");
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "re-created upstream");
+    assert_eq!(upstream[0].body, "v2 offline");
+    assert_eq!(
+        local.provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+    assert_ne!(local.provider_draft_id.as_deref(), Some(stale_id.as_str()));
+    assert_eq!(db.list_drafts("acc-d").unwrap().len(), 1, "no duplicate local row");
+}
+
+#[tokio::test]
+async fn a_draft_saved_offline_is_pushed_on_the_next_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Offline", "written on a plane"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(draft.provider_draft_id.is_none());
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "pushed by the sync");
+    assert_eq!(upstream[0].body, "written on a plane");
+    let drafts = db.list_drafts("acc-d").unwrap();
+    assert_eq!(drafts.len(), 1, "linked in place, not imported as a second draft");
+    assert_eq!(drafts[0].id, draft.id);
+    assert_eq!(
+        drafts[0].provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+
+    // Once pushed it is clean: later syncs must not push it again.
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+    let token = provider.provider_drafts()[0].provider_message_id.clone();
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+    assert_eq!(
+        provider.provider_drafts()[0].provider_message_id,
+        token,
+        "no repeat push"
+    );
+    assert_eq!(db.list_drafts("acc-d").unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_save_the_provider_refused_is_pushed_on_the_next_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+
+    provider.fail_draft_writes(Some("backend unavailable"));
+    let refused = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2"),
+        Some(&provider),
+    )
+    .await;
+    assert!(refused.is_err(), "the failed push is reported");
+    assert_eq!(
+        db.get_draft(&draft.id).unwrap().unwrap().body,
+        "v2",
+        "saved locally anyway"
+    );
+
+    provider.fail_draft_writes(None);
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(
+        db.get_draft(&draft.id).unwrap().unwrap().body,
+        "v2",
+        "not overwritten by the pull"
+    );
+    assert_eq!(provider.provider_drafts()[0].body, "v2", "pushed by the sync");
+}
+
+#[tokio::test]
+async fn when_both_sides_edited_a_draft_the_local_one_wins_and_is_pushed() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let provider_id = draft.provider_draft_id.clone().expect("pushed");
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    // Edited on another device...
+    provider.add_provider_draft(emailops_lib::models::ProviderDraft {
+        provider_draft_id: provider_id.clone(),
+        to_addresses: vec!["recipient@example.com".to_string()],
+        cc_addresses: Vec::new(),
+        subject: "Plan".to_string(),
+        body: "edited elsewhere".to_string(),
+        body_html: None,
+        updated_at: Some(1_700_000_500),
+        provider_message_id: Some("msg-elsewhere".to_string()),
+    });
+    // ...and offline here.
+    compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "edited here"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(db.get_draft(&draft.id).unwrap().unwrap().body, "edited here");
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "same provider draft, updated in place");
+    assert_eq!(upstream[0].provider_draft_id, provider_id);
+    assert_eq!(upstream[0].body, "edited here");
+}
+
+#[tokio::test]
+async fn a_clean_draft_deleted_upstream_is_pruned() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let provider_id = draft.provider_draft_id.clone().expect("pushed");
+
+    provider.delete_draft(&provider_id).await.unwrap();
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert!(
+        db.get_draft(&draft.id).unwrap().is_none(),
+        "nothing unpushed to protect"
+    );
+    assert!(
+        provider.provider_drafts().is_empty(),
+        "and it is not resurrected upstream"
+    );
+}
+
+#[tokio::test]
+async fn a_clean_draft_edited_upstream_is_pulled() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    provider.add_provider_draft(emailops_lib::models::ProviderDraft {
+        provider_draft_id: draft.provider_draft_id.clone().expect("pushed"),
+        to_addresses: vec!["recipient@example.com".to_string()],
+        cc_addresses: Vec::new(),
+        subject: "Plan".to_string(),
+        body: "edited elsewhere".to_string(),
+        body_html: None,
+        updated_at: Some(1_700_000_500),
+        provider_message_id: Some("msg-elsewhere".to_string()),
+    });
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(db.get_draft(&draft.id).unwrap().unwrap().body, "edited elsewhere");
 }
 
 // ── P0: send contract via FakeEmailProvider ────────────────────────────────
