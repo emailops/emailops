@@ -1195,6 +1195,7 @@ impl LlamaCppRuntime {
             system_prefix_tokens: Some(outcome.system_prefix_tokens),
             stable_tokens: Some(outcome.stable_tokens),
             dropped_front_tokens: Some(outcome.dropped_front_tokens),
+            cost_usd: None,
         })
     }
 
@@ -1349,6 +1350,7 @@ impl LlamaCppRuntime {
             system_prefix_tokens: Some(outcome.system_prefix_tokens),
             stable_tokens: Some(outcome.stable_tokens),
             dropped_front_tokens: Some(outcome.dropped_front_tokens),
+            cost_usd: None,
         })
     }
 

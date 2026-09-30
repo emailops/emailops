@@ -1179,6 +1179,7 @@ impl AIProvider for OllamaClient {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 
@@ -1207,6 +1208,7 @@ impl AIProvider for OllamaClient {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 

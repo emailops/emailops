@@ -78,6 +78,10 @@ pub struct ChatStreamResult {
     /// cold prefills on long chats (the leading bytes change every turn),
     /// distinct from "anchor / plan failure". Embedded llama.cpp only.
     pub dropped_front_tokens: Option<u32>,
+    /// What the provider charged for this call, when it says (OpenRouter).
+    /// `None` from the local backends, and from a reply cancelled before its
+    /// usage arrived.
+    pub cost_usd: Option<f64>,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -107,6 +111,8 @@ pub struct ToolStreamResult {
     pub stable_tokens: Option<u32>,
     /// See [`ChatStreamResult::dropped_front_tokens`].
     pub dropped_front_tokens: Option<u32>,
+    /// See [`ChatStreamResult::cost_usd`].
+    pub cost_usd: Option<f64>,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -249,6 +255,31 @@ pub trait AIProvider: Send + Sync {
     /// assistant message (which may contain tool_calls the caller should resolve).
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage>;
 
+    /// [`chat_with_tools`](Self::chat_with_tools) together with what the call
+    /// used and cost, for callers that account for spend. The default reports
+    /// no usage, which is right for the local backends; a paid backend
+    /// overrides it.
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        Ok(ToolStreamResult {
+            message: self.chat_with_tools(messages, tools).await?,
+            eval_count: None,
+            prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            cost_usd: None,
+        })
+    }
+
     /// Streaming chat. `on_token` is called for each text chunk (owned String);
     /// returning `false` cancels the stream. Returns the full accumulated content.
     async fn chat_stream(
@@ -297,6 +328,7 @@ pub trait AIProvider: Send + Sync {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 
@@ -730,6 +762,7 @@ impl AIProvider for FakeAiProvider {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 }

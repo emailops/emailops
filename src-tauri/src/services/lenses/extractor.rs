@@ -109,8 +109,17 @@ pub async fn extract_email(
     // local models under-fill tool arguments while answering the same prompt
     // well in plain chat. Keep a text fallback for sparse or unsupported tool
     // responses.
-    let tool_result = provider.chat_with_tools(&messages, std::slice::from_ref(&tool)).await;
+    let tool_result = crate::services::ai::AiService::chat_with_tools(
+        db,
+        provider.as_ref(),
+        &messages,
+        std::slice::from_ref(&tool),
+        "lens_extract",
+    )
+    .await;
     let tool_extracted = match tool_result {
+        // Out of budget: the text fallback below would be another paid call.
+        Err(e @ AppError::BudgetExceeded(_)) => return Err(e),
         Ok(response) => response
             .tool_calls
             .as_ref()
@@ -1143,6 +1152,135 @@ mod tests {
         assert_eq!(result.data["invoice_number"], "BCL-0010144");
         assert_eq!(result.data["due_date"], "2026-05-19");
         assert_eq!(result.data["status"], "unpaid");
+    }
+
+    /// A test DB holding one synthetic email, the given monthly budget, and a
+    /// Lens over three optional text columns.
+    fn contact_fixture(budget: &str) -> (Database, Lens) {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", budget).expect("set budget");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct1', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .expect("insert account");
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES
+                 ('email1', 'acct1', 'thread1', 'Contact details', 'Example Sender',
+                  'sender@example.com', 'example.com', '[]', '[]', 'contact', 1779187200,
+                  0, 'primary', 'inbox', 1779187200)",
+                [],
+            )
+            .expect("insert email");
+        db.connection()
+            .execute(
+                "INSERT INTO email_bodies (email_id, body)
+                 VALUES ('email1', 'Reach Example Labs at sender@example.com or 555-0100.')",
+                [],
+            )
+            .expect("insert body");
+        let lens = Lens {
+            id: "lens1".into(),
+            name: "Contacts".into(),
+            icon: None,
+            template_key: None,
+            account_id: None,
+            scope: LensScope::default(),
+            schema: all_optional_schema(),
+            prompt_text: "Extract contact fields.".into(),
+            prompt_version: 1,
+            model_provider: None,
+            model_name: None,
+            is_enabled: true,
+            sort_order: 1,
+            created_at: 0,
+            updated_at: 0,
+        };
+        (db, lens)
+    }
+
+    /// A mock OpenRouter that answers every chat request with a complete tool
+    /// call costing `cost` USD, and a client pointed at it.
+    async fn openrouter_extracting(cost: f64) -> (wiremock::MockServer, Arc<dyn AIProvider>) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let arguments = r#"{\"email\":\"sender@example.com\",\"phone\":\"555-0100\",\"company\":\"Example Labs\"}"#;
+        let body = [
+            format!(
+                r#"{{"choices":[{{"delta":{{"tool_calls":[{{"index":0,"id":"call_x","type":"function","function":{{"name":"extract","arguments":"{arguments}"}}}}]}},"finish_reason":"tool_calls"}}]}}"#
+            ),
+            format!(r#"{{"choices":[],"usage":{{"prompt_tokens":150,"completion_tokens":20,"cost":{cost}}}}}"#),
+            "[DONE]".to_string(),
+        ]
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let client = crate::ai::openrouter::OpenRouterClient::new(
+            "key".to_string(),
+            "vendor/model".to_string(),
+            "vendor/embed".to_string(),
+        )
+        .with_base_url(server.uri());
+        (server, Arc::new(client))
+    }
+
+    #[tokio::test]
+    async fn a_lens_tool_call_records_what_the_provider_charged() {
+        let (db, lens) = contact_fixture("1.0");
+        let (server, provider) = openrouter_extracting(0.004).await;
+
+        let result = extract_email(&db, provider, &lens, "email1", None)
+            .await
+            .expect("extract");
+
+        assert_eq!(result.status, ExtractionStatus::Ok);
+        assert_eq!(result.data["company"], "Example Labs");
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.004).abs() < 1e-9);
+        assert_eq!(usage.total_prompt_tokens, 150);
+        let operation: String = db
+            .reader()
+            .query_row("SELECT operation FROM ai_usage", [], |row| row.get(0))
+            .expect("usage row");
+        assert_eq!(operation, "lens_extract");
+    }
+
+    /// The refusal must end the extraction: falling back to the text prompt
+    /// would be another paid call past the budget.
+    #[tokio::test]
+    async fn a_lens_tool_call_is_refused_once_the_budget_is_spent() {
+        let (db, lens) = contact_fixture("0.004");
+        let (server, provider) = openrouter_extracting(0.004).await;
+        extract_email(&db, provider.clone(), &lens, "email1", None)
+            .await
+            .expect("the call that crosses the budget is kept");
+
+        let second = extract_email(&db, provider, &lens, "email1", None).await;
+
+        assert!(
+            matches!(second, Err(AppError::BudgetExceeded(_))),
+            "got {:?}",
+            second.map(|result| result.data)
+        );
+        assert_eq!(
+            server.received_requests().await.expect("requests").len(),
+            1,
+            "no paid call past the budget"
+        );
     }
 
     fn all_optional_schema() -> LensSchema {

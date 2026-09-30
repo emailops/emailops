@@ -6,7 +6,9 @@ const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::OpenRouterClient;
-use crate::ai::provider::{AIProvider, CompletionOptions, CompletionResult, ModelInfo};
+use crate::ai::provider::{
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
+};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{AiConfig, AiLogEvent, AiUsageSummary};
@@ -590,12 +592,17 @@ impl AiService {
     /// crosses the budget is recorded and its output kept, and the next one is
     /// refused here.
     fn ensure_budget_remaining(&self) -> Result<()> {
-        let config = Self::get_config(&self.db)?;
+        Self::ensure_budget(&self.db)
+    }
+
+    /// [`Self::ensure_budget_remaining`] without a service.
+    fn ensure_budget(db: &Database) -> Result<()> {
+        let config = Self::get_config(db)?;
         if config.monthly_budget_usd <= 0.0 {
             return Ok(());
         }
 
-        let spent = Self::get_usage_since(&self.db, config.period_start)?;
+        let spent = Self::get_usage_since(db, config.period_start)?;
         if spent.total_cost_usd >= config.monthly_budget_usd {
             Err(AppError::BudgetExceeded(format!(
                 "AI budget exceeded: ${:.4} spent of ${:.2} budget",
@@ -684,13 +691,34 @@ impl AiService {
         completion_tokens: u32,
         cost_usd: f64,
     ) -> Result<()> {
+        Self::record_provider_call(
+            &self.db,
+            self.provider.as_ref(),
+            model,
+            operation,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+        )
+    }
+
+    /// [`Self::record_call`] without a service.
+    fn record_provider_call(
+        db: &Database,
+        provider: &dyn AIProvider,
+        model: &str,
+        operation: &str,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        cost_usd: f64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        let conn = self.db.connection();
+        let conn = db.connection();
         conn.execute(
             "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                self.provider.provider_type().to_string(),
+                provider.provider_type().to_string(),
                 model,
                 operation,
                 prompt_tokens,
@@ -700,22 +728,112 @@ impl AiService {
             ],
         )?;
 
-        self.emit_ai_log(&AiLogEvent {
-            provider: self.provider.provider_type().to_string(),
-            model: model.to_string(),
-            operation: operation.to_string(),
-            prompt_tokens,
-            completion_tokens,
-            cost_usd,
-            status: "ok".to_string(),
-            timestamp: now,
-        });
+        crate::services::events::emit(
+            "ai_log",
+            &AiLogEvent {
+                provider: provider.provider_type().to_string(),
+                model: model.to_string(),
+                operation: operation.to_string(),
+                prompt_tokens,
+                completion_tokens,
+                cost_usd,
+                status: "ok".to_string(),
+                timestamp: now,
+            },
+        );
 
         Ok(())
     }
 
-    fn emit_ai_log(&self, event: &AiLogEvent) {
-        crate::services::events::emit("ai_log", event);
+    /// Record a chat call the provider charged for. A backend that reports no
+    /// cost (the local ones) adds no row.
+    fn record_stream_usage(
+        db: &Database,
+        provider: &dyn AIProvider,
+        operation: &str,
+        prompt_tokens: Option<u32>,
+        completion_tokens: Option<u32>,
+        cost_usd: Option<f64>,
+    ) -> Result<()> {
+        let Some(cost_usd) = cost_usd else {
+            return Ok(());
+        };
+        Self::record_provider_call(
+            db,
+            provider,
+            provider.model_name(),
+            operation,
+            prompt_tokens.unwrap_or(0),
+            completion_tokens.unwrap_or(0),
+            cost_usd,
+        )
+    }
+
+    /// [`AIProvider::chat_stream_with_tools`] under the budget, for callers
+    /// that hold a provider rather than an `AiService` (the chat turn):
+    /// refused before the call once the period's spend has reached the
+    /// budget, and recorded after it when the provider reports a cost.
+    pub async fn chat_stream_with_tools(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_stream_with_tools(messages, tools, on_token).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            "chat",
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result)
+    }
+
+    /// [`AIProvider::chat_with_tools`] under the budget, recorded as
+    /// `operation`; see [`Self::chat_stream_with_tools`].
+    pub async fn chat_with_tools(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+        operation: &str,
+    ) -> Result<AiMessage> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_with_tools_metered(messages, tools).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            operation,
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result.message)
+    }
+
+    /// [`AIProvider::chat_stream`] under the budget; see
+    /// [`Self::chat_stream_with_tools`].
+    pub async fn chat_stream(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: Vec<AiMessage>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ChatStreamResult> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_stream(messages, on_token).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            "chat",
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result)
     }
 
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {
@@ -1151,6 +1269,123 @@ mod budget_tests {
         fake.push_completion_result(paid_completion("a", 5.0));
         svc.complete("q1", "test", None).await.unwrap();
         assert!(svc.complete("q2", "test", None).await.is_ok());
+    }
+
+    // ── Streamed chat turns ─────────────────────────────────────────────────
+
+    /// A mock OpenRouter whose every chat reply costs `cost` USD, and a client
+    /// pointed at it.
+    async fn openrouter_charging(cost: f64) -> (wiremock::MockServer, OpenRouterClient) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let body = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"Paid.\"}},\"finish_reason\":\"stop\"}}]}}\n\n\
+             data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":300,\"completion_tokens\":4,\"cost\":{cost}}}}}\n\n\
+             data: [DONE]\n\n"
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into())
+            .with_base_url(server.uri());
+        (server, client)
+    }
+
+    fn question() -> Vec<AiMessage> {
+        vec![AiMessage {
+            role: "user".to_string(),
+            content: "Is the invoice paid?".to_string(),
+            tool_calls: None,
+        }]
+    }
+
+    fn db_with_budget(budget: &str) -> Database {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", budget).unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn a_streamed_tool_round_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let (_server, client) = openrouter_charging(0.002).await;
+
+        let result = AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        assert_eq!(result.message.content, "Paid.");
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.002).abs() < 1e-9);
+        assert_eq!(usage.total_prompt_tokens, 300);
+        assert_eq!(usage.total_completion_tokens, 4);
+        let (provider, model, operation): (String, String, String) = db
+            .reader()
+            .query_row("SELECT provider, model, operation FROM ai_usage", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(
+            (provider.as_str(), model.as_str(), operation.as_str()),
+            ("openrouter", "vendor/model", "chat")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_streamed_answer_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let (_server, client) = openrouter_charging(0.003).await;
+
+        AiService::chat_stream(&db, &client, question(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.003).abs() < 1e-9);
+    }
+
+    /// The streamed call that crosses the budget is kept and recorded; the
+    /// next one never reaches the provider.
+    #[tokio::test]
+    async fn a_streamed_turn_is_refused_before_the_call_once_the_budget_is_spent() {
+        let db = db_with_budget("0.5");
+        let (server, client) = openrouter_charging(0.5).await;
+        AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        let tools = AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true)).await;
+        let plain = AiService::chat_stream(&db, &client, question(), Box::new(|_| true)).await;
+
+        assert!(matches!(tools, Err(AppError::BudgetExceeded(_))), "got {tools:?}");
+        assert!(matches!(plain, Err(AppError::BudgetExceeded(_))), "got {plain:?}");
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no paid call past the budget"
+        );
+    }
+
+    /// A local backend reports no cost: its chat rounds add no usage rows.
+    #[tokio::test]
+    async fn a_stream_without_a_reported_cost_records_nothing() {
+        let db = db_with_budget("1.0");
+        let fake = FakeAiProvider::new();
+        fake.push_chat_response("local answer");
+
+        AiService::chat_stream(&db, &fake, question(), Box::new(|_| true))
+            .await
+            .unwrap();
+        AiService::chat_stream_with_tools(&db, &fake, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
     }
 }
 
