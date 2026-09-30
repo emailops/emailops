@@ -502,7 +502,10 @@ mod tests {
     }
 
     /// A temp file plus a launcher that records what it was asked to open.
+    /// Opening reports to the output panel through the process logger, whose
+    /// events other tests count, so the fixture holds the seam lock.
     struct Fixture {
+        _seam: std::sync::MutexGuard<'static, ()>,
         _tmp: tempfile::TempDir,
         path: PathBuf,
         launched: RefCell<Vec<PathBuf>>,
@@ -514,6 +517,7 @@ mod tests {
             let path = tmp.path().join(disk_name);
             std::fs::write(&path, b"x").expect("write");
             Self {
+                _seam: crate::services::events::seam_test_lock(),
                 _tmp: tmp,
                 path,
                 launched: RefCell::new(Vec::new()),
@@ -592,9 +596,8 @@ mod tests {
 
     #[test]
     fn opening_is_reported_to_the_output_panel_by_name() {
-        let _seam = crate::services::events::seam_test_lock();
-        let logger = crate::services::logger::install_for_testing();
         let f = Fixture::new("1b2c.pdf");
+        let logger = crate::services::logger::install_for_testing();
         f.open("panel-log-report.pdf", None, false).expect("opens");
         assert!(logger
             .events()
