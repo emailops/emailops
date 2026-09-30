@@ -33,6 +33,16 @@
 //!   race against another client mutating the mailbox at that instant, so an
 //!   immediate retry essentially never repeats it.
 //!
+//! - [`uid_store_seen`]: sends the command raw and checks only the tagged
+//!   completion, for the same reason as [`select`].
+//!
+//! - [`uid_fetch_flags`]: reads the raw response and picks out the UID and
+//!   FLAGS of each FETCH line itself — like SEARCH, a FLAGS-only reply has no
+//!   literals.
+//!
+//! - [`examine_uid_validity`]: raw, like [`select`], but it keeps the one
+//!   response code it is after.
+//!
 //! Every body fetch here goes out as [`FETCH_BODY_PEEK`]. Read its docs before
 //! changing the attribute: the non-`PEEK` form mutates the user's mailbox.
 
@@ -85,6 +95,96 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
         .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
 }
 
+/// Open a mailbox read-only and report its `UIDVALIDITY`.
+///
+/// UIDs are only meaningful together with this value (RFC 3501 §2.3.1.1): when
+/// a server rebuilds a mailbox it hands out a new one, and every UID stored
+/// before then may now name a different message — or none. `None` when the
+/// server did not send the response code, which RFC 3501 allows only for a
+/// mailbox without persistent UIDs.
+///
+/// `EXAMINE` rather than `SELECT` because this is a pure probe: it must not
+/// clear `\Recent` or take a write lock. Raw for the same reason as
+/// [`select`].
+pub(crate) fn examine_uid_validity<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    mailbox_name: &str,
+) -> Result<Option<u32>> {
+    let quoted = quote_mailbox("EXAMINE", mailbox_name)?;
+    let raw = session
+        .run_command_and_read_response(format!("EXAMINE {quoted}"))
+        .map_err(|e| AppError::SyncError(format!("IMAP EXAMINE failed: {e}")))?;
+    Ok(parse_uid_validity(&raw))
+}
+
+/// Find the `[UIDVALIDITY n]` response code among the untagged lines of a
+/// `SELECT` / `EXAMINE` response.
+pub(crate) fn parse_uid_validity(raw: &[u8]) -> Option<u32> {
+    let text = String::from_utf8_lossy(raw);
+    let (_, after) = split_once_ignore_ascii_case(&text, "[UIDVALIDITY ")?;
+    after.split(']').next()?.trim().parse::<u32>().ok()
+}
+
+/// What identifies one message of a mailbox independently of its UID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FetchedIdentity {
+    pub uid: u32,
+    /// The RFC 5322 `Message-ID` header, trimmed the way the sync stores it.
+    pub message_id: Option<String>,
+    /// The server's INTERNALDATE, epoch seconds.
+    pub internal_date: Option<i64>,
+}
+
+/// List every message of the selected mailbox as `(UID, Message-ID,
+/// INTERNALDATE)` — what lets stored rows be matched to their new UIDs after a
+/// `UIDVALIDITY` change. One command for the whole mailbox; only the one
+/// header field travels, and `.PEEK` keeps the fetch from marking anything
+/// read (see [`FETCH_BODY_PEEK`]).
+///
+/// The header comes back as a literal, so this goes through the crate's typed
+/// parser with the same retry as [`uid_fetch_body`].
+pub(crate) fn uid_fetch_identities<T: Read + Write>(session: &mut imap::Session<T>) -> Result<Vec<FetchedIdentity>> {
+    let mut last_err: Option<imap::Error> = None;
+    for attempt in 1..=FETCH_RETRY_ATTEMPTS {
+        match session.uid_fetch("1:*", "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])") {
+            Ok(messages) => {
+                return Ok(messages
+                    .iter()
+                    .filter_map(|fetch| {
+                        Some(FetchedIdentity {
+                            uid: fetch.uid?,
+                            message_id: fetch.header().and_then(message_id_in_header),
+                            internal_date: fetch.internal_date().map(|d| d.timestamp()),
+                        })
+                    })
+                    .collect());
+            }
+            Err(imap::Error::Parse(imap::error::ParseError::Unexpected(_))) if attempt < FETCH_RETRY_ATTEMPTS => {}
+            Err(e) => {
+                last_err = Some(e);
+                break;
+            }
+        }
+    }
+    Err(AppError::SyncError(format!(
+        "IMAP FETCH failed: {}",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
+    )))
+}
+
+/// The `Message-ID` value in a fetched header block, trimmed exactly like the
+/// value the message parser stores, so the two compare equal.
+fn message_id_in_header(header: &[u8]) -> Option<String> {
+    use mailparse::MailHeaderMap;
+    let (headers, _) = mailparse::parse_headers(header).ok()?;
+    headers
+        .get_first_value("Message-ID")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 /// `UID COPY <uid_set> <mailbox>` with the mailbox quoted. imap 2.4.1's own
 /// `uid_copy` sends the name raw (its `uid_mv` quotes it), so the COPY-based
 /// move fallback failed on any folder name with a space or quote.
@@ -97,6 +197,21 @@ pub(crate) fn uid_copy<T: Read + Write>(
     session
         .run_command_and_check_ok(format!("UID COPY {uid_set} {quoted}"))
         .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {e}")))
+}
+
+/// Set or clear `\Seen` on one message: `UID STORE <uid> ±FLAGS.SILENT (\Seen)`.
+///
+/// Goes out as a raw command rather than through the crate's `uid_store`,
+/// which parses the reply as FETCH data and so fails on any interleaved
+/// untagged response (see the module docs). `.SILENT` asks the server not to
+/// echo the new flags; a server that echoes them anyway is tolerated. A UID
+/// the mailbox no longer holds is not an error in IMAP — the command succeeds
+/// and changes nothing.
+pub(crate) fn uid_store_seen<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, seen: bool) -> Result<()> {
+    let sign = if seen { '+' } else { '-' };
+    session
+        .run_command_and_check_ok(format!("UID STORE {uid} {sign}FLAGS.SILENT (\\Seen)"))
+        .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {e}")))
 }
 
 /// Render a mailbox name as an IMAP quoted string. A raw line break would let
@@ -237,6 +352,72 @@ pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
             .map(|e| e.to_string())
             .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
     )))
+}
+
+/// Most UIDs named in one `UID FETCH … (UID FLAGS)`. Keeps the command line
+/// well under the ~8 KB many servers cap a line at.
+const FLAGS_FETCH_CHUNK: usize = 200;
+
+/// Read the `\Seen` state of `uids` in the selected mailbox, keyed by UID.
+///
+/// A UID the mailbox no longer holds is simply absent from the result — that
+/// absence is the signal the caller is after (the message was deleted or moved
+/// in another client), not an error.
+///
+/// Goes out raw and is parsed by [`parse_flags_response`]: a FLAGS-only reply
+/// carries no literals, so there is nothing protocol-aware to get wrong, and
+/// the crate's typed `uid_fetch` would fail the whole command on any
+/// interleaved untagged response (see the module docs).
+pub(crate) fn uid_fetch_flags<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uids: &[u32],
+) -> Result<std::collections::HashMap<u32, bool>> {
+    let mut seen_by_uid = std::collections::HashMap::with_capacity(uids.len());
+    for chunk in uids.chunks(FLAGS_FETCH_CHUNK) {
+        let set = chunk.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let raw = session
+            .run_command_and_read_response(format!("UID FETCH {set} (UID FLAGS)"))
+            .map_err(|e| AppError::SyncError(format!("IMAP FETCH FLAGS failed: {e}")))?;
+        // An unsolicited FETCH about some other message must not be read as an
+        // answer about one of ours.
+        seen_by_uid.extend(
+            parse_flags_response(&raw)
+                .into_iter()
+                .filter(|(uid, _)| chunk.contains(uid)),
+        );
+    }
+    Ok(seen_by_uid)
+}
+
+/// Scan the untagged lines of a `FETCH (UID FLAGS)` response for
+/// `(uid, has \Seen)` pairs. Lines that are not FETCH data, or that carry no
+/// UID or no FLAGS list, are skipped: without both there is nothing to say
+/// about a stored message.
+pub(crate) fn parse_flags_response(raw: &[u8]) -> Vec<(u32, bool)> {
+    let text = String::from_utf8_lossy(raw);
+    text.split("\r\n")
+        .flat_map(|l| l.split('\n'))
+        .filter_map(|line| {
+            let data = line.trim().strip_prefix('*')?;
+            let (_, attributes) = split_once_ignore_ascii_case(data, " FETCH (")?;
+            let (_, after_uid) = split_once_ignore_ascii_case(attributes, "UID ")?;
+            let uid = after_uid
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|digits| digits.parse::<u32>().ok())?;
+            let (_, after_flags) = split_once_ignore_ascii_case(attributes, "FLAGS (")?;
+            let flags = after_flags.split(')').next()?;
+            let seen = flags.split_whitespace().any(|flag| flag.eq_ignore_ascii_case("\\Seen"));
+            Some((uid, seen))
+        })
+        .collect()
+}
+
+/// `str::split_once` with an ASCII-case-insensitive needle.
+fn split_once_ignore_ascii_case<'a>(haystack: &'a str, needle: &str) -> Option<(&'a str, &'a str)> {
+    // ASCII-only lowering keeps byte offsets identical to the original.
+    let at = haystack.to_ascii_lowercase().find(&needle.to_ascii_lowercase())?;
+    Some((&haystack[..at], &haystack[at + needle.len()..]))
 }
 
 /// Outcome of scanning the untagged portion of a `SEARCH` response.
@@ -541,6 +722,46 @@ mod tests {
         assert!(err.contains("line break"), "got: {err}");
     }
 
+    #[test]
+    fn marking_read_adds_the_seen_flag_without_asking_for_a_fetch_reply() {
+        let (mut session, sent) = recorded_session_for("a2 OK Store completed.\r\n");
+        assert!(uid_store_seen(&mut session, 91, true).is_ok());
+        assert!(
+            sent.text().contains("UID STORE 91 +FLAGS.SILENT (\\Seen)\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    #[test]
+    fn marking_unread_removes_the_seen_flag() {
+        let (mut session, sent) = recorded_session_for("a2 OK Store completed.\r\n");
+        assert!(uid_store_seen(&mut session, 91, false).is_ok());
+        assert!(
+            sent.text().contains("UID STORE 91 -FLAGS.SILENT (\\Seen)\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    /// Servers that ignore `.SILENT`, or another client touching the mailbox,
+    /// interleave a FETCH; the crate's typed `uid_store` rejects that.
+    #[test]
+    fn a_flag_store_survives_an_interleaved_fetch() {
+        let response = "* 7 FETCH (FLAGS (\\Seen) UID 91)\r\na2 OK Store completed.\r\n";
+        assert!(uid_store_seen(&mut session_for(response), 91, true).is_ok());
+    }
+
+    #[test]
+    fn a_refused_flag_store_is_an_error() {
+        // A read-only mailbox: the push did not happen and must be retried.
+        let err = match uid_store_seen(&mut session_for("a2 NO [READ-ONLY] Mailbox is read-only\r\n"), 91, true) {
+            Ok(()) => panic!("expected a failure"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP STORE failed"), "got: {err}");
+    }
+
     /// The same bug class, reproduced against `Session::uid_fetch`: an
     /// unsolicited SEARCH mid-FETCH makes the crate reject the whole command,
     /// even though the FETCH data itself parsed fine.
@@ -770,6 +991,209 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("body not found"), "got: {err}");
+    }
+
+    #[test]
+    fn uid_validity_is_read_from_the_examine_response() {
+        let raw = b"* 172 EXISTS\r\n\
+                    * 1 RECENT\r\n\
+                    * OK [UNSEEN 12] Message 12 is first unseen\r\n\
+                    * OK [UIDVALIDITY 3857529045] UIDs valid\r\n\
+                    * OK [UIDNEXT 4392] Predicted next UID\r\n\
+                    * FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
+        assert_eq!(parse_uid_validity(raw), Some(3_857_529_045));
+    }
+
+    #[test]
+    fn uid_validity_parsing_is_case_insensitive_and_tolerates_a_bare_code() {
+        assert_eq!(parse_uid_validity(b"* ok [uidvalidity 7]\r\n"), Some(7));
+    }
+
+    #[test]
+    fn a_response_without_uid_validity_has_none() {
+        // UIDNEXT must not be mistaken for it, nor a value that is not a UID.
+        assert_eq!(parse_uid_validity(b"* OK [UIDNEXT 4392] next\r\n* 3 EXISTS\r\n"), None);
+        assert_eq!(parse_uid_validity(b"* OK [UIDVALIDITY abc] nope\r\n"), None);
+        assert_eq!(parse_uid_validity(b"* OK [UIDVALIDITY 4294967296] too big\r\n"), None);
+        assert_eq!(parse_uid_validity(b""), None);
+    }
+
+    #[test]
+    fn examine_reads_uid_validity_without_selecting_read_write() {
+        let response = "* 3 EXISTS\r\n\
+                        * OK [UIDVALIDITY 42] UIDs valid\r\n\
+                        a2 OK [READ-ONLY] Examine completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        let validity = match examine_uid_validity(&mut session, "Projects/Q3") {
+            Ok(validity) => validity,
+            Err(e) => panic!("examine failed: {e}"),
+        };
+
+        assert_eq!(validity, Some(42));
+        assert!(
+            sent.text().contains("EXAMINE \"Projects/Q3\"\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    #[test]
+    fn examine_survives_an_interleaved_fetch_and_propagates_a_tagged_no() {
+        let response = "* 7 FETCH (FLAGS (\\Seen) UID 91)\r\n\
+                        * OK [UIDVALIDITY 42] UIDs valid\r\n\
+                        a2 OK Examine completed.\r\n";
+        assert_eq!(
+            examine_uid_validity(&mut session_for(response), "INBOX").ok(),
+            Some(Some(42))
+        );
+
+        let err = match examine_uid_validity(&mut session_for("a2 NO Mailbox does not exist\r\n"), "Gone") {
+            Ok(validity) => panic!("expected a failure, got {validity:?}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP EXAMINE failed"), "got: {err}");
+    }
+
+    #[test]
+    fn identities_carry_the_uid_message_id_and_arrival_time_of_every_message() {
+        let with_id = "Message-ID: <a@example.com>\r\n\r\n";
+        let without_id = "\r\n";
+        let response = format!(
+            "* 1 FETCH (UID 5 INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" BODY[HEADER.FIELDS (MESSAGE-ID)] {{{}}}\r\n{with_id})\r\n\
+             * 2 FETCH (UID 9 BODY[HEADER.FIELDS (MESSAGE-ID)] {{{}}}\r\n{without_id})\r\n\
+             a2 OK Fetch completed.\r\n",
+            with_id.len(),
+            without_id.len()
+        );
+        let (mut session, sent) = recorded_session_for(&response);
+        let identities = match uid_fetch_identities(&mut session) {
+            Ok(identities) => identities,
+            Err(e) => panic!("identity fetch failed: {e}"),
+        };
+
+        let sent = sent.text();
+        assert!(sent.contains("UID FETCH 1:* "), "sent: {sent}");
+        assert!(
+            sent.contains("BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"),
+            "a non-PEEK header fetch would mark the whole folder read; sent: {sent}"
+        );
+        assert_eq!(
+            identities,
+            vec![
+                FetchedIdentity {
+                    uid: 5,
+                    message_id: Some("<a@example.com>".to_string()),
+                    internal_date: Some(837_596_665),
+                },
+                FetchedIdentity {
+                    uid: 9,
+                    message_id: None,
+                    internal_date: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_mailbox_has_no_identities() {
+        let identities = match uid_fetch_identities(&mut session_for("a2 OK Fetch completed.\r\n")) {
+            Ok(identities) => identities,
+            Err(e) => panic!("identity fetch failed: {e}"),
+        };
+        assert!(identities.is_empty());
+    }
+
+    #[test]
+    fn a_refused_identity_fetch_is_an_error() {
+        let err = match uid_fetch_identities(&mut session_for("a2 NO [SERVERBUG] Internal error\r\n")) {
+            Ok(identities) => panic!("expected a failure, got {identities:?}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP FETCH failed"), "got: {err}");
+    }
+
+    #[test]
+    fn flags_are_read_per_uid_in_either_attribute_order() {
+        let raw = b"* 1 FETCH (UID 91 FLAGS (\\Seen \\Answered))\r\n\
+                    * 2 FETCH (FLAGS () UID 92)\r\n\
+                    * 3 FETCH (FLAGS (\\Flagged) UID 93)\r\n";
+        assert_eq!(parse_flags_response(raw), vec![(91, true), (92, false), (93, false)]);
+    }
+
+    #[test]
+    fn flag_names_and_keywords_are_case_insensitive() {
+        let raw = b"* 1 fetch (uid 7 flags (\\SEEN))\r\n";
+        assert_eq!(parse_flags_response(raw), vec![(7, true)]);
+    }
+
+    #[test]
+    fn a_keyword_that_merely_contains_seen_is_not_the_seen_flag() {
+        let raw = b"* 1 FETCH (UID 7 FLAGS (NotSeen $Seen-later))\r\n";
+        assert_eq!(parse_flags_response(raw), vec![(7, false)]);
+    }
+
+    #[test]
+    fn flag_lines_without_a_uid_or_without_flags_are_skipped() {
+        let raw = b"* 4 FETCH (FLAGS (\\Seen))\r\n\
+                    * 5 FETCH (UID 95)\r\n\
+                    * 12 EXISTS\r\n\
+                    * OK [UIDNEXT 4392] Predicted next UID\r\n";
+        assert!(parse_flags_response(raw).is_empty());
+    }
+
+    #[test]
+    fn a_flags_fetch_reports_the_uids_the_mailbox_still_holds() {
+        // 92 was deleted in another client: the server just does not mention it.
+        let response = "* 1 FETCH (UID 91 FLAGS (\\Seen))\r\n\
+                        * 2 FETCH (UID 93 FLAGS ())\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        let flags = match uid_fetch_flags(&mut session, &[91, 92, 93]) {
+            Ok(flags) => flags,
+            Err(e) => panic!("flags fetch failed: {e}"),
+        };
+
+        assert!(
+            sent.text().contains("UID FETCH 91,92,93 (UID FLAGS)\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+        assert_eq!(flags.get(&91), Some(&true));
+        assert_eq!(flags.get(&93), Some(&false));
+        assert!(!flags.contains_key(&92));
+    }
+
+    #[test]
+    fn a_flags_fetch_ignores_an_unsolicited_fetch_about_another_message() {
+        let response = "* 9 FETCH (UID 500 FLAGS (\\Seen))\r\n\
+                        * 1 FETCH (UID 91 FLAGS ())\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let flags = match uid_fetch_flags(&mut session_for(response), &[91]) {
+            Ok(flags) => flags,
+            Err(e) => panic!("flags fetch failed: {e}"),
+        };
+        assert_eq!(flags.len(), 1);
+        assert_eq!(flags.get(&91), Some(&false));
+    }
+
+    #[test]
+    fn a_flags_fetch_of_nothing_issues_no_command() {
+        let flags = match uid_fetch_flags(&mut session_for(""), &[]) {
+            Ok(flags) => flags,
+            Err(e) => panic!("empty flags fetch failed: {e}"),
+        };
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn a_refused_flags_fetch_is_an_error_not_a_mailbox_of_vanished_messages() {
+        // Reading "nothing came back" as "everything was deleted" would wipe
+        // the local mailbox on a server hiccup.
+        let err = match uid_fetch_flags(&mut session_for("a2 NO [SERVERBUG] Internal error\r\n"), &[91]) {
+            Ok(flags) => panic!("expected a failure, got {flags:?}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP FETCH FLAGS failed"), "got: {err}");
     }
 
     #[test]

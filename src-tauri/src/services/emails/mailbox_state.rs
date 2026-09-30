@@ -8,16 +8,20 @@
 //! The two actions deliberately order their writes differently:
 //!
 //! - **read state** is local-first and the push is best-effort. Opening a
-//!   message must work offline, and a failed push is logged, never fatal.
+//!   message must work offline, and a failed push is logged, never fatal. It is
+//!   not lost either: the row keeps a pending marker
+//!   (`emails.read_push_pending_since`) until the provider has the change, and
+//!   every sync retries what is pending ([`retry_pending_read_pushes`]).
 //! - **delete** is provider-first, mirroring [`super::folders::move_email`]. A
 //!   delete that only happened locally would silently diverge from the account
 //!   with no retry, so the row stays visible if the provider refuses.
 
 use std::sync::Arc;
 
+use crate::db::emails::mailbox_state::PendingReadPush;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::Email;
+use crate::models::{Account, Email};
 use crate::services::app_handle::AppHandle;
 use crate::services::logger;
 use crate::sync::provider::{provider_supports_mailbox_writes, EmailProvider};
@@ -37,9 +41,9 @@ pub async fn mark_as_read(db: &Arc<Database>, email_id: &str, app: Option<AppHan
             logger::log(
                 "error",
                 "sync",
-                format!("Read state will stay local — could not reach the mail provider: {e}"),
+                format!("Could not reach the mail provider — the read state will be sent on the next sync: {e}"),
             );
-            None
+            return mark_read(db, email_id, PushVia::NextSync).await;
         }
     };
     mark_as_read_with_provider(db, email_id, provider.as_deref()).await
@@ -74,38 +78,198 @@ async fn write_provider(
 
 /// Mark one email read locally and, when the account's provider supports it,
 /// at the provider too. `provider` is `None` for providers without mailbox
-/// writes, and when the provider could not be built (offline, missing
-/// credentials) — the local write happens either way.
+/// writes — the change then stays local. The local write happens either way.
 pub async fn mark_as_read_with_provider(
     db: &Arc<Database>,
     email_id: &str,
     provider: Option<&dyn EmailProvider>,
 ) -> Result<()> {
+    let via = provider.map_or(PushVia::Never, PushVia::Now);
+    mark_read(db, email_id, via).await
+}
+
+/// How a read-state change reaches the provider.
+enum PushVia<'a> {
+    /// The provider has no mailbox writes: the change is local-only.
+    Never,
+    /// The provider has them but cannot be reached right now (offline, expired
+    /// credentials): the change is queued for the next sync.
+    NextSync,
+    Now(&'a dyn EmailProvider),
+}
+
+async fn mark_read(db: &Arc<Database>, email_id: &str, via: PushVia<'_>) -> Result<()> {
     let email = load_email(db, email_id)?;
     if email.is_read {
         // Opening a thread re-marks every message in it; skipping the no-op
-        // keeps that from firing one provider write per message per open.
+        // keeps that from firing one provider write per message per open. A
+        // push still owed for this row is retried by the sync, not from here.
         return Ok(());
     }
-    db.mark_as_read(email_id)?;
-
-    if let Some(provider) = pushable(provider, &email) {
-        if let Err(e) = provider.set_read_state(&email.id, true).await {
-            // Best-effort by design: the local row is authoritative and the
-            // next sync will re-read the provider's state anyway.
-            logger::log(
-                "error",
-                "sync",
-                format!("Could not mark message as read at the provider: {e}"),
-            );
+    // Locally-composed Sent rows have no counterpart at the provider yet.
+    let via = if email.id.starts_with(LOCAL_SENT_ID_PREFIX) {
+        PushVia::Never
+    } else {
+        via
+    };
+    let now = crate::services::clock::now_secs();
+    match via {
+        PushVia::Never => db.mark_as_read(email_id)?,
+        PushVia::NextSync => db.mark_as_read_pending_push(email_id, now)?,
+        PushVia::Now(provider) => {
+            // Marked pending *before* the push, in the same statement as the
+            // read flag, so a crash or a concurrent sync never sees a locally
+            // read row whose change the provider does not have yet.
+            db.mark_as_read_pending_push(email_id, now)?;
+            match provider.set_read_state(&email.id, true).await {
+                // "No such message" settles it too: there is nothing to retry.
+                Ok(()) | Err(AppError::NotFound(_)) => db.clear_read_push_pending(email_id)?,
+                Err(e) => {
+                    // Best-effort by design: reading mail must not depend on
+                    // the network. The row stays pending and the next sync
+                    // retries the push.
+                    logger::log(
+                        "error",
+                        "sync",
+                        format!("Could not mark message as read at the provider (will retry on the next sync): {e}"),
+                    );
+                }
+            }
         }
     }
     Ok(())
 }
 
+/// A read-state change older than this is given up on: a push that has failed
+/// on every sync for a week (a read-only mailbox, a revoked permission) is not
+/// going to land, and retrying it forever would cost a request per sync.
+const READ_PUSH_MAX_AGE_SECS: i64 = 7 * 86_400;
+
+/// Most pending read-state changes one sync pushes. A backlog larger than
+/// this (a long offline session) drains over the following syncs.
+const MAX_READ_PUSHES_PER_SYNC: usize = 100;
+
+/// A sync stops retrying after this many failed pushes: when the provider is
+/// down every remaining push would fail the same way, each after its own
+/// retries and timeouts.
+const MAX_READ_PUSH_FAILURES_PER_SYNC: usize = 3;
+
+/// What to do with the read-state changes still owed to the provider.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct ReadPushPlan {
+    /// `(email id, read state)` to push, oldest change first.
+    pub push: Vec<(String, bool)>,
+    /// Email ids whose change is too old to keep retrying.
+    pub give_up: Vec<String>,
+}
+
+/// Pure: split pending changes into the ones to push now and the ones that
+/// have been failing for longer than [`READ_PUSH_MAX_AGE_SECS`]. A marker
+/// dated in the future (the clock moved back) is still pushed.
+pub(super) fn plan_read_push_retries(pending: &[PendingReadPush], now: i64) -> ReadPushPlan {
+    let mut plan = ReadPushPlan::default();
+    for row in pending {
+        if now - row.pending_since > READ_PUSH_MAX_AGE_SECS {
+            plan.give_up.push(row.id.clone());
+        } else {
+            plan.push.push((row.id.clone(), row.is_read));
+        }
+    }
+    plan
+}
+
+/// Push the read-state changes a previous attempt could not deliver (offline,
+/// a 5xx, expired credentials). Runs at the start of every sync, before the
+/// server-to-local refresh, which leaves pending rows alone in any case.
+///
+/// Non-fatal: a push that fails again stays pending for the next sync.
+pub(super) async fn retry_pending_read_pushes(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn EmailProvider,
+    now: i64,
+) {
+    if !provider_supports_mailbox_writes(&account.provider) {
+        return;
+    }
+    let pending = match db.pending_read_pushes(&account.id, MAX_READ_PUSHES_PER_SYNC) {
+        Ok(rows) if rows.is_empty() => return,
+        Ok(rows) => rows,
+        Err(e) => {
+            super::emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not read the read-state changes still to send: {e}"),
+            );
+            return;
+        }
+    };
+    let plan = plan_read_push_retries(&pending, now);
+
+    let mut settled: Vec<&str> = plan.give_up.iter().map(String::as_str).collect();
+    if !plan.give_up.is_empty() {
+        super::emit_account_log(
+            "warn",
+            "sync",
+            &account.email,
+            &format!(
+                "Gave up sending the read state of {} message(s) after {} days of failed attempts",
+                plan.give_up.len(),
+                READ_PUSH_MAX_AGE_SECS / 86_400
+            ),
+        );
+    }
+
+    let mut pushed: u32 = 0;
+    let mut failures: usize = 0;
+    for (id, read) in &plan.push {
+        match provider.set_read_state(id, *read).await {
+            Ok(()) => {
+                pushed += 1;
+                settled.push(id);
+            }
+            // The provider no longer has the message: nothing left to push.
+            Err(AppError::NotFound(_)) => settled.push(id),
+            Err(e) => {
+                super::emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!("Could not send a read-state change (will retry on the next sync): {e}"),
+                );
+                failures += 1;
+                if failures >= MAX_READ_PUSH_FAILURES_PER_SYNC {
+                    break;
+                }
+            }
+        }
+    }
+
+    for id in settled {
+        if let Err(e) = db.clear_read_push_pending(id) {
+            super::emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Could not record that a read-state change was sent: {e}"),
+            );
+        }
+    }
+    if pushed > 0 {
+        super::emit_account_log(
+            "debug",
+            "sync",
+            &account.email,
+            &format!("Sent {pushed} read-state change(s) that could not be delivered earlier"),
+        );
+    }
+}
+
 /// Delete one email: move it to the provider's Trash first, then soft-delete
 /// the local row. A provider failure aborts the whole operation so the user
-/// keeps seeing a message that still exists in their account.
+/// keeps seeing a message that still exists in their account — except "no
+/// such message", which means the account already lost it.
 pub async fn delete_email_with_provider(
     db: &Arc<Database>,
     email_id: &str,
@@ -114,7 +278,14 @@ pub async fn delete_email_with_provider(
     let email = load_email(db, email_id)?;
 
     if let Some(provider) = pushable(provider, &email) {
-        provider.trash_message(&email.id).await?;
+        match provider.trash_message(&email.id, email.message_id.as_deref()).await {
+            Ok(()) => {}
+            // Already deleted, or moved and re-keyed, in another client: there
+            // is nothing left under this id to trash, and keeping the row
+            // would leave a message the user can never get rid of.
+            Err(AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
     }
     db.delete_email(email_id)
 }
@@ -145,6 +316,29 @@ mod tests {
         delete_email_with_provider as delete, mark_as_read_with_provider as mark_read,
     };
     use crate::sync::provider::{FakeEmailProvider, FakeMailboxOp};
+
+    use super::{plan_read_push_retries, retry_pending_read_pushes, PendingReadPush, PushVia, ReadPushPlan};
+
+    fn pending_ids(db: &Arc<Database>, account_id: &str) -> Vec<String> {
+        db.pending_read_pushes(account_id, 100)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect()
+    }
+
+    fn account(id: &str, provider: &str) -> crate::models::Account {
+        crate::models::Account {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            email: format!("{id}@example.com"),
+            name: "Test".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+        }
+    }
 
     fn test_db(account_id: &str) -> Arc<Database> {
         let db = Database::new_for_testing().unwrap();
@@ -264,6 +458,215 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_push_leaves_the_row_pending_for_the_next_sync() {
+        // Regression: the failure was only logged, so the message stayed
+        // unread in every other client forever.
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("network unreachable");
+
+        mark_read(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert_eq!(pending_ids(&db, "acc-1"), vec!["m-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_delivered_push_leaves_nothing_pending() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        mark_read(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert!(pending_ids(&db, "acc-1").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_push_to_a_message_the_provider_lost_is_not_kept_pending() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes_as_not_found();
+
+        mark_read(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_read);
+        assert!(pending_ids(&db, "acc-1").is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_provider_queues_the_push() {
+        // Offline, or credentials that need refreshing: the provider could not
+        // even be built, but it does take mailbox writes.
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+
+        super::mark_read(&db, "m-1", PushVia::NextSync).await.unwrap();
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_read);
+        assert_eq!(pending_ids(&db, "acc-1"), vec!["m-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_provider_without_mailbox_writes_queues_nothing() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+
+        mark_read(&db, "m-1", None).await.unwrap();
+
+        assert!(pending_ids(&db, "acc-1").is_empty());
+    }
+
+    // ── retry of pending pushes ───────────────────────────────────────────
+
+    fn pending(id: &str, since: i64) -> PendingReadPush {
+        PendingReadPush {
+            id: id.to_string(),
+            is_read: true,
+            pending_since: since,
+        }
+    }
+
+    #[test]
+    fn retry_plan_pushes_recent_changes_and_gives_up_on_week_old_ones() {
+        const DAY: i64 = 86_400;
+        let now = 100 * DAY;
+        let cases = [
+            ("just queued", now, true),
+            ("six days old", now - 6 * DAY, true),
+            ("exactly a week old", now - 7 * DAY, true),
+            ("over a week old", now - 7 * DAY - 1, false),
+            ("queued in the future (clock moved back)", now + DAY, true),
+        ];
+        for (label, since, pushed) in cases {
+            let plan = plan_read_push_retries(&[pending("m-1", since)], now);
+            let expected = if pushed {
+                ReadPushPlan {
+                    push: vec![("m-1".to_string(), true)],
+                    give_up: vec![],
+                }
+            } else {
+                ReadPushPlan {
+                    push: vec![],
+                    give_up: vec!["m-1".to_string()],
+                }
+            };
+            assert_eq!(plan, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn retry_plan_keeps_the_order_and_the_state_of_each_change() {
+        let mut unread = pending("m-2", 20);
+        unread.is_read = false;
+        let plan = plan_read_push_retries(&[pending("m-1", 10), unread], 30);
+        assert_eq!(plan.push, vec![("m-1".to_string(), true), ("m-2".to_string(), false)]);
+    }
+
+    #[test]
+    fn retry_plan_of_nothing_is_empty() {
+        assert_eq!(plan_read_push_retries(&[], 30), ReadPushPlan::default());
+    }
+
+    #[tokio::test]
+    async fn the_next_sync_delivers_a_push_that_failed() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("network unreachable");
+        mark_read(&db, "m-1", Some(&provider)).await.unwrap();
+        provider.restore_mailbox_writes();
+
+        retry_pending_read_pushes(&db, &account("acc-1", "imap"), &provider, 2_000).await;
+
+        assert_eq!(
+            provider.mailbox_ops(),
+            vec![FakeMailboxOp::SetReadState {
+                message_id: "m-1".to_string(),
+                read: true
+            }]
+        );
+        assert!(pending_ids(&db, "acc-1").is_empty(), "delivered, so no longer pending");
+    }
+
+    #[tokio::test]
+    async fn a_push_that_fails_again_stays_pending() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        db.mark_as_read_pending_push("m-1", 1_000).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("503");
+
+        retry_pending_read_pushes(&db, &account("acc-1", "outlook"), &provider, 2_000).await;
+
+        assert_eq!(pending_ids(&db, "acc-1"), vec!["m-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_retry_the_provider_answers_with_no_such_message_is_dropped() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        db.mark_as_read_pending_push("m-1", 1_000).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes_as_not_found();
+
+        retry_pending_read_pushes(&db, &account("acc-1", "outlook"), &provider, 2_000).await;
+
+        assert!(pending_ids(&db, "acc-1").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_week_old_pending_push_is_given_up_without_a_provider_call() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        db.mark_as_read_pending_push("m-1", 1_000).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        retry_pending_read_pushes(&db, &account("acc-1", "imap"), &provider, 1_000 + 8 * 86_400).await;
+
+        assert!(provider.mailbox_ops().is_empty());
+        assert!(pending_ids(&db, "acc-1").is_empty());
+        assert!(db.get_email("m-1").unwrap().unwrap().is_read, "the local state is kept");
+    }
+
+    #[tokio::test]
+    async fn a_down_provider_is_not_asked_once_per_pending_row() {
+        let db = test_db("acc-1");
+        let rows: Vec<_> = (0..10).map(|i| email(&format!("m-{i}"), "acc-1", false)).collect();
+        db.insert_emails_batch(&rows).unwrap();
+        for row in &rows {
+            db.mark_as_read_pending_push(&row.id, 1_000).unwrap();
+        }
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("connection refused");
+        let calls = provider.call_log();
+
+        retry_pending_read_pushes(&db, &account("acc-1", "imap"), &provider, 2_000).await;
+
+        let attempts = calls
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|c| c.as_str() == "set_read_state")
+            .count();
+        assert_eq!(attempts, super::MAX_READ_PUSH_FAILURES_PER_SYNC);
+        assert_eq!(pending_ids(&db, "acc-1").len(), 10, "every change is still owed");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_provider_has_nothing_retried() {
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", false)]).unwrap();
+        db.mark_as_read_pending_push("m-1", 1_000).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        retry_pending_read_pushes(&db, &account("acc-1", "exchange-ews"), &provider, 2_000).await;
+
+        assert!(provider.mailbox_ops().is_empty());
+    }
+
+    #[tokio::test]
     async fn mark_read_on_an_already_read_row_skips_the_push() {
         // Opening a thread re-marks every message; without this guard each
         // open would fire one Gmail write per message, forever.
@@ -289,7 +692,8 @@ mod tests {
         assert_eq!(
             provider.mailbox_ops(),
             vec![FakeMailboxOp::Trash {
-                message_id: "m-1".to_string()
+                message_id: "m-1".to_string(),
+                message_id_header: Some("<m-1@example.com>".to_string()),
             }]
         );
         assert!(inbox_ids(&db, "acc-1").is_empty(), "row no longer listed");
@@ -312,6 +716,20 @@ mod tests {
             vec!["m-1".to_string()],
             "the message is still there after a failed trash"
         );
+    }
+
+    #[tokio::test]
+    async fn delete_goes_through_when_the_provider_no_longer_has_the_message() {
+        // Deleted or moved in another client: a refusal here would leave a row
+        // the user can never delete.
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", true)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes_as_not_found();
+
+        delete(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert!(inbox_ids(&db, "acc-1").is_empty());
     }
 
     #[tokio::test]

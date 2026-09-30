@@ -3513,6 +3513,100 @@ async fn mark_as_read_is_idempotent() {
     assert!(db.get_email_by_id("e-r2").unwrap().unwrap().is_read);
 }
 
+// A read-state push that failed (offline, 5xx) used to be lost: the row was
+// read locally and unread in every other client, forever.
+#[tokio::test]
+async fn a_failed_read_push_is_delivered_by_the_next_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rp", "rp@example.com")).unwrap();
+    let account = db.get_account("acc-rp").unwrap().unwrap();
+    db.insert_email(&make_email("e-rp", "acc-rp", 1000)).unwrap();
+
+    let offline = FakeEmailProvider::new("rp@example.com", "Rp");
+    offline.fail_mailbox_writes("network unreachable");
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-rp", Some(&offline))
+        .await
+        .unwrap();
+    assert_eq!(db.pending_read_pushes("acc-rp", 10).unwrap().len(), 1);
+
+    let online = FakeEmailProvider::new("rp@example.com", "Rp");
+    let calls = online.call_log();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(online),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        calls.read().unwrap().iter().any(|c| c == "set_read_state"),
+        "the sync must retry the push"
+    );
+    assert!(db.pending_read_pushes("acc-rp", 10).unwrap().is_empty());
+}
+
+// IMAP ids embed a UID. After the server rebuilt the inbox, a new message
+// landed on a UID the app already had a row for — and was dropped as "already
+// synced", while the stored row pointed at the wrong message.
+#[tokio::test]
+async fn a_renumbered_imap_inbox_keeps_its_rows_and_still_receives_new_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-uv", "uv@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-uv").unwrap().unwrap();
+
+    let mut stored = make_email_with("acc-uv::5", "acc-uv", 1_000, "a@example.com", "inbox");
+    stored.message_id = Some("<old@example.com>".to_string());
+    stored.subject = "stored before the rebuild".to_string();
+    stored.is_read = true;
+    db.insert_email(&stored).unwrap();
+    db.set_folder_uid_validity("acc-uv", "inbox", 100).unwrap();
+
+    // The rebuilt mailbox: the stored message now sits at UID 9, and UID 5
+    // belongs to a message that arrived afterwards.
+    let provider = FakeEmailProvider::new("uv@example.com", "Uv");
+    provider.set_folder_uid_validity("inbox", "acc-uv::", 200);
+    let mut moved = stored.clone();
+    moved.id = "acc-uv::9".to_string();
+    provider.add_message(moved, EmailCategory::Primary, vec![]);
+    let mut arrived = make_email_with("acc-uv::5", "acc-uv", 2_000, "b@example.com", "inbox");
+    arrived.message_id = Some("<new@example.com>".to_string());
+    arrived.subject = "arrived after the rebuild".to_string();
+    provider.add_message(arrived, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let at_nine = db.get_email_by_id("acc-uv::9").unwrap().expect("re-keyed row");
+    assert_eq!(at_nine.subject, "stored before the rebuild");
+    assert!(at_nine.is_read, "local state travels with the row");
+    let at_five = db.get_email_by_id("acc-uv::5").unwrap().expect("new mail stored");
+    assert_eq!(
+        at_five.subject, "arrived after the rebuild",
+        "the new message must not be dropped as already synced"
+    );
+    assert_eq!(db.get_folder_uid_validity("acc-uv", "inbox").unwrap(), Some(200));
+}
+
 #[test]
 fn delete_email_hides_it_from_get_emails() {
     let db = test_db();

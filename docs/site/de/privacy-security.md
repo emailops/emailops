@@ -78,8 +78,8 @@ auch überall sonst zu sehen ist:
 
 | Aktion | Wirkung auf das Konto |
 |---|---|
-| Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert (Gmail) |
-| Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gmail) und bleibt dort 30 Tage wiederherstellbar |
+| Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert |
+| Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gelöschte Elemente bei Outlook) und bleibt dort wiederherstellbar, bis der Anbieter ihn leert – bei Gmail 30 Tage |
 | Eine Nachricht in einen anderen Ordner verschieben, oder **Als Spam bestätigen** | Die Nachricht wird auch im Konto verschoben — Als Spam bestätigen legt sie im Spam-Ordner des Anbieters ab |
 | Einen Ordner anlegen, umbenennen oder löschen | Der Ordner ändert sich auch im Konto |
 | Einen Entwurf speichern | Der Entwurf wird in den Entwürfen des Kontos gespeichert |

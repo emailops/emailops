@@ -143,6 +143,15 @@ pub async fn rename_folder(
         db.delete_preference(old_key)?;
     }
 
+    // RENAME keeps a mailbox's UIDs on mainstream servers, and the recorded
+    // UIDVALIDITY is what notices the ones where it does not: carried over,
+    // the next sync compares it with the renamed mailbox's and repairs the
+    // ids if the server renumbered.
+    if let Some(uid_validity) = db.get_folder_uid_validity(&account.id, &old_mailbox)? {
+        db.set_folder_uid_validity(&account.id, &new_mailbox, uid_validity)?;
+    }
+    db.delete_folder_uid_validity(&account.id, &old_mailbox)?;
+
     logger::log(
         "success",
         "sync",
@@ -169,6 +178,8 @@ pub async fn delete_folder(
 
     let deleted = db.delete_emails_in_mailbox(&account.id, &folder_mailbox_value(&folder.server_path))?;
     db.delete_folder_row(&account.id, folder_id)?;
+    // A folder created later under the same name is a different mailbox.
+    db.delete_folder_uid_validity(&account.id, &folder_mailbox_value(&folder.server_path))?;
     for key in super::sync::custom_folder_pref_keys(&account.id, &folder.server_path) {
         db.delete_preference(&key)?;
     }
@@ -506,6 +517,42 @@ mod tests {
         let [new_fwd, ..] = super::super::sync::custom_folder_pref_keys("acc-1", "Klienten");
         assert_eq!(db.get_preference(&new_fwd).unwrap().as_deref(), Some("12345"));
         assert!(db.get_preference(&old_fwd).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn rename_folder_carries_the_uid_validity_to_the_new_name() {
+        // Carried rather than dropped: if the server renumbered on RENAME, the
+        // next sync sees the mismatch and repairs the stored ids.
+        let db = test_db("acc-1");
+        seed_folder(&db, "acc-1", "Kunden");
+        db.set_folder_uid_validity("acc-1", "folder:Kunden", 77).unwrap();
+        let provider = provider_with_folders(&["Kunden"]);
+
+        rename_folder(&db, &imap_account("acc-1"), &provider, "acc-1:Kunden", "Klienten")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            db.get_folder_uid_validity("acc-1", "folder:Klienten").unwrap(),
+            Some(77)
+        );
+        assert_eq!(db.get_folder_uid_validity("acc-1", "folder:Kunden").unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn delete_folder_forgets_its_uid_validity() {
+        // A folder created later under the same name is another mailbox; a
+        // leftover value would make its first sync look like a rebuild.
+        let db = test_db("acc-1");
+        seed_folder(&db, "acc-1", "Alt");
+        db.set_folder_uid_validity("acc-1", "folder:Alt", 77).unwrap();
+        let provider = provider_with_folders(&["Alt"]);
+
+        delete_folder(&db, &imap_account("acc-1"), &provider, "acc-1:Alt")
+            .await
+            .unwrap();
+
+        assert_eq!(db.get_folder_uid_validity("acc-1", "folder:Alt").unwrap(), None);
     }
 
     #[tokio::test]

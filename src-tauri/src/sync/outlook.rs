@@ -744,11 +744,14 @@ impl OutlookClient {
                         continue;
                     }
 
-                    return Err(AppError::SyncError(format!(
-                        "Failed to {}: {}",
-                        operation,
-                        format_graph_error(status, &body)
-                    )));
+                    let message = format!("Failed to {}: {}", operation, format_graph_error(status, &body));
+                    // Typed so callers can tell "Graph no longer has this id"
+                    // (a moved or deleted message) from an outage.
+                    return Err(if status == StatusCode::NOT_FOUND {
+                        AppError::NotFound(message)
+                    } else {
+                        AppError::SyncError(message)
+                    });
                 }
                 Err(error) => {
                     if is_retryable_transport_error(&error)
@@ -1045,6 +1048,50 @@ impl EmailProvider for OutlookClient {
             }
         }
         Ok(None)
+    }
+
+    /// One `$batch` of `GET /me/messages/{id}?$select=id,isRead` per
+    /// [`GRAPH_BATCH_LIMIT`] ids. Asking by id rather than listing folders
+    /// needs no "was the listing complete?" reasoning: every answer is about
+    /// exactly one stored message.
+    async fn fetch_message_states(
+        &self,
+        message_ids: &[String],
+    ) -> Result<Option<std::collections::HashMap<String, provider::RemoteMessageState>>> {
+        let mut states = std::collections::HashMap::with_capacity(message_ids.len());
+        let url = format!("{}/$batch", self.base_url);
+        for chunk in message_ids.chunks(GRAPH_BATCH_LIMIT) {
+            let ids: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            let payload = build_batch_payload(&ids, "id,isRead");
+            let response = self
+                .send_post_json_with_retry(&url, &payload, "refresh message states")
+                .await?;
+            let envelope: serde_json::Value = response.json().await?;
+            states.extend(states_from_batch(chunk, &envelope));
+        }
+        Ok(Some(states))
+    }
+
+    /// `PATCH /me/messages/{id}` with `isRead` (`Mail.ReadWrite`). Setting
+    /// the same value twice is a no-op at Graph, so it is safe to retry.
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        let url = format!("{}/me/messages/{}", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "isRead": read });
+        self.send_request_with_retry("set read state", |client, token| {
+            client.patch(&url).bearer_auth(token).json(&payload)
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
+    /// `DELETE /me/messages/{id}`: the app's delete action is the reversible
+    /// one, so the message stays recoverable from the account's own clients.
+    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+        let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "destinationId": "deleteditems" });
+        self.send_post_json_no_resend(&url, &payload, "trash message").await?;
+        Ok(())
     }
 
     async fn list_mailbox_messages(
@@ -1405,6 +1452,11 @@ struct GraphBatchSubResponse {
 /// finds its way back to the right slot. The `$select` projection matches the
 /// single-message path so both produce the same `GraphMessage`.
 fn build_message_batch_payload(message_ids: &[&str]) -> serde_json::Value {
+    build_batch_payload(message_ids, MESSAGE_SELECT_FIELDS)
+}
+
+/// A `$batch` of message GETs projecting `select`, one sub-request per id.
+fn build_batch_payload(message_ids: &[&str], select: &str) -> serde_json::Value {
     let requests: Vec<serde_json::Value> = message_ids
         .iter()
         .enumerate()
@@ -1415,12 +1467,33 @@ fn build_message_batch_payload(message_ids: &[&str]) -> serde_json::Value {
                 "url": format!(
                     "/me/messages/{}?$select={}",
                     urlencoding::encode(message_id),
-                    MESSAGE_SELECT_FIELDS
+                    select
                 ),
             })
         })
         .collect();
     serde_json::json!({ "requests": requests })
+}
+
+/// Read one chunk's answers out of a state-refresh `$batch`: 200 is the
+/// message's read flag, 404 means Graph no longer has that id (deleted, or
+/// moved and re-keyed). Any other status — a throttled sub-request above all —
+/// says nothing about the message and is left out.
+fn states_from_batch(chunk: &[String], envelope: &serde_json::Value) -> Vec<(String, provider::RemoteMessageState)> {
+    parse_batch_response(envelope)
+        .into_iter()
+        .filter_map(|sub| {
+            let id = chunk.get(sub.index)?;
+            let state = match sub.status {
+                200 => provider::RemoteMessageState::Present {
+                    is_read: sub.body.as_ref()?.get("isRead")?.as_bool()?,
+                },
+                404 => provider::RemoteMessageState::Missing,
+                _ => return None,
+            };
+            Some((id.clone(), state))
+        })
+        .collect()
 }
 
 /// Pull the sub-responses out of a `$batch` envelope.
@@ -2033,6 +2106,179 @@ mod tests {
         let msg = format_graph_error(StatusCode::BAD_GATEWAY, "nginx fail");
         assert!(msg.contains("502"));
         assert!(msg.contains("nginx fail"));
+    }
+
+    #[test]
+    fn batch_states_read_the_flag_a_missing_id_and_skip_everything_else() {
+        let chunk: Vec<String> = ["read", "unread", "gone", "throttled", "unanswered", "malformed"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Out of order on purpose: Graph does not answer in request order.
+        let envelope = serde_json::json!({ "responses": [
+            { "id": "2", "status": 404, "body": { "error": { "code": "ErrorItemNotFound" } } },
+            { "id": "0", "status": 200, "body": { "id": "read", "isRead": true } },
+            { "id": "3", "status": 429, "body": {} },
+            { "id": "1", "status": 200, "body": { "id": "unread", "isRead": false } },
+            { "id": "5", "status": 200, "body": { "id": "malformed" } },
+            { "id": "9", "status": 404 },
+        ]});
+
+        let mut states = states_from_batch(&chunk, &envelope);
+        states.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(
+            states,
+            vec![
+                ("gone".to_string(), provider::RemoteMessageState::Missing),
+                (
+                    "read".to_string(),
+                    provider::RemoteMessageState::Present { is_read: true }
+                ),
+                (
+                    "unread".to_string(),
+                    provider::RemoteMessageState::Present { is_read: false }
+                ),
+            ],
+            "a throttled, unanswered or malformed slot says nothing about its message"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_refresh_asks_for_is_read_in_batches_of_twenty() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/$batch"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"responses":[{"id":"0","status":200,"body":{"id":"x","isRead":true}},{"id":"1","status":404}]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids: Vec<String> = (0..25).map(|i| format!("m-{i}")).collect();
+        let states = EmailProvider::fetch_message_states(&client, &ids)
+            .await
+            .expect("refresh")
+            .expect("supported");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2, "25 ids = one batch of 20 and one of 5");
+        let first: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(first["requests"].as_array().map(Vec::len), Some(20));
+        assert_eq!(first["requests"][0]["url"], "/me/messages/m-0?$select=id,isRead");
+        // Slot 0 and 1 of each batch were answered; the rest are unknown.
+        assert_eq!(states.len(), 4);
+        assert_eq!(
+            states.get("m-0"),
+            Some(&provider::RemoteMessageState::Present { is_read: true })
+        );
+        assert_eq!(states.get("m-21"), Some(&provider::RemoteMessageState::Missing));
+        assert_eq!(states.get("m-5"), None);
+    }
+
+    #[tokio::test]
+    async fn marking_read_patches_is_read_on_the_message() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/m-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-1"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::set_read_state(&client, "m-1", true)
+            .await
+            .expect("mark read");
+        EmailProvider::set_read_state(&client, "m-1", false)
+            .await
+            .expect("mark unread");
+
+        let requests = server.received_requests().await.expect("requests");
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).expect("json body"))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                serde_json::json!({ "isRead": true }),
+                serde_json::json!({ "isRead": false })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn trashing_moves_the_message_to_deleted_items() {
+        // A move, never `DELETE /me/messages/{id}`: the message must stay
+        // recoverable from the account's Deleted Items.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-3/move"))
+            .respond_with(ResponseTemplate::new(201).set_body_raw(r#"{"id":"m-3-moved"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::trash_message(&client, "m-3", None).await.expect("trash");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "deleteditems" }));
+    }
+
+    #[tokio::test]
+    async fn a_write_to_a_message_graph_no_longer_has_is_reported_as_not_found() {
+        // Graph re-keys a message on every move, so an id stored before the
+        // user filed the message elsewhere answers 404. Callers tell that
+        // apart from an outage: it is not worth retrying.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let err = EmailProvider::set_read_state(&client, "stale-id", true)
+            .await
+            .expect_err("404");
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_trash_that_fails_with_a_server_error_is_not_resent() {
+        // The move may have been carried out; replaying it would address an id
+        // Graph has already retired.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        assert!(EmailProvider::trash_message(&client, "m-3", None).await.is_err());
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
     }
 
     #[tokio::test]

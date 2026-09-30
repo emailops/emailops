@@ -74,8 +74,8 @@ everywhere else:
 
 | Action | Effect on the account |
 |---|---|
-| Marking a message read or unread | The same message is marked read on the account (Gmail) |
-| Deleting a message | The message is moved to the account's **Trash** (Gmail), where it stays recoverable for 30 days |
+| Marking a message read or unread | The same message is marked read on the account |
+| Deleting a message | The message is moved to the account's **Trash** (Deleted Items on Outlook), where it stays recoverable until the provider empties it — 30 days on Gmail |
 | Moving a message to another folder, or **Confirm junk** | The message moves on the account too — Confirm junk files it in the provider's junk folder |
 | Creating, renaming or deleting a folder | The folder changes on the account too |
 | Saving a draft | The draft is saved to the account's Drafts |
