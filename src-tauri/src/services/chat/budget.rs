@@ -10,10 +10,12 @@
 use crate::ai::provider::AiMessage;
 use crate::models::{BudgetCut, BudgetTrace};
 
-/// Chars per token before any call of the conversation has been measured.
-/// Low on purpose (mail measures ~3.5-4 on the Qwen tokenizer): an estimate
-/// that errs high cuts a little early, one that errs low truncates.
-const DEFAULT_CHARS_PER_TOKEN: f32 = 3.0;
+/// Chars per token before any call of the conversation has been measured:
+/// the low end of what the Qwen tokenizer measures on these prompts (a chat
+/// prompt of 20.6k chars counted 5224 tokens, 3.95 each; mail runs 3.5-4).
+/// An estimate that errs high cuts a little early; one that errs low leaves
+/// the runtime to truncate, which the safety margin is there to avoid.
+const DEFAULT_CHARS_PER_TOKEN: f32 = 3.5;
 /// A measured ratio outside this range is a measurement artefact (a prompt
 /// the runtime truncated, a provider counting its own tool schemas).
 const MIN_CHARS_PER_TOKEN: f32 = 2.0;
@@ -607,11 +609,11 @@ mod tests {
     }
 
     #[test]
-    fn uncalibrated_estimate_is_three_chars_per_token() {
+    fn the_uncalibrated_estimate_is_three_and_a_half_chars_per_token() {
         let est = Estimator::uncalibrated();
-        assert_eq!(est.tokens(3000), 1000);
-        assert_eq!(est.tokens(3001), 1001, "rounds up");
-        assert_eq!(est.chars(1000), 3000);
+        assert_eq!(est.tokens(3500), 1000);
+        assert_eq!(est.tokens(3501), 1001, "rounds up");
+        assert_eq!(est.chars(1000), 3500);
     }
 
     #[test]
@@ -830,11 +832,11 @@ mod tests {
     #[test]
     fn prompt_tokens_build_on_the_last_measured_call() {
         let est = Estimator::uncalibrated();
-        assert_eq!(estimate_prompt_tokens(est, 30_000, None), 10_000);
-        // 7000 tokens measured at 28k chars; 3k chars were added since.
-        assert_eq!(estimate_prompt_tokens(est, 31_000, Some((28_000, 7_000))), 8_000);
+        assert_eq!(estimate_prompt_tokens(est, 35_000, None), 10_000);
+        // 7000 tokens measured at 28k chars; 3.5k chars were added since.
+        assert_eq!(estimate_prompt_tokens(est, 31_500, Some((28_000, 7_000))), 8_000);
         // The prompt shrank since (tool results were cut).
-        assert_eq!(estimate_prompt_tokens(est, 25_000, Some((28_000, 7_000))), 6_000);
+        assert_eq!(estimate_prompt_tokens(est, 24_500, Some((28_000, 7_000))), 6_000);
         assert_eq!(estimate_prompt_tokens(est, 1_000, Some((28_000, 7_000))), 0);
     }
 
@@ -867,14 +869,14 @@ mod tests {
 
     #[test]
     fn message_chars_leave_room_for_what_rides_outside_the_messages() {
-        // 8192 → 6912 prompt tokens → 20736 chars at 3 chars/token.
+        // 8192 → 6912 prompt tokens → 24192 chars at 3.5 chars/token.
         assert_eq!(
             TurnBudget::new(8192, Estimator::uncalibrated(), 0).message_chars(),
-            20_736
+            24_192
         );
         assert_eq!(
             TurnBudget::new(8192, Estimator::uncalibrated(), 5_000).message_chars(),
-            15_736
+            19_192
         );
         assert_eq!(
             TurnBudget::new(8192, Estimator::uncalibrated(), 50_000).message_chars(),
@@ -902,7 +904,7 @@ mod tests {
         assert_eq!(trace.reply_reserve, 1024);
         assert!(matches!(
             trace.cuts.as_slice(),
-            [BudgetCut::ToolResults { results: 1, chars_dropped }] if *chars_dropped > 6_000
+            [BudgetCut::ToolResults { results: 1, chars_dropped }] if *chars_dropped > 3_000
         ));
     }
 
@@ -928,20 +930,20 @@ mod tests {
         let trace = budget.trace().expect("trace");
         assert!(!trace.fits);
         assert!(trace.cuts.is_empty());
-        assert!(trace.estimated_prompt_tokens > 10_000);
+        assert!(trace.estimated_prompt_tokens > 8_000);
     }
 
     #[test]
     fn a_measured_call_replaces_the_estimate() {
         let mut budget = TurnBudget::new(8192, Estimator::uncalibrated(), 0);
-        // 24k chars estimate to 8000 tokens — over. The runtime counted 6000
+        // 28k chars estimate to 8000 tokens — over. The runtime counted 6000
         // and truncated nothing, so the turn fit after all.
-        let mut messages = vec![msg("system", 24_000 - MESSAGE_OVERHEAD_CHARS)];
+        let mut messages = vec![msg("system", 28_000 - MESSAGE_OVERHEAD_CHARS)];
         let chars = budget.fit(&mut messages);
         budget.record_call(chars, Some(6_000), Some(0));
         assert_eq!(budget.trace(), None);
-        // 1200 more chars at the measured 4 chars/token: 6300 tokens, fits.
-        messages.push(msg("tool", 1_200 - MESSAGE_OVERHEAD_CHARS));
+        // 1400 more chars at the measured 4.67 chars/token: 6300 tokens, fits.
+        messages.push(msg("tool", 1_400 - MESSAGE_OVERHEAD_CHARS));
         budget.fit(&mut messages);
         assert_eq!(budget.trace(), None);
         assert_eq!(budget.max_estimated_tokens, 8_000);
@@ -972,7 +974,7 @@ mod tests {
         let mut budget = TurnBudget::new(8192, Estimator::uncalibrated(), 0);
         let plan = PromptPlan {
             cuts: vec![BudgetCut::HistoryTurns { messages: 2 }],
-            estimated_chars: 15_000,
+            estimated_chars: 17_500,
             fits: true,
             ..PromptPlan::default()
         };

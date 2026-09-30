@@ -1,0 +1,57 @@
+# Context budget (services/chat/budget.rs): turns whose prompt would not fit
+# the model's window unless it is cut. Every case carries the unconditional
+# `prompt_fits_window` check — no call may report tokens dropped from the
+# front of its prompt, which is how the system prompt used to be lost.
+#
+# Keyed to the demo DB's three "Indie Infra Weekly" issues (#87–#89, ~12k
+# characters each, `updates`). Each opens with a backups tip and carries one
+# distinctive fact in a late section.
+
+- id: budget_long_digest_fact_8k
+  # One long email at the 8k tier a machine under 16 GB gets: the full system
+  # prompt alone does not fit that window, so this exercises the compact
+  # prefix and, when the model reads the body, a cut tool result.
+  question: "What does Indie Infra Weekly #87 say about max_wal_size?"
+  account: "ulises@emailopslabs.dev"
+  category: context_budget
+  tier: full
+  n_ctx: 8192
+  expected_answer_contains_any: ["8GB", "8 GB"]
+  expected_output: "Issue #87 of Indie Infra Weekly says to raise max_wal_size to 8GB before a bulk import on Postgres 18 and put it back afterwards, because the default forces a checkpoint every few seconds. The answer links the email."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: budget_full_body_read_8k
+  # A question only the whole body answers, so the model reads it with a
+  # tool: ~12k characters of tool result against an 8k window. The result is
+  # cut to fit and says so; the first sections survive the cut.
+  question: "List the numbered section titles of Indie Infra Weekly #87, in order. Read the full email first."
+  account: "ulises@emailopslabs.dev"
+  category: context_budget
+  tier: full
+  n_ctx: 8192
+  expected_answer_contains: ["Postgres", "SQLite"]
+  expected_output: "The numbered sections of Indie Infra Weekly #87 start with 1. Postgres, 2. SQLite, 3. Reverse proxies, 4. TLS certificates, 5. DNS, and continue through 26. Reader questions. When the email was cut to fit the context window the answer lists the sections it could read and says the rest was not shown. The answer links the email."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: budget_fourth_turn_follow_up
+  # A follow-up on the fourth retrieval turn, at the 16k tier a 16–24 GB
+  # machine gets: the three earlier turns each replay the emails they were
+  # asked with (~24k tokens in all), so the earlier questions lose theirs.
+  previous_questions:
+    - "What is the backups tip in Indie Infra Weekly #87?"
+    - "And what does issue #88 say about backups?"
+    - "And issue #89?"
+  question: "Which of those three issues mentions PgBouncer?"
+  account: "ulises@emailopslabs.dev"
+  category: context_budget
+  tier: full
+  n_ctx: 16384
+  expected_answer_contains: ["89"]
+  expected_output: "Issue #89 of Indie Infra Weekly mentions PgBouncer: version 1.24 supports prepared statements in transaction pooling mode. The answer links the email."
+  metrics:
+    - answer_relevancy
+    - faithfulness

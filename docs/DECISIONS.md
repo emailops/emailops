@@ -2361,3 +2361,26 @@ tool results had no cap. What gives way first is a product choice, made by the d
   with the runtime's truncation kept as the safety net.
 - *Telling the user about every cut*: on a small window the note would sit under most
   answers of a long conversation.
+
+## 2026-09-30 — Windows under 16k tokens get a compact chat system prompt
+
+**Decision:** When the model's window is under 16 384 tokens the chat renders
+`chat.system_compact` and a compact tool catalogue (each tool's one-line summary, the
+first sentence of each parameter description, stated once) instead of the full ones. The
+choice depends on the window alone, never on the turn, and prewarm makes it through the
+same function. A `chat.system` the user customised is kept at any window.
+**Context:** The full system message is about 29 000 chars (~7 400 tokens): the template
+11 500, the tool catalogue 16 600. An 8 192 window leaves 7 168 for the prompt, so on a
+machine under 16 GB, and on Ollama, the system prompt did not fit even in an empty
+conversation and the budget above had nothing left to cut. The compact message is pinned
+under 16 000 chars by a test. On the demo mailbox a retrieval turn at 8 192 went from
+11 961 prompt tokens with 4 793 dropped to 5 981 with none.
+**Rejected:**
+- *Raising the smallest tier to 16k*: the KV cache for 16k costs memory on exactly the
+  machines that get 8k because they have none to spare, and it does nothing for Ollama.
+- *Trimming only the tool catalogue*: the template alone is 11 500 chars; with a compact
+  catalogue the message was still ~5 800 tokens, leaving about 1 000 for everything else.
+- *A per-turn choice of prompt* (compact only when the turn is large): the system prefix
+  would change between turns and cold-prefill the KV cache each time it did.
+**Limit:** the compact prompt drops three of the four examples and the long-form rules;
+its answers at 8k were checked on the smoke tier and the context-budget cases only.

@@ -11,6 +11,8 @@
 //   --account <id>                 Scope retrieval to this account (required
 //                                  if multiple enabled accounts are present).
 //   --out <dir>                    Report output directory.
+//   --n-ctx <tokens>               Context window for the embedded model,
+//                                  over the stored setting (e.g. 8192).
 //
 // Env (optional):
 //   OPENROUTER_API_KEY             Required for judge mode.
@@ -71,6 +73,11 @@ struct Args {
     /// Defaults to `src-tauri/evals/chat/cases`.
     #[arg(long)]
     cases_dir: Option<PathBuf>,
+
+    /// Run the embedded model with this context window (tokens) instead of the
+    /// stored setting, e.g. 8192 for the tier a machine under 16 GB gets.
+    #[arg(long = "n-ctx")]
+    n_ctx: Option<u32>,
 }
 
 fn main() {
@@ -111,6 +118,7 @@ fn main() {
         } else {
             EvalDbMode::CopyToTemp
         },
+        n_ctx: args.n_ctx,
     };
 
     // Use Tokio to drive async code. A single-thread runtime is enough —

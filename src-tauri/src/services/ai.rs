@@ -212,13 +212,31 @@ pub fn should_evict(keep_alive: u32, idle_secs: i64) -> bool {
     }
 }
 
+/// A context window pinned for this process; `0` when none is.
+static RUN_N_CTX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Pin the embedded model's context window for this process, over the stored
+/// `chat.n_ctx` preference — which is left untouched, so an eval can run at
+/// the 8k tier without changing what the app is set to. `0` removes the pin.
+/// Returns the pin it replaced.
+#[cfg(any(test, feature = "eval"))]
+pub fn pin_run_n_ctx(n_ctx: u32) -> u32 {
+    RUN_N_CTX.swap(n_ctx, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Read the `chat.n_ctx` preference: the user's configured context window for
 /// the embedded llama.cpp chat model. `0` (or unset / unparseable) means
 /// "auto" — let the runtime pick the model's trained context capped at the
 /// default. The hard `[floor, model-trained]` clamp lives in
 /// `planner::effective_n_ctx`, so this reader only sanitises garbage to `0`.
-#[cfg(feature = "llamacpp")]
+///
+/// A window pinned for this process (see [`pin_run_n_ctx`]) wins over the
+/// preference.
 pub fn load_n_ctx_override(db: &Database) -> u32 {
+    let pinned = RUN_N_CTX.load(std::sync::atomic::Ordering::Relaxed);
+    if pinned > 0 {
+        return pinned;
+    }
     db.get_preference("chat.n_ctx")
         .ok()
         .flatten()
@@ -1047,6 +1065,21 @@ fn llamacpp_model_paths(
 mod provider_tests {
     use super::*;
     use crate::db::Database;
+
+    #[test]
+    fn a_pinned_window_wins_over_the_stored_preference_and_leaves_it_alone() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("chat.n_ctx", "32768").expect("pref");
+        assert_eq!(load_n_ctx_override(&db), 32_768);
+
+        let before = pin_run_n_ctx(8192);
+        let pinned = load_n_ctx_override(&db);
+        pin_run_n_ctx(before);
+
+        assert_eq!(pinned, 8192);
+        assert_eq!(load_n_ctx_override(&db), 32_768, "unpinned: the preference again");
+        assert_eq!(db.get_preference("chat.n_ctx").expect("pref").as_deref(), Some("32768"));
+    }
 
     /// Serializes tests that mutate the process-global `OPENROUTER_API_KEY` so
     /// they don't stomp on each other under `cargo test`'s parallel runner.

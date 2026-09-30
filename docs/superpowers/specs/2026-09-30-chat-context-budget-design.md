@@ -15,9 +15,11 @@ the tool results of the turn. Nothing checked that they fit the model's window.
 
 Measured on 2026-09-30 with the default registry on an empty test DB: the system message
 is 29 332 chars (template 11 513, identity ~1 200, tool summary lines 1 901, `<tools>`
-JSON 14 739, of which `search_emails` alone is 7 621). `NEXT-SESSION.md` records the full
-chat prompt at 7 466 tokens against the 7 168 an 8 192 window leaves, so at that tier the
-system prompt does not fit even with an empty conversation.
+JSON 14 739, of which `search_emails` alone is 7 621). `make bench-oneshot-kv` measured a
+full chat prompt at 7 466 tokens against the 7 168 an 8 192 window leaves, so at that tier
+the system prompt does not fit even with an empty conversation. On the demo mailbox, one
+retrieval turn at 8 192 sent 11 961 prompt tokens and the runtime dropped 4 793 from the
+front — more than half of the system prompt.
 
 ## Goal
 
@@ -41,7 +43,8 @@ in a decided order, and the user is told when the cut can affect the answer.
   remote budget).
 - **Reply reserve:** `n_ctx / 8`, clamped to 1 024..4 096. A further 256 tokens cover
   chat-template tokens and estimate error.
-- **Estimate:** 3 chars per token until a call has been measured. After that, the
+- **Estimate:** 3.5 chars per token until a call has been measured (a 20.6k-char chat
+  prompt measured 5 224 tokens, 3.95 each). After that, the
   measured ratio (clamped to 2..5), and within a turn the provider's last count plus an
   estimate of what changed since. `LlmCallTrace.prompt_chars` carries the ratio to the
   next turn. A count that is implausible for any tokenizer (under 1.5 or over 8 chars per
@@ -82,9 +85,20 @@ in a decided order, and the user is told when the cut can affect the answer.
 ## Compact system prefix (windows under 16 384)
 
 Chosen by the window, not per turn, so the KV anchor stays byte-stable; prewarm selects
-it with the same function. Target: a system message of at most 4 096 measured tokens.
-What is removed is decided by measurement and by the eval — see the implementation notes
-at the end of this file once that step lands.
+it through the same function (`turn::system_prompt_inputs`). Target: a system message of
+at most 16 000 chars, about 4 096 tokens; a unit test pins it.
+
+- **Template:** `chat.system_compact` (`CHAT_SYSTEM_COMPACT`), a second entry in the
+  prompt registry: the same contracts as `chat.system`, one line each, one example
+  instead of four. Under half the size. A `chat.system` the user customised is kept
+  whatever the window — it is the prompt they asked for.
+- **Tool catalogue:** `CatalogDetail::Compact`. Each tool is described by its
+  `prompt_summary()` and the first sentence of every parameter description, and stated
+  once: as its schema in the `<tools>` block on the embedded runtime, or as its summary
+  line on a provider that is sent the schemas through its API (those schemas are compact
+  too).
+- **Measured** on the demo mailbox at 8 192 tokens: a retrieval turn sends 5 981 prompt
+  tokens with 0 dropped, against 11 961 with 4 793 dropped before.
 
 ## What the user sees
 
@@ -99,9 +113,14 @@ at the end of this file once that step lands.
 - Table-driven unit tests for the planner and for `TurnBudget`.
 - Turn-level tests against `FakeAiProvider`: the system message reaches the model whole,
   a prompt that fits is unchanged, stripped questions are stored.
-- Eval: `--n-ctx` to pin the window of a run, earlier turns in a case, and a metric that
-  fails a case when any call reports `dropped_front_tokens > 0`. New public cases: a long
-  newsletter at 8k, a follow-up on the fourth retrieval turn, several full-body reads.
+- Eval: `--n-ctx` pins the window of a run and `n_ctx:` of a case (a process-wide pin in
+  `services::ai`; the stored preference is not touched), `previous_questions:` runs
+  earlier turns, and the unconditional `prompt_fits_window` check fails a case when any
+  call reports `dropped_front_tokens > 0` or the budget could not fit the prompt. New
+  public cases in `evals/chat/cases/context_budget.yaml`, on three ~12k-char digests added
+  to the demo generator: a fact deep in a long email at 8k, a full-body read at 8k (the
+  tool result is cut), and a follow-up on the fourth retrieval turn at 16k (earlier
+  questions lose their emails).
 - Gate: the smoke tier at the default window is unchanged; the smoke tier at 8k is
   compared before and after.
 
@@ -109,5 +128,5 @@ at the end of this file once that step lands.
 
 - Before the embedded model has loaded, its live window is unknown and the configured
   tier stands in; the KV-fit clamp can make the real window smaller.
-- The first turn of a conversation estimates at 3 chars per token; mail measures 3.5–4,
-  so it cuts somewhat early.
+- The first turn of a conversation estimates at 3.5 chars per token; these prompts
+  measure about 3.95, so it cuts somewhat early.

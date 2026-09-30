@@ -157,9 +157,22 @@ floor, not the clamp** — it is what a machine under 16 GB gets, and what
 anything with a failed RAM probe falls back to.
 `plan_prompt_budget` (same file) shrinks the generation budget and then
 **front-truncates the prompt** when `prompt_len + max_tokens > n_ctx` —
-silently dropping the head of the prompt (and emitting a warning). At the 8192
-tier a full chat prompt (~7.5k tokens) already truncates and cold-prefills
-every turn; `make bench-oneshot-kv` measures this.
+silently dropping the head of the prompt (and emitting a warning). That is
+the safety net. A chat turn no longer relies on it: the context budget
+(`src-tauri/src/services/chat/budget.rs`) sizes the prompt before every model
+call and cuts, in order, earlier questions' emails, earlier exchanges, this
+turn's retrieved emails and this turn's tool results — never the system
+prompt. Windows under 16384 tokens also get the compact system prompt
+(`chat.system_compact`) and a compact tool catalogue, because the full prefix
+(~7.4k tokens) does not fit an 8192 window.
+
+- **A new tool, or a longer tool description, must still fit the compact
+  catalogue.** A compact definition is the tool's `prompt_summary()` plus the
+  first sentence of each parameter description, so put what the model must
+  know in those. `the_compact_system_message_of_the_shipped_tools_fits_half_an_8k_window`
+  (`turn.rs`) fails when the compact prefix outgrows 16k characters.
+- **An edit to `chat.system` that a small window needs** has to be mirrored in
+  `CHAT_SYSTEM_COMPACT` (`prompts/defaults.rs`), in one line.
 
 - Anything that grows the prompt (a longer system prompt, a new tool's schema
   in the tool array, more retrieved sources, longer summaries) eats this

@@ -9788,7 +9788,8 @@ Preséntalos en una tabla markdown …";
         assert!(result.content.len() < 16_500, "{} chars", result.content.len());
         assert!(result.content.contains("characters omitted to fit the context window"));
         let sent_chars: usize = sent.iter().map(|m| m.content.len()).sum();
-        assert!(sent_chars / 3 <= 8192 - 1024, "{sent_chars} chars sent");
+        // 3.5 chars per token before anything is measured.
+        assert!(sent_chars * 2 / 7 <= 8192 - 1024, "{sent_chars} chars sent");
         // The trace keeps what the tool really returned, and says it was cut.
         assert_eq!(tool_traces[0].result_chars, 16_500);
         assert_eq!(

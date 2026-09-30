@@ -32,6 +32,9 @@ pub struct RunnerConfig {
     pub cases_dir: PathBuf,
     pub prod_db_path: PathBuf,
     pub db_mode: EvalDbMode,
+    /// Context window the embedded model runs the whole suite with, over the
+    /// stored preference. A case's own `n_ctx` still wins for that case.
+    pub n_ctx: Option<u32>,
 }
 
 /// Run the whole suite. Returns the path to the generated report on success.
@@ -67,6 +70,10 @@ pub async fn run(cfg: RunnerConfig) -> EvalResult<PathBuf> {
     // ── 2. Prepare DB ───────────────────────────────────────────────────────
     let prepared_db = prepare_eval_db(&cfg.prod_db_path, cfg.db_mode, "chat")?;
     let db = Arc::new(Database::new(prepared_db.db_dir().to_path_buf())?);
+    // Pinned for the rest of the process, which ends with this run.
+    if let Some(n_ctx) = cfg.n_ctx {
+        crate::services::ai::pin_run_n_ctx(n_ctx);
+    }
     crate::evals::shared::apply_eval_model_override_from_env(&db)?;
     // When no env override is active, default the suite to the app default
     // provider (local llama.cpp) + default model rather than inheriting the

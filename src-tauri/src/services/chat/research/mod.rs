@@ -112,12 +112,7 @@ pub(crate) fn plan_n_ctx(
 /// preferences and the machine. Call it once the model is loaded (after the
 /// planner ran) so the live window is known.
 pub(crate) async fn resolve_n_ctx(db: &Database, provider: &dyn AIProvider) -> u32 {
-    let n_ctx_override = db
-        .get_preference("chat.n_ctx")
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
+    let n_ctx_override = crate::services::ai::load_n_ctx_override(db);
     let remote_budget = match db.get_preference(REMOTE_N_CTX_BUDGET_PREF) {
         Ok(pref) => plan_remote_n_ctx_budget(pref.as_deref()),
         Err(e) => {

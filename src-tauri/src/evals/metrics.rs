@@ -42,6 +42,10 @@ impl HeuristicReport {
 pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicReport> {
     let mut checks: Vec<HeuristicCheck> = Vec::new();
 
+    // Unconditional: a prompt that did not fit the window lost its head — the
+    // system prompt — whatever the answer looks like.
+    checks.push(check_prompt_fits(outcome.assistant_trace.as_ref()));
+
     // Unconditional check: every case must produce a non-empty assistant reply.
     // An empty answer means the turn silently failed somewhere (model produced
     // no tokens, streaming aborted, etc) and there is no point running the
@@ -159,6 +163,30 @@ pub fn evaluate(case: &EvalCase, outcome: &CaseOutcome) -> EvalResult<HeuristicR
     }
 
     Ok(HeuristicReport { checks })
+}
+
+/// No prompt of the turn overflowed the context window: the embedded runtime
+/// truncated none from the front, and the context budget fitted every one.
+fn check_prompt_fits(trace: Option<&ChatTrace>) -> HeuristicCheck {
+    let dropped: u32 = trace
+        .map(|t| t.llm_calls.iter().filter_map(|c| c.dropped_front_tokens).sum())
+        .unwrap_or(0);
+    let unfit = trace.and_then(|t| t.budget.as_ref()).filter(|b| !b.fits);
+    let actual = match (dropped, unfit) {
+        (0, None) => "every prompt fit".to_string(),
+        (0, Some(b)) => format!(
+            "a prompt of ~{} tokens did not fit the {}-token window",
+            b.estimated_prompt_tokens, b.n_ctx
+        ),
+        (n, _) => format!("the runtime dropped {n} tokens from the front of a prompt"),
+    };
+    HeuristicCheck {
+        name: "prompt_fits_window".into(),
+        passed: dropped == 0 && unfit.is_none(),
+        expected: "every prompt of the turn fits the context window".into(),
+        actual,
+        detail: String::new(),
+    }
 }
 
 fn check_route(expected: &crate::models::RouteMode, trace: Option<&ChatTrace>) -> HeuristicCheck {
@@ -748,6 +776,55 @@ mod tests {
             search_page: None,
             budget: None,
         }
+    }
+
+    // ── prompt fits the window ──────────────────────────────────────────
+
+    fn call_that_dropped(tokens: Option<u32>) -> crate::models::LlmCallTrace {
+        serde_json::from_value(serde_json::json!({
+            "kind": "tool_round", "round": 0, "latencyMs": 1, "droppedFrontTokens": tokens
+        }))
+        .expect("call fixture")
+    }
+
+    #[test]
+    fn a_turn_whose_prompts_all_fit_passes() {
+        let mut t = trace_with(vec![]);
+        t.llm_calls = vec![call_that_dropped(Some(0)), call_that_dropped(None)];
+        assert!(check_prompt_fits(Some(&t)).passed);
+        // No trace at all: nothing to hold against the turn.
+        assert!(check_prompt_fits(None).passed);
+    }
+
+    #[test]
+    fn a_prompt_the_runtime_truncated_fails_the_case() {
+        let mut t = trace_with(vec![]);
+        t.llm_calls = vec![call_that_dropped(Some(0)), call_that_dropped(Some(412))];
+        let check = check_prompt_fits(Some(&t));
+        assert!(!check.passed);
+        assert!(check.actual.contains("412"), "{}", check.actual);
+    }
+
+    #[test]
+    fn a_prompt_the_budget_could_not_fit_fails_the_case() {
+        let mut t = trace_with(vec![]);
+        t.budget = Some(crate::models::BudgetTrace {
+            n_ctx: 8192,
+            reply_reserve: 1024,
+            estimated_prompt_tokens: 9000,
+            cuts: vec![],
+            fits: false,
+        });
+        assert!(!check_prompt_fits(Some(&t)).passed);
+        // Cuts alone are fine: that is the budget doing its job.
+        t.budget = Some(crate::models::BudgetTrace {
+            n_ctx: 8192,
+            reply_reserve: 1024,
+            estimated_prompt_tokens: 6000,
+            cuts: vec![crate::models::BudgetCut::HistoryTurns { messages: 2 }],
+            fits: true,
+        });
+        assert!(check_prompt_fits(Some(&t)).passed);
     }
 
     // ── skills ──────────────────────────────────────────────────────────

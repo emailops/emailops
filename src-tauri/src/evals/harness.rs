@@ -114,6 +114,22 @@ impl Drop for ClockGuard {
     }
 }
 
+/// RAII guard: pins the embedded model's context window for one case and puts
+/// back whatever was pinned before (a run-wide `--n-ctx`, or nothing) on drop.
+struct NCtxGuard(u32);
+
+impl NCtxGuard {
+    fn install(n_ctx: u32) -> Self {
+        Self(crate::services::ai::pin_run_n_ctx(n_ctx))
+    }
+}
+
+impl Drop for NCtxGuard {
+    fn drop(&mut self) {
+        crate::services::ai::pin_run_n_ctx(self.0);
+    }
+}
+
 /// Outcome of running one eval case end to end.
 pub struct CaseOutcome {
     pub conversation_id: String,
@@ -265,6 +281,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     //    `SystemClock` on drop, so a panic or early-return inside the chat
     //    turn cannot leave the global registry pointing at a stale clock.
     let _clock_guard = resolve_as_of(&db, account_id, &categories, case.as_of.as_ref())?.map(ClockGuard::install);
+    let _n_ctx_guard = case.n_ctx.map(NCtxGuard::install);
     // The case's own skills, removed again when the case ends.
     let _skills_guard = crate::evals::skill_fixtures::SkillFixtureGuard::install(&db, &case.skills)?;
 
@@ -294,46 +311,59 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         None => db.create_chat_conversation(account_id, "New chat")?,
     };
 
-    // 2. User + empty assistant rows, matching the production command flow.
-    let user_msg: ChatMessage = db.insert_chat_message(&conv.id, "user", &case.question, None)?;
-    let assistant_msg: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;
+    // 2–4. One turn per question: the case's earlier questions first, then
+    //    the one under evaluation. Each turn mirrors the production command
+    //    flow — user + empty assistant rows, then the conversation's recent
+    //    turns minus those two as history (the service re-adds the question
+    //    as the final message itself). Errors here are service-level (e.g.
+    //    Ollama unreachable), so we wrap them into EvalError but do not
+    //    swallow — the runner decides whether that aborts the whole suite.
+    let mut user_msg: Option<ChatMessage> = None;
+    let mut assistant_msg: Option<ChatMessage> = None;
+    for question in case
+        .previous_questions
+        .iter()
+        .map(String::as_str)
+        .chain([case.question.as_str()])
+    {
+        let user: ChatMessage = db.insert_chat_message(&conv.id, "user", question, None)?;
+        let assistant: ChatMessage = db.insert_chat_message(&conv.id, "assistant", "", Some(model))?;
+        let mut history = db.get_recent_chat_turns(&conv.id, 20)?;
+        history.retain(|m| m.id != assistant.id && m.id != user.id);
 
-    // 3. Single-turn cases: history is empty (the service re-adds the user
-    //    question as the final message itself).
-    let history: Vec<ChatMessage> = Vec::new();
-
-    // 4. Run the turn. Errors here are service-level (e.g. Ollama unreachable),
-    //    so we wrap them into EvalError but do not swallow — the runner decides
-    //    whether that aborts the whole suite. `categories` was computed up
-    //    front so `resolve_as_of` could share the same scope.
-
-    // run_chat_turn now takes an injected ToolRegistry so production code
-    // can hold a single Arc on AppState. Evals don't share state with the
-    // running app, so build a fresh default registry per case.
-    let registry = std::sync::Arc::new(crate::services::chat::tools::default_registry());
-    chat::run_chat_turn(
-        db.clone(),
-        registry,
-        conv.id.clone(),
-        user_msg.id.clone(),
-        assistant_msg.id.clone(),
-        account_id.to_string(),
-        case.question.clone(),
-        model.to_string(),
-        history,
-        categories,
-        // A case may set `ambient_thread_id` to reproduce the chat panel's
-        // context chip, including the cross-account shape where the thread
-        // belongs to an account other than the one the chat runs on. Nothing
-        // else: a headless case has no view on screen and never retries.
-        chat::TurnContext {
-            ambient_thread_id: ambient_thread_id.clone(),
-            ambient_account_id: ambient_owner.clone(),
-            research: case.research,
-            ..Default::default()
-        },
-    )
-    .await?;
+        // run_chat_turn takes an injected ToolRegistry so production code can
+        // hold a single Arc on AppState. Evals don't share state with the
+        // running app, so build a fresh default registry per turn.
+        let registry = std::sync::Arc::new(crate::services::chat::tools::default_registry());
+        chat::run_chat_turn(
+            db.clone(),
+            registry,
+            conv.id.clone(),
+            user.id.clone(),
+            assistant.id.clone(),
+            account_id.to_string(),
+            question.to_string(),
+            model.to_string(),
+            history,
+            categories.clone(),
+            // A case may set `ambient_thread_id` to reproduce the chat panel's
+            // context chip, including the cross-account shape where the thread
+            // belongs to an account other than the one the chat runs on. Nothing
+            // else: a headless case has no view on screen and never retries.
+            chat::TurnContext {
+                ambient_thread_id: ambient_thread_id.clone(),
+                ambient_account_id: ambient_owner.clone(),
+                research: case.research,
+                ..Default::default()
+            },
+        )
+        .await?;
+        user_msg = Some(user);
+        assistant_msg = Some(assistant);
+    }
+    let (Some(user_msg), Some(assistant_msg)) = (user_msg, assistant_msg) else {
+        return Err(EvalError::Config(format!("case {} ran no turn", case.id)));
+    };
 
     let wall_elapsed_ms = start.elapsed().as_millis() as i64;
 

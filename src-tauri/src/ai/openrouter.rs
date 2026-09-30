@@ -195,6 +195,13 @@ struct OpenRouterTopProvider {
     context_length: Option<u32>,
 }
 
+/// Model windows already read from the catalogue, by (base URL, model id).
+fn known_windows() -> &'static std::sync::Mutex<std::collections::HashMap<(String, String), u32>> {
+    static WINDOWS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(String, String), u32>>> =
+        std::sync::OnceLock::new();
+    WINDOWS.get_or_init(Default::default)
+}
+
 /// The context window of `model_id` according to the model catalogue: the
 /// smaller of the model's own length and its top provider's, so a prompt sized
 /// to it fits wherever the request lands. A routing suffix (`:nitro`,
@@ -762,11 +769,28 @@ impl AIProvider for OpenRouterClient {
     }
 
     /// The selected model's window from the catalogue. Asked for on demand
-    /// (one catalogue request) rather than on every turn; an unreadable
-    /// catalogue leaves it unknown and the caller sizes to its safe default.
+    /// and remembered for the life of the process, so the chat — which sizes
+    /// every turn to the window — costs one catalogue request per model, not
+    /// one per turn. An unreadable catalogue leaves it unknown (and is asked
+    /// again next time); the caller sizes to its safe default.
     async fn resolve_context_window(&self) -> Option<u32> {
+        let key = (self.base_url.clone(), self.model.clone());
+        if let Some(window) = known_windows()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
+            return Some(*window);
+        }
         match self.fetch_model_catalogue().await {
-            Ok(models) => model_context_length(&models, &self.model),
+            Ok(models) => {
+                let window = model_context_length(&models, &self.model)?;
+                known_windows()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key, window);
+                Some(window)
+            }
             Err(e) => {
                 crate::services::logger::log(
                     "warn",
@@ -1640,6 +1664,24 @@ mod context_window_tests {
             OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
         assert_eq!(client.context_window(), None, "not known before it is asked for");
         assert_eq!(client.resolve_context_window().await, Some(128_000));
+    }
+
+    #[tokio::test]
+    async fn a_window_already_read_is_not_asked_for_again() {
+        // The chat sizes every turn to the window, and builds a new client
+        // per turn: the catalogue is fetched once per model, not once per turn.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(catalogue()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        for _ in 0..2 {
+            let client = OpenRouterClient::new("key".into(), "vendor/plain".into(), "vendor/embed".into())
+                .with_base_url(server.uri());
+            assert_eq!(client.resolve_context_window().await, Some(32_000));
+        }
     }
 
     #[tokio::test]
