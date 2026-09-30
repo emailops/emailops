@@ -77,8 +77,8 @@ que ce que vous faites ici soit ce que vous voyez partout ailleurs :
 
 | Action | Effet sur le compte |
 |---|---|
-| Marquer un message comme lu ou non lu | Le même message est marqué comme lu sur le compte (Gmail) |
-| Supprimer un message | Le message est placé dans la **Corbeille** du compte (Gmail), où il reste récupérable pendant 30 jours |
+| Marquer un message comme lu ou non lu | Le même message est marqué comme lu sur le compte |
+| Supprimer un message | Le message est placé dans la **Corbeille** du compte (Éléments supprimés sur Outlook), où il reste récupérable jusqu'à ce que le fournisseur la vide : 30 jours sur Gmail |
 | Déplacer un message vers un autre dossier, ou **Confirmer** | Le message est aussi déplacé sur le compte — Confirmer le range dans le dossier des indésirables du fournisseur |
 | Créer, renommer ou supprimer un dossier | Le dossier change aussi sur le compte |
 | Enregistrer un brouillon | Le brouillon est enregistré dans les Brouillons du compte |

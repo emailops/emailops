@@ -1992,3 +1992,114 @@ synthetic "Apply the skill" question steered routing, retrieval and titles (a ba
   just pasted the name they want.
 - *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
   against 9–14 s turns) — no measured problem, so no cache.
+
+## 2026-09-30 — Read state and delete write back to IMAP and Outlook too
+
+**Decision:** `provider_supports_mailbox_writes` now covers Gmail, IMAP and Outlook. Marking
+read pushes `UID STORE ±FLAGS.SILENT (\Seen)` (IMAP) or `PATCH /me/messages/{id}` `isRead`
+(Graph); delete moves the message to the account's Trash — the IMAP Trash folder through
+the existing `UID MOVE` / `COPY` path, Graph `move` to `deleteditems` — and never expunges
+or hard-deletes. The ordering of the 2026-08-15 entry is unchanged: read state local-first,
+delete provider-first. Two refinements apply to every provider: a provider answering "no
+such message" (`AppError::NotFound`) counts as deleted, so the local delete goes through;
+and `trash_message` takes the message's Message-ID, which IMAP checks against the UID before
+moving anything.
+**Context:** A review at `c1f152f` found these changes stayed local on IMAP and Outlook and
+diverged silently from the account. Outlook already requests `Mail.ReadWrite`, so no scope
+changes and no account has to re-authenticate. An IMAP id is a UID, which a server-side
+mailbox rebuild can hand to another message; without the Message-ID check a delete made
+between the rebuild and the next sync would trash the wrong message.
+**Rejected:**
+- *Local-only delete when the IMAP server has no recognisable Trash folder*: that is the
+  silent divergence this removes; the delete is refused with an error instead.
+- *`\Deleted` + `EXPUNGE` in place*: permanent, and the app's delete is the reversible one.
+- *Treating an IMAP Message-ID mismatch as "already gone"*: it would hide a message that
+  still exists upstream; the delete is refused and the next sync repairs the id.
+
+## 2026-09-30 — A failed read-state push is retried by the sync, for up to a week
+
+**Decision:** Marking a message read sets `emails.read_push_pending_since` (V029) in the
+same statement as `is_read`, and clears it once the provider has the change. Every sync
+starts by pushing what is still pending (`retry_pending_read_pushes`): at most 100 rows,
+stopping after 3 failures, and giving up on a change older than 7 days. "No such message"
+settles a pending push. This applies to Gmail as well — it shares the service path.
+**Context:** The push was best-effort and its failure only logged, and a re-opened message
+returns early because it is already read locally — so one offline moment left a message
+unread in every other client for good. The marker is written before the push, not after a
+failure, so a crash or a concurrent sync never sees a locally read row the provider does
+not know about.
+**Rejected:**
+- *A preference holding the pending ids* (no migration): the marker has to travel with the
+  row when it is re-keyed, vanish with it, and be read and written atomically with
+  `is_read` by two concurrent tasks; a JSON list in `user_preferences` does none of that.
+- *Retrying forever*: a read-only mailbox or a revoked permission would cost a failing
+  request per row on every sync.
+- *A retry queue for delete*: delete is provider-first, so a failed delete is an error the
+  user sees and nothing is left half-done.
+
+## 2026-09-30 — Sync refreshes the state of recent stored IMAP/Outlook mail; pending local changes win
+
+**Decision:** Once per 2 minutes per account, the sync asks the provider for the current
+state of the account's stored mail from the last 30 days, newest first, at most 200 rows
+(`EmailProvider::fetch_message_states`): IMAP one `UID FETCH (UID FLAGS)` per folder, Graph
+one `$batch` of `$select=id,isRead` per 20 ids. Read state follows the server. A message
+the provider no longer has under its id is located by Message-ID (`locate_message`) and
+re-keyed in place into its new mailbox, or soft-deleted when the provider does not have it
+any more — at most 25 such lookups per pass. **Conflict rule: a row with a pending local
+push is never touched; for every other row the server wins.** Spam is left to
+`reconcile_spam_moves`, Sent mail keeps its read flag, and a row the provider could not
+check (its folder would not open, its sub-request was throttled) is left alone.
+**Context:** The fetch passes drop every id the database already holds, so a message read,
+deleted or filed in another client never changed here; only Spam was reconciled. Gmail is
+out of scope for this pass (the developer asked for IMAP and Outlook) and answers `None`.
+**Rejected:**
+- *Graph delta queries*: exact and cheap in steady state, but they need a delta token per
+  folder, its expiry handling and a first full enumeration; asking about the ids already
+  stored needs no state and no "was the listing complete?" reasoning.
+- *Listing each folder and diffing*: a truncated listing reads as mass deletion — the rule
+  the spam reconciliation already has to work around.
+- *Refreshing the whole mailbox*: unbounded on the 47k-message accounts this runs against.
+- *Last-writer-wins by timestamp*: neither IMAP flags nor `isRead` carry a change time.
+
+## 2026-09-30 — IMAP UIDVALIDITY is recorded per mailbox; a change re-keys stored mail by Message-ID
+
+**Decision:** Every IMAP sync first reads each stored mailbox's `UIDVALIDITY` (`EXAMINE`)
+and compares it with the value recorded in `folder_uid_validity` (V027). The first sight
+of a mailbox records a baseline. On a change, before anything is listed, the mailbox is
+listed as `(UID, Message-ID, INTERNALDATE)` and the stored rows are matched to it — by
+Message-ID, copies of one Message-ID in order, and by arrival time for the few messages
+without one when that is unambiguous — then re-keyed in one transaction, so read state,
+tags, bodies and embeddings survive. Rows nothing matches are hard-deleted together with
+the mailbox's failed-download records, and the mailbox's sync windows are reopened so
+whatever is still on the server is downloaded again. A failure aborts the sync and leaves
+the recorded value, so the next sync retries.
+**Context:** IMAP ids are `{account}::{uid}`, and nothing read or stored UIDVALIDITY. After
+a server migration, restore or index repair, new mail whose UID matched a stored id was
+dropped as "already synced", and stored ids addressed other messages for re-fetch, move and
+locate. A rebuild that happened before V027 was applied cannot be detected: the first sync
+only records a baseline.
+**Rejected:**
+- *Drop the mailbox's rows and re-download*: loses classification, embeddings, memory and
+  read state for every message, and the per-sync caps make a large inbox take days.
+- *Keep unmatched rows under a detached id*: they could never be deleted or moved upstream
+  and would duplicate any message the re-sweep brings back.
+- *Include UIDVALIDITY in the message id*: the principled fix, but it re-keys every stored
+  IMAP row of every install in a migration and changes an id format frozen for backward
+  compatibility.
+- *Non-fatal on failure*: a sync that goes on with stale ids in place is exactly the bug.
+**Known limit:** the inbox reopens through its incremental window, which one IMAP sync lists
+only as far back as the newest ~1 000 messages. An unmatched inbox message older than that
+and without a usable Message-ID is not re-downloaded automatically.
+
+## 2026-09-30 — V027 and V029 are release-coupled
+
+**Decision:** `V027__folder_uid_validity.sql` (new table) and `V029__read_push_pending.sql`
+(new `emails` column + partial index) ship together with the code above. Like every
+migration, a development build applies them to whatever database it opens, and the released
+binaries up to the current version then refuse that database until a release containing
+both is installed. V026 and V028 belong to parallel work and are intentionally absent here.
+**Context:** Same coupling as V008–V024 before them; recorded because two version numbers
+are skipped on this branch and the merge order matters — `migration_versions_are_unique`
+guards against a collision, not against a missing neighbour.
+**Rejected:** *Storing both in `user_preferences` to avoid a migration* — see the two entries
+above for why each needs real schema.
