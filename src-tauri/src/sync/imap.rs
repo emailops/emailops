@@ -551,6 +551,102 @@ impl ImapClient {
         }
     }
 
+    /// Move `uid` out of the selected folder into `target`: `UID MOVE` when the
+    /// server advertises it, else the RFC 3501 fallback (`COPY`, flag the
+    /// original `\Deleted`, expunge it). Either way the message ends up in
+    /// `target` — this never destroys mail. A UID the folder no longer holds
+    /// is not an error in IMAP: the command succeeds and moves nothing.
+    fn move_uid_blocking(
+        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+        uid: u32,
+        target: &str,
+    ) -> Result<()> {
+        let uid_set = uid.to_string();
+        let has_move = session
+            .capabilities()
+            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("MOVE")))
+            .unwrap_or(false);
+        if has_move {
+            session
+                .uid_mv(&uid_set, target)
+                .map_err(|e| AppError::SyncError(format!("IMAP MOVE to '{target}' failed: {e}")))?;
+        } else {
+            // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
+            // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
+            // folder are left alone.
+            imap_search::uid_copy(session, &uid_set, target)?;
+            session
+                .uid_store(&uid_set, "+FLAGS (\\Deleted)")
+                .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
+            let has_uidplus = session
+                .capabilities()
+                .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("UIDPLUS")))
+                .unwrap_or(false);
+            let expunged = if has_uidplus {
+                session
+                    .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
+                    .map(|_| ())
+            } else {
+                session.expunge().map(|_| ())
+            };
+            if let Err(e) = expunged {
+                // The copy landed and the original is flagged \Deleted —
+                // functionally moved. Log rather than fail the operation.
+                crate::services::logger::log(
+                    "debug",
+                    "sync",
+                    format!("IMAP EXPUNGE after move failed (message copied + flagged): {e}"),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The server path of the account's Trash folder: SPECIAL-USE / localized
+    /// detection over `LIST`, then the legacy candidate names. `None` when the
+    /// server has no folder that looks like a Trash.
+    fn resolve_trash_path_blocking(
+        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    ) -> Option<String> {
+        if let Ok(entries) = Self::list_entries_blocking(session) {
+            if let Some(resolved) = resolve_role_folder(WellKnownFolder::Trash, &entries) {
+                return Some(resolved);
+            }
+        }
+        ImapFolder::Trash
+            .legacy_candidates()
+            .iter()
+            .find(|candidate| imap_search::select(session, candidate).is_ok())
+            .map(|candidate| (*candidate).to_string())
+    }
+
+    /// The blocking half of [`EmailProvider::trash_message`].
+    fn trash_uid_blocking(
+        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+        source: &ImapFolder,
+        uid: u32,
+        message_id_header: Option<&str>,
+    ) -> Result<()> {
+        // Resolved before the source is selected: the legacy fallback probes
+        // candidate names with SELECT.
+        let trash_path = Self::resolve_trash_path_blocking(session)
+            .ok_or_else(|| AppError::SyncError("No Trash folder found on the IMAP server".to_string()))?;
+        if !Self::select_folder_blocking(session, source) {
+            return Err(AppError::SyncError(format!(
+                "IMAP source folder {source:?} not found on server"
+            )));
+        }
+        if let Some(header) = message_id_header {
+            let holds_it = imap_search::uid_search(session, &format!("UID {uid} HEADER Message-ID \"{header}\""))?;
+            if !holds_it.contains(&uid) {
+                return Err(AppError::SyncError(
+                    "The message changed on the server since the last sync; sync the account and try again".to_string(),
+                ));
+            }
+        }
+        Self::move_uid_blocking(session, uid, &trash_path)
+    }
+
     /// Connect and login synchronously — intended for use inside `spawn_blocking`.
     ///
     /// Enforces TCP connect / read / write timeouts so a wrong host or an
@@ -1529,6 +1625,64 @@ impl EmailProvider for ImapClient {
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
     }
 
+    /// `UID STORE ±FLAGS.SILENT (\Seen)` in the folder the message's id names.
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        let (folder, uid_str) = self.parse_message_ref(message_id);
+        let uid: u32 = uid_str
+            .parse()
+            .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
+        let creds = self.credentials.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let result = if Self::select_folder_blocking(&mut session, &folder) {
+                imap_search::uid_store_seen(&mut session, uid, read)
+            } else {
+                Err(AppError::SyncError(format!(
+                    "IMAP {folder:?} folder not found on server"
+                )))
+            };
+            let _ = session.logout();
+            result
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+    }
+
+    /// Move the message to the account's Trash folder — never `\Deleted` +
+    /// `EXPUNGE` in place, which would destroy it. A message already in Trash
+    /// stays there.
+    ///
+    /// A UID is only meaningful until the server rebuilds the mailbox, after
+    /// which it can name a different message. When the Message-ID is known the
+    /// UID is checked against it first, so a stale id can never trash the
+    /// wrong message.
+    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
+        let (source, uid_str) = self.parse_message_ref(message_id);
+        let uid: u32 = uid_str
+            .parse()
+            .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
+        if source == ImapFolder::Trash {
+            return Ok(());
+        }
+        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
+        // don't occur in practice, so the check is skipped for them.
+        let header = message_id_header
+            .map(str::trim)
+            .filter(|h| !h.is_empty() && !h.contains('"'))
+            .map(str::to_string);
+        let creds = self.credentials.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let result = Self::trash_uid_blocking(&mut session, &source, uid, header.as_deref());
+            let _ = session.logout();
+            result
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+    }
+
     /// Find a message the app already stores: still at its own UID, or — after
     /// the user moved it in another client — under a new UID in INBOX or Trash,
     /// which only its Message-ID header can find. One connection either way.
@@ -1637,44 +1791,7 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let uid_set = uid.to_string();
-            let has_move = session
-                .capabilities()
-                .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("MOVE")))
-                .unwrap_or(false);
-            if has_move {
-                session
-                    .uid_mv(&uid_set, &target_for_select)
-                    .map_err(|e| AppError::SyncError(format!("IMAP MOVE to '{target_for_select}' failed: {e}")))?;
-            } else {
-                // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
-                // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
-                // folder are left alone.
-                imap_search::uid_copy(&mut session, &uid_set, &target_for_select)?;
-                session
-                    .uid_store(&uid_set, "+FLAGS (\\Deleted)")
-                    .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
-                let has_uidplus = session
-                    .capabilities()
-                    .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("UIDPLUS")))
-                    .unwrap_or(false);
-                let expunged = if has_uidplus {
-                    session
-                        .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
-                        .map(|_| ())
-                } else {
-                    session.expunge().map(|_| ())
-                };
-                if let Err(e) = expunged {
-                    // The copy landed and the original is flagged \Deleted —
-                    // functionally moved. Log rather than fail the operation.
-                    crate::services::logger::log(
-                        "debug",
-                        "sync",
-                        format!("IMAP EXPUNGE after move failed (message copied + flagged): {e}"),
-                    );
-                }
-            }
+            Self::move_uid_blocking(&mut session, uid, &target_for_select)?;
 
             // Resolve the message's UID in the target folder so the caller
             // can re-ingest it under its new id without a full folder resync.

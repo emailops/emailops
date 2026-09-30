@@ -733,11 +733,14 @@ impl OutlookClient {
                         continue;
                     }
 
-                    return Err(AppError::SyncError(format!(
-                        "Failed to {}: {}",
-                        operation,
-                        format_graph_error(status, &body)
-                    )));
+                    let message = format!("Failed to {}: {}", operation, format_graph_error(status, &body));
+                    // Typed so callers can tell "Graph no longer has this id"
+                    // (a moved or deleted message) from an outage.
+                    return Err(if status == StatusCode::NOT_FOUND {
+                        AppError::NotFound(message)
+                    } else {
+                        AppError::SyncError(message)
+                    });
                 }
                 Err(error) => {
                     if is_retryable_transport_error(&error)
@@ -1034,6 +1037,28 @@ impl EmailProvider for OutlookClient {
             }
         }
         Ok(None)
+    }
+
+    /// `PATCH /me/messages/{id}` with `isRead` (`Mail.ReadWrite`). Setting
+    /// the same value twice is a no-op at Graph, so it is safe to retry.
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        let url = format!("{}/me/messages/{}", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "isRead": read });
+        self.send_request_with_retry("set read state", |client, token| {
+            client.patch(&url).bearer_auth(token).json(&payload)
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
+    /// `DELETE /me/messages/{id}`: the app's delete action is the reversible
+    /// one, so the message stays recoverable from the account's own clients.
+    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+        let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "destinationId": "deleteditems" });
+        self.send_post_json_no_resend(&url, &payload, "trash message").await?;
+        Ok(())
     }
 
     async fn list_mailbox_messages(
@@ -1990,6 +2015,106 @@ mod tests {
         let msg = format_graph_error(StatusCode::BAD_GATEWAY, "nginx fail");
         assert!(msg.contains("502"));
         assert!(msg.contains("nginx fail"));
+    }
+
+    #[tokio::test]
+    async fn marking_read_patches_is_read_on_the_message() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/m-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-1"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::set_read_state(&client, "m-1", true)
+            .await
+            .expect("mark read");
+        EmailProvider::set_read_state(&client, "m-1", false)
+            .await
+            .expect("mark unread");
+
+        let requests = server.received_requests().await.expect("requests");
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).expect("json body"))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                serde_json::json!({ "isRead": true }),
+                serde_json::json!({ "isRead": false })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn trashing_moves_the_message_to_deleted_items() {
+        // A move, never `DELETE /me/messages/{id}`: the message must stay
+        // recoverable from the account's Deleted Items.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-3/move"))
+            .respond_with(ResponseTemplate::new(201).set_body_raw(r#"{"id":"m-3-moved"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::trash_message(&client, "m-3", None).await.expect("trash");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "deleteditems" }));
+    }
+
+    #[tokio::test]
+    async fn a_write_to_a_message_graph_no_longer_has_is_reported_as_not_found() {
+        // Graph re-keys a message on every move, so an id stored before the
+        // user filed the message elsewhere answers 404. Callers tell that
+        // apart from an outage: it is not worth retrying.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let err = EmailProvider::set_read_state(&client, "stale-id", true)
+            .await
+            .expect_err("404");
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_trash_that_fails_with_a_server_error_is_not_resent() {
+        // The move may have been carried out; replaying it would address an id
+        // Graph has already retired.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        assert!(EmailProvider::trash_message(&client, "m-3", None).await.is_err());
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
     }
 
     #[tokio::test]

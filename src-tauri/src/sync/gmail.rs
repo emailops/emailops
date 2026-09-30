@@ -1763,7 +1763,7 @@ impl EmailProvider for GmailClient {
         self.set_read_state(message_id, read).await
     }
 
-    async fn trash_message(&self, message_id: &str) -> Result<()> {
+    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
         self.trash_message(message_id).await
     }
 

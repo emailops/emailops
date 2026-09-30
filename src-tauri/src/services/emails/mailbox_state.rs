@@ -105,7 +105,8 @@ pub async fn mark_as_read_with_provider(
 
 /// Delete one email: move it to the provider's Trash first, then soft-delete
 /// the local row. A provider failure aborts the whole operation so the user
-/// keeps seeing a message that still exists in their account.
+/// keeps seeing a message that still exists in their account — except "no
+/// such message", which means the account already lost it.
 pub async fn delete_email_with_provider(
     db: &Arc<Database>,
     email_id: &str,
@@ -114,7 +115,14 @@ pub async fn delete_email_with_provider(
     let email = load_email(db, email_id)?;
 
     if let Some(provider) = pushable(provider, &email) {
-        provider.trash_message(&email.id).await?;
+        match provider.trash_message(&email.id, email.message_id.as_deref()).await {
+            Ok(()) => {}
+            // Already deleted, or moved and re-keyed, in another client: there
+            // is nothing left under this id to trash, and keeping the row
+            // would leave a message the user can never get rid of.
+            Err(AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
     }
     db.delete_email(email_id)
 }
@@ -289,7 +297,8 @@ mod tests {
         assert_eq!(
             provider.mailbox_ops(),
             vec![FakeMailboxOp::Trash {
-                message_id: "m-1".to_string()
+                message_id: "m-1".to_string(),
+                message_id_header: Some("<m-1@example.com>".to_string()),
             }]
         );
         assert!(inbox_ids(&db, "acc-1").is_empty(), "row no longer listed");
@@ -312,6 +321,20 @@ mod tests {
             vec!["m-1".to_string()],
             "the message is still there after a failed trash"
         );
+    }
+
+    #[tokio::test]
+    async fn delete_goes_through_when_the_provider_no_longer_has_the_message() {
+        // Deleted or moved in another client: a refusal here would leave a row
+        // the user can never delete.
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", true)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes_as_not_found();
+
+        delete(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert!(inbox_ids(&db, "acc-1").is_empty());
     }
 
     #[tokio::test]

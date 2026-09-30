@@ -17,10 +17,11 @@ pub fn provider_supports_drafts(provider: &str) -> bool {
 /// Whether a provider supports server-side mailbox-state writes — pushing
 /// read/unread and delete back to the account so the change is visible in the
 /// provider's own clients. Gmail implements them via `messages.modify` /
-/// `messages.trash`; IMAP (flags + Trash move) and Outlook (Graph `isRead` +
-/// move) are not wired yet, so their mailbox state stays local to EmailOps.
+/// `messages.trash`, IMAP via `UID STORE` on `\Seen` and a move to the Trash
+/// folder, Outlook via Graph `isRead` and a move to `deleteditems`. An unknown
+/// provider keeps its mailbox state local to EmailOps.
 pub fn provider_supports_mailbox_writes(provider: &str) -> bool {
-    matches!(provider, "gmail")
+    matches!(provider, "gmail" | "imap" | "outlook")
 }
 
 /// An attachment to include in an outgoing email.
@@ -537,7 +538,15 @@ pub trait EmailProvider: Send + Sync {
 
     /// Move one message to the provider's Trash. Recoverable by the user from
     /// the provider's own UI — this is not a permanent delete.
-    async fn trash_message(&self, _message_id: &str) -> Result<()> {
+    ///
+    /// `message_id_header` is the message's RFC 5322 Message-ID when known.
+    /// IMAP addresses a message by a UID that a server-side mailbox rebuild
+    /// can hand to a different message, so it checks the header before moving
+    /// anything; Gmail and Graph ids are never reused and ignore it.
+    ///
+    /// `AppError::NotFound` means the provider no longer has the message under
+    /// this id, so there is nothing left to trash.
+    async fn trash_message(&self, _message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
         Err(AppError::InvalidInput(
             "mailbox state writes are not supported by this provider".to_string(),
         ))
@@ -670,9 +679,9 @@ pub struct FakeEmailProvider {
     /// Provider calls in the order they were made, so a test can assert on the
     /// shape of a sync — e.g. that downloading starts before listing ends.
     calls: std::sync::Arc<std::sync::RwLock<Vec<String>>>,
-    /// When `Some`, every mailbox-state write fails with this message instead
-    /// of being recorded — simulates an offline or refusing provider.
-    mailbox_write_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, every mailbox-state write fails instead of being recorded
+    /// — simulates an offline or refusing provider, or a message it lost.
+    mailbox_write_failure: std::sync::RwLock<Option<FakeWriteFailure>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
@@ -681,11 +690,27 @@ pub struct FakeEmailProvider {
     attachment_listing: std::sync::RwLock<Option<Option<Vec<String>>>>,
 }
 
+/// How [`FakeEmailProvider`] fails a mailbox-state write.
+#[derive(Debug, Clone)]
+enum FakeWriteFailure {
+    /// Transient: offline, 5xx, a refusing server.
+    Unavailable(String),
+    /// The provider no longer has the message under that id.
+    MessageGone,
+}
+
 /// A mailbox-state call recorded by [`FakeEmailProvider`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeMailboxOp {
-    SetReadState { message_id: String, read: bool },
-    Trash { message_id: String },
+    SetReadState {
+        message_id: String,
+        read: bool,
+    },
+    Trash {
+        message_id: String,
+        /// The Message-ID header the caller vouched for the message with.
+        message_id_header: Option<String>,
+    },
 }
 
 /// A folder-management call recorded by [`FakeEmailProvider`].
@@ -791,7 +816,24 @@ impl FakeEmailProvider {
         *self
             .mailbox_write_failure
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(message.into());
+            .unwrap_or_else(PoisonError::into_inner) = Some(FakeWriteFailure::Unavailable(message.into()));
+    }
+
+    /// Make every subsequent mailbox-state write answer "no such message",
+    /// as a provider does once the message was deleted or re-keyed upstream.
+    pub fn fail_mailbox_writes_as_not_found(&self) {
+        *self
+            .mailbox_write_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(FakeWriteFailure::MessageGone);
+    }
+
+    /// Let mailbox-state writes succeed again.
+    pub fn restore_mailbox_writes(&self) {
+        *self
+            .mailbox_write_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// `Err` when a failure has been configured, `Ok` otherwise.
@@ -802,7 +844,8 @@ impl FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
         {
-            Some(message) => Err(AppError::SyncError(message)),
+            Some(FakeWriteFailure::Unavailable(message)) => Err(AppError::SyncError(message)),
+            Some(FakeWriteFailure::MessageGone) => Err(AppError::NotFound("Fake message is gone".to_string())),
             None => Ok(()),
         }
     }
@@ -1224,7 +1267,7 @@ impl EmailProvider for FakeEmailProvider {
         Ok(())
     }
 
-    async fn trash_message(&self, message_id: &str) -> Result<()> {
+    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
         self.mailbox_write_gate()?;
         self.messages
             .write()
@@ -1235,6 +1278,7 @@ impl EmailProvider for FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .push(FakeMailboxOp::Trash {
                 message_id: message_id.to_string(),
+                message_id_header: message_id_header.map(str::to_string),
             });
         Ok(())
     }
@@ -1708,7 +1752,7 @@ mod tests {
         // silently pretend the push happened — callers gate on
         // `provider_supports_mailbox_writes` and keep the change local instead.
         let p = BareProvider;
-        for result in [p.set_read_state("m", true).await, p.trash_message("m").await] {
+        for result in [p.set_read_state("m", true).await, p.trash_message("m", None).await] {
             match result {
                 Err(crate::models::error::AppError::InvalidInput(msg)) => {
                     assert!(msg.contains("not supported"), "unexpected message: {msg}");
@@ -1719,13 +1763,14 @@ mod tests {
     }
 
     #[test]
-    fn only_gmail_supports_server_side_mailbox_writes() {
-        assert!(provider_supports_mailbox_writes("gmail"));
+    fn every_shipped_provider_supports_server_side_mailbox_writes() {
+        for provider in ["gmail", "imap", "outlook"] {
+            assert!(provider_supports_mailbox_writes(provider), "{provider}");
+        }
         assert!(
-            !provider_supports_mailbox_writes("imap"),
-            "IMAP flag/move write-back is not implemented yet — must stay local-only"
+            !provider_supports_mailbox_writes("exchange-ews"),
+            "a provider nobody wired must stay local-only"
         );
-        assert!(!provider_supports_mailbox_writes("outlook"));
     }
 
     #[tokio::test]
@@ -1733,7 +1778,7 @@ mod tests {
         let p = FakeEmailProvider::new("me@example.com", "Me");
         p.set_read_state("m-1", true).await.unwrap();
         p.set_read_state("m-2", false).await.unwrap();
-        p.trash_message("m-1").await.unwrap();
+        p.trash_message("m-1", Some("<m-1@example.com>")).await.unwrap();
 
         assert_eq!(
             p.mailbox_ops(),
@@ -1747,7 +1792,8 @@ mod tests {
                     read: false
                 },
                 FakeMailboxOp::Trash {
-                    message_id: "m-1".to_string()
+                    message_id: "m-1".to_string(),
+                    message_id_header: Some("<m-1@example.com>".to_string()),
                 },
             ]
         );
@@ -1758,9 +1804,23 @@ mod tests {
         let p = FakeEmailProvider::new("me@example.com", "Me");
         p.fail_mailbox_writes("mailbox is over quota");
 
-        let err = p.trash_message("m-1").await.unwrap_err();
+        let err = p.trash_message("m-1", None).await.unwrap_err();
         assert!(err.to_string().contains("over quota"), "unexpected error: {err}");
         assert!(p.mailbox_ops().is_empty(), "a failed write must not be recorded");
+    }
+
+    #[tokio::test]
+    async fn fake_provider_can_report_a_message_it_no_longer_has() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.fail_mailbox_writes_as_not_found();
+        assert!(matches!(
+            p.set_read_state("m-1", true).await,
+            Err(AppError::NotFound(_))
+        ));
+
+        p.restore_mailbox_writes();
+        p.set_read_state("m-1", true).await.unwrap();
+        assert_eq!(p.mailbox_ops().len(), 1);
     }
 
     #[test]

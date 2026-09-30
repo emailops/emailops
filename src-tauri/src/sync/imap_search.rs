@@ -33,6 +33,9 @@
 //!   race against another client mutating the mailbox at that instant, so an
 //!   immediate retry essentially never repeats it.
 //!
+//! - [`uid_store_seen`]: sends the command raw and checks only the tagged
+//!   completion, for the same reason as [`select`].
+//!
 //! Every body fetch here goes out as [`FETCH_BODY_PEEK`]. Read its docs before
 //! changing the attribute: the non-`PEEK` form mutates the user's mailbox.
 
@@ -97,6 +100,21 @@ pub(crate) fn uid_copy<T: Read + Write>(
     session
         .run_command_and_check_ok(format!("UID COPY {uid_set} {quoted}"))
         .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {e}")))
+}
+
+/// Set or clear `\Seen` on one message: `UID STORE <uid> ±FLAGS.SILENT (\Seen)`.
+///
+/// Goes out as a raw command rather than through the crate's `uid_store`,
+/// which parses the reply as FETCH data and so fails on any interleaved
+/// untagged response (see the module docs). `.SILENT` asks the server not to
+/// echo the new flags; a server that echoes them anyway is tolerated. A UID
+/// the mailbox no longer holds is not an error in IMAP — the command succeeds
+/// and changes nothing.
+pub(crate) fn uid_store_seen<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, seen: bool) -> Result<()> {
+    let sign = if seen { '+' } else { '-' };
+    session
+        .run_command_and_check_ok(format!("UID STORE {uid} {sign}FLAGS.SILENT (\\Seen)"))
+        .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {e}")))
 }
 
 /// Render a mailbox name as an IMAP quoted string. A raw line break would let
@@ -539,6 +557,46 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("line break"), "got: {err}");
+    }
+
+    #[test]
+    fn marking_read_adds_the_seen_flag_without_asking_for_a_fetch_reply() {
+        let (mut session, sent) = recorded_session_for("a2 OK Store completed.\r\n");
+        assert!(uid_store_seen(&mut session, 91, true).is_ok());
+        assert!(
+            sent.text().contains("UID STORE 91 +FLAGS.SILENT (\\Seen)\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    #[test]
+    fn marking_unread_removes_the_seen_flag() {
+        let (mut session, sent) = recorded_session_for("a2 OK Store completed.\r\n");
+        assert!(uid_store_seen(&mut session, 91, false).is_ok());
+        assert!(
+            sent.text().contains("UID STORE 91 -FLAGS.SILENT (\\Seen)\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    /// Servers that ignore `.SILENT`, or another client touching the mailbox,
+    /// interleave a FETCH; the crate's typed `uid_store` rejects that.
+    #[test]
+    fn a_flag_store_survives_an_interleaved_fetch() {
+        let response = "* 7 FETCH (FLAGS (\\Seen) UID 91)\r\na2 OK Store completed.\r\n";
+        assert!(uid_store_seen(&mut session_for(response), 91, true).is_ok());
+    }
+
+    #[test]
+    fn a_refused_flag_store_is_an_error() {
+        // A read-only mailbox: the push did not happen and must be retried.
+        let err = match uid_store_seen(&mut session_for("a2 NO [READ-ONLY] Mailbox is read-only\r\n"), 91, true) {
+            Ok(()) => panic!("expected a failure"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IMAP STORE failed"), "got: {err}");
     }
 
     /// The same bug class, reproduced against `Session::uid_fetch`: an
