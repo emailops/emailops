@@ -52,3 +52,16 @@ Cross-cutting dimensions every category should eventually cover:
 - Pick the `tier`: `smoke` (fast, run on every change), `full` (the rest), `lab`
   (exploratory, expected to be flaky while a behaviour is being worked on).
 - Run it alone first: `make cli-eval ARGS="--case <id> --json --judge"`.
+
+## Context window and multi-turn cases
+
+- `n_ctx: 8192` runs the case with that context window on the embedded model, over the
+  stored setting (which is not changed). `--n-ctx <tokens>` on `emailops-cli eval` and
+  `chat_eval` does the same for a whole run; a case's own value wins. Use 8192 for the
+  tier a machine under 16 GB gets, 16384 for 16–24 GB.
+- `previous_questions:` lists questions asked earlier in the same conversation. Each runs
+  as a real turn, so the evaluated `question` replays them as the app would. The checks
+  apply to the final turn only.
+- Every case carries the `prompt_fits_window` check: it fails when a model call reports
+  tokens dropped from the front of its prompt, or the context budget could not fit it.
+  `cases/context_budget.yaml` holds the cases that overflow on purpose.

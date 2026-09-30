@@ -940,6 +940,83 @@ WORK_THREADS_EN += [
            days_ago=14),
 ]
 
+# Long mail, for the chat's context budget: three issues of a technical digest,
+# each ~13k characters, so a turn that retrieves or reads them overflows a
+# small context window unless the prompt is cut to fit. Every issue opens with
+# a backups tip and buries one distinctive fact in a late section, so a case
+# can ask for either. `updates`, so the chat's default categories reach them;
+# old enough to stay out of the "today" / "this week" cases.
+_DIGEST_TOPICS = [
+    "Postgres", "SQLite", "Reverse proxies", "TLS certificates", "DNS", "Object storage",
+    "Container images", "Log shipping", "Metrics", "Alerting", "Queues", "Cron jobs",
+    "Secrets", "SSH hardening", "Firewalls", "CDN caching", "Email deliverability",
+    "Load testing", "Schema migrations", "Feature flags", "Rollbacks", "Cost control",
+    "Status pages", "On-call", "Dependency updates", "Reader questions",
+]
+
+
+def _digest_body(issue: int, backups_tip: str, late_fact: tuple[str, str]) -> str:
+    """One issue of the digest: an intro, a backups tip, then one short section
+    per topic. `late_fact` is (topic, sentence): that topic's section carries
+    the sentence instead of the generic text."""
+    parts = [
+        f"Indie Infra Weekly — issue #{issue}\n\n"
+        "A long read for people who run their own servers. This week: backups, "
+        "then one note per topic.\n\n"
+        f"Backups\n{backups_tip}"
+    ]
+    for n, topic in enumerate(_DIGEST_TOPICS, start=1):
+        if topic == late_fact[0]:
+            text = late_fact[1]
+        else:
+            text = (
+                f"Nothing dramatic in {topic.lower()} for issue #{issue}, which is how we like it. "
+                f"Two readers wrote in about their {topic.lower()} setup after last week's note, and "
+                f"both settled on the boring option: fewer moving parts, one page of runbook, and a "
+                f"calendar reminder to look at it again in a quarter. If your {topic.lower()} "
+                f"configuration has not been read by a second person this year, item {n} on this "
+                f"issue's checklist is to fix that before adding anything new."
+            )
+        parts.append(f"{n}. {topic}\n{text}")
+    parts.append("That is all for this issue. Reply to this email with questions for the next one.")
+    return "\n\n".join(parts)
+
+
+WORK_THREADS_EN += [
+    Thread("Indie Infra Weekly", "digest@indieinfraweekly.example",
+           "Indie Infra Weekly #87: restores you have actually tested", "updates",
+           [("them", _digest_body(
+               87,
+               "Test a restore every month, not just the backup job: on the first Monday, "
+               "run a full restore into a scratch directory and open one file from it.",
+               ("Schema migrations",
+                "Before a bulk import on Postgres 18, raise max_wal_size to 8GB and put it back "
+                "afterwards; the default forces a checkpoint every few seconds and the import "
+                "takes three times as long.")))],
+           days_ago=26),
+    Thread("Indie Infra Weekly", "digest@indieinfraweekly.example",
+           "Indie Infra Weekly #88: one copy stays offline", "updates",
+           [("them", _digest_body(
+               88,
+               "Keep one copy offline: a weekly rsync to an encrypted USB disk that is "
+               "unplugged the rest of the week survives the mistakes an online copy repeats.",
+               ("Rollbacks",
+                "For SQLite-backed services, set PRAGMA journal_size_limit to 64 MB so the WAL "
+                "file shrinks back after a rollback instead of staying at its high-water mark.")))],
+           days_ago=19),
+    Thread("Indie Infra Weekly", "digest@indieinfraweekly.example",
+           "Indie Infra Weekly #89: encrypt before you upload", "updates",
+           [("them", _digest_body(
+               89,
+               "Encrypt before you upload: pipe the archive through age with a hardware-backed "
+               "key, so the storage provider only ever holds ciphertext.",
+               ("Load testing",
+                "PgBouncer 1.24 supports prepared statements in transaction pooling mode; "
+                "rerun last quarter's load test, because the connection count it needs drops "
+                "by about a third.")))],
+           days_ago=12),
+]
+
 PERSONAL_THREADS_EN: list[Thread] = [
     # Imported from the maintainer's mailbox, anonymised (see private-evals/imports/):
     # an airline e-ticket plus its check-in reminder, for single-fact questions.

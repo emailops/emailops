@@ -507,7 +507,8 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             cases_dir,
             judge,
             judge_model,
-        } => super::eval::run_eval(session, case, tier, cases_dir, judge, judge_model).await,
+            n_ctx,
+        } => super::eval::run_eval(session, case, tier, cases_dir, judge, judge_model, n_ctx).await,
     }
 }
 

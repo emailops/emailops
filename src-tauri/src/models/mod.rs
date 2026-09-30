@@ -1045,6 +1045,10 @@ pub struct LlmCallTrace {
     /// Embedded llama.cpp only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropped_front_tokens: Option<u32>,
+    /// Chars of the prompt this call was sent. With `prompt_tokens` it gives
+    /// the next turn its chars-per-token ratio (see `services::chat::budget`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_chars: Option<u32>,
     /// Messages sent to the LLM at this round, formatted for tracing.
     /// Only populated when the `tracing` feature is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1192,6 +1196,68 @@ pub struct ChatTrace {
     /// state (a form fill) and on traces written before it was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_page: Option<SearchPageTrace>,
+    /// What was cut from the prompt to fit the context window. `None` when
+    /// nothing was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<BudgetTrace>,
+}
+
+/// One thing the context budget cut from a chat prompt so it fits the window
+/// (see `services::chat::budget`). Listed in the order they are applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BudgetCut {
+    /// Earlier questions replayed without the emails they were asked with.
+    #[serde(rename_all = "camelCase")]
+    HistorySources { messages: u32 },
+    /// Earlier messages left out of the prompt altogether.
+    #[serde(rename_all = "camelCase")]
+    HistoryTurns { messages: u32 },
+    /// The open email thread, shown shorter than usual.
+    #[serde(rename_all = "camelCase")]
+    OpenThread { chars: u32 },
+    /// This turn's retrieved emails, each shown with a shorter excerpt.
+    #[serde(rename_all = "camelCase")]
+    SourceExcerpts { chars_per_email: u32 },
+    /// Retrieved emails left out of this turn's prompt.
+    #[serde(rename_all = "camelCase")]
+    SourcesDropped { emails: u32 },
+    /// Tool results of this turn, shortened.
+    #[serde(rename_all = "camelCase")]
+    ToolResults { results: u32, chars_dropped: u32 },
+}
+
+impl BudgetCut {
+    /// Whether the cut took something away from what THIS turn's answer rests
+    /// on, as opposed to older conversation history.
+    pub fn affects_answer(&self) -> bool {
+        !matches!(self, Self::HistorySources { .. } | Self::HistoryTurns { .. })
+    }
+}
+
+/// How a chat turn's prompt was fitted to the context window. Absent when
+/// nothing had to be cut.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetTrace {
+    /// The window the prompt was sized to.
+    pub n_ctx: u32,
+    /// Tokens kept free for the reply.
+    pub reply_reserve: u32,
+    /// Largest prompt estimate of the turn, after the cuts.
+    pub estimated_prompt_tokens: u32,
+    pub cuts: Vec<BudgetCut>,
+    /// False when the prompt still exceeded the window after every cut: the
+    /// provider truncated it (or refused it) on its own.
+    pub fits: bool,
+}
+
+impl BudgetTrace {
+    /// Whether the user should be told: the answer may rest on shortened
+    /// material, or the prompt did not fit at all.
+    pub fn affects_answer(&self) -> bool {
+        !self.fits || self.cuts.iter().any(BudgetCut::affects_answer)
+    }
 }
 
 /// A `search_emails` page, persisted on the trace: the call's arguments and
@@ -1235,6 +1301,8 @@ pub enum TraceStep {
     Help,
     /// The user skills applied before the model ran (`ChatTrace::applied_skills`).
     Skill,
+    /// What the context budget cut from the prompt (`ChatTrace::budget`).
+    Budget,
     #[serde(rename_all = "camelCase")]
     Llm {
         index: usize,

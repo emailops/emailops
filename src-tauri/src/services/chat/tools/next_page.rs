@@ -126,6 +126,7 @@ mod tests {
             applied_skills: Vec::new(),
             steps: Vec::new(),
             search_page: None,
+            budget: None,
         });
         message
     }

@@ -128,6 +128,7 @@ pub fn form_fill_trace(
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            prompt_chars: None,
             input: None,
             output: None,
         }],
@@ -136,6 +137,7 @@ pub fn form_fill_trace(
         applied_skills: Vec::new(),
         steps: Vec::new(),
         search_page: None,
+        budget: None,
     })
 }
 

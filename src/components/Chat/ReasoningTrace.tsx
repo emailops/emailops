@@ -1,8 +1,9 @@
+import type { TFunction } from 'i18next';
 import { Fragment, type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatLatency, tokensPerSecond } from '@/lib/reasoningTrace';
 import { buildFlow, type FlowPhase, type FlowStep } from '@/lib/traceFlow';
-import type { ChatMessage, ChatTrace } from '@/types';
+import type { BudgetCut, BudgetTrace, ChatMessage, ChatTrace } from '@/types';
 
 /** Re-exported so existing callers keep a single import site for latency formatting. */
 export { formatLatency };
@@ -48,6 +49,31 @@ function Pre({ text }: { text: string }) {
   );
 }
 
+/** One cut, in words. */
+function budgetCutLabel(cut: BudgetCut, t: TFunction<['chat']>): string {
+  switch (cut.kind) {
+    case 'historySources':
+      return t('chat:reasoning.flow.budget.cut.historySources', { n: cut.messages });
+    case 'historyTurns':
+      return t('chat:reasoning.flow.budget.cut.historyTurns', { n: cut.messages });
+    case 'openThread':
+      return t('chat:reasoning.flow.budget.cut.openThread', { n: cut.chars });
+    case 'sourceExcerpts':
+      return t('chat:reasoning.flow.budget.cut.sourceExcerpts', { n: cut.charsPerEmail });
+    case 'sourcesDropped':
+      return t('chat:reasoning.flow.budget.cut.sourcesDropped', { n: cut.emails });
+    case 'toolResults':
+      return t('chat:reasoning.flow.budget.cut.toolResults', { n: cut.results, chars: cut.charsDropped });
+  }
+}
+
+/** Every cut of a turn, plus the overflow when it still did not fit. */
+function budgetSummary(budget: BudgetTrace, t: TFunction<['chat']>): string {
+  const parts = budget.cuts.map((cut) => budgetCutLabel(cut, t));
+  if (!budget.fits) parts.push(t('chat:reasoning.flow.budget.overflow', { n: budget.estimatedPromptTokens }));
+  return parts.join(' · ');
+}
+
 /** The title of a step: what ran, in words, plus its short result. */
 function StepTitle({ step, trace }: { step: FlowStep; trace: ChatTrace }) {
   const { t } = useTranslation(['chat']);
@@ -73,6 +99,16 @@ function StepTitle({ step, trace }: { step: FlowStep; trace: ChatTrace }) {
     case 'llmRound':
       title = t('chat:reasoning.flow.kind.llmRound', { n: step.round ?? 0 });
       break;
+    case 'budget':
+      title = (
+        <>
+          {t('chat:reasoning.flow.kind.budget')}{' '}
+          <span className="text-gray-600">
+            ({t('chat:reasoning.flow.budget.window', { n: trace.budget?.nCtx ?? 0 })})
+          </span>
+        </>
+      );
+      break;
     default:
       title = t(`chat:reasoning.flow.kind.${step.kind}` as const);
   }
@@ -88,6 +124,9 @@ function StepTitle({ step, trace }: { step: FlowStep; trace: ChatTrace }) {
         <span className="font-mono text-[12px] text-gray-700 break-all">
           {step.kind === 'router' ? `${t('chat:reasoning.flow.keywords')}: ${step.summary}` : step.summary}
         </span>
+      )}
+      {step.kind === 'budget' && trace.budget && (
+        <span className="text-gray-700">{budgetSummary(trace.budget, t)}</span>
       )}
       {step.findings != null && (
         <span className="text-gray-600">→ {t('chat:reasoning.flow.findings', { n: step.findings })}</span>

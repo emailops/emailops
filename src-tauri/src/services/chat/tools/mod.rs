@@ -299,6 +299,48 @@ pub trait Tool: Send + Sync {
     async fn execute(&self, ctx: &ToolCtx<'_>, args: serde_json::Value) -> Result<ToolOutput, ToolError>;
 }
 
+/// How much of the tool catalogue a prompt can afford.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogDetail {
+    /// Every tool with its full description and parameter notes.
+    Full,
+    /// For a small context window: each tool's one-line summary, and only the
+    /// first sentence of every parameter note.
+    Compact,
+}
+
+/// The first sentence of `text`, its full stop included. An abbreviation's
+/// stop ("e.g.", "i.e.") does not end one.
+fn first_sentence(text: &str) -> &str {
+    for (i, _) in text.match_indices('.') {
+        let ends_here = text[i + 1..].chars().next().is_none_or(|c| c == ' ');
+        let abbreviation = text[..i].ends_with("e.g") || text[..i].ends_with("i.e");
+        if ends_here && !abbreviation {
+            return &text[..=i];
+        }
+    }
+    text
+}
+
+/// `schema` with every `description` cut to its first sentence.
+fn compact_schema(schema: &serde_json::Value) -> serde_json::Value {
+    match schema {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .map(|(key, value)| {
+                let value = match value.as_str() {
+                    Some(text) if key == "description" => serde_json::Value::from(first_sentence(text)),
+                    _ => compact_schema(value),
+                };
+                (key.clone(), value)
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into(),
+        serde_json::Value::Array(items) => items.iter().map(compact_schema).collect(),
+        other => other.clone(),
+    }
+}
+
 /// Collection of all tools the chat can call. Built once at startup
 /// (`AppState::tool_registry`) and shared across every chat turn.
 pub struct ToolRegistry {
@@ -327,17 +369,27 @@ impl ToolRegistry {
     /// `is_available(&db)` so the LLM never sees tools whose backing feature
     /// is turned off.
     pub fn definitions(&self, db: &Database) -> Vec<serde_json::Value> {
+        self.definitions_with(db, CatalogDetail::Full)
+    }
+
+    /// [`definitions`](Self::definitions) at the given level of detail.
+    pub fn definitions_with(&self, db: &Database, detail: CatalogDetail) -> Vec<serde_json::Value> {
         let mut defs: Vec<_> = self
             .tools
             .values()
             .filter(|t| t.is_available(db))
             .map(|t| {
+                let schema = t.parameters_schema_for(db);
+                let (description, parameters) = match detail {
+                    CatalogDetail::Full => (t.description(), schema),
+                    CatalogDetail::Compact => (t.prompt_summary(), compact_schema(&schema)),
+                };
                 serde_json::json!({
                     "type": "function",
                     "function": {
                         "name": t.name(),
-                        "description": t.description(),
-                        "parameters": t.parameters_schema_for(db),
+                        "description": description,
+                        "parameters": parameters,
                     },
                 })
             })
@@ -384,6 +436,20 @@ impl ToolRegistry {
     /// derived from `parameters_schema()`. Adding a new tool automatically
     /// updates the prompt — no template edit needed.
     pub fn render_system_prompt_section(&self, db: &Database) -> String {
+        self.render_system_prompt_section_with(db, CatalogDetail::Full, false)
+    }
+
+    /// [`render_system_prompt_section`](Self::render_system_prompt_section)
+    /// at the given level of detail. A compact section states each tool once:
+    /// as its schema in the `<tools>` block, or — when the provider is sent
+    /// the schemas through its API (`schemas_via_api`) — as its summary line.
+    pub fn render_system_prompt_section_with(
+        &self,
+        db: &Database,
+        detail: CatalogDetail,
+        schemas_via_api: bool,
+    ) -> String {
+        let compact = detail == CatalogDetail::Compact;
         let mut entries: Vec<(&'static str, String)> = self
             .tools
             .values()
@@ -401,10 +467,13 @@ impl ToolRegistry {
             })
             .collect();
         entries.sort_by_key(|(name, _)| *name);
-        let mut out = String::from("Tools:\n");
-        for (_, line) in entries {
-            out.push_str(&line);
-            out.push('\n');
+        let mut out = String::new();
+        if !compact || schemas_via_api {
+            out.push_str("Tools:\n");
+            for (_, line) in entries {
+                out.push_str(&line);
+                out.push('\n');
+            }
         }
 
         // The skills index, while `load_skill` is on the menu. It depends only
@@ -427,7 +496,11 @@ impl ToolRegistry {
         // inconsistent tool-call shapes (sometimes `tool_call: name(args)`,
         // sometimes `<tool_call>{…}</tool_call>` with the `name` field
         // dropped) and turns silently fail to produce an answer.
-        let defs = self.definitions(db);
+        let defs = if compact && schemas_via_api {
+            Vec::new()
+        } else {
+            self.definitions_with(db, detail)
+        };
         if !defs.is_empty() {
             out.push_str("\n<tools>\n");
             // One JSON object per line — easier for the model to read and
@@ -3495,5 +3568,124 @@ mod tests {
                 names,
             );
         }
+    }
+    // ── Compact catalogue (small context windows) ───────────────────────────
+
+    struct VerboseTool;
+
+    #[async_trait]
+    impl Tool for VerboseTool {
+        fn name(&self) -> &'static str {
+            "verbose"
+        }
+        fn description(&self) -> &'static str {
+            "A long description. It explains the tool over several sentences that a small window cannot afford."
+        }
+        fn prompt_summary(&self) -> &'static str {
+            "does the thing"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "since": { "type": "string", "description": "Only mail on or after this date. ISO-8601, e.g. '2026-04-17'." },
+                    "mode": { "type": "string", "enum": ["a", "b"], "description": "How it matches (e.g. by word or by meaning). 'a' is the default." },
+                    "plain": { "type": "integer" }
+                },
+                "required": ["since"],
+            })
+        }
+        async fn execute(&self, _ctx: &ToolCtx<'_>, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+            Ok(ToolOutput::text("ran"))
+        }
+    }
+
+    #[test]
+    fn first_sentence_stops_at_the_first_full_stop_that_ends_one() {
+        for (text, want) in [
+            ("One. Two. Three.", "One."),
+            ("No stop at all", "No stop at all"),
+            ("Ends here.", "Ends here."),
+            (
+                "Matches a prefix (e.g. 'alice') or a name. More.",
+                "Matches a prefix (e.g. 'alice') or a name.",
+            ),
+            ("The id, i.e. the value shown. More.", "The id, i.e. the value shown."),
+            ("Version 1.5 applies. More.", "Version 1.5 applies."),
+            ("", ""),
+        ] {
+            assert_eq!(first_sentence(text), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn compact_definitions_carry_the_summary_and_first_sentences() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(VerboseTool)]);
+        let defs = registry.definitions_with(&db, CatalogDetail::Compact);
+        let function = &defs[0]["function"];
+        assert_eq!(function["name"], "verbose");
+        assert_eq!(function["description"], "does the thing");
+        let props = &function["parameters"]["properties"];
+        assert_eq!(props["since"]["description"], "Only mail on or after this date.");
+        assert_eq!(
+            props["mode"]["description"],
+            "How it matches (e.g. by word or by meaning)."
+        );
+        // Everything that is not a description is untouched.
+        assert_eq!(props["mode"]["enum"], serde_json::json!(["a", "b"]));
+        assert_eq!(props["plain"], serde_json::json!({ "type": "integer" }));
+        assert_eq!(function["parameters"]["required"], serde_json::json!(["since"]));
+    }
+
+    #[test]
+    fn full_definitions_are_what_they_always_were() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(VerboseTool)]);
+        assert_eq!(
+            registry.definitions_with(&db, CatalogDetail::Full),
+            registry.definitions(&db)
+        );
+        assert!(registry.definitions(&db)[0]["function"]["description"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("A long description.")));
+        assert_eq!(
+            registry.render_system_prompt_section_with(&db, CatalogDetail::Full, true),
+            registry.render_system_prompt_section(&db)
+        );
+    }
+
+    #[test]
+    fn a_compact_section_states_each_tool_once_as_its_schema() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(VerboseTool)]);
+        let section = registry.render_system_prompt_section_with(&db, CatalogDetail::Compact, false);
+        assert!(!section.contains("Tools:\n"), "no summary list: {section}");
+        assert!(section.contains("<tools>\n") && section.contains("</tools>"));
+        assert!(section.contains("\"description\":\"does the thing\""));
+        assert!(!section.contains("several sentences"));
+    }
+
+    #[test]
+    fn a_compact_section_for_an_api_that_is_sent_the_schemas_lists_summaries_only() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = ToolRegistry::with_tools(vec![Arc::new(VerboseTool)]);
+        let section = registry.render_system_prompt_section_with(&db, CatalogDetail::Compact, true);
+        assert!(
+            section.starts_with("Tools:\n  - verbose(mode?, plain?, since): does the thing\n"),
+            "{section}"
+        );
+        assert!(!section.contains("<tools>"));
+    }
+
+    #[test]
+    fn the_compact_catalogue_of_the_shipped_tools_is_at_most_half_the_full_one() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = default_registry();
+        let full = registry.render_system_prompt_section(&db).len();
+        let compact = registry
+            .render_system_prompt_section_with(&db, CatalogDetail::Compact, false)
+            .len();
+        assert!(compact * 2 <= full, "compact {compact} chars, full {full}");
     }
 }

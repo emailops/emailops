@@ -82,6 +82,20 @@ pub struct EvalCase {
     #[serde(default)]
     pub model: Option<String>,
 
+    /// Context window, in tokens, the embedded model runs this case with —
+    /// over the stored `chat.n_ctx` preference, which is left untouched. Use
+    /// it to pin a case to the 8k tier a machine under 16 GB gets. Ignored by
+    /// the HTTP providers, which have their own window.
+    #[serde(default)]
+    pub n_ctx: Option<u32>,
+
+    /// Questions asked, in order, in the same conversation before `question`.
+    /// Each runs as a real turn, so the evaluated turn replays them the way
+    /// the app would — emails they retrieved included. Every check applies to
+    /// the final turn only.
+    #[serde(default)]
+    pub previous_questions: Vec<String>,
+
     /// Account override for this case — either the account id or the account's
     /// email address. When set, overrides the CLI --account flag and the
     /// auto-resolved default. Used so cases can target the mailbox where the
@@ -328,6 +342,26 @@ mod tests {
         assert_eq!(c.skills.len(), 1);
         assert_eq!(c.skills[0].name, "vendor-support");
         assert_eq!(c.skills[0].body, "Step one.");
+    }
+
+    #[test]
+    fn a_case_runs_single_turn_at_the_configured_window_unless_it_says_otherwise() {
+        let c = parse_case("- id: t\n  question: q\n");
+        assert_eq!(c.n_ctx, None);
+        assert!(c.previous_questions.is_empty());
+
+        let c = parse_case(
+            r#"
+- id: t
+  question: "and the third one?"
+  n_ctx: 8192
+  previous_questions:
+    - "what arrived today?"
+    - "and yesterday?"
+"#,
+        );
+        assert_eq!(c.n_ctx, Some(8192));
+        assert_eq!(c.previous_questions, vec!["what arrived today?", "and yesterday?"]);
     }
 
     #[test]

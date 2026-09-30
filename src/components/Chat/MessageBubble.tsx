@@ -4,6 +4,7 @@ import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { errorText, isAppErrorPayload } from '@/lib/errors';
 import { formatDuration, remainingSeconds } from '@/lib/researchTime';
+import { budgetAffectsAnswer } from '@/lib/traceFlow';
 import { useChatStore } from '@/stores/chatStore';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessage, ChatPhase } from '@/types';
@@ -34,6 +35,9 @@ interface MessageBubbleProps {
   /** A turn is already in flight — the retry button stays visible but inert
    *  rather than queueing a second turn the store would drop anyway. */
   isSending?: boolean;
+  /** Open Settings → AI, where the context window is set. Without it the
+   *  context-budget note is shown with no button. */
+  onOpenAiSettings?: () => void;
 }
 
 /** LM Studio-style "Processing…" status: a spinner plus a localized label for
@@ -318,6 +322,7 @@ export function MessageBubble({
   onReject,
   isRejected,
   isSending,
+  onOpenAiSettings,
 }: MessageBubbleProps) {
   const { t } = useTranslation(['chat']);
   const isUser = message.role === 'user';
@@ -413,6 +418,29 @@ export function MessageBubble({
                 </svg>
                 {t('chat:sources.showInList', { count: referencedEmailIds.length })}
               </button>
+            )}
+            {!isStreaming && budgetAffectsAnswer(message.trace?.budget) && (
+              <div
+                data-testid="chat-budget-notice"
+                data-variant={message.trace?.budget?.fits === false ? 'overflow' : 'cut'}
+                className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900"
+              >
+                <span>
+                  {message.trace?.budget?.fits === false
+                    ? t('chat:message.budgetOverflow')
+                    : t('chat:message.budgetNotice')}
+                </span>
+                {onOpenAiSettings && (
+                  <button
+                    type="button"
+                    data-testid="chat-budget-settings"
+                    onClick={onOpenAiSettings}
+                    className="ml-auto flex-shrink-0 rounded border border-amber-300 px-1.5 py-0.5 font-medium hover:bg-amber-100"
+                  >
+                    {t('chat:message.budgetSettings')}
+                  </button>
+                )}
+              </div>
             )}
             {!isStreaming && message.trace && <ReasoningSection trace={message.trace} />}
             {!isStreaming && hasAnswer && onReject && !isRejected && (

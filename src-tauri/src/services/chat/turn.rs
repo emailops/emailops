@@ -20,6 +20,9 @@ use crate::models::{
 use crate::services::ai::AiService;
 use crate::util::html::strip_html_for_fts;
 
+use super::budget::{
+    describe_cuts, plan_prompt, Estimator, HistoryItem, PromptParts, PromptPlan, SourceItem, TurnBudget,
+};
 use super::conversations::{derive_title, title_is_default};
 use super::retrieval::{
     mark_relevant_region, retrieve_context_full, smart_body_slice, smart_body_slice_indexed, ScoredEmail,
@@ -241,6 +244,263 @@ pub fn build_prompt_with_thread(
     tools_section: &str,
     ambient_thread: Option<&str>,
 ) -> Vec<(String, String)> {
+    build_prompt_fitted(
+        sources,
+        history,
+        user_question,
+        language,
+        user_email,
+        system_template,
+        tools_section,
+        ambient_thread,
+        None,
+    )
+}
+
+/// What an earlier question replays as once the context budget has dropped
+/// the emails it was asked with.
+const HISTORY_SOURCES_DROPPED_NOTE: &str =
+    "[The emails shown with this earlier question were left out to save space. Search again if you need them.]";
+
+/// The earlier messages a turn replays: the last `cap` of the conversation,
+/// user and assistant only.
+fn replayed_history(history: &[ChatMessage], cap: usize) -> Vec<&ChatMessage> {
+    let start = history.len().saturating_sub(cap);
+    history[start..]
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .collect()
+}
+
+/// How an earlier message replays. User rows replay the exact bytes they
+/// were PROMPTED with (memory header + sources + question) — not the raw
+/// question — so this turn's prompt purely extends the previous one and the
+/// llama.cpp KV prefix survives. See `ChatMessage::prompt_content`.
+fn history_replay_content(msg: &ChatMessage) -> &str {
+    match (&msg.prompt_content, msg.role.as_str()) {
+        (Some(p), "user") => p,
+        _ => &msg.content,
+    }
+}
+
+/// An earlier question without the emails it was asked with: the question
+/// itself under a note that says so. `None` when it carries nothing to drop.
+fn stripped_history_content(msg: &ChatMessage) -> Option<String> {
+    if msg.role != "user" {
+        return None;
+    }
+    let prompted = msg.prompt_content.as_deref()?;
+    let stripped = format!("{HISTORY_SOURCES_DROPPED_NOTE}\n\n{}", msg.content);
+    (stripped.len() < prompted.len()).then_some(stripped)
+}
+
+/// The `- From: … id=…` line a source is introduced with, body excluded.
+fn source_header(src: &ScoredEmail) -> String {
+    format!(
+        "- From: {} <{}>  Subject: {}  Date: {}  id={}\n    ",
+        src.email.sender,
+        src.email.sender_email,
+        src.email.subject,
+        format_date(src.email.timestamp),
+        src.email.id,
+    )
+}
+
+/// What surrounds a source's body besides its header: the blank line after
+/// it and the relevant-region markers.
+const SOURCE_FRAMING_CHARS: usize = 100;
+
+/// Plan how a turn's first prompt is cut to `budget_chars`. `messages` is the
+/// prompt as it would be sent uncut (system first, the question's message
+/// last, every per-turn block already in it); the rest is what it was built
+/// from. A plan without cuts means `messages` goes out as it is.
+fn plan_first_prompt(
+    messages: &[(String, String)],
+    history: &[ChatMessage],
+    sources: &[ScoredEmail],
+    ambient_thread: Option<&str>,
+    budget_chars: usize,
+) -> PromptPlan {
+    let history_items: Vec<HistoryItem> = replayed_history(history, MAX_HISTORY_TURNS)
+        .into_iter()
+        .map(|m| HistoryItem {
+            is_user: m.role == "user",
+            full_chars: history_replay_content(m).len(),
+            stripped_chars: stripped_history_content(m).map(|s| s.len()),
+        })
+        .collect();
+    // An open thread takes the place of the sources (see `build_prompt_fitted`).
+    let source_items: Vec<SourceItem> = if ambient_thread.is_some() {
+        Vec::new()
+    } else {
+        sources
+            .iter()
+            .map(|src| SourceItem {
+                header_chars: source_header(src).len() + SOURCE_FRAMING_CHARS,
+                body_chars: strip_html_for_fts(&src.body).len(),
+            })
+            .collect()
+    };
+    let this_turn: usize = source_items
+        .iter()
+        .map(|s| s.header_chars + s.body_chars.min(MAX_SOURCE_BODY_CHARS))
+        .sum::<usize>()
+        + ambient_thread.map(str::len).unwrap_or(0);
+    let parts = PromptParts {
+        system_chars: messages.first().map(|(_, c)| c.len()).unwrap_or(0),
+        history: &history_items,
+        tail_chars: messages
+            .last()
+            .map(|(_, c)| c.len())
+            .unwrap_or(0)
+            .saturating_sub(this_turn),
+        sources: &source_items,
+        max_source_body_chars: MAX_SOURCE_BODY_CHARS,
+        open_thread_chars: ambient_thread.map(str::len),
+    };
+    plan_prompt(&parts, budget_chars)
+}
+
+/// Chars per token as the conversation last measured them: the most recent
+/// model call whose prompt the provider counted in full.
+fn estimator_from_history(history: &[ChatMessage]) -> Estimator {
+    history
+        .iter()
+        .rev()
+        .filter_map(|m| m.trace.as_ref())
+        .flat_map(|t| t.llm_calls.iter().rev())
+        .find_map(|call| match (call.prompt_chars, call.prompt_tokens) {
+            (Some(chars), Some(tokens)) if call.dropped_front_tokens.unwrap_or(0) == 0 => {
+                Some(Estimator::calibrated(chars as usize, tokens))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(Estimator::uncalibrated)
+}
+
+/// The context budget of a turn on `provider`: its window, the conversation's
+/// measured chars per token, and the tool schemas that ride outside the
+/// messages. The embedded runtime reads its tools from the system prompt
+/// alone; the HTTP providers are also sent the schemas as `tools`.
+async fn turn_budget_for(
+    db: &Database,
+    provider: &dyn AIProvider,
+    registry: &tools::ToolRegistry,
+    history: &[ChatMessage],
+) -> TurnBudget {
+    let n_ctx = super::research::resolve_n_ctx(db, provider).await;
+    let tool_schema_chars = if schemas_via_api(provider) {
+        registry
+            .definitions_with(db, catalog_detail(super::budget::compact_prefix(n_ctx)))
+            .iter()
+            .map(|d| d.to_string().len())
+            .sum()
+    } else {
+        0
+    };
+    TurnBudget::new(n_ctx, estimator_from_history(history), tool_schema_chars)
+}
+
+/// Whether `provider` is sent the tool schemas through its API. The embedded
+/// runtime is not: it reads them from the system prompt.
+fn schemas_via_api(provider: &dyn AIProvider) -> bool {
+    provider.provider_type() != crate::ai::provider::ProviderType::LlamaCpp
+}
+
+fn catalog_detail(compact: bool) -> tools::CatalogDetail {
+    if compact {
+        tools::CatalogDetail::Compact
+    } else {
+        tools::CatalogDetail::Full
+    }
+}
+
+/// The system template and the tool section a chat prompt is rendered from.
+/// `compact` (see `budget::compact_prefix`) selects the short forms a small
+/// window needs. A `chat.system` the user wrote themselves is kept whatever
+/// the window: it is the prompt they asked for.
+///
+/// The one place a turn and the prewarm both get these from, so the prefix
+/// they render is the same bytes.
+pub(super) fn system_prompt_inputs(
+    db: &Database,
+    registry: &tools::ToolRegistry,
+    provider: &dyn AIProvider,
+    compact: bool,
+) -> Result<(String, String)> {
+    let template_id = if compact && !crate::services::prompts::is_overridden(db, "chat.system")? {
+        "chat.system_compact"
+    } else {
+        "chat.system"
+    };
+    let template = crate::services::prompts::get_template(db, template_id)?;
+    // Rendered from the registry so it stays in lockstep with what
+    // `definitions_with` advertises to the LLM via the function-calling menu.
+    // Disabling a feature in Settings removes its tools from BOTH places.
+    let tools_section =
+        registry.render_system_prompt_section_with(db, catalog_detail(compact), schemas_via_api(provider));
+    Ok((template, tools_section))
+}
+
+/// The output-panel line for a turn whose answer rests on cut material.
+fn budget_warning(budget: &crate::models::BudgetTrace) -> String {
+    let cuts = describe_cuts(&budget.cuts);
+    if budget.fits {
+        format!(
+            "chat prompt cut to fit the {}-token context window ({cuts}) — the answer may miss details",
+            budget.n_ctx
+        )
+    } else {
+        format!(
+            "chat prompt (~{} tokens) did not fit the {}-token context window{} — the answer may miss context",
+            budget.estimated_prompt_tokens,
+            budget.n_ctx,
+            if cuts.is_empty() {
+                String::new()
+            } else {
+                format!(" even after cuts ({cuts})")
+            }
+        )
+    }
+}
+
+/// Make the plan's stripped questions what later turns replay too, so the
+/// next prompt extends this one instead of cutting the same emails again.
+fn persist_stripped_history(db: &Database, history: &[ChatMessage], plan: &PromptPlan) {
+    let replayed = replayed_history(history, MAX_HISTORY_TURNS);
+    for i in &plan.stripped {
+        let Some(msg) = replayed.get(*i) else { continue };
+        let Some(stripped) = stripped_history_content(msg) else {
+            continue;
+        };
+        if let Err(e) = db.update_chat_message_prompt_content(&msg.id, &stripped) {
+            emit_log(
+                "warn",
+                &format!("context budget: could not store a shortened question: {e}"),
+            );
+        }
+    }
+}
+
+/// [`build_prompt_with_thread`] cut to a context-budget `plan` (see
+/// [`plan_first_prompt`]); `None` builds the prompt uncut.
+#[allow(clippy::too_many_arguments)]
+fn build_prompt_fitted(
+    sources: &[ScoredEmail],
+    history: &[ChatMessage],
+    user_question: &str,
+    language: &str,
+    user_email: &str,
+    system_template: &str,
+    tools_section: &str,
+    ambient_thread: Option<&str>,
+    plan: Option<&PromptPlan>,
+) -> Vec<(String, String)> {
+    let sources = match plan {
+        Some(plan) => &sources[..plan.source_count.min(sources.len())],
+        None => sources,
+    };
+    let source_body_chars = plan.map(|p| p.source_body_chars).unwrap_or(MAX_SOURCE_BODY_CHARS);
     let now = now_local();
     let today = now.format("%Y-%m-%d").to_string();
     let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
@@ -306,19 +566,13 @@ before answering any factual question about the user's mailbox.)\n",
         tail.push_str("Sources (cite each fact with a link to the email it came from: [short label](email://ID)):\n");
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
-            let sliced = smart_body_slice_indexed(&body_text, user_question, MAX_SOURCE_BODY_CHARS);
+            let sliced = smart_body_slice_indexed(&body_text, user_question, source_body_chars);
             let marked = mark_relevant_region(&sliced);
             // `id=` lets a RAG answer link the email (`email://ID`) the same
             // way a tool result does; without it the model invented ids.
-            tail.push_str(&format!(
-                "- From: {} <{}>  Subject: {}  Date: {}  id={}\n    {}\n\n",
-                src.email.sender,
-                src.email.sender_email,
-                src.email.subject,
-                format_date(src.email.timestamp),
-                src.email.id,
-                marked
-            ));
+            tail.push_str(&source_header(src));
+            tail.push_str(&marked);
+            tail.push_str("\n\n");
         }
     }
     tail.push('\n');
@@ -327,20 +581,16 @@ before answering any factual question about the user's mailbox.)\n",
     let mut messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
     messages.push(("system".to_string(), system));
 
-    // Trim history to the last MAX_HISTORY_TURNS turns, preserving order.
-    let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
-    for msg in &history[start..] {
-        if msg.role == "user" || msg.role == "assistant" {
-            // User rows replay the exact bytes they were PROMPTED with
-            // (memory header + sources + question) — not the raw question —
-            // so this turn's prompt purely extends the previous one and the
-            // llama.cpp KV prefix survives. See `ChatMessage::prompt_content`.
-            let content = match (&msg.prompt_content, msg.role.as_str()) {
-                (Some(p), "user") => p.clone(),
-                _ => msg.content.clone(),
-            };
-            messages.push((msg.role.clone(), content));
-        }
+    // The last MAX_HISTORY_TURNS turns, in order — fewer, and some without
+    // the emails they were asked with, when the context budget says so.
+    let replayed = replayed_history(history, MAX_HISTORY_TURNS);
+    let start = plan.map(|p| p.history_start).unwrap_or(0);
+    for (i, msg) in replayed.into_iter().enumerate().skip(start) {
+        let stripped = plan
+            .filter(|p| p.stripped.contains(&i))
+            .and_then(|_| stripped_history_content(msg));
+        let content = stripped.unwrap_or_else(|| history_replay_content(msg).to_string());
+        messages.push((msg.role.clone(), content));
     }
 
     messages.push(("user".to_string(), tail));
@@ -2106,6 +2356,7 @@ fn build_tool_round_trace(
         system_prefix_tokens: result.and_then(|r| r.system_prefix_tokens),
         stable_tokens: result.and_then(|r| r.stable_tokens),
         dropped_front_tokens: result.and_then(|r| r.dropped_front_tokens),
+        prompt_chars: None,
         input: None,
         output: None,
     }
@@ -2129,6 +2380,7 @@ fn build_final_stream_trace(latency_ms: i64, result: Option<&crate::ai::provider
         system_prefix_tokens: result.and_then(|r| r.system_prefix_tokens),
         stable_tokens: result.and_then(|r| r.stable_tokens),
         dropped_front_tokens: result.and_then(|r| r.dropped_front_tokens),
+        prompt_chars: None,
         input: None,
         output: None,
     }
@@ -2169,6 +2421,7 @@ fn build_planner_trace(latency_ms: i64, outcome: &str, telemetry: PlannerTelemet
         system_prefix_tokens: None,
         stable_tokens: None,
         dropped_front_tokens: None,
+        prompt_chars: None,
         input: None,
         output: Some(format!("planner: {outcome}")),
     }
@@ -2193,13 +2446,16 @@ async fn run_tool_loop(
     app_help: bool,
     tool_traces: &mut Vec<ToolCallTrace>,
     llm_calls: &mut Vec<LlmCallTrace>,
+    // Consulted before every model call: this turn's tool results are cut
+    // when the prompt would not fit the window otherwise.
+    budget: &mut TurnBudget,
     // Raised by the chat's Cancel button (see `chat::cancel`).
     cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> ToolLoopOutcome {
     let is_cancelled = || cancel.load(std::sync::atomic::Ordering::Relaxed);
     // Feature-flag–aware: tools whose `is_available(db)` returns false are
     // omitted from the array the LLM sees.
-    let tools = registry.definitions(db.as_ref());
+    let tools = registry.definitions_with(db.as_ref(), catalog_detail(budget.compact_prefix()));
 
     // Convert (role, content) pairs into AiMessage structs.
     let mut messages: Vec<AiMessage> = initial_messages
@@ -2373,6 +2629,7 @@ async fn run_tool_loop(
             emit_log("info", "tool_loop: cancelled by the user");
             break;
         }
+        let prompt_chars = budget.fit(&mut messages);
         // Snapshot the prompt sent to the model so the reasoning panel can
         // show exactly what each tool round received. Dev-only — release
         // builds skip the formatting to avoid the per-round allocation cost.
@@ -2459,8 +2716,9 @@ async fn run_tool_loop(
 
         let response = match call_result {
             Ok(r) => {
-                #[allow(unused_mut)] // mutated only in debug builds (trace snapshots)
+                budget.record_call(prompt_chars, r.prompt_eval_count, r.dropped_front_tokens);
                 let mut trace = build_tool_round_trace(round as i32, call_ms, Some(&r));
+                trace.prompt_chars = Some(prompt_chars as u32);
                 #[cfg(debug_assertions)]
                 {
                     trace.input = Some(input_snapshot);
@@ -3123,6 +3381,11 @@ async fn run_thread_bound_turn(
         tools::ToolRegistry::with_tools(vec![])
     });
 
+    // Sized first: a small window gets the compact system prompt.
+    let mut turn_budget = turn_budget_for(&db, provider.as_ref(), &registry, &history).await;
+    let (system_template, tools_section) =
+        system_prompt_inputs(&db, &registry, provider.as_ref(), turn_budget.compact_prefix())?;
+
     // `chat.system` carries a `{{ tools_section }}` placeholder. Unknown
     // variables are left INTACT by `prompts::render` (prompts/mod.rs:197), so
     // omitting it here shipped a literal "{{ tools_section }}" to the model —
@@ -3134,13 +3397,12 @@ async fn run_thread_bound_turn(
     tpl_vars.insert("weekday", weekday);
     tpl_vars.insert("next_days", next_days_line(now.date()));
     tpl_vars.insert("language_instruction", language_instruction);
-    tpl_vars.insert("tools_section", registry.render_system_prompt_section(db.as_ref()));
+    tpl_vars.insert("tools_section", tools_section);
     // Empty rather than omitted, for the same reason: the identity block only
     // explains how to map "I"/"me" onto `search_emails` filters, and this path
     // never searches. Binding it blank drops the section; omitting it would
     // ship a literal "{{ user_identity }}" to the model.
     tpl_vars.insert("user_identity", String::new());
-    let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
     let base_system = crate::services::prompts::render(&system_template, &tpl_vars);
     debug_assert!(
         !base_system.contains("{{"),
@@ -3155,19 +3417,49 @@ async fn run_thread_bound_turn(
     let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
 
     // Build the message list as (role, content) pairs for the tool loop:
-    // system + last N user/assistant turns + the current question.
-    let mut initial_messages: Vec<(String, String)> = Vec::with_capacity(history.len() + 2);
-    initial_messages.push(("system".to_string(), system));
-    let start = history.len().saturating_sub(THREAD_HISTORY_TURNS);
-    for msg in &history[start..] {
-        if msg.role == "user" || msg.role == "assistant" {
-            initial_messages.push((msg.role.clone(), msg.content.clone()));
-        }
-    }
+    // system + last N user/assistant turns + the current question. The seeded
+    // thread rides in the system message, so when the window is short the
+    // earlier turns are what gives way.
     let final_user = match skill_block.as_deref() {
         Some(block) => format!("{block}\n\n{user_question}"),
         None => user_question.clone(),
     };
+    let replayed = replayed_history(&history, THREAD_HISTORY_TURNS);
+    let history_items: Vec<HistoryItem> = replayed
+        .iter()
+        .map(|m| HistoryItem {
+            is_user: m.role == "user",
+            full_chars: m.content.len(),
+            stripped_chars: None,
+        })
+        .collect();
+    let plan = plan_prompt(
+        &PromptParts {
+            system_chars: system.len(),
+            history: &history_items,
+            tail_chars: final_user.len(),
+            sources: &[],
+            max_source_body_chars: 0,
+            open_thread_chars: None,
+        },
+        turn_budget.message_chars(),
+    );
+    turn_budget.record_plan(&plan);
+    if !plan.cuts.is_empty() {
+        emit_log(
+            "info",
+            &format!(
+                "context budget: prompt cut to fit the {}-token window ({})",
+                turn_budget.n_ctx(),
+                describe_cuts(&plan.cuts)
+            ),
+        );
+    }
+    let mut initial_messages: Vec<(String, String)> = Vec::with_capacity(replayed.len() + 2);
+    initial_messages.push(("system".to_string(), system));
+    for msg in &replayed[plan.history_start.min(replayed.len())..] {
+        initial_messages.push((msg.role.clone(), msg.content.clone()));
+    }
     initial_messages.push(("user".to_string(), final_user));
 
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
@@ -3194,6 +3486,7 @@ async fn run_thread_bound_turn(
         false,
         &mut tool_traces,
         &mut llm_calls,
+        &mut turn_budget,
         Arc::clone(&cancel),
     )
     .await;
@@ -3271,7 +3564,7 @@ async fn run_thread_bound_turn(
         // Stream a synthesis pass, bounded by STREAM_TIMEOUT.
         let conv_id_for_stream = conversation_id.clone();
         let msg_id_for_stream = assistant_message_id.clone();
-        let ai_messages: Vec<AiMessage> = outcome
+        let mut ai_messages: Vec<AiMessage> = outcome
             .messages
             .into_iter()
             .map(|m| AiMessage {
@@ -3280,6 +3573,7 @@ async fn run_thread_bound_turn(
                 tool_calls: None,
             })
             .collect();
+        let prompt_chars = turn_budget.fit(&mut ai_messages);
         // Gate the live stream so any tool-call markup the backend emits as raw
         // text is suppressed before it reaches the bubble (see the tools-first
         // synthesis path for the rationale).
@@ -3319,6 +3613,9 @@ async fn run_thread_bound_turn(
                 STREAM_TIMEOUT.as_secs()
             ))),
         };
+        if let Ok(r) = &res {
+            turn_budget.record_call(prompt_chars, r.prompt_eval_count, r.dropped_front_tokens);
+        }
         if let Ok(mut g) = gate.lock() {
             let tail = g.finish();
             if !tail.is_empty() {
@@ -3393,6 +3690,7 @@ async fn run_thread_bound_turn(
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
+                budget: turn_budget.trace(),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -3618,6 +3916,7 @@ async fn synthesize_with_recovery(
     stream_timeout: std::time::Duration,
     llm_calls: &mut Vec<LlmCallTrace>,
     tool_traces: &mut Vec<ToolCallTrace>,
+    budget: &mut TurnBudget,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> SynthesisRecovery {
     let mut prompt_messages = synthesis_messages;
@@ -3627,6 +3926,7 @@ async fn synthesize_with_recovery(
     let mut corrective_done = false;
 
     loop {
+        let prompt_chars = budget.fit(&mut prompt_messages);
         // Keep a copy so the next ladder step can re-prompt from this context.
         let retry_base = prompt_messages.clone();
         let t_attempt = std::time::Instant::now();
@@ -3640,6 +3940,9 @@ async fn synthesize_with_recovery(
             cancel,
         )
         .await;
+        if let Ok(r) = &attempt {
+            budget.record_call(prompt_chars, r.prompt_eval_count, r.dropped_front_tokens);
+        }
 
         // A cancelled turn makes no further model call and runs no tool:
         // whatever this attempt produced is what the user keeps.
@@ -3665,9 +3968,9 @@ async fn synthesize_with_recovery(
 
         // Record the empty attempt as its own trace entry so the reasoning
         // panel shows each call instead of one call with accumulated latency.
-        #[allow(unused_mut)] // mutated only in debug builds (output snapshot)
         let mut empty_trace = build_final_stream_trace(t_attempt.elapsed().as_millis() as i64, Some(&empty_result));
         empty_trace.kind = "final_stream_empty".to_string();
+        empty_trace.prompt_chars = Some(prompt_chars as u32);
         #[cfg(debug_assertions)]
         {
             empty_trace.output = Some(empty_result.content.clone());
@@ -3974,6 +4277,8 @@ async fn run_chat_turn_inner(
     // all-tools turn; only a conversation explicitly seeded with a thread
     // takes the thread-bound path. Its message ids join the link allowlist.
     let mut ambient_context: Option<String> = None;
+    // Where it came from, to read it again shorter if the window is short.
+    let mut ambient_source: Option<(String, String)> = None;
     let mut ambient_refs: Vec<String> = Vec::new();
     let thread_context: Option<Vec<ChatMessage>> = match turn_mode {
         ChatTurnMode::ConversationThread => Some(system_messages),
@@ -3992,6 +4297,7 @@ async fn run_chat_turn_inner(
             match super::conversations::build_thread_context(&db, lookup_account, &thread_id) {
                 Ok((context, _subject)) => {
                     ambient_context = Some(context);
+                    ambient_source = Some((lookup_account.to_string(), thread_id.clone()));
                     ambient_refs = db
                         .get_thread(lookup_account, &thread_id)
                         .map(|emails| emails.into_iter().map(|e| e.id).collect())
@@ -4487,14 +4793,100 @@ async fn run_chat_turn_inner(
     );
 
     // ── 4. Tool-call loop + streaming reply ─────────────────────────────
-    let system_template = crate::services::prompts::get_template(&db, "chat.system")?;
-    // Tools section is rendered from the registry so it stays in lockstep
-    // with what `definitions(&db)` advertises to the LLM via the
-    // function-calling menu. Disabling a feature in Settings instantly
-    // removes its tools from BOTH places — no template edit needed.
-    let tools_section = registry.render_system_prompt_section(db.as_ref());
+    // Sized first: a small window gets the compact system prompt, and the
+    // budget below decides whether the rest fits next to it.
+    let mut turn_budget = if research_active {
+        // Research sizes its own prompts (see `research::plan`).
+        TurnBudget::unlimited()
+    } else {
+        turn_budget_for(&db, provider.as_ref(), &registry, &history).await
+    };
+    let (system_template, tools_section) =
+        system_prompt_inputs(&db, &registry, provider.as_ref(), turn_budget.compact_prefix())?;
     // `user_email` was resolved earlier (before the query planner) and feeds the
     // system prompt's first-person identity line here.
+    // The per-turn blocks that join the final user message. A closure because
+    // a prompt the context budget has to cut is built twice.
+    let decorate = |messages: &mut Vec<(String, String)>| {
+        // The invoked skill sits right before the question, after the Sources: it
+        // is what decides how this turn is answered, and ahead of the Sources the
+        // model followed their "cite each fact" line instead of the skill's steps.
+        if let Some(block) = skill_block.as_deref() {
+            insert_before_question(messages, &user_question, block);
+        }
+
+        // What the user has on screen, so "esto" / "aquí" resolve. Same placement
+        // rule as everything else in this block: per-turn content goes in the final
+        // user message, never the system message, or the KV prefix is invalidated
+        // on every navigation. Skipped on an ambient-thread turn — the OPEN EMAIL
+        // block already names what the user is looking at, and two "you are looking
+        // at X" statements in one prompt is one too many.
+        if ambient_context.is_none() {
+            if let Some(ctx) = view_ctx.as_ref() {
+                let line = match ctx {
+                    super::view_context::ViewContext::Lens(id) => match db.get_lens(id) {
+                        Ok(lens) => {
+                            let labels: Vec<&str> = lens.schema.columns.iter().map(|c| c.label.as_str()).collect();
+                            super::view_context::lens_context_line(&lens.name, &labels)
+                        }
+                        Err(e) => {
+                            emit_log("warn", &format!("view context: open lens not found ({e})"));
+                            super::view_context::view_context_line(ctx)
+                        }
+                    },
+                    _ => super::view_context::view_context_line(ctx),
+                };
+                prepend_to_final_user_message(messages, &line);
+            }
+        }
+
+        // A retry of an answer the user rejected. Prepended AFTER the view line so
+        // it ends up closest to the question — a small model weights the end of the
+        // prompt most, and the correction is the thing it must not ignore.
+        if let Some(correction) = context.correction.as_ref() {
+            let rejected = db
+                .get_chat_messages(&conversation_id)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|m| m.id == correction.rejected_message_id)
+                .map(|m| m.content);
+            if let Some(block) = super::correction::render_correction_block(correction, rejected.as_deref()) {
+                prepend_to_final_user_message(messages, &block);
+            }
+        }
+
+        // The EmailOps-help block rides in the final user message for the same
+        // reason as the memory header below: it varies per turn, and any per-turn
+        // byte in the system message would invalidate the KV prefix.
+        if let Some(block) = crate::services::help_docs::render_help_block(&help_sources, app_help) {
+            prepend_to_final_user_message(messages, &block);
+        }
+
+        // Inject the memory header into the final user message — but only when
+        // the user has the Memory feature enabled. Disabling it in Settings
+        // should remove `<memory>...</memory>` from the prompt entirely (the
+        // user can verify this in the reasoning panel). It rides with the
+        // per-turn tail (not the system message) because it is derived from the
+        // current question and would otherwise break the cross-turn KV prefix.
+        // Pure SQLite reads → negligible latency. Errors degrade to no-header
+        // rather than failing the turn.
+        let memory_enabled = db
+            .get_preference("memory_enabled")
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if memory_enabled {
+            match crate::services::memory::header::build_header(&db, &account_id, &user_question) {
+                Ok(Some(header)) => prepend_to_final_user_message(messages, &header),
+                Ok(None) => {}
+                Err(e) => emit_log("debug", &format!("memory header skipped: {e}")),
+            }
+        }
+    };
+
+    // Build the prompt uncut, then ask the budget whether it fits the model's
+    // window. It usually does, and goes out exactly as built.
     let mut initial_messages = build_prompt_with_thread(
         &sources,
         &history,
@@ -4505,81 +4897,53 @@ async fn run_chat_turn_inner(
         &tools_section,
         ambient_context.as_deref(),
     );
-
-    // The invoked skill sits right before the question, after the Sources: it
-    // is what decides how this turn is answered, and ahead of the Sources the
-    // model followed their "cite each fact" line instead of the skill's steps.
-    if let Some(block) = skill_block.as_deref() {
-        insert_before_question(&mut initial_messages, &user_question, block);
-    }
-
-    // What the user has on screen, so "esto" / "aquí" resolve. Same placement
-    // rule as everything else in this block: per-turn content goes in the final
-    // user message, never the system message, or the KV prefix is invalidated
-    // on every navigation. Skipped on an ambient-thread turn — the OPEN EMAIL
-    // block already names what the user is looking at, and two "you are looking
-    // at X" statements in one prompt is one too many.
-    if ambient_context.is_none() {
-        if let Some(ctx) = view_ctx.as_ref() {
-            let line = match ctx {
-                super::view_context::ViewContext::Lens(id) => match db.get_lens(id) {
-                    Ok(lens) => {
-                        let labels: Vec<&str> = lens.schema.columns.iter().map(|c| c.label.as_str()).collect();
-                        super::view_context::lens_context_line(&lens.name, &labels)
-                    }
+    decorate(&mut initial_messages);
+    let plan = plan_first_prompt(
+        &initial_messages,
+        &history,
+        &sources,
+        ambient_context.as_deref(),
+        turn_budget.message_chars(),
+    );
+    turn_budget.record_plan(&plan);
+    if !plan.cuts.is_empty() {
+        emit_log(
+            "info",
+            &format!(
+                "context budget: prompt cut to fit the {}-token window ({})",
+                turn_budget.n_ctx(),
+                describe_cuts(&plan.cuts)
+            ),
+        );
+        persist_stripped_history(&db, &history, &plan);
+        // The open thread, read again into what the window leaves for it.
+        let shorter_thread = match (&ambient_source, plan.open_thread_chars) {
+            (Some((account, thread_id)), Some(chars)) if Some(chars) != ambient_context.as_ref().map(String::len) => {
+                match super::conversations::build_thread_context_within(&db, account, thread_id, chars) {
+                    Ok((context, _subject)) => Some(context),
                     Err(e) => {
-                        emit_log("warn", &format!("view context: open lens not found ({e})"));
-                        super::view_context::view_context_line(ctx)
+                        emit_log(
+                            "warn",
+                            &format!("context budget: could not shorten the open thread: {e}"),
+                        );
+                        None
                     }
-                },
-                _ => super::view_context::view_context_line(ctx),
-            };
-            prepend_to_final_user_message(&mut initial_messages, &line);
-        }
-    }
-
-    // A retry of an answer the user rejected. Prepended AFTER the view line so
-    // it ends up closest to the question — a small model weights the end of the
-    // prompt most, and the correction is the thing it must not ignore.
-    if let Some(correction) = context.correction.as_ref() {
-        let rejected = db
-            .get_chat_messages(&conversation_id)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|m| m.id == correction.rejected_message_id)
-            .map(|m| m.content);
-        if let Some(block) = super::correction::render_correction_block(correction, rejected.as_deref()) {
-            prepend_to_final_user_message(&mut initial_messages, &block);
-        }
-    }
-
-    // The EmailOps-help block rides in the final user message for the same
-    // reason as the memory header below: it varies per turn, and any per-turn
-    // byte in the system message would invalidate the KV prefix.
-    if let Some(block) = crate::services::help_docs::render_help_block(&help_sources, app_help) {
-        prepend_to_final_user_message(&mut initial_messages, &block);
-    }
-
-    // Inject the memory header into the final user message — but only when
-    // the user has the Memory feature enabled. Disabling it in Settings
-    // should remove `<memory>...</memory>` from the prompt entirely (the
-    // user can verify this in the reasoning panel). It rides with the
-    // per-turn tail (not the system message) because it is derived from the
-    // current question and would otherwise break the cross-turn KV prefix.
-    // Pure SQLite reads → negligible latency. Errors degrade to no-header
-    // rather than failing the turn.
-    let memory_enabled = db
-        .get_preference("memory_enabled")
-        .ok()
-        .flatten()
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    if memory_enabled {
-        match crate::services::memory::header::build_header(&db, &account_id, &user_question) {
-            Ok(Some(header)) => prepend_to_final_user_message(&mut initial_messages, &header),
-            Ok(None) => {}
-            Err(e) => emit_log("debug", &format!("memory header skipped: {e}")),
-        }
+                }
+            }
+            _ => None,
+        };
+        initial_messages = build_prompt_fitted(
+            &sources,
+            &history,
+            &user_question,
+            ai_language.english_name(),
+            &user_email,
+            &system_template,
+            &tools_section,
+            shorter_thread.as_deref().or(ambient_context.as_deref()),
+            Some(&plan),
+        );
+        decorate(&mut initial_messages);
     }
 
     // The final user-message bytes are now fixed — persist them so the next
@@ -4813,6 +5177,7 @@ async fn run_chat_turn_inner(
             app_help,
             &mut tool_traces,
             &mut llm_calls,
+            &mut turn_budget,
             Arc::clone(&turn_guard.flag),
         )
         .await;
@@ -4985,6 +5350,7 @@ async fn run_chat_turn_inner(
                         STREAM_TIMEOUT,
                         &mut llm_calls,
                         &mut tool_traces,
+                        &mut turn_budget,
                         &turn_guard.flag,
                     )
                     .await;
@@ -5112,6 +5478,7 @@ async fn run_chat_turn_inner(
                     STREAM_TIMEOUT,
                     &mut llm_calls,
                     &mut tool_traces,
+                    &mut turn_budget,
                     &turn_guard.flag,
                 )
                 .await;
@@ -5422,6 +5789,10 @@ async fn run_chat_turn_inner(
             // ── 5. Assemble, persist, and emit the reasoning trace ─────────
             // Done after stream success so the trace reflects the full flow
             // (routing + retrieval + any tool calls + total wall-clock time).
+            let budget_trace = turn_budget.trace();
+            if let Some(b) = budget_trace.as_ref().filter(|b| b.affects_answer()) {
+                emit_log("warn", &budget_warning(b));
+            }
             let trace = super::trace_steps::with_steps(ChatTrace {
                 route: route.clone(),
                 retrieval: retrieval_trace.clone(),
@@ -5436,6 +5807,7 @@ async fn run_chat_turn_inner(
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
+                budget: budget_trace,
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
@@ -6093,6 +6465,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            &mut TurnBudget::unlimited(),
             cancel,
         )
         .await;
@@ -6194,6 +6567,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            &mut TurnBudget::unlimited(),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6311,6 +6685,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            &mut TurnBudget::unlimited(),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6524,6 +6899,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6613,6 +6989,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6691,6 +7068,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6760,6 +7138,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6804,6 +7183,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6852,6 +7232,7 @@ mod tests {
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -6950,6 +7331,7 @@ mod tests {
             false,
             &mut tool_traces,
             &mut llm_calls,
+            &mut TurnBudget::unlimited(),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -8673,6 +9055,7 @@ Preséntalos en una tabla markdown …";
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -8727,6 +9110,7 @@ Preséntalos en una tabla markdown …";
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
@@ -8869,6 +9253,7 @@ Preséntalos en una tabla markdown …";
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &mut TurnBudget::unlimited(),
             &cancel,
         )
         .await;
@@ -8951,6 +9336,7 @@ Preséntalos en una tabla markdown …";
             false,
             &mut tool_traces,
             &mut llm_calls,
+            &mut TurnBudget::unlimited(),
             Arc::clone(&cancel),
         )
         .await;
@@ -9136,5 +9522,331 @@ Preséntalos en una tabla markdown …";
             selectable_slash.get("weekly-digest").is_none(),
             "a skill the user already invoked is not stacked with a planner pick"
         );
+    }
+    // ── Context budget ──────────────────────────────────────────────────────
+
+    /// A user row as an earlier turn prompted it: `chars` of sources, then
+    /// the question.
+    fn prompted_user(question: &str, chars: usize) -> ChatMessage {
+        let mut msg = make_message("user", question);
+        msg.prompt_content = Some(format!("Sources:\n{}\n\n{question}", "s".repeat(chars)));
+        msg
+    }
+
+    fn long_sources(count: i32, body_chars: usize) -> Vec<ScoredEmail> {
+        (1..=count)
+            .map(|n| make_scored(n, "Quarterly plan", &"lorem ipsum dolor ".repeat(body_chars / 18)))
+            .collect()
+    }
+
+    fn prompt_len(messages: &[(String, String)]) -> usize {
+        messages.iter().map(|(_, content)| content.len()).sum()
+    }
+
+    #[test]
+    fn a_first_prompt_that_fits_goes_out_as_built() {
+        let history = vec![prompted_user("first?", 2_000), make_message("assistant", "an answer")];
+        let sources = long_sources(3, 6_000);
+        let built = build_prompt(&sources, &history, "what now?", "en", "", tpl(), "TOOLS");
+
+        let plan = plan_first_prompt(&built, &history, &sources, None, 1_000_000);
+
+        assert!(plan.cuts.is_empty() && plan.fits, "{plan:?}");
+        let fitted = build_prompt_fitted(
+            &sources,
+            &history,
+            "what now?",
+            "en",
+            "",
+            tpl(),
+            "TOOLS",
+            None,
+            Some(&plan),
+        );
+        assert_eq!(fitted, built);
+    }
+
+    #[test]
+    fn a_first_prompt_over_budget_is_cut_around_the_system_message_and_the_question() {
+        let history = vec![
+            prompted_user("first?", 9_000),
+            make_message("assistant", "first answer"),
+            prompted_user("second?", 9_000),
+            make_message("assistant", "second answer"),
+            prompted_user("third?", 9_000),
+            make_message("assistant", "third answer"),
+        ];
+        let sources = long_sources(8, 6_000);
+        let built = build_prompt(&sources, &history, "what now?", "en", "", tpl(), "TOOLS");
+        let system = built[0].1.clone();
+        let budget = system.len() + 12_000;
+        assert!(prompt_len(&built) > budget, "the fixture must overflow");
+
+        let plan = plan_first_prompt(&built, &history, &sources, None, budget);
+        let fitted = build_prompt_fitted(
+            &sources,
+            &history,
+            "what now?",
+            "en",
+            "",
+            tpl(),
+            "TOOLS",
+            None,
+            Some(&plan),
+        );
+
+        assert!(plan.fits, "{plan:?}");
+        assert_eq!(fitted[0].1, system, "the system message is never cut");
+        let (role, tail) = fitted.last().expect("final message");
+        assert_eq!(role, "user");
+        assert!(tail.ends_with("what now?"));
+        assert!(
+            prompt_len(&fitted) + fitted.len() * 24 <= budget,
+            "{} chars against a budget of {budget}: {plan:?}",
+            prompt_len(&fitted)
+        );
+    }
+
+    #[test]
+    fn a_stripped_question_replays_under_a_note_without_its_emails() {
+        let history = vec![
+            prompted_user("when is the kickoff?", 9_000),
+            make_message("assistant", "March 3rd."),
+        ];
+        let built = build_prompt(&[], &history, "and the venue?", "en", "", tpl(), "");
+        let plan = plan_first_prompt(&built, &history, &[], None, built[0].1.len() + 2_000);
+        assert_eq!(plan.stripped, vec![0]);
+        assert_eq!(plan.history_start, 0);
+
+        let fitted = build_prompt_fitted(&[], &history, "and the venue?", "en", "", tpl(), "", None, Some(&plan));
+        assert_eq!(
+            fitted[1].1,
+            format!("{HISTORY_SOURCES_DROPPED_NOTE}\n\nwhen is the kickoff?")
+        );
+        assert_eq!(fitted[2].1, "March 3rd.");
+    }
+
+    #[test]
+    fn a_question_already_stripped_has_nothing_left_to_strip() {
+        let mut msg = make_message("user", "when is the kickoff?");
+        msg.prompt_content = Some(format!("{HISTORY_SOURCES_DROPPED_NOTE}\n\nwhen is the kickoff?"));
+        assert_eq!(stripped_history_content(&msg), None);
+        // Nor has one that was never prompted with anything but itself.
+        assert_eq!(stripped_history_content(&make_message("user", "hi")), None);
+        assert_eq!(stripped_history_content(&make_message("assistant", "hi")), None);
+    }
+
+    #[test]
+    fn stripped_questions_are_stored_for_the_turns_that_follow() {
+        let db = Database::new_for_testing().expect("test db");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('a1', 'gmail', 'a@b.c', 'a', 0, 0, 1)",
+                [],
+            )
+            .expect("seed account");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db
+            .insert_chat_message(&conv.id, "user", "when is the kickoff?", None)
+            .expect("user msg");
+        let prompted = format!("Sources:\n{}\n\nwhen is the kickoff?", "s".repeat(5_000));
+        db.update_chat_message_prompt_content(&user.id, &prompted)
+            .expect("prompted");
+        let history = db.get_chat_messages(&conv.id).expect("history");
+
+        let plan = PromptPlan {
+            stripped: vec![0],
+            ..PromptPlan::default()
+        };
+        persist_stripped_history(&db, &history, &plan);
+
+        let stored = db.get_chat_messages(&conv.id).expect("msgs");
+        assert_eq!(
+            stored[0].prompt_content.as_deref(),
+            Some(format!("{HISTORY_SOURCES_DROPPED_NOTE}\n\nwhen is the kickoff?").as_str())
+        );
+        assert_eq!(
+            stored[0].content, "when is the kickoff?",
+            "what the user sees is untouched"
+        );
+    }
+
+    fn traced_call(prompt_chars: Option<u32>, prompt_tokens: Option<u32>, dropped: Option<u32>) -> ChatMessage {
+        let mut call = build_tool_round_trace(0, 10, None);
+        call.prompt_chars = prompt_chars;
+        call.prompt_tokens = prompt_tokens;
+        call.dropped_front_tokens = dropped;
+        let mut msg = make_message("assistant", "answer");
+        msg.trace = Some(ChatTrace {
+            route: RouteDecision {
+                mode: RouteMode::ToolsFirst,
+                reason: String::new(),
+                matched_keywords: vec![],
+                classifier: "forced".to_string(),
+            },
+            retrieval: None,
+            tool_calls: Vec::new(),
+            model: "m".to_string(),
+            total_elapsed_ms: 0,
+            tool_loop_ms: 0,
+            llm_streaming_ms: None,
+            llm_calls: vec![call],
+            help: None,
+            research: None,
+            applied_skills: Vec::new(),
+            steps: Vec::new(),
+            search_page: None,
+            budget: None,
+        });
+        msg
+    }
+
+    #[test]
+    fn the_estimator_comes_from_the_conversations_last_measured_call() {
+        // Nothing measured yet.
+        assert_eq!(
+            estimator_from_history(&[make_message("user", "q"), make_message("assistant", "a")]),
+            Estimator::uncalibrated()
+        );
+        // The most recent measured call wins.
+        let history = vec![
+            traced_call(Some(20_000), Some(10_000), Some(0)),
+            traced_call(Some(40_000), Some(10_000), Some(0)),
+        ];
+        assert_eq!(estimator_from_history(&history), Estimator::calibrated(40_000, 10_000));
+        // A call the runtime truncated counted only what it kept: skipped.
+        let history = vec![
+            traced_call(Some(40_000), Some(10_000), None),
+            traced_call(Some(40_000), Some(7_000), Some(3_000)),
+        ];
+        assert_eq!(estimator_from_history(&history), Estimator::calibrated(40_000, 10_000));
+    }
+
+    #[tokio::test]
+    async fn the_tool_loop_cuts_a_tool_result_that_would_not_fit_and_keeps_the_system_message() {
+        struct HugeTool;
+        #[async_trait::async_trait]
+        impl tools::Tool for HugeTool {
+            fn name(&self) -> &'static str {
+                "get_email_body"
+            }
+            fn description(&self) -> &'static str {
+                "a very long email"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                Ok(tools::ToolOutput::text("newsletter ".repeat(1_500)))
+            }
+        }
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(HugeTool) as Arc<dyn tools::Tool>
+        ]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response("It is a newsletter.");
+
+        let system = "RULES ".repeat(2_000);
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut budget = TurnBudget::new(8192, Estimator::uncalibrated(), 0);
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "what is this email?",
+            vec![
+                ("system".to_string(), system.clone()),
+                ("user".to_string(), "what is this email?".to_string()),
+            ],
+            Some(vec![ai_tool_call("get_email_body")]),
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut budget,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+
+        // What the model was sent: the whole system message, a shorter result.
+        let sent = &provider.chat_calls()[0];
+        assert_eq!(sent[0].content, system);
+        let result = sent.iter().find(|m| m.role == "tool").expect("tool result");
+        assert!(result.content.len() < 16_500, "{} chars", result.content.len());
+        assert!(result.content.contains("characters omitted to fit the context window"));
+        let sent_chars: usize = sent.iter().map(|m| m.content.len()).sum();
+        // 3.5 chars per token before anything is measured.
+        assert!(sent_chars * 2 / 7 <= 8192 - 1024, "{sent_chars} chars sent");
+        // The trace keeps what the tool really returned, and says it was cut.
+        assert_eq!(tool_traces[0].result_chars, 16_500);
+        assert_eq!(
+            llm_calls[0].prompt_chars.map(|c| c as usize),
+            Some(sent_chars + sent.len() * 24 + "get_email_body{}".len())
+        );
+        let trace = budget.trace().expect("budget trace");
+        assert!(trace.fits);
+        assert!(trace.affects_answer());
+        assert_eq!(
+            outcome.messages.last().map(|m| m.content.as_str()),
+            Some("It is a newsletter.")
+        );
+    }
+    #[test]
+    fn the_compact_system_message_of_the_shipped_tools_fits_half_an_8k_window() {
+        // Built from the defaults directly, not through the template store
+        // (tests that install overrides run in parallel).
+        let db = Database::new_for_testing().expect("test db");
+        let registry = tools::default_registry();
+        let tools_section = registry.render_system_prompt_section_with(&db, tools::CatalogDetail::Compact, false);
+        let msgs = build_prompt(
+            &[],
+            &[],
+            "",
+            "English",
+            "user@example.com",
+            crate::services::prompts::defaults::CHAT_SYSTEM_COMPACT,
+            &tools_section,
+        );
+        // The full prefix measures ~3.9 chars per token (29k chars, ~7.4k
+        // tokens), so 16k chars is the 4096-token target.
+        assert!(msgs[0].1.len() <= 16_000, "{} chars", msgs[0].1.len());
+        assert!(!msgs[0].1.contains("{{"), "unbound placeholder");
+    }
+
+    #[test]
+    fn a_small_window_gets_the_compact_tool_section_and_a_large_one_the_full() {
+        let db = Database::new_for_testing().expect("test db");
+        let registry = tools::default_registry();
+        let provider = crate::ai::provider::FakeAiProvider::new();
+
+        let (_, compact) = system_prompt_inputs(&db, &registry, &provider, true).expect("compact");
+        // The fake is an HTTP-style provider: schemas go through its API.
+        assert!(compact.starts_with("Tools:\n") && !compact.contains("<tools>"));
+
+        let (_, full) = system_prompt_inputs(&db, &registry, &provider, false).expect("full");
+        assert_eq!(full, registry.render_system_prompt_section(&db));
+    }
+
+    #[test]
+    fn a_system_prompt_the_user_wrote_is_kept_on_a_small_window() {
+        let db = Database::new_for_testing().expect("test db");
+        crate::services::prompts::set_template(&db, "chat.system", "MINE {{tools_section}}").expect("override");
+        let registry = tools::default_registry();
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let (template, _) = system_prompt_inputs(&db, &registry, &provider, true).expect("inputs");
+        assert_ne!(template, crate::services::prompts::defaults::CHAT_SYSTEM_COMPACT);
     }
 }

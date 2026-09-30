@@ -20,6 +20,7 @@ interface ChatPanelDockProps {
   onExpand: () => void;
   onNavigateToInbox?: () => void;
   onShowEmailsInList?: (query: string) => void;
+  onOpenAiSettings?: () => void;
 }
 
 /** Keyboard resize step, matching the arrow-key convention of a native splitter. */
@@ -38,6 +39,7 @@ export function ChatPanelDock({
   onExpand,
   onNavigateToInbox,
   onShowEmailsInList,
+  onOpenAiSettings,
 }: ChatPanelDockProps) {
   const { t } = useTranslation('chat');
   const [width, setWidth] = usePersistedPref<number>('chat_panel_width', CHAT_PANEL_DEFAULT_WIDTH, {
@@ -118,6 +120,7 @@ export function ChatPanelDock({
           onExpand={onExpand}
           onNavigateToInbox={onNavigateToInbox}
           onShowEmailsInList={onShowEmailsInList}
+          onOpenAiSettings={onOpenAiSettings}
         />
       </div>
     </div>

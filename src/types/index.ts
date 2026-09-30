@@ -829,6 +829,28 @@ export interface ChatTrace {
   steps: TraceStep[];
   /** User skills applied before the model ran (mirrors `AppliedSkill`). */
   appliedSkills?: { name: string; via: 'slash' | 'planner' }[];
+  /** What was cut from the prompt to fit the context window; absent when
+   *  nothing was. */
+  budget?: BudgetTrace | null;
+}
+
+/** Mirrors `BudgetCut`: one thing cut from a chat prompt, in the order applied. */
+export type BudgetCut =
+  | { kind: 'historySources'; messages: number }
+  | { kind: 'historyTurns'; messages: number }
+  | { kind: 'openThread'; chars: number }
+  | { kind: 'sourceExcerpts'; charsPerEmail: number }
+  | { kind: 'sourcesDropped'; emails: number }
+  | { kind: 'toolResults'; results: number; charsDropped: number };
+
+/** Mirrors `BudgetTrace`: how a turn's prompt was fitted to the window. */
+export interface BudgetTrace {
+  nCtx: number;
+  replyReserve: number;
+  estimatedPromptTokens: number;
+  cuts: BudgetCut[];
+  /** False when the prompt exceeded the window even after every cut. */
+  fits: boolean;
 }
 
 /** Mirrors `KvCacheStats`: prompt tokens served from the KV cache. */
@@ -853,6 +875,7 @@ export type TraceStep =
   | { type: 'retrieval' }
   | { type: 'help' }
   | { type: 'skill' }
+  | { type: 'budget' }
   | { type: 'llm'; index: number; kvCache: KvCacheStats | null; cacheAction: CacheAction | null }
   | { type: 'tool'; index: number };
 

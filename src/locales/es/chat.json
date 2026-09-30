@@ -62,7 +62,10 @@
     "wrongPrompt": "¿Qué ha fallado?",
     "wrongPlaceholder": "Ayuda al modelo a hacerlo mejor — p. ej. esos correos son de septiembre, no de agosto",
     "wrongSubmit": "Reintentar",
-    "rejected": "Marcada como incorrecta — reintentada abajo."
+    "rejected": "Marcada como incorrecta — reintentada abajo.",
+    "budgetNotice": "Parte de los correos en los que se basa esta respuesta se ha acortado para caber en la ventana de contexto del modelo; pueden faltar detalles.",
+    "budgetOverflow": "Esta conversación ya no cabe en la ventana de contexto del modelo; la respuesta puede haber perdido instrucciones o contexto.",
+    "budgetSettings": "Ajustes de IA"
   },
   "processing": {
     "routing": "Enrutando…",
@@ -166,7 +169,8 @@
         "llmRound": "Ronda LLM {{n}}",
         "answer": "Respuesta (LLM)",
         "llmCall": "Llamada LLM",
-        "llmCallN": "Llamada LLM {{n}}/{{total}}"
+        "llmCallN": "Llamada LLM {{n}}/{{total}}",
+        "budget": "Presupuesto de contexto"
       },
       "section": {
         "prompt": "prompt",
@@ -184,6 +188,18 @@
         "route": "ruta",
         "reason": "motivo",
         "status": "estado"
+      },
+      "budget": {
+        "window": "ventana de {{n}} tokens",
+        "overflow": "aun así no cupo (~{{n}} tokens)",
+        "cut": {
+          "historySources": "correos de {{n}} preguntas anteriores omitidos",
+          "historyTurns": "{{n}} mensajes anteriores omitidos",
+          "openThread": "hilo abierto recortado a {{n}} caracteres",
+          "sourceExcerpts": "extractos recortados a {{n}} caracteres por correo",
+          "sourcesDropped": "{{n}} correos recuperados omitidos",
+          "toolResults": "{{n}} resultados de herramientas recortados en {{chars}} caracteres"
+        }
       }
     }
   },

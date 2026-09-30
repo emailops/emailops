@@ -19,6 +19,8 @@ interface MessageListProps {
   rejectedMessageIds?: string[];
   /** A turn is in flight. */
   isSending?: boolean;
+  /** Open Settings → AI (offered by the context-budget note). */
+  onOpenAiSettings?: () => void;
 }
 
 /**
@@ -77,6 +79,7 @@ export function MessageList({
   onRejectMessage,
   rejectedMessageIds,
   isSending,
+  onOpenAiSettings,
 }: MessageListProps) {
   const { t } = useTranslation(['chat']);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -124,6 +127,7 @@ export function MessageList({
           onReject={onRejectMessage && m.role === 'assistant' ? (reason) => onRejectMessage(m.id, reason) : undefined}
           isRejected={rejectedMessageIds?.includes(m.id)}
           isSending={isSending}
+          onOpenAiSettings={onOpenAiSettings}
         />
       ))}
     </div>

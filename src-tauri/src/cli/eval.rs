@@ -125,6 +125,7 @@ pub async fn run_eval(
     cases_dir: Option<PathBuf>,
     judge: bool,
     judge_model: Option<String>,
+    n_ctx: Option<u32>,
 ) -> Result<()> {
     use crate::evals::{case_loader, harness, metrics};
     use crate::models::error::AppError;
@@ -136,6 +137,11 @@ pub async fn run_eval(
     // CLI's perspective — surface them as a typed AppError.
     fn map_eval_err(e: crate::evals::EvalError) -> AppError {
         AppError::AiError(format!("eval: {e}"))
+    }
+
+    // Pinned for the rest of the process, which ends with this command.
+    if let Some(n_ctx) = n_ctx {
+        crate::services::ai::pin_run_n_ctx(n_ctx);
     }
 
     let dir = resolve_cases_dir(cases_dir);

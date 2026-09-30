@@ -456,6 +456,11 @@ pub enum Command {
         /// Model the judge runs on (defaults to the chat model).
         #[arg(long, value_name = "MODEL")]
         judge_model: Option<String>,
+        /// Run the embedded model with this context window instead of the
+        /// stored setting (e.g. 8192, the tier a machine under 16 GB gets).
+        /// The setting itself is not changed.
+        #[arg(long = "n-ctx", value_name = "TOKENS")]
+        n_ctx: Option<u32>,
     },
 }
 

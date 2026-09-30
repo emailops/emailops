@@ -30,8 +30,11 @@ pub async fn prewarm_chat(
     // Resolve exactly the inputs `run_chat_turn` feeds `build_prompt` so the
     // prewarmed prefix stays byte-identical with real turns.
     let ai_language = crate::services::i18n::resolve_ai_language(db)?;
-    let system_template = crate::services::prompts::get_template(db, "chat.system")?;
-    let tools_section = registry.render_system_prompt_section(db);
+    // The window decides which system prompt a turn renders (compact under
+    // 16k); ask the same question here, through the same function.
+    let n_ctx = super::research::resolve_n_ctx(db, provider).await;
+    let (system_template, tools_section) =
+        super::turn::system_prompt_inputs(db, registry, provider, super::budget::compact_prefix(n_ctx))?;
     // Same graceful degradation as `run_chat_turn`: a lookup failure just
     // drops the identity line rather than failing the prewarm.
     let user_email = db
@@ -98,8 +101,13 @@ mod tests {
         let sent = &calls[0];
 
         let ai_language = crate::services::i18n::resolve_ai_language(&db).expect("lang");
-        let system_template = crate::services::prompts::get_template(&db, "chat.system").expect("template");
-        let tools_section = registry.render_system_prompt_section(&db);
+        // The fake runs at the default 8k window: the compact prefix.
+        let (system_template, tools_section) =
+            crate::services::chat::turn::system_prompt_inputs(&db, &registry, &fake, true).expect("inputs");
+        assert!(
+            !tools_section.contains("<tools>"),
+            "an HTTP provider is sent the schemas by its API"
+        );
         let expected: Vec<AiMessage> = crate::services::chat::build_prompt(
             &[],
             &[],

@@ -2335,6 +2335,61 @@ zero-data-retention endpoint, 1M context.
 zero-data-retention endpoint.
 **Limit:** not measured on the app's chat eval; chosen on catalogue data only.
 
+## 2026-09-30 — A chat prompt is cut to the window in a fixed order, never the system prompt
+
+**Decision:** Before every model call of a chat turn the prompt is sized against the
+model's window (`services/chat/budget.rs`). When it would not fit, it is cut in this
+order: the emails earlier questions were asked with, then earlier exchanges, then this
+turn's open thread and retrieved emails, then this turn's tool results. The system
+prompt, the question and its per-turn blocks are never cut. Every cut is in the trace;
+the user is told under the answer only when something of the current turn was cut or the
+prompt did not fit. Sizes are estimated from chars and corrected with the provider's
+token counts.
+**Context:** Nothing checked the prompt against the window. The embedded runtime drops
+tokens from the front, so an overflow cost the rules, the date and the tool catalogue
+first, silently; Ollama truncates on its own and OpenRouter was sent everything. One
+retrieval turn carries up to 11 emails of 4 000 chars, earlier turns replay theirs, and
+tool results had no cap. What gives way first is a product choice, made by the developer.
+**Rejected:**
+- *Dropping whole earlier turns only*: simplest, but the model forgets what the
+  conversation was about by the third or fourth retrieval turn at 32k although the
+  questions and answers themselves are small.
+- *Never replaying earlier emails*: uniform, but it changes every follow-up even where
+  the prompt fits, and the prompt stops extending the previous one.
+- *Exact token counts through the provider trait*: precise only on the embedded runtime,
+  one actor round-trip per call, and a wider trait. The measured ratio gets close enough
+  with the runtime's truncation kept as the safety net.
+- *Telling the user about every cut*: on a small window the note would sit under most
+  answers of a long conversation.
+
+## 2026-09-30 — Windows under 16k tokens get a compact chat system prompt
+
+**Decision:** When the model's window is under 16 384 tokens the chat renders
+`chat.system_compact` and a compact tool catalogue (each tool's one-line summary, the
+first sentence of each parameter description, stated once) instead of the full ones. The
+choice depends on the window alone, never on the turn, and prewarm makes it through the
+same function. A `chat.system` the user customised is kept at any window.
+**Context:** The full system message is about 29 000 chars (~7 400 tokens): the template
+11 500, the tool catalogue 16 600. An 8 192 window leaves 7 168 for the prompt, so on a
+machine under 16 GB, and on Ollama, the system prompt did not fit even in an empty
+conversation and the budget above had nothing left to cut. The compact message is pinned
+under 16 000 chars by a test. On the demo mailbox a retrieval turn at 8 192 went from
+11 961 prompt tokens with 4 793 dropped to 6 112 with none.
+**Rejected:**
+- *Raising the smallest tier to 16k*: the KV cache for 16k costs memory on exactly the
+  machines that get 8k because they have none to spare, and it does nothing for Ollama.
+- *Trimming only the tool catalogue*: the template alone is 11 500 chars; with a compact
+  catalogue the message was still ~5 800 tokens, leaving about 1 000 for everything else.
+- *A per-turn choice of prompt* (compact only when the turn is large): the system prefix
+  would change between turns and cold-prefill the KV cache each time it did.
+**Limit:** the compact prompt keeps the email-link contract and three examples whole (a
+first version with one-line link rules lost the links on tool-result answers) and states
+the other rules in one line each. Checked on the embedded runtime only, with
+`qwen3.5-4b-q4_k_m`: the smoke tier at 8 192 passes 36 of 41 with no prompt truncated,
+against 36 of 41 with 39 prompts truncated before; three of the five failures also fail at
+the default window, and which other cases fail moved between runs of near-identical
+prompts. Ollama and OpenRouter were not run.
+
 ## 2026-09-30 — AI models are remembered per provider; a save never keeps an unusable embedding model
 
 **Decision:** Supersedes the "Remembering a last-used model per provider" rejection in the

@@ -30,9 +30,17 @@ interface ChatViewProps {
   onNavigateToInbox?: () => void;
   /** Show the emails an answer references in the email list, via this search query. */
   onShowEmailsInList?: (query: string) => void;
+  /** Open Settings → AI (offered by the context-budget note under an answer). */
+  onOpenAiSettings?: () => void;
 }
 
-export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShowEmailsInList }: ChatViewProps) {
+export function ChatView({
+  accountId,
+  onAccountChange,
+  onNavigateToInbox,
+  onShowEmailsInList,
+  onOpenAiSettings,
+}: ChatViewProps) {
   const { t } = useTranslation(['chat', 'common']);
   // Chat conversations are hard-scoped to one account. In unified
   const {
@@ -226,6 +234,7 @@ export function ChatView({ accountId, onAccountChange, onNavigateToInbox, onShow
                   }
                   rejectedMessageIds={rejectedMessageIds}
                   isSending={isSending}
+                  onOpenAiSettings={onOpenAiSettings}
                 />
               )}
               {error && <div className="px-6 py-2 text-xs text-red-600 bg-red-50 border-t border-red-200">{error}</div>}

@@ -1449,6 +1449,7 @@ function AppInner() {
               onAccountChange={handleChatAccountChange}
               onNavigateToInbox={() => setViewMode('inbox')}
               onShowEmailsInList={handleShowChatEmailsInList}
+              onOpenAiSettings={() => setSettingsTab('ai')}
             />
           ) : viewMode === 'tasks' && tasksEnabled ? (
             <div className="flex flex-col flex-1 overflow-hidden">
@@ -1708,6 +1709,7 @@ function AppInner() {
             }}
             onNavigateToInbox={() => setViewMode('inbox')}
             onShowEmailsInList={handleShowChatEmailsInList}
+            onOpenAiSettings={() => setSettingsTab('ai')}
           />
         )}
       </div>
