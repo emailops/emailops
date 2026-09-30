@@ -72,6 +72,12 @@ pub(crate) fn folder_email_id_prefix(account_id: &str, server_path: &str) -> Str
 /// oldest stored email.
 const MAX_INBOX_PAGES_PER_SYNC: u32 = 10;
 
+/// Most mailboxes whose UIDVALIDITY one sync checks: the inbox, the three role
+/// folders and the custom folders the sync walks
+/// (`MAX_CUSTOM_FOLDERS_PER_ACCOUNT` in `services/emails/sync.rs`). Each costs
+/// one `EXAMINE` round trip on the shared connection.
+const MAX_VALIDITY_FOLDERS: usize = 54;
+
 /// IMAP has no "has attachment" search key. A message carrying attachments is
 /// `multipart/mixed` at the top level in practice, and a message that *is*
 /// one document (a scanner mail) is `application/*`.
@@ -296,6 +302,19 @@ impl ImapFolder {
         }
     }
 
+    /// The inverse of [`Self::mailbox_value`].
+    fn from_mailbox_value(mailbox: &str) -> Self {
+        match mailbox {
+            "sent" => Self::Sent,
+            "spam" => Self::Spam,
+            "trash" => Self::Trash,
+            other => match other.strip_prefix("folder:") {
+                Some(path) if !path.is_empty() => Self::Custom(path.to_string()),
+                _ => Self::Inbox,
+            },
+        }
+    }
+
     /// The `mailbox` column value for a message fetched from this folder.
     /// `parse_message` defaults every message to `"inbox"`, so `get_message`
     /// must apply this so Sent/Spam/Trash/custom-folder messages are not
@@ -411,6 +430,12 @@ impl ImapClient {
             ImapFolder::Trash => self.make_prefixed_email_id(TRASH_ID_PREFIX, uid),
             ImapFolder::Custom(path) => self.make_folder_email_id(path, uid),
         }
+    }
+
+    /// What every stored id of `folder` starts with; the UID follows.
+    fn id_prefix(&self, folder: &ImapFolder) -> String {
+        let id = self.located_id(folder, 0);
+        id.strip_suffix('0').unwrap_or(&id).to_string()
     }
 
     /// The stored-row ids of the messages an attachment search found.
@@ -1683,6 +1708,83 @@ impl EmailProvider for ImapClient {
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
     }
 
+    /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
+    /// `LIST` still checks the inbox; a mailbox that will not open is skipped.
+    async fn folder_uid_validities(&self) -> Result<Vec<provider::FolderUidValidity>> {
+        let creds = self.credentials.clone();
+        let found = tokio::task::spawn_blocking(move || -> Result<Vec<(ImapFolder, u32)>> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let entries = Self::list_folders_blocking(&mut session).unwrap_or_else(|e| {
+                crate::services::logger::log(
+                    "debug",
+                    "sync",
+                    format!("IMAP LIST failed, checking UIDVALIDITY of the inbox only: {e}"),
+                );
+                Vec::new()
+            });
+            let mut found = Vec::new();
+            // The same set the sync stores mail from, so every stored id is covered.
+            for (folder, path) in attachment_search_folders(&folder_plan::plan_folders(&entries))
+                .into_iter()
+                .take(MAX_VALIDITY_FOLDERS)
+            {
+                match imap_search::examine_uid_validity(&mut session, &path) {
+                    Ok(Some(uid_validity)) => found.push((folder, uid_validity)),
+                    Ok(None) => {}
+                    Err(e) => crate::services::logger::log(
+                        "debug",
+                        "sync",
+                        format!("IMAP UIDVALIDITY check skipped {folder:?}: {e}"),
+                    ),
+                }
+            }
+            let _ = session.logout();
+            Ok(found)
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+
+        Ok(found
+            .into_iter()
+            .map(|(folder, uid_validity)| provider::FolderUidValidity {
+                mailbox: folder.mailbox_value(),
+                id_prefix: self.id_prefix(&folder),
+                uid_validity,
+            })
+            .collect())
+    }
+
+    async fn list_mailbox_identities(&self, mailbox: &str) -> Result<Vec<provider::MessageIdentity>> {
+        let folder = ImapFolder::from_mailbox_value(mailbox);
+        let creds = self.credentials.clone();
+        let folder_for_select = folder.clone();
+        let fetched = tokio::task::spawn_blocking(move || -> Result<Vec<imap_search::FetchedIdentity>> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let result = if Self::select_folder_blocking(&mut session, &folder_for_select) {
+                imap_search::uid_fetch_identities(&mut session)
+            } else {
+                Err(AppError::SyncError(format!(
+                    "IMAP {folder_for_select:?} folder not found on server"
+                )))
+            };
+            let _ = session.logout();
+            result
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+
+        Ok(fetched
+            .into_iter()
+            .map(|identity| provider::MessageIdentity {
+                id: self.located_id(&folder, identity.uid),
+                message_id: identity.message_id,
+                timestamp: identity.internal_date,
+            })
+            .collect())
+    }
+
     /// One connection; per folder, one `SELECT` and one `UID FETCH (UID FLAGS)`
     /// over the stored UIDs. A UID the folder no longer returns is `Missing`.
     /// A folder that cannot be selected, or whose fetch the server refuses,
@@ -2757,6 +2859,35 @@ mod tests {
     #[test]
     fn message_timestamp_falls_back_to_now_when_nothing_is_known() {
         assert_eq!(message_timestamp(None, None, NOW), NOW);
+    }
+
+    #[test]
+    fn a_mailbox_value_maps_back_to_its_folder() {
+        for folder in [
+            ImapFolder::Inbox,
+            ImapFolder::Sent,
+            ImapFolder::Spam,
+            ImapFolder::Trash,
+            ImapFolder::Custom("INBOX.Projekte".to_string()),
+        ] {
+            assert_eq!(ImapFolder::from_mailbox_value(&folder.mailbox_value()), folder);
+        }
+    }
+
+    #[test]
+    fn a_folders_id_prefix_is_what_its_stored_ids_start_with() {
+        let client = imap_client_synced_from(None);
+        for folder in [
+            ImapFolder::Inbox,
+            ImapFolder::Sent,
+            ImapFolder::Spam,
+            ImapFolder::Trash,
+            ImapFolder::Custom("INBOX.Projekte".to_string()),
+        ] {
+            let prefix = client.id_prefix(&folder);
+            // A UID ending in zero must not be eaten by the prefix.
+            assert_eq!(client.located_id(&folder, 120), format!("{prefix}120"), "{folder:?}");
+        }
     }
 
     #[test]

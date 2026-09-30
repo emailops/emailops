@@ -350,6 +350,11 @@ pub async fn sync_account_with_provider(
     // is the first point at which applying it is safe — see the function docs.
     apply_pending_extra_mailbox_backfill_reset(db, account_id);
 
+    // Before anything is listed: a mailbox the IMAP server renumbered must
+    // have its stored ids repaired first, or the listing below drops new mail
+    // whose UID matches a stale id. Fatal on purpose — see the function docs.
+    super::uid_validity::reconcile_uid_validity(db, account, email_provider.as_ref()).await?;
+
     // Read-state changes a previous push could not deliver (offline, a 5xx)
     // go out before anything is read back from the provider.
     super::mailbox_state::retry_pending_read_pushes(
@@ -1686,15 +1691,50 @@ fn apply_pending_extra_mailbox_backfill_reset(db: &Arc<Database>, account_id: &s
 /// going through the same derivation functions the sync passes use keeps the
 /// formats in lockstep.
 pub(super) fn custom_folder_pref_keys(account_id: &str, server_path: &str) -> [String; 4] {
-    let target = SyncTarget::CustomFolder {
-        server_path: server_path.to_string(),
-    };
+    sync_target_pref_keys(
+        account_id,
+        &SyncTarget::CustomFolder {
+            server_path: server_path.to_string(),
+        },
+    )
+}
+
+fn sync_target_pref_keys(account_id: &str, target: &SyncTarget) -> [String; 4] {
     [
-        extra_mailbox_forward_key(account_id, &target),
-        extra_mailbox_backfill_key(account_id, &target),
-        extra_mailbox_backfill_cursor_key(account_id, &target),
-        extra_mailbox_forward_gap_key(account_id, &target),
+        extra_mailbox_forward_key(account_id, target),
+        extra_mailbox_backfill_key(account_id, target),
+        extra_mailbox_backfill_cursor_key(account_id, target),
+        extra_mailbox_forward_gap_key(account_id, target),
     ]
+}
+
+/// Make the next passes list `mailbox` (an `emails.mailbox` value) from the
+/// account's floor again instead of from where they last stopped. Used after a
+/// UIDVALIDITY change: the rows that could be matched were re-keyed, and
+/// listing the mailbox again is what re-downloads the rest. Already-stored
+/// messages are dropped by id as usual, so this costs listings, not downloads.
+///
+/// Sent/Spam/Trash and custom folders forget their watermarks and walk their
+/// whole history again over the following syncs. The inbox reopens its
+/// incremental window, which one sync lists as far back as the provider's
+/// per-sync paging cap allows (the newest ~1 000 messages on IMAP).
+pub(super) fn reopen_mailbox_sync(db: &Database, account_id: &str, mailbox: &str) -> Result<()> {
+    let target = match mailbox {
+        "inbox" => return db.set_preference(&inbox_incremental_resume_key(account_id), "0"),
+        "sent" => SyncTarget::Canonical(ExtraMailbox::Sent),
+        "spam" => SyncTarget::Canonical(ExtraMailbox::Spam),
+        "trash" => SyncTarget::Canonical(ExtraMailbox::Trash),
+        other => match other.strip_prefix("folder:") {
+            Some(server_path) => SyncTarget::CustomFolder {
+                server_path: server_path.to_string(),
+            },
+            None => return Ok(()),
+        },
+    };
+    for key in sync_target_pref_keys(account_id, &target) {
+        db.delete_preference(&key)?;
+    }
+    Ok(())
 }
 
 /// Convert a folder plan (plus the LIST entries it came from, for delimiter

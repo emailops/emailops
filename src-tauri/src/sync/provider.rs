@@ -309,6 +309,28 @@ pub enum RemoteMessageState {
     Missing,
 }
 
+/// The UIDVALIDITY an IMAP server reports for one mailbox the sync stores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderUidValidity {
+    /// The `emails.mailbox` value of the mailbox's messages.
+    pub mailbox: String,
+    /// What every stored id of this mailbox starts with; the rest is the UID.
+    pub id_prefix: String,
+    pub uid_validity: u32,
+}
+
+/// One message of a mailbox as the provider has it now, with what identifies
+/// it independently of its provider id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageIdentity {
+    /// The id the sync would store this message under today.
+    pub id: String,
+    /// RFC 5322 Message-ID header.
+    pub message_id: Option<String>,
+    /// The timestamp the sync would store for it (IMAP INTERNALDATE).
+    pub timestamp: Option<i64>,
+}
+
 /// Everything a reply needs to know about the message it answers.
 ///
 /// Grouped rather than passed loose because the fields are easy to confuse and
@@ -600,6 +622,24 @@ pub trait EmailProvider: Send + Sync {
         Ok(None)
     }
 
+    /// The current UIDVALIDITY of every mailbox the sync stores mail from.
+    /// IMAP only: its message ids embed a UID, which a server-side mailbox
+    /// rebuild re-assigns. Gmail and Graph ids are never reused, so the default
+    /// reports nothing. A mailbox the server could not answer for is left out.
+    async fn folder_uid_validities(&self) -> Result<Vec<FolderUidValidity>> {
+        Ok(Vec::new())
+    }
+
+    /// Every message currently in `mailbox` (an `emails.mailbox` value), so
+    /// rows stored before a UIDVALIDITY change can be matched to the ids their
+    /// messages have now. Only called for a mailbox
+    /// [`Self::folder_uid_validities`] reported.
+    async fn list_mailbox_identities(&self, _mailbox: &str) -> Result<Vec<MessageIdentity>> {
+        Err(AppError::InvalidInput(
+            "listing mailbox identities is not supported by this provider".to_string(),
+        ))
+    }
+
     // ── Drafts ────────────────────────────────────────────────────────────
     //
     // Providers that support server-side drafts (Gmail, Outlook) override
@@ -723,6 +763,11 @@ pub struct FakeEmailProvider {
     /// Ids `fetch_message_states` leaves out of its answer — a folder that
     /// would not open, a throttled sub-request.
     unverifiable_messages: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// What `folder_uid_validities` reports — empty unless a test models an
+    /// IMAP server.
+    uid_validities: std::sync::RwLock<Vec<FolderUidValidity>>,
+    /// When `Some`, `list_mailbox_identities` fails with this message.
+    identity_listing_failure: std::sync::RwLock<Option<String>>,
 }
 
 /// How [`FakeEmailProvider`] fails a mailbox-state write.
@@ -807,7 +852,29 @@ impl FakeEmailProvider {
             attachment_listing: std::sync::RwLock::new(None),
             reports_message_states: std::sync::atomic::AtomicBool::new(false),
             unverifiable_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
+            uid_validities: std::sync::RwLock::new(Vec::new()),
+            identity_listing_failure: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Report `uid_validity` for `mailbox` from now on, replacing any earlier
+    /// value — calling it again with another number is a server-side rebuild.
+    pub fn set_folder_uid_validity(&self, mailbox: &str, id_prefix: &str, uid_validity: u32) {
+        let mut validities = self.uid_validities.write().unwrap_or_else(PoisonError::into_inner);
+        validities.retain(|v| v.mailbox != mailbox);
+        validities.push(FolderUidValidity {
+            mailbox: mailbox.to_string(),
+            id_prefix: id_prefix.to_string(),
+            uid_validity,
+        });
+    }
+
+    /// Make `list_mailbox_identities` fail with `message`.
+    pub fn fail_identity_listing(&self, message: impl Into<String>) {
+        *self
+            .identity_listing_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(message.into());
     }
 
     /// Make `fetch_message_states` answer from the fake mailbox: a stored
@@ -1391,6 +1458,36 @@ impl EmailProvider for FakeEmailProvider {
         }))
     }
 
+    async fn folder_uid_validities(&self) -> Result<Vec<FolderUidValidity>> {
+        Ok(self
+            .uid_validities
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
+    }
+
+    async fn list_mailbox_identities(&self, mailbox: &str) -> Result<Vec<MessageIdentity>> {
+        self.record_call("list_mailbox_identities");
+        if let Some(message) = self
+            .identity_listing_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::SyncError(message));
+        }
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(guard
+            .iter()
+            .filter(|m| m.email.mailbox == mailbox)
+            .map(|m| MessageIdentity {
+                id: m.email.id.clone(),
+                message_id: m.email.message_id.clone(),
+                timestamp: Some(m.email.timestamp),
+            })
+            .collect())
+    }
+
     async fn fetch_message_states(
         &self,
         message_ids: &[String],
@@ -1926,6 +2023,45 @@ mod tests {
         let err = p.trash_message("m-1", None).await.unwrap_err();
         assert!(err.to_string().contains("over quota"), "unexpected error: {err}");
         assert!(p.mailbox_ops().is_empty(), "a failed write must not be recorded");
+    }
+
+    #[tokio::test]
+    async fn providers_without_uids_report_no_uid_validity() {
+        assert!(BareProvider.folder_uid_validities().await.unwrap().is_empty());
+        assert!(BareProvider.list_mailbox_identities("inbox").await.is_err());
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert!(p.folder_uid_validities().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fake_provider_models_a_uid_validity_change_and_lists_a_mailbox() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.set_folder_uid_validity("inbox", "acc::", 1);
+        p.set_folder_uid_validity("inbox", "acc::", 2);
+        let mut in_sent = sample_email("acc::SENT::4", 900);
+        in_sent.mailbox = "sent".to_string();
+        p.add_message(in_sent, EmailCategory::Primary, vec![]);
+        p.add_message(sample_email("acc::7", 1_000), EmailCategory::Primary, vec![]);
+
+        assert_eq!(
+            p.folder_uid_validities().await.unwrap(),
+            vec![FolderUidValidity {
+                mailbox: "inbox".to_string(),
+                id_prefix: "acc::".to_string(),
+                uid_validity: 2,
+            }]
+        );
+        assert_eq!(
+            p.list_mailbox_identities("inbox").await.unwrap(),
+            vec![MessageIdentity {
+                id: "acc::7".to_string(),
+                message_id: None,
+                timestamp: Some(1_000),
+            }]
+        );
+
+        p.fail_identity_listing("connection reset");
+        assert!(p.list_mailbox_identities("inbox").await.is_err());
     }
 
     #[tokio::test]

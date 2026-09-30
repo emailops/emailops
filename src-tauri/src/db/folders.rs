@@ -148,6 +148,45 @@ impl Database {
         Ok(new_id)
     }
 
+    /// The UIDVALIDITY recorded for one mailbox of an IMAP account (V027), or
+    /// `None` when that mailbox has not been checked yet. `mailbox` is the
+    /// `emails.mailbox` value.
+    pub fn get_folder_uid_validity(&self, account_id: &str, mailbox: &str) -> Result<Option<u32>> {
+        use rusqlite::OptionalExtension;
+        let validity = self
+            .reader()
+            .query_row(
+                "SELECT uid_validity FROM folder_uid_validity WHERE account_id = ?1 AND mailbox = ?2",
+                params![account_id, mailbox],
+                |row| row.get::<_, u32>(0),
+            )
+            .optional()?;
+        Ok(validity)
+    }
+
+    /// Record the UIDVALIDITY the stored ids of one mailbox are valid under.
+    pub fn set_folder_uid_validity(&self, account_id: &str, mailbox: &str, uid_validity: u32) -> Result<()> {
+        self.connection().execute(
+            "INSERT INTO folder_uid_validity (account_id, mailbox, uid_validity, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (account_id, mailbox) DO UPDATE SET
+                 uid_validity = excluded.uid_validity,
+                 updated_at = excluded.updated_at",
+            params![account_id, mailbox, uid_validity, chrono::Utc::now().timestamp()],
+        )?;
+        Ok(())
+    }
+
+    /// Forget a mailbox's UIDVALIDITY — the folder was renamed or deleted, so
+    /// the next mailbox to carry that name is a different one. Idempotent.
+    pub fn delete_folder_uid_validity(&self, account_id: &str, mailbox: &str) -> Result<()> {
+        self.connection().execute(
+            "DELETE FROM folder_uid_validity WHERE account_id = ?1 AND mailbox = ?2",
+            params![account_id, mailbox],
+        )?;
+        Ok(())
+    }
+
     /// Delete a folder row by id, scoped to the account. Idempotent.
     pub fn delete_folder_row(&self, account_id: &str, folder_id: &str) -> Result<()> {
         self.connection().execute(
@@ -205,6 +244,54 @@ mod tests {
             role,
             delimiter: Some(".".to_string()),
         }
+    }
+
+    #[test]
+    fn uid_validity_is_stored_per_account_and_mailbox() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.seed_test_account("acc-2");
+        assert_eq!(db.get_folder_uid_validity("acc-1", "inbox").unwrap(), None);
+
+        db.set_folder_uid_validity("acc-1", "inbox", 7).unwrap();
+        db.set_folder_uid_validity("acc-1", "folder:Projects", 4_294_967_295)
+            .unwrap();
+        db.set_folder_uid_validity("acc-1", "inbox", 8).unwrap();
+
+        assert_eq!(db.get_folder_uid_validity("acc-1", "inbox").unwrap(), Some(8));
+        assert_eq!(
+            db.get_folder_uid_validity("acc-1", "folder:Projects").unwrap(),
+            Some(u32::MAX),
+            "a UIDVALIDITY is a full 32-bit value"
+        );
+        assert_eq!(db.get_folder_uid_validity("acc-2", "inbox").unwrap(), None);
+    }
+
+    #[test]
+    fn a_forgotten_uid_validity_reads_as_never_checked() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.set_folder_uid_validity("acc-1", "folder:Old", 7).unwrap();
+
+        db.delete_folder_uid_validity("acc-1", "folder:Old").unwrap();
+        db.delete_folder_uid_validity("acc-1", "folder:Old").unwrap();
+
+        assert_eq!(db.get_folder_uid_validity("acc-1", "folder:Old").unwrap(), None);
+    }
+
+    #[test]
+    fn deleting_an_account_drops_its_uid_validities() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.set_folder_uid_validity("acc-1", "inbox", 7).unwrap();
+
+        db.delete_account("acc-1").unwrap();
+
+        let left: i64 = db
+            .reader()
+            .query_row("SELECT COUNT(*) FROM folder_uid_validity", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]

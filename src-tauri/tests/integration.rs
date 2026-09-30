@@ -3257,6 +3257,61 @@ async fn a_failed_read_push_is_delivered_by_the_next_sync() {
     assert!(db.pending_read_pushes("acc-rp", 10).unwrap().is_empty());
 }
 
+// IMAP ids embed a UID. After the server rebuilt the inbox, a new message
+// landed on a UID the app already had a row for — and was dropped as "already
+// synced", while the stored row pointed at the wrong message.
+#[tokio::test]
+async fn a_renumbered_imap_inbox_keeps_its_rows_and_still_receives_new_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-uv", "uv@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-uv").unwrap().unwrap();
+
+    let mut stored = make_email_with("acc-uv::5", "acc-uv", 1_000, "a@example.com", "inbox");
+    stored.message_id = Some("<old@example.com>".to_string());
+    stored.subject = "stored before the rebuild".to_string();
+    stored.is_read = true;
+    db.insert_email(&stored).unwrap();
+    db.set_folder_uid_validity("acc-uv", "inbox", 100).unwrap();
+
+    // The rebuilt mailbox: the stored message now sits at UID 9, and UID 5
+    // belongs to a message that arrived afterwards.
+    let provider = FakeEmailProvider::new("uv@example.com", "Uv");
+    provider.set_folder_uid_validity("inbox", "acc-uv::", 200);
+    let mut moved = stored.clone();
+    moved.id = "acc-uv::9".to_string();
+    provider.add_message(moved, EmailCategory::Primary, vec![]);
+    let mut arrived = make_email_with("acc-uv::5", "acc-uv", 2_000, "b@example.com", "inbox");
+    arrived.message_id = Some("<new@example.com>".to_string());
+    arrived.subject = "arrived after the rebuild".to_string();
+    provider.add_message(arrived, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let at_nine = db.get_email_by_id("acc-uv::9").unwrap().expect("re-keyed row");
+    assert_eq!(at_nine.subject, "stored before the rebuild");
+    assert!(at_nine.is_read, "local state travels with the row");
+    let at_five = db.get_email_by_id("acc-uv::5").unwrap().expect("new mail stored");
+    assert_eq!(
+        at_five.subject, "arrived after the rebuild",
+        "the new message must not be dropped as already synced"
+    );
+    assert_eq!(db.get_folder_uid_validity("acc-uv", "inbox").unwrap(), Some(200));
+}
+
 #[test]
 fn delete_email_hides_it_from_get_emails() {
     let db = test_db();

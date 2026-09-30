@@ -12,6 +12,7 @@ mod redownload;
 mod send;
 mod state_refresh;
 mod sync;
+mod uid_validity;
 
 use std::sync::Arc;
 
