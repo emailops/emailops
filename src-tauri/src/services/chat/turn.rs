@@ -4731,7 +4731,7 @@ async fn run_chat_turn_inner(
         tool_traces.extend(prepared.gather_calls.iter().cloned());
         // Read the window now, with the model loaded by the planner: batches
         // and notes are sized to what the runtime really runs with.
-        let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref());
+        let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref()).await;
         let run = super::research::run_research(
             super::research::ResearchInput {
                 db: &db,

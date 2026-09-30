@@ -2194,3 +2194,40 @@ it was sent from EmailOps. The developer chose to keep that formatting.
 **Limit:** this covers a draft sent without editing its body. The compose editor (Tiptap
 StarterKit) has no table or style nodes, so editing such a draft in the app still
 flattens it before the sanitizer sees it.
+
+## 2026-09-30 — Remote models are sized to their own window, capped by a context budget
+
+**Decision:** For OpenRouter, research batches are sized to `min(model window, budget)`.
+The window is the selected model's `context_length` from the model catalogue (the smaller
+of the model's and its top provider's), read on demand; the budget is
+`chat.remote_n_ctx_budget`, 32 768 tokens by default. An unreadable catalogue falls back
+to 8 192.
+**Context:** OpenRouter reported no window, so research sized every batch to the 8 192
+default inherited from local runtimes: many small paid calls, each resending the
+instructions. The local cap exists because of RAM, which does not apply to a remote
+model; what does apply is cost and how much mail leaves the machine per call.
+**Rejected:**
+- *Using the model's full window (128k–1M)*: one research call could ship, and bill, a
+  large share of the mailbox.
+- *Reusing `chat.n_ctx` for remote providers*: that setting is clamped to what the local
+  KV cache fits and means something else.
+- *Fetching the catalogue on every chat turn*: it is a large response; only research
+  sizes prompts to the window today, so it asks when it runs.
+
+## 2026-09-30 — The compose editor carries tables and verbatim inline styles
+
+**Decision:** The Tiptap editor keeps table markup (with its layout attributes) and a raw
+`style` attribute on text spans and block nodes, so a formatted draft survives being
+edited in the app. This replaces the limit noted in "Outgoing HTML keeps tables and safe
+inline styles". The backend sanitizer remains the only filter.
+**Context:** With only the backend allowlist widened, editing the body of a draft written
+in the provider's web client still flattened it, because the editor schema had no table
+or style nodes.
+**Rejected:**
+- *Per-property style extensions (Color, FontFamily, FontSize…)*: each carries one
+  property; a verbatim `style` keeps everything the backend allows with less code.
+- *Toolbar controls for creating tables or picking colours*: the goal is to preserve
+  existing formatting, not to author it.
+**Limit:** `thead`/`tfoot` fold into one `tbody`, `caption` becomes a row, `colgroup`
+widths, `center`/`sub`/`sup`/`small` and a `div` wrapping other blocks are lost, and
+style strings are rewritten in normalised form (`#ff0000` → `rgb(255, 0, 0)`).

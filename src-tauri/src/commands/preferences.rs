@@ -58,6 +58,19 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
                 "chat.n_ctx must be 0 (auto) or between {N_CTX_PREF_MIN} and {N_CTX_PREF_MAX}, got: {parsed}"
             )));
         }
+    } else if key == crate::services::chat::research::REMOTE_N_CTX_BUDGET_PREF {
+        // Prompt budget for remote (OpenRouter) models. `0` = default; the
+        // model's own window still caps it at read time.
+        const BUDGET_MIN: u32 = 4096;
+        const BUDGET_MAX: u32 = 2_000_000;
+        let parsed = value
+            .parse::<u32>()
+            .map_err(|_| AppError::InvalidInput(format!("{key} must be a whole number of tokens, got: {value}")))?;
+        if parsed != 0 && !(BUDGET_MIN..=BUDGET_MAX).contains(&parsed) {
+            return Err(AppError::InvalidInput(format!(
+                "{key} must be 0 (default) or between {BUDGET_MIN} and {BUDGET_MAX}, got: {parsed}"
+            )));
+        }
     } else if key == "calendar_notify_minutes" {
         // Meeting-reminder lead time. The notifier clamps defensively at read
         // time too, but reject nonsense at the write boundary so Settings can
@@ -165,6 +178,24 @@ mod tests {
         match err {
             AppError::InvalidInput(msg) => assert!(msg.contains("ui_language")),
             other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_pref_accepts_a_remote_context_budget_or_the_default() {
+        for v in ["0", "4096", "32768", "200000"] {
+            assert!(
+                validate_pref("chat.remote_n_ctx_budget", v).is_ok(),
+                "should accept {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_a_nonsense_remote_context_budget() {
+        for v in ["lots", "-1", "512", "99999999"] {
+            let err = validate_pref("chat.remote_n_ctx_budget", v).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "should reject {v}");
         }
     }
 

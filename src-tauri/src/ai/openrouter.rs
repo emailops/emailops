@@ -168,6 +168,38 @@ struct OpenRouterModelInfo {
     id: String,
     name: Option<String>,
     pricing: serde_json::Value,
+    /// Maximum context length of the model, in tokens.
+    #[serde(default)]
+    context_length: Option<u32>,
+    #[serde(default)]
+    top_provider: Option<OpenRouterTopProvider>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenRouterTopProvider {
+    /// Context length of the endpoint OpenRouter routes to first; can be
+    /// smaller than the model's own.
+    #[serde(default)]
+    context_length: Option<u32>,
+}
+
+/// The context window of `model_id` according to the model catalogue: the
+/// smaller of the model's own length and its top provider's, so a prompt sized
+/// to it fits wherever the request lands. A routing suffix (`:nitro`,
+/// `:floor`) is not a catalogue id and falls back to the base model; a listed
+/// variant (`:free`) is looked up as is. Pure.
+fn model_context_length(models: &[OpenRouterModelInfo], model_id: &str) -> Option<u32> {
+    let base_id = model_id.split(':').next().unwrap_or(model_id);
+    let model = models
+        .iter()
+        .find(|m| m.id == model_id)
+        .or_else(|| models.iter().find(|m| m.id == base_id))?;
+    let top = model.top_provider.as_ref().and_then(|p| p.context_length);
+    [model.context_length, top]
+        .into_iter()
+        .flatten()
+        .filter(|n| *n > 0)
+        .min()
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,6 +387,24 @@ impl OpenRouterClient {
     }
 
     async fn list_models_from_api(&self) -> Result<Vec<ModelInfo>> {
+        let models = self
+            .fetch_model_catalogue()
+            .await?
+            .into_iter()
+            .map(|m| {
+                let pricing = parse_openrouter_pricing(&m.pricing);
+                ModelInfo {
+                    id: m.id,
+                    name: m.name.unwrap_or_else(|| "Unnamed model".to_string()),
+                    pricing,
+                }
+            })
+            .collect();
+
+        Ok(models)
+    }
+
+    async fn fetch_model_catalogue(&self) -> Result<Vec<OpenRouterModelInfo>> {
         let url = format!("{}/models", self.base_url);
         let response = self
             .client
@@ -376,20 +426,7 @@ impl OpenRouterClient {
             .await
             .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter models: {}", e)))?;
 
-        let models = body
-            .data
-            .into_iter()
-            .map(|m| {
-                let pricing = parse_openrouter_pricing(&m.pricing);
-                ModelInfo {
-                    id: m.id,
-                    name: m.name.unwrap_or_else(|| "Unnamed model".to_string()),
-                    pricing,
-                }
-            })
-            .collect();
-
-        Ok(models)
+        Ok(body.data)
     }
 
     pub async fn list_embedding_models_from_api(&self) -> Result<Vec<ModelInfo>> {
@@ -445,6 +482,23 @@ impl OpenRouterClient {
 impl AIProvider for OpenRouterClient {
     fn provider_type(&self) -> ProviderType {
         ProviderType::OpenRouter
+    }
+
+    /// The selected model's window from the catalogue. Asked for on demand
+    /// (one catalogue request) rather than on every turn; an unreadable
+    /// catalogue leaves it unknown and the caller sizes to its safe default.
+    async fn resolve_context_window(&self) -> Option<u32> {
+        match self.fetch_model_catalogue().await {
+            Ok(models) => model_context_length(&models, &self.model),
+            Err(e) => {
+                crate::services::logger::log(
+                    "warn",
+                    "ai",
+                    format!("OpenRouter: could not read the context window of {}: {e}", self.model),
+                );
+                None
+            }
+        }
     }
 
     fn model_name(&self) -> &str {
@@ -1241,5 +1295,81 @@ mod chat_stream_tests {
         assert_eq!(body["temperature"], 0.2);
         assert_eq!(body["messages"][1]["tool_calls"][0]["type"], "function");
         assert!(body.get("reasoning").is_none(), "reasoning is left to the model");
+    }
+}
+
+#[cfg(test)]
+mod context_window_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn models(json: serde_json::Value) -> Vec<OpenRouterModelInfo> {
+        serde_json::from_value::<OpenRouterModelsResponse>(json)
+            .expect("models json")
+            .data
+    }
+
+    fn catalogue() -> serde_json::Value {
+        serde_json::json!({ "data": [
+            { "id": "vendor/big", "name": "Big", "pricing": {}, "context_length": 200000,
+              "top_provider": { "context_length": 128000 } },
+            { "id": "vendor/plain", "name": "Plain", "pricing": {}, "context_length": 32000 },
+            { "id": "vendor/top-only", "name": "Top", "pricing": {}, "context_length": null,
+              "top_provider": { "context_length": 64000 } },
+            { "id": "vendor/free-one:free", "name": "Free", "pricing": {}, "context_length": 8000 },
+            { "id": "vendor/free-one", "name": "Paid", "pricing": {}, "context_length": 100000 },
+            { "id": "vendor/silent", "name": "Silent", "pricing": {} }
+        ]})
+    }
+
+    #[test]
+    fn the_window_is_the_smaller_of_the_model_and_its_top_provider() {
+        let models = models(catalogue());
+        assert_eq!(model_context_length(&models, "vendor/big"), Some(128_000));
+        assert_eq!(model_context_length(&models, "vendor/plain"), Some(32_000));
+        assert_eq!(model_context_length(&models, "vendor/top-only"), Some(64_000));
+    }
+
+    #[test]
+    fn a_model_the_catalogue_says_nothing_about_has_no_window() {
+        let models = models(catalogue());
+        assert_eq!(model_context_length(&models, "vendor/silent"), None);
+        assert_eq!(model_context_length(&models, "vendor/unknown"), None);
+    }
+
+    #[test]
+    fn a_routing_suffix_falls_back_to_the_base_model_but_a_listed_variant_wins() {
+        let models = models(catalogue());
+        assert_eq!(model_context_length(&models, "vendor/plain:nitro"), Some(32_000));
+        assert_eq!(model_context_length(&models, "vendor/free-one:free"), Some(8_000));
+    }
+
+    #[tokio::test]
+    async fn the_client_reads_its_models_window_from_the_catalogue() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(catalogue()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client =
+            OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
+        assert_eq!(client.context_window(), None, "not known before it is asked for");
+        assert_eq!(client.resolve_context_window().await, Some(128_000));
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_that_cannot_be_read_leaves_the_window_unknown() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let client =
+            OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
+        assert_eq!(client.resolve_context_window().await, None);
     }
 }

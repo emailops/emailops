@@ -246,6 +246,13 @@ pub trait AIProvider: Send + Sync {
         None
     }
 
+    /// [`Self::context_window`] for backends that must ask for it: a remote
+    /// provider looks its model up in the catalogue here. Defaults to the
+    /// value the backend already knows.
+    async fn resolve_context_window(&self) -> Option<u32> {
+        self.context_window()
+    }
+
     /// Generate a single embedding vector.
     async fn embed(&self, text: &str) -> Result<EmbeddingResult>;
     /// Generate embeddings for a batch of texts (may parallelize internally).
