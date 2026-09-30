@@ -44,10 +44,12 @@ def test_a_gitignored_dotfile_gets_the_same_verdict_whether_or_not_it_exists(tmp
     (root / ".gitignore").write_text(".claude/settings.local.json\n")
     (root / "docs" / "guide.md").write_text("Allow the command in `.claude/settings.local.json`.\n")
     # A pre-commit hook exports GIT_INDEX_FILE / GIT_DIR for the real checkout;
-    # inherited, `git add` here would overwrite that index with this fixture.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    subprocess.run(["git", "init", "-q", str(root)], check=True, env=env)
-    subprocess.run(["git", "-C", str(root), "add", "."], check=True, env=env)
+    # inherited, `git add` here would overwrite that index with this fixture
+    # and the checker would list the real repo's files under this root.
+    for name in [k for k in os.environ if k.startswith("GIT_")]:
+        monkeypatch.delenv(name)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     monkeypatch.setattr(check_docs_paths, "ROOT", root)
     monkeypatch.setattr(check_docs_paths, "ALLOWED_UNRESOLVED", {})
 
