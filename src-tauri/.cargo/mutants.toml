@@ -30,13 +30,15 @@ exclude_re = [
     "<impl (std::)?(fmt::)?Debug for ",
 ]
 
-# Integration tests (tests/) and doctests are left out: every mutant would pay a
-# second full link of the crate plus the doctest pass. The planners targeted here
-# are covered by their inline unit tests; a mutant missed only because of this is
-# re-checked against the integration suite before it is written down (see the guide).
-additional_cargo_test_args = ["--lib"]
+# Build and test the library's unit tests only. Integration tests (tests/) and
+# doctests would add a second link of the crate and a doctest pass to every
+# mutant. A mutant missed here is re-checked with `--iterate --cargo-test-arg=--tests`
+# (lib + integration suite) before it is recorded (see the guide).
+additional_cargo_args = ["--lib"]
 
-# Timeouts: baseline test time x3, never under 60 s; builds x3 of the baseline build.
+# Timeouts: baseline test time x3, never under 60 s. Builds get x10 of the baseline
+# build: with a warm target the baseline is a 3-6 s incremental rebuild, and a
+# mutant in a large or generic function can take several times that.
 timeout_multiplier = 3.0
 minimum_test_timeout = 60.0
-build_timeout_multiplier = 3.0
+build_timeout_multiplier = 10.0

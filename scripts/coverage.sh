@@ -34,8 +34,6 @@ rust() {
     exit 1
   fi
   mkdir -p "$OUT/rust"
-  # Incremental state doubles the size of the instrumented target dir for no gain here.
-  export CARGO_INCREMENTAL=0
   local status=0
   cargo llvm-cov --manifest-path "$MANIFEST" --no-default-features --no-report \
     > "$OUT/rust/test-output.txt" 2>&1 || status=$?
