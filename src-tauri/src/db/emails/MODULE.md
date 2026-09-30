@@ -45,7 +45,7 @@ Every dedup/count/CTE under `AllEnabled` must key on `(account_id, thread_id)`
 
 ## Performance guidelines
 
-- Thread-latest queries use `GROUP BY thread_id, MAX(timestamp)` — never `NOT EXISTS`.
+- Thread-latest queries use `GROUP BY thread_id, MAX(timestamp)` — never `NOT EXISTS`. The representative is picked by id with an `id` tie-break (`timestamp DESC, id DESC`, like the inbox), never by joining back on `timestamp = MAX(timestamp)`: two emails of a thread stamped in the same second would both come back.
 - Broad filters (domain/sender) drive from `idx_emails_account_active` with LIMIT; selective filters (tags) drive from `email_tags`.
 - `LIKE 'prefix%'` is converted to `>= / <` range bounds to avoid parameter-plan problems.
 

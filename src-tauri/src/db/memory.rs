@@ -866,27 +866,30 @@ impl Database {
         Ok(rows)
     }
 
-    /// Insert (or replace) the embedding for a fact.
+    /// Insert (or replace) the embedding for a fact. One transaction: a
+    /// failed insert keeps the previous embedding instead of clearing it.
     pub fn upsert_fact_embedding(&self, fact_id: &str, embedding: &[f32], model: &str) -> Result<()> {
-        let conn = self.connection();
+        let mut conn = self.connection();
         let now = chrono::Utc::now().timestamp();
+        let tx = conn.transaction()?;
         // Clear any previous embedding row for this fact.
-        conn.execute(
+        tx.execute(
             "DELETE FROM vec_memory_facts WHERE rowid IN (SELECT rowid FROM memory_fact_chunks WHERE fact_id = ?1)",
             params![fact_id],
         )?;
-        conn.execute("DELETE FROM memory_fact_chunks WHERE fact_id = ?1", params![fact_id])?;
-        conn.execute(
+        tx.execute("DELETE FROM memory_fact_chunks WHERE fact_id = ?1", params![fact_id])?;
+        tx.execute(
             "INSERT INTO memory_fact_chunks (fact_id, embedding_model, created_at)
              VALUES (?1, ?2, ?3)",
             params![fact_id, model, now],
         )?;
-        let rowid = conn.last_insert_rowid();
+        let rowid = tx.last_insert_rowid();
         let blob = fact_embedding_to_blob(embedding);
-        conn.execute(
+        tx.execute(
             "INSERT INTO vec_memory_facts (rowid, embedding) VALUES (?1, ?2)",
             params![rowid, blob],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -899,19 +902,23 @@ impl Database {
         limit: i32,
     ) -> Result<Vec<(MemoryFact, f32)>> {
         let blob = fact_embedding_to_blob(query_embedding);
-        // Stage 1: KNN on vec_memory_facts — broad fetch so we can still fill
-        // the requested limit after filtering.
+        // Stage 1: KNN on vec_memory_facts, pre-filtered to this account's
+        // non-retired facts (as `vec_search` does for emails) so other
+        // accounts' and retired vectors never take the top-k slots.
         let expand = (limit * 5).max(10);
         let knn: Vec<(i64, f32)> = {
             let conn = self.reader();
             let mut stmt = conn.prepare(
-                "SELECT rowid, distance FROM vec_memory_facts WHERE embedding MATCH ?1
+                "SELECT rowid, distance FROM vec_memory_facts
+                 WHERE embedding MATCH ?1
+                   AND rowid IN (SELECT mfc.rowid FROM memory_fact_chunks mfc
+                                 JOIN memory_facts f ON f.id = mfc.fact_id
+                                 WHERE f.account_id = ?3 AND f.status != 'retired')
                  ORDER BY distance LIMIT ?2",
             )?;
-            let collected: Vec<(i64, f32)> = stmt
-                .query_map(params![blob, expand], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .filter_map(|r| r.ok())
-                .collect();
+            let collected = stmt
+                .query_map(params![blob, expand, account_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<(i64, f32)>>>()?;
             collected
         };
         if knn.is_empty() {
@@ -956,15 +963,18 @@ impl Database {
     }
 
     /// Delete a fact row outright. Cascades to FTS via trigger and to
-    /// memory_fact_chunks / vec_memory_facts via explicit cleanup here.
+    /// memory_fact_chunks / vec_memory_facts via explicit cleanup here, all in
+    /// one transaction.
     pub fn delete_memory_fact(&self, fact_id: &str) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM vec_memory_facts WHERE rowid IN (SELECT rowid FROM memory_fact_chunks WHERE fact_id = ?1)",
             params![fact_id],
         )?;
-        conn.execute("DELETE FROM memory_fact_chunks WHERE fact_id = ?1", params![fact_id])?;
-        conn.execute("DELETE FROM memory_facts WHERE id = ?1", params![fact_id])?;
+        tx.execute("DELETE FROM memory_fact_chunks WHERE fact_id = ?1", params![fact_id])?;
+        tx.execute("DELETE FROM memory_facts WHERE id = ?1", params![fact_id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1312,5 +1322,92 @@ mod tests {
         assert_eq!(s.deadline_at, Some(9999));
         assert_eq!(s.awaiting, "them");
         assert_eq!(s.last_outbound_at, Some(200));
+    }
+
+    /// A 768-d fact embedding pointing along (1, tilt): cosine distance to
+    /// `fact_emb(0.0)` grows with `tilt`.
+    fn fact_emb(tilt: f32) -> Vec<f32> {
+        let mut v = vec![0.0_f32; 768];
+        v[0] = 1.0;
+        v[1] = tilt;
+        v
+    }
+
+    fn fact_vector_rows(db: &Database) -> i64 {
+        db.reader()
+            .query_row("SELECT COUNT(*) FROM vec_memory_facts", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    // A failed re-embed (here a wrong-dimension vector) must leave the
+    // previous embedding in place, not a half-cleared chunk table.
+    #[test]
+    fn upsert_fact_embedding_failure_keeps_previous_embedding() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a1");
+        db.insert_memory_fact(&new_fact("f1", "a1", "contact", "a@example.com", "fact"))
+            .unwrap();
+        db.upsert_fact_embedding("f1", &fact_emb(0.0), "m1").unwrap();
+
+        assert!(db.upsert_fact_embedding("f1", &[0.5_f32; 3], "m2").is_err());
+
+        let model: String = db
+            .reader()
+            .query_row(
+                "SELECT embedding_model FROM memory_fact_chunks WHERE fact_id = 'f1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "m1");
+        assert_eq!(fact_vector_rows(&db), 1);
+    }
+
+    // A failure part-way through deleting a fact must not strand the fact
+    // without its vector (or the vector without its fact).
+    #[test]
+    fn delete_memory_fact_is_all_or_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a1");
+        db.insert_memory_fact(&new_fact("f1", "a1", "contact", "a@example.com", "fact"))
+            .unwrap();
+        db.upsert_fact_embedding("f1", &fact_emb(0.0), "m1").unwrap();
+        db.connection()
+            .execute_batch(
+                "CREATE TEMP TRIGGER block_fact_delete BEFORE DELETE ON memory_facts
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+
+        assert!(db.delete_memory_fact("f1").is_err());
+        assert_eq!(fact_vector_rows(&db), 1, "the vector must survive the failed delete");
+    }
+
+    // Regression: the KNN ran over every account's facts and filtered after,
+    // so another account's (or retired) nearer facts filled the top-k and
+    // this account's fact never came back.
+    #[test]
+    fn vec_search_memory_facts_is_not_starved_by_other_accounts_or_retired_facts() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a1");
+        db.seed_test_account("a2");
+        for i in 0..20 {
+            let other = format!("other-{i}");
+            db.insert_memory_fact(&new_fact(&other, "a2", "contact", "b@example.com", "other"))
+                .unwrap();
+            db.upsert_fact_embedding(&other, &fact_emb(0.0), "m").unwrap();
+            let retired = format!("retired-{i}");
+            let mut fact = new_fact(&retired, "a1", "contact", "c@example.com", "old");
+            fact.status = "retired".to_string();
+            db.insert_memory_fact(&fact).unwrap();
+            db.upsert_fact_embedding(&retired, &fact_emb(0.0), "m").unwrap();
+        }
+        db.insert_memory_fact(&new_fact("mine", "a1", "contact", "a@example.com", "mine"))
+            .unwrap();
+        db.upsert_fact_embedding("mine", &fact_emb(1.0), "m").unwrap();
+
+        let hits = db.vec_search_memory_facts(&fact_emb(0.0), "a1", 1).unwrap();
+        let ids: Vec<&str> = hits.iter().map(|(f, _)| f.id.as_str()).collect();
+        assert_eq!(ids, vec!["mine"]);
     }
 }
