@@ -120,3 +120,24 @@ describe('ComposeTabView with a recipient typed but not tokenised', () => {
     expect(saves[saves.length - 1][0]).toMatchObject({ toAddresses: ['bob@example.com'] });
   });
 });
+
+describe('ComposeTabView opened from the compose modal', () => {
+  it('starts with the files attached in the modal and sends them', async () => {
+    const file = { filename: 'notes.txt', mimeType: 'text/plain', data: 'aGVsbG8=' };
+    await act(async () => {
+      root.render(
+        <ComposeTabView
+          tab={{ ...tab, toAddresses: ['bob@example.com'], fileAttachments: [file] }}
+          accounts={[account]}
+          onClose={() => {}}
+        />,
+      );
+    });
+    expect(container.textContent).toContain('notes.txt');
+
+    await act(async () => {
+      sendButton().click();
+    });
+    expect(vi.mocked(api.sendNewEmail).mock.calls[0][5]).toEqual([file]);
+  });
+});

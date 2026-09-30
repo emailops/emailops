@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
 import type { CatalogModel } from '@/types';
 import { BackgroundActivityStatus } from './BackgroundActivityStatus';
@@ -76,11 +77,15 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   openrouter: 'OpenRouter',
 };
 
-function ModelSelector() {
+export function ModelSelector() {
   const { t } = useTranslation(['dashboard']);
   const [provider, setProvider] = useState<Provider>('ollama');
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState<string>('');
+  // Same probe as the Settings pickers: Embedded is offered only where its
+  // runtime can run (not on Intel Macs). A failed probe leaves it enabled and
+  // lets the backend's own guard report the real problem.
+  const [embeddedAvailable, setEmbeddedAvailable] = useState<boolean | null>(null);
   const addLog = useLogStore((s) => s.addLog);
 
   const loadModels = async (prov: Provider): Promise<string[]> => {
@@ -109,6 +114,10 @@ function ModelSelector() {
 
   useEffect(() => {
     void load();
+    api
+      .detectAiCapability()
+      .then((cap) => setEmbeddedAvailable(cap.embeddedAiAvailable))
+      .catch(() => setEmbeddedAvailable(null));
     // Refresh when AI Settings saves (provider/model may have changed)
     const unlistenConfig = listen('ai-config-updated', () => void load());
     // Refresh when any model download completes so newly-downloaded models
@@ -124,18 +133,24 @@ function ModelSelector() {
   }, []);
 
   const handleProviderChange = async (newProv: Provider) => {
+    const previous = { provider, models, currentModel };
     setProvider(newProv);
     const list = await loadModels(newProv);
     setModels(list);
     const newModel = list[0] ?? '';
     setCurrentModel(newModel);
-    // Persist both provider and model
+    // Persist provider and model together through the same path AI Settings
+    // uses; the rest of the config (budget, thinking) is kept as stored.
     try {
-      await api.setPref('ai_provider', newProv);
-      if (newModel) await api.setAiModel(newModel);
+      const cfg = await api.getAiConfig();
+      await api.setAiConfig(newProv, newModel, null, null, cfg.monthlyBudgetUsd, cfg.thinkingEnabled);
       addLog('info', 'ai', `AI backend → ${PROVIDER_LABELS[newProv]}${newModel ? ` · ${newModel}` : ''}`);
     } catch (err) {
-      addLog('error', 'ai', `Failed to switch provider: ${err}`);
+      // Nothing was switched: show the backend that is still in use.
+      setProvider(previous.provider);
+      setModels(previous.models);
+      setCurrentModel(previous.currentModel);
+      addLog('error', 'ai', `Failed to switch provider: ${errorText(err)}`);
     }
   };
 
@@ -155,7 +170,11 @@ function ModelSelector() {
       <Select
         value={provider}
         onChange={(value) => void handleProviderChange(value)}
-        options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({ value: p, label: PROVIDER_LABELS[p] }))}
+        options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({
+          value: p,
+          label: PROVIDER_LABELS[p],
+          disabled: p === 'llamacpp' && embeddedAvailable === false,
+        }))}
         ariaLabel={t('dashboard:log.aiBackend')}
         size="xs"
       />

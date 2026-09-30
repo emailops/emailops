@@ -284,3 +284,43 @@ describe('refetchLimit', () => {
     expect(refetchLimit(4000, PAGE_SIZE, CAP)).toBe(CAP);
   });
 });
+
+describe('resetForAccount', () => {
+  const tab = {
+    type: 'thread' as const,
+    id: 't1',
+    threadId: 't1',
+    accountId: 'acct-a',
+    subject: 's',
+    threadEmails: [],
+    isLoading: false,
+    focusEmailId: null,
+  };
+
+  beforeEach(() => {
+    useEmailStore.getState().reset();
+    useEmailStore.setState({
+      resetAccountKey: 'acct-a',
+      tabs: [tab],
+      activeTabId: 't1',
+      selectedEmail: makeEmail('e1'),
+    });
+  });
+
+  it('keeps tabs and selection when the account did not change', () => {
+    // Saving account settings, reordering or re-authenticating reloads the
+    // account list and re-runs the App effect for the same account.
+    useEmailStore.getState().resetForAccount('acct-a');
+    const s = useEmailStore.getState();
+    expect(s.tabs).toEqual([tab]);
+    expect(s.selectedEmail?.id).toBe('e1');
+  });
+
+  it('clears tabs and selection on a real switch', () => {
+    useEmailStore.getState().resetForAccount('acct-b');
+    const s = useEmailStore.getState();
+    expect(s.tabs).toEqual([]);
+    expect(s.selectedEmail).toBeNull();
+    expect(s.resetAccountKey).toBe('acct-b');
+  });
+});

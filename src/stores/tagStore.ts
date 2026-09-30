@@ -2,6 +2,36 @@ import { create } from 'zustand';
 import * as api from '@/lib/api';
 import type { EmailTag } from '@/types';
 
+/** Payload of the backend `email-classified` event. */
+export interface ClassifiedTags {
+  priority: string;
+  intent: string;
+  topic: string;
+  confidence: number | null;
+}
+
+const CLASSIFIER_TAG_TYPES = new Set(['priority', 'intent', 'topic']);
+
+/**
+ * Pure helper: an email's tags after a classification landed. Only the three
+ * tag types the classifier owns are replaced; junk and company tags come from
+ * other pipelines and must survive (replacing the whole list dropped them).
+ */
+export function mergeClassifiedTags(
+  existing: EmailTag[],
+  emailId: string,
+  tags: ClassifiedTags,
+  now: number,
+): EmailTag[] {
+  const { confidence } = tags;
+  return [
+    ...existing.filter((t) => !CLASSIFIER_TAG_TYPES.has(t.tagType)),
+    { emailId, tagType: 'priority', tagValue: tags.priority, confidence, createdAt: now },
+    { emailId, tagType: 'intent', tagValue: tags.intent, confidence, createdAt: now },
+    { emailId, tagType: 'topic', tagValue: tags.topic, confidence, createdAt: now },
+  ];
+}
+
 interface TagStore {
   /** Map of emailId -> tags */
   tagsByEmail: Record<string, EmailTag[]>;

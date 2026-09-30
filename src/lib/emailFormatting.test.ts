@@ -78,6 +78,44 @@ describe('sanitizeEmailHtmlFull remote-content gating', () => {
     expect(clean).toContain(dataUri);
     expect(hasBlockedImages).toBe(false);
   });
+
+  // The legacy HTML `background` attribute fetches like an <img> on any
+  // element that carries it (tables and cells in old newsletter templates).
+  it('strips a remote background attribute', () => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(
+      '<table background="https://tracker.example/bg.png"><tr><td background="//tracker.example/c.png">x</td></tr></table>',
+      false,
+    );
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('keeps a remote background attribute when remote content is allowed', () => {
+    const { html: clean } = sanitizeEmailHtmlFull('<table background="https://cdn.example/bg.png"></table>', true);
+
+    expect(clean).toContain('https://cdn.example/bg.png');
+  });
+
+  // CSS in <style> blocks is not rewritten (the frame's own CSP blocks the
+  // fetch), but the user still needs the "Load images" banner to see them.
+  it('reports remote url() in a <style> block as blocked content', () => {
+    const { hasBlockedImages } = sanitizeEmailHtmlFull(
+      '<style>.hero { background-image: url("https://tracker.example/h.png"); }</style><div class="hero">x</div>',
+      false,
+    );
+
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('does not report a <style> block that only uses data: urls', () => {
+    const { hasBlockedImages } = sanitizeEmailHtmlFull(
+      '<style>.a { background: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=); }</style><div class="a">x</div>',
+      false,
+    );
+
+    expect(hasBlockedImages).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
