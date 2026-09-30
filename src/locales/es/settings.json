@@ -181,6 +181,14 @@
     "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
     "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
   },
+  "confirmReindex": {
+    "title": "¿Regenerar todos los Embeddings?",
+    "body": "El modelo de Embeddings ha cambiado. Al guardar se eliminan todos los Embeddings existentes y se regeneran con el nuevo modelo. La búsqueda semántica queda reducida hasta que termine.",
+    "bodyNone": "No hay ningún modelo de Embeddings seleccionado. Al guardar se eliminan todos los Embeddings existentes y la búsqueda semántica se desactiva: solo se busca por palabras clave hasta que elijas un modelo.",
+    "openRouter": "El texto de cada correo indexado se enviará a OpenRouter y se facturará en tu cuenta de OpenRouter.",
+    "confirm": "Guardar y regenerar",
+    "confirmNone": "Guardar y eliminar"
+  },
   "promptEditor": {
     "resetTitle": "¿Restaurar el prompt por defecto?",
     "resetBody": "“{{label}}” volverá a su valor por defecto. Se perderán tus personalizaciones.",

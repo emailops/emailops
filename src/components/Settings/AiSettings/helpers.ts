@@ -72,6 +72,15 @@ export function chatModelForProvider(
 }
 
 /**
+ * Whether saving `next` replaces the email index: every vector made with the
+ * `saved` model is deleted and rebuilt. With no saved model there is nothing
+ * to replace.
+ */
+export function embeddingModelChanged(saved: string, next: string): boolean {
+  return saved !== '' && saved !== next;
+}
+
+/**
  * Whether Save must first ask the backend to check the OpenRouter embedding
  * model: it is new, or it was saved without ever passing the check.
  */

@@ -181,6 +181,14 @@
     "embeddingCheckFailed": "Rien n'a été enregistré : le modèle d'Embeddings ne peut pas être utilisé : {{error}}",
     "embeddingListFailed": "Échec du chargement des modèles d'Embeddings d'OpenRouter : {{error}}"
   },
+  "confirmReindex": {
+    "title": "Régénérer tous les Embeddings ?",
+    "body": "Le modèle d'Embeddings a changé. L'enregistrement supprime tous les Embeddings existants et les régénère avec le nouveau modèle. La recherche sémantique est réduite jusqu'à la fin de l'opération.",
+    "bodyNone": "Aucun modèle d'Embeddings n'est sélectionné. L'enregistrement supprime tous les Embeddings existants et désactive la recherche sémantique : la recherche se fait uniquement par mots-clés jusqu'à ce que vous choisissiez un modèle.",
+    "openRouter": "Le texte de chaque e-mail indexé sera envoyé à OpenRouter et facturé sur votre compte OpenRouter.",
+    "confirm": "Enregistrer et régénérer",
+    "confirmNone": "Enregistrer et supprimer"
+  },
   "promptEditor": {
     "resetTitle": "Réinitialiser le prompt par défaut ?",
     "resetBody": "« {{label}} » sera restauré à sa valeur par défaut. Vos personnalisations seront perdues.",

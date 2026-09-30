@@ -10,12 +10,14 @@ import type { AiModelInfo, CatalogModel, ModelDownloadProgress } from '@/types';
 import { AiSharedPreferences } from './AiSettings/AiSharedPreferences';
 import { ChatPromptsSection } from './AiSettings/ChatPromptsSection';
 import { ConfirmDisableDialog } from './AiSettings/ConfirmDisableDialog';
+import { ConfirmReindexDialog } from './AiSettings/ConfirmReindexDialog';
 import { EmbeddedPanel } from './AiSettings/EmbeddedPanel';
 import {
   chatModelForProvider,
   contextBudgetFromPref,
   contextBudgetToPref,
   DEFAULT_CONTEXT_BUDGET,
+  embeddingModelChanged,
   embeddingModelForProvider,
   needsEmbeddingProbe,
 } from './AiSettings/helpers';
@@ -37,6 +39,8 @@ export function AiSettings() {
   // AI surfaces show up in the UI. Stored in `user_preferences.ai_enabled`.
   const { enabled: aiEnabled, setEnabled: setAiEnabled } = useAiStore();
   const [confirmDisable, setConfirmDisable] = useState(false);
+  // Save is waiting for the user to accept that the email index is rebuilt.
+  const [confirmReindex, setConfirmReindex] = useState(false);
   const [config, setConfig] = useState<AiConfigState | null>(null);
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   // Map modelId → in-progress download info
@@ -388,7 +392,7 @@ export function AiSettings() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!config) return;
     setError(null);
     setSuccess(null);
@@ -398,6 +402,16 @@ export function AiSettings() {
       setError(t('settings:openRouter.chatModelRequired'));
       return;
     }
+    // A changed embedding model deletes and rebuilds the whole index: ask first.
+    if (embeddingModelChanged(savedEmbedModelRef.current, config.embeddingModel)) {
+      setConfirmReindex(true);
+      return;
+    }
+    void save();
+  };
+
+  const save = async () => {
+    if (!config) return;
     setSaving(true);
     try {
       const prevEmbedModel = savedEmbedModelRef.current;
@@ -489,7 +503,7 @@ export function AiSettings() {
       }
 
       // Trigger full re-index if the embedding model changed.
-      const embedChanged = prevEmbedModel !== '' && prevEmbedModel !== config.embeddingModel;
+      const embedChanged = embeddingModelChanged(prevEmbedModel, config.embeddingModel);
       if (embedChanged) {
         addLog('info', 'ai', t('settings:ai.reindexStarting'));
         try {
@@ -707,6 +721,17 @@ export function AiSettings() {
           </>
         )}
       </SettingsPanel>
+      {confirmReindex && (
+        <ConfirmReindexDialog
+          provider={config.provider}
+          embeddingModel={config.embeddingModel}
+          onCancel={() => setConfirmReindex(false)}
+          onConfirm={() => {
+            setConfirmReindex(false);
+            void save();
+          }}
+        />
+      )}
       {confirmDisable && (
         <ConfirmDisableDialog
           onCancel={() => setConfirmDisable(false)}

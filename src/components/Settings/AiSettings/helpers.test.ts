@@ -5,6 +5,7 @@ import {
   contextBudgetFromPref,
   contextBudgetToPref,
   DEFAULT_CONTEXT_BUDGET,
+  embeddingModelChanged,
   embeddingModelForProvider,
   MIN_CONTEXT_BUDGET,
   needsEmbeddingProbe,
@@ -109,6 +110,15 @@ describe('chatModelForProvider', () => {
     const nothingLocal = { catalog: catalog.slice(0, 1), ollamaModels: [] };
     expect(chatModelForProvider('llamacpp', remote, nothingLocal)).toBe('');
     expect(chatModelForProvider('ollama', remote, nothingLocal)).toBe('');
+  });
+});
+
+describe('embeddingModelChanged', () => {
+  it('is a change only when a saved model is replaced by another, or by none', () => {
+    expect(embeddingModelChanged('embed-a', 'embed-b')).toBe(true);
+    expect(embeddingModelChanged('embed-a', '')).toBe(true);
+    expect(embeddingModelChanged('embed-a', 'embed-a')).toBe(false);
+    expect(embeddingModelChanged('', 'embed-b')).toBe(false);
   });
 });
 

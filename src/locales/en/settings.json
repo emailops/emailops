@@ -181,6 +181,14 @@
     "embeddingCheckFailed": "Nothing was saved — the Embeddings model cannot be used: {{error}}",
     "embeddingListFailed": "Failed to load the OpenRouter Embeddings models: {{error}}"
   },
+  "confirmReindex": {
+    "title": "Regenerate all Embeddings?",
+    "body": "The Embeddings model changed. Saving deletes all existing Embeddings and regenerates them with the new model. Semantic search is reduced until that finishes.",
+    "bodyNone": "No Embeddings model is selected. Saving deletes all existing Embeddings and turns semantic search off: search is keyword-only until you choose a model.",
+    "openRouter": "The text of every indexed email will be sent to OpenRouter and billed to your OpenRouter account.",
+    "confirm": "Save and regenerate",
+    "confirmNone": "Save and delete"
+  },
   "promptEditor": {
     "resetTitle": "Reset prompt to default?",
     "resetBody": "“{{label}}” will be restored to its built-in default. Your customisations will be lost.",

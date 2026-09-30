@@ -181,6 +181,14 @@
     "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
     "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
   },
+  "confirmReindex": {
+    "title": "Alle Embeddings neu erzeugen?",
+    "body": "Das Embeddings-Modell wurde geändert. Beim Speichern werden alle vorhandenen Embeddings gelöscht und mit dem neuen Modell neu erzeugt. Die semantische Suche ist eingeschränkt, bis das abgeschlossen ist.",
+    "bodyNone": "Es ist kein Embeddings-Modell ausgewählt. Beim Speichern werden alle vorhandenen Embeddings gelöscht und die semantische Suche wird ausgeschaltet: Es wird nur nach Stichwörtern gesucht, bis du ein Modell auswählst.",
+    "openRouter": "Der Text jeder indizierten E-Mail wird an OpenRouter gesendet und über dein OpenRouter-Konto abgerechnet.",
+    "confirm": "Speichern und neu erzeugen",
+    "confirmNone": "Speichern und löschen"
+  },
   "promptEditor": {
     "resetTitle": "Prompt auf Standard zurücksetzen?",
     "resetBody": "„{{label}}“ wird auf den eingebauten Standard zurückgesetzt. Deine Anpassungen gehen verloren.",

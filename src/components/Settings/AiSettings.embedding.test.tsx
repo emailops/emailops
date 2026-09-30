@@ -181,6 +181,15 @@ describe('AiSettings — embedding model', () => {
     await settle();
   }
 
+  const reindexDialogShown = () => container.textContent?.includes('settings:confirmReindex.title') ?? false;
+
+  async function confirmReindex() {
+    await act(async () => {
+      button('settings:confirmReindex.confirm').click();
+    });
+    await settle();
+  }
+
   it('lists the OpenRouter embedding models in the selector', async () => {
     await mount({});
     expect(api.listAiEmbeddingModels).toHaveBeenCalledWith('openrouter');
@@ -195,6 +204,7 @@ describe('AiSettings — embedding model', () => {
     await mount({});
     await choose('vendor/embed-large');
     await save();
+    await confirmReindex();
 
     expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed-large', null, false);
     expect(api.setAiConfig).toHaveBeenCalledWith(
@@ -217,6 +227,7 @@ describe('AiSettings — embedding model', () => {
     await mount({});
     await choose('vendor/embed-large');
     await save();
+    await confirmReindex();
 
     expect(api.setAiConfig).not.toHaveBeenCalled();
     expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
@@ -226,8 +237,10 @@ describe('AiSettings — embedding model', () => {
   it('does not check again a model that is saved and already validated', async () => {
     await mount({});
     await save();
+    expect(reindexDialogShown()).toBe(false);
     expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
     expect(api.setAiConfig).toHaveBeenCalled();
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
   });
 
   it('checks on save a model that was saved without ever being validated', async () => {
@@ -243,6 +256,7 @@ describe('AiSettings — embedding model', () => {
     expect(embeddingSelect().value).toBe('');
     await typeChatModel('vendor/model');
     await save();
+    await confirmReindex();
 
     expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
     expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', '']);
@@ -253,6 +267,7 @@ describe('AiSettings — embedding model', () => {
     await mount({});
     await switchTo('settings:ai.providerEmbeddedLabel');
     await save();
+    await confirmReindex();
 
     expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'chat-local-gguf', 'embed-local-gguf']);
     expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
@@ -278,6 +293,7 @@ describe('AiSettings — embedding model', () => {
     await mount({});
     await switchTo('settings:ai.providerOllamaLabel');
     await save();
+    await confirmReindex();
 
     expect(api.setAiConfig.mock.calls[0].slice(0, 2)).toEqual(['ollama', 'ollama-chat']);
   });
@@ -290,5 +306,69 @@ describe('AiSettings — embedding model', () => {
     expect(api.setAiConfig).not.toHaveBeenCalled();
     expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
     expect(container.textContent).toContain('settings:openRouter.chatModelRequired');
+    expect(reindexDialogShown()).toBe(false);
+  });
+
+  it('asks before replacing the Embeddings, and does nothing until answered', async () => {
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+
+    expect(reindexDialogShown()).toBe(true);
+    expect(container.textContent).toContain('settings:confirmReindex.body');
+    expect(container.textContent).toContain('settings:confirmReindex.openRouter');
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
+  });
+
+  it('cancelling the question saves nothing and keeps the form as it was', async () => {
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+    await act(async () => {
+      button('common:actions.cancel').click();
+    });
+    await settle();
+
+    expect(reindexDialogShown()).toBe(false);
+    expect(embeddingSelect().value).toBe('vendor/embed-large');
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
+  });
+
+  it('says semantic search will be off when the new choice is no model', async () => {
+    await mount({});
+    await choose('');
+    await save();
+
+    expect(container.textContent).toContain('settings:confirmReindex.bodyNone');
+    expect(container.textContent).not.toContain('settings:confirmReindex.openRouter');
+    await act(async () => {
+      button('settings:confirmReindex.confirmNone').click();
+    });
+    await settle();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', '']);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mention OpenRouter when the new model runs locally', async () => {
+    await mount({});
+    await switchTo('settings:ai.providerEmbeddedLabel');
+    await save();
+
+    expect(container.textContent).toContain('settings:confirmReindex.body');
+    expect(container.textContent).not.toContain('settings:confirmReindex.openRouter');
+  });
+
+  it('does not ask when there were no Embeddings to replace', async () => {
+    await mount({ embeddingModel: '' });
+    await choose('vendor/embed');
+    await save();
+
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed', null, false);
+    expect(api.setAiConfig).toHaveBeenCalled();
   });
 });
