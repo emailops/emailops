@@ -60,16 +60,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-// `Special` and `token_to_str` are deprecated in llama-cpp-2 — the new
-// `token_to_piece` API is more flexible but not yet migrated here.
-#[allow(deprecated)]
-use llama_cpp_2::model::Special;
 use llama_cpp_2::{
     context::{params::LlamaContextParams, LlamaContext},
     llama_batch::LlamaBatch,
     model::{AddBos, LlamaModel},
     sampling::LlamaSampler,
     token::LlamaToken,
+    TokenToStringError,
 };
 
 use super::planner::{
@@ -78,6 +75,7 @@ use super::planner::{
     plan_stable_boundary, AuxPrefixPlan, OneshotEvict, PrefixPlan,
 };
 use super::runtime::backend;
+use crate::ai::utf8_stream::Utf8Stream;
 
 /// Physical batch size. llama.cpp splits submitted batches into ubatch-sized
 /// chunks internally; sizing this to n_ctx makes Metal allocate huge per-graph
@@ -181,6 +179,15 @@ struct GenRequest {
     reply: tokio::sync::oneshot::Sender<std::result::Result<GenOutcome, String>>,
 }
 
+impl GenRequest {
+    /// The caller stopped waiting for this reply (its future was dropped by a
+    /// timeout or a cancelled turn), so generating it is wasted work that
+    /// holds up the queue.
+    fn caller_gone(&self) -> bool {
+        self.reply.is_closed()
+    }
+}
+
 /// Cloneable handle to the actor thread. Dropping every handle closes the
 /// channel, which makes the thread exit and release the context + model Arc.
 #[derive(Clone)]
@@ -225,6 +232,14 @@ impl InferenceActorHandle {
             thread: Arc::new(Mutex::new(Some(join))),
             n_ctx,
         })
+    }
+
+    /// Whether the inference thread is still running. A dead thread (a panic
+    /// that escaped, a context that could not be created) answers nothing
+    /// again, so the runtime spawns a fresh actor instead of reusing it.
+    pub(crate) fn is_alive(&self) -> bool {
+        let guard = self.thread.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.as_ref().is_some_and(|handle| !handle.is_finished())
     }
 
     /// A waiter for this actor's thread that outlives the handle itself.
@@ -384,6 +399,10 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     // and repeating the same advice would spam the output panel.
     let mut n_ctx_suggested = false;
     while let Ok(req) = rx.recv() {
+        if req.caller_gone() {
+            crate::services::logger::log("debug", "ai", "llamacpp: skipped a request its caller abandoned");
+            continue;
+        }
         let GenRequest {
             prompt,
             temperature,
@@ -396,23 +415,26 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             grammar,
             reply,
         } = req;
-        let result = generate_with_cache(
-            model,
-            &mut ctx,
-            &mut cached_tokens,
-            &mut cached_system,
-            &mut aux_prefix,
-            &prompt,
-            temperature,
-            max_tokens,
-            cache_prompt,
-            aux_prefix_bytes,
-            stable_prompt_bytes,
-            system_prefix_bytes,
-            on_token.as_mut(),
-            &mut n_ctx_suggested,
-            grammar.as_deref(),
-        );
+        let result = run_catching_panics(|| {
+            generate_with_cache(
+                model,
+                &mut ctx,
+                &mut cached_tokens,
+                &mut cached_system,
+                &mut aux_prefix,
+                &prompt,
+                temperature,
+                max_tokens,
+                cache_prompt,
+                aux_prefix_bytes,
+                stable_prompt_bytes,
+                system_prefix_bytes,
+                on_token.as_mut(),
+                &mut n_ctx_suggested,
+                grammar.as_deref(),
+                &|| reply.is_closed(),
+            )
+        });
         if result.is_err() {
             // The decode state is unknown after a failure — drop everything so
             // the mirrors never disagree with the real KV contents.
@@ -425,6 +447,27 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
     }
 }
 
+/// Run one request, turning a panic into that request's error.
+///
+/// A panic that unwound out of the actor loop killed the thread, and the
+/// runtime kept handing out its handle: embedded AI stayed broken until the
+/// app restarted. The caller treats the error like any failed pass and resets
+/// the KV mirrors.
+fn run_catching_panics(
+    request: impl FnOnce() -> std::result::Result<GenOutcome, String>,
+) -> std::result::Result<GenOutcome, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(request)).unwrap_or_else(|payload| {
+        let what = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        let msg = format!("Inference panicked: {what}");
+        crate::services::logger::log("error", "ai", format!("llamacpp: {msg}"));
+        Err(msg)
+    })
+}
+
 /// Copy the whole one-shot prefix sequence onto the generation sequence.
 ///
 /// Whole-sequence: a ranged copy would bring the recurrent state from the END
@@ -433,6 +476,23 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
 fn copy_aux_into_generation(ctx: &mut LlamaContext) -> std::result::Result<(), String> {
     ctx.copy_kv_cache_seq(AUX_SEQ, 1, None, None)
         .map_err(|e| format!("KV aux-seq→generation copy failed: {}", e))
+}
+
+/// The raw bytes of `token`'s text, special tokens rendered. A piece can be
+/// part of a multi-byte character, so it is decoded by the caller's
+/// [`Utf8Stream`], never on its own.
+pub(crate) fn token_bytes(model: &LlamaModel, token: LlamaToken) -> std::result::Result<Vec<u8>, String> {
+    match model.token_to_piece_bytes(token, 8, true, None) {
+        Ok(bytes) => Ok(bytes),
+        // The piece is longer than the first buffer: llama.cpp reports the
+        // size it needs as a negative number.
+        Err(TokenToStringError::InsufficientBufferSpace(needed)) => model
+            .token_to_piece_bytes(token, needed.unsigned_abs() as usize, true, None)
+            .map_err(|e| format!("Token decode failed: {e}")),
+        // llama.cpp writes nothing for this token (size 0): an empty piece.
+        Err(TokenToStringError::UnknownTokenType) => Ok(Vec::new()),
+        Err(e) => Err(format!("Token decode failed: {e}")),
+    }
 }
 
 /// One generation pass against the persistent context.
@@ -459,6 +519,7 @@ fn generate_with_cache(
     mut on_token: Option<&mut OnToken>,
     n_ctx_suggested: &mut bool,
     grammar: Option<&str>,
+    caller_gone: &dyn Fn() -> bool,
 ) -> std::result::Result<GenOutcome, String> {
     // Prefill clock starts before tokenisation: everything up to the first
     // sampled token is latency the user perceives as "thinking".
@@ -853,11 +914,20 @@ fn generate_with_cache(
     let mut sampler = LlamaSampler::chain_simple(chain);
 
     let mut output = String::new();
+    // One decoder for the whole reply: a character split across tokens is
+    // emitted once its last byte arrives.
+    let mut utf8 = Utf8Stream::new();
     let mut n_gen = 0u32;
     // Set when the model ends the reply itself or the caller stops it.
     let mut ended = false;
 
     for i in 0..max_gen {
+        // Nobody is waiting for the rest of this reply: stop, so the next
+        // request is not stuck behind it.
+        if caller_gone() {
+            ended = true;
+            break;
+        }
         // `sample` already accepts the token into every sampler of the chain
         // (`llama_sampler_sample` → `llama_sampler_accept`). Accepting it again
         // is a no-op for temperature and distribution but advances a grammar
@@ -869,10 +939,7 @@ fn generate_with_cache(
             break;
         }
 
-        let piece = {
-            #[allow(deprecated)]
-            model.token_to_str(token, Special::Tokenize).unwrap_or_default()
-        };
+        let piece = utf8.push(&token_bytes(model, token)?);
 
         n_gen += 1;
         output.push_str(&piece);
@@ -892,6 +959,14 @@ fn generate_with_cache(
         batch.clear();
         // Sampled tokens land only in seq 1 — `cached` stays prompt-only.
     }
+    // A character the reply never completed.
+    let unfinished = utf8.finish();
+    if !unfinished.is_empty() {
+        output.push_str(&unfinished);
+        if let Some(ref mut cb) = on_token {
+            cb(unfinished);
+        }
+    }
 
     Ok(GenOutcome {
         text: output,
@@ -908,4 +983,81 @@ fn generate_with_cache(
         dropped_front_tokens: dropped_front as u32,
         aux_plan: aux_plan_name,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A handle wired to a channel the test reads, with no inference thread.
+    fn detached_handle() -> (InferenceActorHandle, Receiver<GenRequest>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = InferenceActorHandle {
+            tx,
+            thread: Arc::new(Mutex::new(None)),
+            n_ctx: Arc::new(AtomicU32::new(0)),
+        };
+        (handle, rx)
+    }
+
+    /// A caller that stops waiting (a timeout, a cancelled turn) drops its
+    /// `generate` future; the actor must see that, so it skips a queued request
+    /// and stops decoding one in flight instead of running it to `max_tokens`.
+    #[tokio::test]
+    async fn the_actor_sees_a_caller_that_stopped_waiting() {
+        let (handle, rx) = detached_handle();
+        let mut call = Box::pin(handle.generate("p".into(), 0.0, 8, false, None, None, None, None, None));
+        // Drive the call until it is parked on the reply.
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(20), &mut call)
+            .await
+            .is_err());
+        let request = rx.try_recv().expect("the request was queued");
+        assert!(!request.caller_gone(), "the caller is still waiting");
+
+        drop(call);
+
+        assert!(request.caller_gone());
+    }
+
+    fn handle_on_thread(body: impl FnOnce() + Send + 'static) -> InferenceActorHandle {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        InferenceActorHandle {
+            tx,
+            thread: Arc::new(Mutex::new(Some(std::thread::spawn(body)))),
+            n_ctx: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// A handle whose thread died (a panic that escaped) must not be handed
+    /// out again: every call through it fails until the app restarts.
+    #[test]
+    fn a_handle_whose_thread_exited_is_not_alive() {
+        let handle = handle_on_thread(|| {});
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while handle.is_alive() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!handle.is_alive());
+    }
+
+    #[test]
+    fn a_handle_whose_thread_runs_is_alive() {
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let handle = handle_on_thread(move || {
+            let _ = stop_rx.recv();
+        });
+        assert!(handle.is_alive());
+        drop(stop_tx);
+    }
+
+    /// A panic inside one request becomes that request's error; the thread,
+    /// and with it the loaded model, keeps serving the next one.
+    #[test]
+    fn a_panicking_request_becomes_an_error() {
+        let result = run_catching_panics(|| panic!("decoder blew up"));
+        match result {
+            Err(msg) => assert!(msg.contains("decoder blew up"), "{msg}"),
+            Ok(_) => panic!("a panic must not look like success"),
+        }
+    }
 }

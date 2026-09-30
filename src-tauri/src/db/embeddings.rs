@@ -1,8 +1,28 @@
 use std::collections::HashMap;
 
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use rusqlite::params;
+
+/// Dimension of the `vec_emails` index (`float[768]`, migration V001). A
+/// vector of any other size cannot be stored in it.
+pub const EMAIL_EMBEDDING_DIM: usize = 768;
+
+/// Refuse a chunk list the `vec_emails` index cannot hold, before anything is
+/// written.
+fn check_email_embeddings(embeddings: &[Vec<f32>]) -> Result<()> {
+    if embeddings.is_empty() {
+        return Err(AppError::AiError("No embedding vectors to store".to_string()));
+    }
+    if let Some(bad) = embeddings.iter().find(|e| e.len() != EMAIL_EMBEDDING_DIM) {
+        return Err(AppError::AiError(format!(
+            "The embedding model returned {}-dimension vectors; the email index needs {EMAIL_EMBEDDING_DIM}. \
+             Choose a {EMAIL_EMBEDDING_DIM}-dimension embedding model in Settings → AI.",
+            bad.len()
+        )));
+    }
+    Ok(())
+}
 
 /// Convert f32 embedding to raw little-endian bytes for sqlite-vec
 /// sqlite-vec's ceiling on `k` for a KNN query.
@@ -27,31 +47,36 @@ impl Database {
         model: &str,
         content_hash: &str,
     ) -> Result<()> {
+        check_email_embeddings(embeddings)?;
         let conn = self.connection();
         let now = chrono::Utc::now().timestamp();
+        // One transaction: a chunk row without its vector would mark the
+        // email embedded (`embedding_exists`) with nothing to find, forever.
+        let tx = conn.unchecked_transaction()?;
 
         // Delete existing chunks for this email
-        conn.execute(
+        tx.execute(
             "DELETE FROM vec_emails WHERE rowid IN (SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
             params![email_id],
         )?;
-        conn.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        tx.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
 
         // Insert new chunks
         for (idx, embedding) in embeddings.iter().enumerate() {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO embedding_chunks (email_id, account_id, chunk_index, embedding_model, content_hash, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![email_id, account_id, idx as i32, model, content_hash, now],
             )?;
-            let rowid = conn.last_insert_rowid();
+            let rowid = tx.last_insert_rowid();
             let blob = embedding_to_blob(embedding);
-            conn.execute(
+            tx.execute(
                 "INSERT INTO vec_emails (rowid, embedding) VALUES (?1, ?2)",
                 params![rowid, blob],
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -1055,5 +1080,74 @@ mod tests {
             "stopword-only query must return no hits, got {:?}",
             hits
         );
+    }
+
+    fn chunk_rows(db: &Database, email_id: &str) -> i64 {
+        db.connection()
+            .query_row(
+                "SELECT COUNT(*) FROM embedding_chunks WHERE email_id = ?1",
+                params![email_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// A vector of the wrong size (an embedding model the index was not built
+    /// for) used to leave its chunk row behind when the vector insert failed,
+    /// which marked the email embedded forever with no vector to find.
+    #[test]
+    fn a_vector_of_the_wrong_dimension_is_rejected_and_stores_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-dim", "acc1", "alice@x.com", "subject", "body", 100);
+
+        let err = db
+            .store_embedding_chunks("e-dim", "acc1", &[vec![0.1_f32; 384]], "small-model", "hash")
+            .expect_err("a 384-dim vector cannot go into the 768-dim index");
+
+        assert!(err.to_string().contains("768"), "{err}");
+        assert_eq!(chunk_rows(&db, "e-dim"), 0);
+        assert!(!db.embedding_exists("e-dim", "hash").unwrap());
+    }
+
+    #[test]
+    fn empty_embeddings_are_rejected() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-empty", "acc1", "alice@x.com", "subject", "body", 100);
+        assert!(db.store_embedding_chunks("e-empty", "acc1", &[], "m", "hash").is_err());
+        assert!(db
+            .store_embedding_chunks("e-empty", "acc1", &[Vec::new()], "m", "hash")
+            .is_err());
+    }
+
+    /// Replacing an email's chunks is all or nothing: a failed store keeps
+    /// the vectors it was meant to replace.
+    #[test]
+    fn a_failed_store_keeps_the_previous_embedding() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-keep", "acc1", "alice@x.com", "subject", "body", 100);
+        let good = vec![0.1_f32; 768];
+        db.store_embedding_chunks("e-keep", "acc1", std::slice::from_ref(&good), "m", "old")
+            .unwrap();
+
+        // Occupy the vector slot the next chunk row will take, so the store
+        // fails after its chunk row is written.
+        let next_rowid: i64 = db
+            .connection()
+            .query_row("SELECT MAX(rowid) + 1 FROM embedding_chunks", [], |r| r.get(0))
+            .unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO vec_emails (rowid, embedding) VALUES (?1, ?2)",
+                params![next_rowid, embedding_to_blob(&good)],
+            )
+            .unwrap();
+
+        let result = db.store_embedding_chunks("e-keep", "acc1", std::slice::from_ref(&good), "m", "new");
+
+        assert!(result.is_err(), "the vector insert collides");
+        assert!(!db.embedding_exists("e-keep", "new").unwrap(), "no orphan chunk row");
+        assert!(db.embedding_exists("e-keep", "old").unwrap());
+        assert_eq!(chunk_rows(&db, "e-keep"), 1);
+        assert_eq!(db.vec_search(&good, Some("acc1"), None, 10).unwrap().len(), 1);
     }
 }

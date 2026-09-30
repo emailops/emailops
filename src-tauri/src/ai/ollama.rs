@@ -163,6 +163,23 @@ impl OllamaSamplingOptions {
     }
 }
 
+/// `sampling` with the context window [`AIProvider::context_window`] reports,
+/// so Ollama never runs a prompt at its own (smaller) default window. Nothing
+/// else is filled in: a request without options keeps the model's defaults.
+fn with_context_window(sampling: Option<OllamaSamplingOptions>) -> OllamaSamplingOptions {
+    let mut sampling = sampling.unwrap_or(OllamaSamplingOptions {
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        num_ctx: None,
+        num_predict: None,
+    });
+    if sampling.num_ctx.is_none() {
+        sampling.num_ctx = OllamaSamplingOptions::grounded().num_ctx;
+    }
+    sampling
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaChatMessage {
     pub role: String,
@@ -204,6 +221,75 @@ struct OllamaChatStreamChunk {
     eval_count: Option<u32>,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
+}
+
+/// Splits an NDJSON byte stream into lines. Network chunks can end mid-line,
+/// and the stream's last line need not end in a newline.
+#[derive(Debug, Default)]
+struct NdjsonLines {
+    buf: Vec<u8>,
+}
+
+impl NdjsonLines {
+    /// Add `bytes`; return every line they complete (without the newline).
+    fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        self.buf.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        while let Some(idx) = self.buf.iter().position(|b| *b == b'\n') {
+            let mut line: Vec<u8> = self.buf.drain(..=idx).collect();
+            line.pop();
+            lines.push(line);
+        }
+        lines
+    }
+
+    /// The unterminated last line, if the stream ended in one.
+    fn finish(&mut self) -> Option<Vec<u8>> {
+        let rest = std::mem::take(&mut self.buf);
+        (!rest.iter().all(u8::is_ascii_whitespace)).then_some(rest)
+    }
+}
+
+/// An Ollama mid-stream failure: `{"error": "..."}`.
+#[derive(Debug, Deserialize)]
+struct OllamaStreamError {
+    error: String,
+}
+
+/// Parse one NDJSON line of an Ollama chat stream. `Ok(None)` for a blank or
+/// malformed line (logged, the stream goes on); `Err` for an error line.
+fn parse_stream_line(line: &[u8]) -> Result<Option<OllamaChatStreamChunk>> {
+    let text = String::from_utf8_lossy(line);
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Ok(failure) = serde_json::from_str::<OllamaStreamError>(text) {
+        return Err(AppError::AiError(format!("Ollama stream error: {}", failure.error)));
+    }
+    match serde_json::from_str(text) {
+        Ok(chunk) => Ok(Some(chunk)),
+        Err(e) => {
+            // A malformed line is unusual but not necessarily fatal — log and
+            // keep going so a single bad chunk doesn't kill the stream.
+            crate::services::logger::log(
+                "debug",
+                "ai",
+                format!(
+                    "ollama stream: skipping malformed chunk ({} bytes, err: {e})",
+                    text.len()
+                ),
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// The error for a stream that closed before its `done` line.
+fn stream_cut_off(what: &str) -> AppError {
+    AppError::AiError(format!(
+        "Ollama {what} ended before the reply was complete — the model may have stopped or been unloaded"
+    ))
 }
 
 /// Result returned by [`OllamaClient::chat_stream`] — the accumulated text
@@ -460,7 +546,7 @@ impl OllamaClient {
             model: self.model.clone(),
             prompt: prompt.to_string(),
             stream: false,
-            options: sampling,
+            options: Some(with_context_window(sampling)),
             keep_alive: Some(self.keep_alive.clone()),
             format,
         };
@@ -670,31 +756,20 @@ impl OllamaClient {
 
         let mut accumulated = String::new();
         let mut stream = response.bytes_stream();
-        // Chunks can split mid-line; buffer partial lines until we see '\n'.
-        let mut buf: Vec<u8> = Vec::new();
+        let mut lines = NdjsonLines::default();
 
-        while let Some(chunk) = stream.next().await {
-            let bytes = chunk.map_err(|e| AppError::AiError(format!("Ollama chat stream read error: {}", e)))?;
-            buf.extend_from_slice(&bytes);
-
-            while let Some(idx) = buf.iter().position(|b| *b == b'\n') {
-                let line: Vec<u8> = buf.drain(..=idx).collect();
-                let line_str = std::str::from_utf8(&line[..line.len() - 1]).unwrap_or("").trim();
-                if line_str.is_empty() {
-                    continue;
+        loop {
+            let (batch, ended) = match stream.next().await {
+                Some(chunk) => {
+                    let bytes =
+                        chunk.map_err(|e| AppError::AiError(format!("Ollama chat stream read error: {}", e)))?;
+                    (lines.push(&bytes), false)
                 }
-                let parsed: OllamaChatStreamChunk = match serde_json::from_str(line_str) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        // A malformed line is unusual but not necessarily fatal — log
-                        // and keep going so a single bad chunk doesn't kill the stream.
-                        crate::services::logger::log(
-                            "debug",
-                            "ai",
-                            format!("ollama.chat_stream skipping malformed chunk: {} (err: {})", line_str, e),
-                        );
-                        continue;
-                    }
+                None => (lines.finish().into_iter().collect(), true),
+            };
+            for line in batch {
+                let Some(parsed) = parse_stream_line(&line)? else {
+                    continue;
                 };
                 if let Some(msg) = &parsed.message {
                     if !msg.content.is_empty() {
@@ -720,16 +795,10 @@ impl OllamaClient {
                     });
                 }
             }
+            if ended {
+                return Err(stream_cut_off("chat stream"));
+            }
         }
-
-        // Stream ended without a done marker — return what we have.
-        Ok(ChatStreamResult {
-            content: accumulated,
-            eval_count: None,
-            prompt_eval_count: None,
-            prefill_ms: None,
-            cached_prompt_tokens: None,
-        })
     }
 
     /// Streaming chat WITH tool definitions (Ollama wire types). Streams
@@ -778,7 +847,7 @@ impl OllamaClient {
         let mut eval_count: Option<u32> = None;
         let mut prompt_eval_count: Option<u32> = None;
         let mut stream = response.bytes_stream();
-        let mut buf: Vec<u8> = Vec::new();
+        let mut lines = NdjsonLines::default();
 
         let finalize = |content: String, calls: Vec<OllamaToolCall>| OllamaChatMessage {
             role: "assistant".to_string(),
@@ -787,29 +856,18 @@ impl OllamaClient {
             thinking: String::new(),
         };
 
-        while let Some(chunk) = stream.next().await {
-            let bytes = chunk.map_err(|e| AppError::AiError(format!("Ollama tool stream read error: {}", e)))?;
-            buf.extend_from_slice(&bytes);
-
-            while let Some(idx) = buf.iter().position(|b| *b == b'\n') {
-                let line: Vec<u8> = buf.drain(..=idx).collect();
-                let line_str = std::str::from_utf8(&line[..line.len() - 1]).unwrap_or("").trim();
-                if line_str.is_empty() {
-                    continue;
+        loop {
+            let (batch, ended) = match stream.next().await {
+                Some(chunk) => {
+                    let bytes =
+                        chunk.map_err(|e| AppError::AiError(format!("Ollama tool stream read error: {}", e)))?;
+                    (lines.push(&bytes), false)
                 }
-                let parsed: OllamaChatStreamChunk = match serde_json::from_str(line_str) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        crate::services::logger::log(
-                            "debug",
-                            "ai",
-                            format!(
-                                "ollama.chat_stream_with_tools skipping malformed chunk: {} (err: {})",
-                                line_str, e
-                            ),
-                        );
-                        continue;
-                    }
+                None => (lines.finish().into_iter().collect(), true),
+            };
+            for line in batch {
+                let Some(parsed) = parse_stream_line(&line)? else {
+                    continue;
                 };
                 if let Some(msg) = parsed.message {
                     if let Some(tc) = msg.tool_calls {
@@ -833,10 +891,10 @@ impl OllamaClient {
                     return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
                 }
             }
+            if ended {
+                return Err(stream_cut_off("tool stream"));
+            }
         }
-
-        // Stream ended without a done marker — return what we have.
-        Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count))
     }
 
     pub async fn parse_search_query(&self, query: &str) -> Result<ParsedSearchQuery> {
@@ -1794,5 +1852,129 @@ mod stop_reason_tests {
         )
         .unwrap();
         assert!(stopped_at_limit(r.done_reason.as_deref()));
+    }
+}
+
+#[cfg(test)]
+mod context_window_tests {
+    use super::*;
+
+    /// `context_window()` tells the prompt builders they have 8192 tokens.
+    /// A plain `/api/generate` call sent no options, so Ollama ran it at its
+    /// own default window and silently cut the front of longer prompts.
+    #[test]
+    fn a_generate_request_without_options_still_carries_the_window() {
+        let sampling = with_context_window(None);
+        assert_eq!(sampling.num_ctx, OllamaSamplingOptions::grounded().num_ctx);
+        assert_eq!(sampling.temperature, None, "the model's own sampling defaults stay");
+    }
+
+    #[test]
+    fn caller_options_keep_their_values_and_gain_the_window() {
+        let mut given = OllamaSamplingOptions::grounded();
+        given.num_ctx = None;
+        given.temperature = Some(0.0);
+        let sampling = with_context_window(Some(given));
+        assert_eq!(sampling.num_ctx, OllamaSamplingOptions::grounded().num_ctx);
+        assert_eq!(sampling.temperature, Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod stream_line_tests {
+    use super::*;
+
+    fn lines_of(chunks: &[&[u8]]) -> Vec<Vec<u8>> {
+        let mut lines = NdjsonLines::default();
+        let mut out = Vec::new();
+        for chunk in chunks {
+            out.extend(lines.push(chunk));
+        }
+        out.extend(lines.finish());
+        out
+    }
+
+    #[test]
+    fn lines_split_across_chunks_are_joined() {
+        assert_eq!(
+            lines_of(&[b"{\"a\":", b"1}\n{\"b\":2}\n"]),
+            vec![b"{\"a\":1}".to_vec(), b"{\"b\":2}".to_vec()]
+        );
+    }
+
+    /// The last line of a stream need not end in a newline; it used to be
+    /// dropped, and with it the `done` marker.
+    #[test]
+    fn a_final_line_without_a_newline_is_still_a_line() {
+        assert_eq!(
+            lines_of(&[b"{\"a\":1}\n{\"done\":true}"]),
+            vec![b"{\"a\":1}".to_vec(), b"{\"done\":true}".to_vec()]
+        );
+    }
+
+    #[test]
+    fn a_content_line_parses_to_a_chunk() {
+        let chunk = parse_stream_line(br#"{"message":{"role":"assistant","content":"Hi"},"done":false}"#)
+            .unwrap()
+            .expect("a chunk");
+        assert_eq!(chunk.message.unwrap().content, "Hi");
+        assert!(!chunk.done);
+    }
+
+    /// Ollama reports a failure mid-stream (model unloaded, out of memory) as
+    /// `{"error": "..."}`. It used to parse as an empty, not-done chunk and be
+    /// ignored, and the turn ended with a truncated answer and no error.
+    #[test]
+    fn an_error_line_is_an_error() {
+        let err = parse_stream_line(br#"{"error":"model runner has unexpectedly stopped"}"#).unwrap_err();
+        assert!(err.to_string().contains("unexpectedly stopped"), "{err}");
+    }
+
+    #[test]
+    fn blank_and_malformed_lines_are_skipped() {
+        assert!(parse_stream_line(b"   ").unwrap().is_none());
+        assert!(parse_stream_line(b"{not json").unwrap().is_none());
+    }
+
+    async fn stream_reply(body: &'static str) -> Result<ChatStreamResult> {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        let client = OllamaClient {
+            base_url: server.uri(),
+            ..OllamaClient::new(Some("m"))
+        };
+        client
+            .chat_stream_internal(vec![("user".into(), "hi".into())], Box::new(|_| true))
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_ends_without_done_is_an_error() {
+        let result = stream_reply("{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"}}\n").await;
+        assert!(result.is_err(), "a cut-off reply must not pass as complete");
+    }
+
+    #[tokio::test]
+    async fn an_error_line_mid_stream_fails_the_reply() {
+        let result =
+            stream_reply("{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"}}\n{\"error\":\"out of memory\"}\n")
+                .await;
+        assert!(matches!(result, Err(AppError::AiError(msg)) if msg.contains("out of memory")));
+    }
+
+    #[tokio::test]
+    async fn a_done_line_without_a_trailing_newline_completes_the_reply() {
+        let result =
+            stream_reply("{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"}}\n{\"done\":true,\"eval_count\":3}")
+                .await
+                .expect("a complete reply");
+        assert_eq!(result.content, "Hi");
+        assert_eq!(result.eval_count, Some(3));
     }
 }

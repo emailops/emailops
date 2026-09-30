@@ -114,6 +114,14 @@ struct ChatMessageContent {
 struct UsageInfo {
     prompt_tokens: Option<u32>,
     completion_tokens: Option<u32>,
+    /// Credits charged for the request, reported in the body on every response.
+    cost: Option<f64>,
+}
+
+/// What OpenRouter charged for a completion, from the body's `usage.cost`
+/// (OpenRouter sends no cost header). Missing usage counts as free.
+fn completion_cost(response: &OpenRouterChatResponse) -> f64 {
+    response.usage.as_ref().and_then(|u| u.cost).unwrap_or(0.0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -367,8 +375,6 @@ impl AIProvider for OpenRouterClient {
             return Err(request_error(status, &error_text, &self.model, "OpenRouter error"));
         }
 
-        let cost_from_headers = extract_cost_from_response(&response);
-
         let result: OpenRouterChatResponse = response
             .json()
             .await
@@ -383,7 +389,7 @@ impl AIProvider for OpenRouterClient {
         let prompt_tokens = result.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0);
         let completion_tokens = result.usage.as_ref().and_then(|u| u.completion_tokens).unwrap_or(0);
 
-        let cost_usd = cost_from_headers;
+        let cost_usd = completion_cost(&result);
         let truncated = first_choice_truncated(&result);
 
         Ok(CompletionResult {
@@ -548,17 +554,6 @@ fn openrouter_content_to_text(content: &serde_json::Value) -> String {
     String::new()
 }
 
-fn extract_cost_from_response(response: &reqwest::Response) -> f64 {
-    if let Some(cost_str) = response.headers().get("X-OpenRouter-Total-Cost") {
-        if let Ok(cost_str) = cost_str.to_str() {
-            if let Ok(cost) = cost_str.parse::<f64>() {
-                return cost;
-            }
-        }
-    }
-    0.0
-}
-
 #[cfg(test)]
 mod data_policy_tests {
     use super::*;
@@ -630,6 +625,17 @@ mod stop_reason_tests {
         assert_eq!(format["json_schema"]["strict"], true);
         assert_eq!(format["json_schema"]["schema"], shape.to_json_schema());
         assert!(response_format(None).is_none());
+    }
+
+    #[test]
+    fn the_completion_cost_comes_from_the_body_usage() {
+        let r: OpenRouterChatResponse = serde_json::from_str(
+            r#"{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":194,"completion_tokens":2,"cost":0.0125}}"#,
+        )
+        .unwrap();
+        assert_eq!(completion_cost(&r), 0.0125);
+        let r: OpenRouterChatResponse = serde_json::from_str(r#"{"choices":[{"message":{"content":"x"}}]}"#).unwrap();
+        assert_eq!(completion_cost(&r), 0.0);
     }
 
     #[test]
