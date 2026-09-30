@@ -9,6 +9,7 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::models::{AppLogEvent, Email};
+use crate::sync::http_retry::RetryPolicy;
 use crate::sync::provider::{self, EmailBody, EmailProvider, MessageRef};
 
 pub use crate::sync::provider::EmailAttachment;
@@ -278,7 +279,7 @@ impl GmailClient {
         account_id: Option<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::MAIL_REQUEST_TIMEOUT),
             access_token: std::sync::Mutex::new(access_token),
             refresh_token,
             app,
@@ -411,7 +412,7 @@ impl GmailClient {
         }
 
         if let Some(token) = page_token {
-            url.push_str(&format!("&pageToken={}", token));
+            url.push_str(&format!("&pageToken={}", urlencoding::encode(token)));
         }
 
         let mut query_parts = Vec::new();
@@ -493,7 +494,7 @@ impl GmailClient {
         });
         let url = format!("{}/users/me/messages/send", self.base_url);
 
-        let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send reply").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send reply: {}", error_text)));
@@ -528,7 +529,7 @@ impl GmailClient {
         let payload = serde_json::json!({ "raw": raw });
         let url = format!("{}/users/me/messages/send", self.base_url);
 
-        let response = self.send_post_json_with_retry(&url, &payload, "send new email").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send new email").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
@@ -574,7 +575,7 @@ impl GmailClient {
     ) -> Result<String> {
         let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
         let url = format!("{}/users/me/drafts", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let draft: GmailDraftId = response.json().await?;
         Ok(draft.id)
     }
@@ -743,22 +744,14 @@ impl GmailClient {
         let (sender_name, sender_email) = parse_email_address(&from);
 
         // Parse recipients (To and Cc)
-        let recipients: Vec<String> = to
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let recipients = split_address_list(&to);
 
         let cc_header = headers
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case("Cc"))
             .map(|h| h.value.clone())
             .unwrap_or_default();
-        let cc: Vec<String> = cc_header
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let cc = split_address_list(&cc_header);
 
         // Get body content
         let body = self.extract_body(&msg.id, &msg.payload).await;
@@ -943,9 +936,16 @@ impl GmailClient {
 
     async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> String {
         // Try to get HTML body first, fall back to plain text (inline data)
+        // A proper (unnamed, inline) body part always wins; only when none
+        // exists does a named text part count, since some mailers put a
+        // filename on the only body they send.
         let mut html = if let Some(body) = self.find_body_part(payload, "text/html") {
             body
         } else if let Some(body) = self.find_body_part(payload, "text/plain") {
+            plain_text_to_html(&body)
+        } else if let Some(body) = Self::find_body_part_in(payload, "text/html", true) {
+            body
+        } else if let Some(body) = Self::find_body_part_in(payload, "text/plain", true) {
             plain_text_to_html(&body)
         } else if let Some(ref body) = payload.body {
             if let Some(ref data) = body.data {
@@ -959,13 +959,29 @@ impl GmailClient {
 
         // If no inline data, try fetching body via attachment ID
         if html.is_empty() {
-            if let Some(att_id) = Self::find_body_attachment_id(payload, "text/html") {
-                if let Ok(data) = self.fetch_attachment(message_id, &att_id).await {
-                    html = data;
+            let html_att = Self::find_body_attachment_id(payload, "text/html")
+                .or_else(|| Self::find_body_attachment_id_in(payload, "text/html", true));
+            let plain_att = || {
+                Self::find_body_attachment_id(payload, "text/plain")
+                    .or_else(|| Self::find_body_attachment_id_in(payload, "text/plain", true))
+            };
+            if let Some(att_id) = html_att {
+                match self.fetch_attachment(message_id, &att_id).await {
+                    Ok(data) => html = data,
+                    Err(e) => crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("Gmail: could not fetch the HTML body of {message_id}: {e}"),
+                    ),
                 }
-            } else if let Some(att_id) = Self::find_body_attachment_id(payload, "text/plain") {
-                if let Ok(data) = self.fetch_attachment(message_id, &att_id).await {
-                    html = plain_text_to_html(&data);
+            } else if let Some(att_id) = plain_att() {
+                match self.fetch_attachment(message_id, &att_id).await {
+                    Ok(data) => html = plain_text_to_html(&data),
+                    Err(e) => crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("Gmail: could not fetch the text body of {message_id}: {e}"),
+                    ),
                 }
             }
         }
@@ -996,7 +1012,7 @@ impl GmailClient {
                     },
                 };
                 let data_uri = format!("data:{};base64,{}", r.mime_type, std_b64);
-                html = html.replace(&format!("cid:{}", r.content_id), &data_uri);
+                html = crate::util::html::replace_cid_reference(&html, &r.content_id, &data_uri);
             }
         }
 
@@ -1056,8 +1072,34 @@ fn collect_inline_image_refs_recursive(parts: &[GmailPart], out: &mut Vec<Inline
     }
 }
 
+/// Whether a part (or anything under it) may hold the message's own body.
+/// A named or attachment-disposed part is a file the sender attached, and a
+/// `message/rfc822` part is a forwarded message with a body of its own —
+/// picking the first `text/html` at any depth used to render those instead.
+/// `allow_named` is the fallback pass for messages whose only body carries a
+/// filename; attachment-disposed and forwarded parts stay excluded.
+fn is_body_candidate(part: &GmailPart, allow_named: bool) -> bool {
+    if part.mime_type.eq_ignore_ascii_case("message/rfc822") {
+        return false;
+    }
+    if !allow_named && part.filename.as_deref().is_some_and(|f| !f.trim().is_empty()) {
+        return false;
+    }
+    let disposed_as_attachment = part.headers.as_ref().is_some_and(|headers| {
+        headers.iter().any(|h| {
+            h.name.eq_ignore_ascii_case("Content-Disposition")
+                && h.value.trim_start().to_ascii_lowercase().starts_with("attachment")
+        })
+    });
+    !disposed_as_attachment
+}
+
 impl GmailClient {
     fn find_body_part(&self, payload: &GmailPayload, mime_type: &str) -> Option<String> {
+        Self::find_body_part_in(payload, mime_type, false)
+    }
+
+    fn find_body_part_in(payload: &GmailPayload, mime_type: &str, allow_named: bool) -> Option<String> {
         let mut log = Vec::new();
 
         // Check direct body
@@ -1074,7 +1116,7 @@ impl GmailClient {
         // Recurse into parts at arbitrary depth
         if let Some(ref parts) = payload.parts {
             for part in parts {
-                if let Some(decoded) = Self::find_body_part_recursive(part, mime_type, &mut log) {
+                if let Some(decoded) = Self::find_body_part_recursive(part, mime_type, allow_named, &mut log) {
                     return Some(decoded);
                 }
             }
@@ -1083,7 +1125,15 @@ impl GmailClient {
         None
     }
 
-    fn find_body_part_recursive(part: &GmailPart, mime_type: &str, log: &mut Vec<String>) -> Option<String> {
+    fn find_body_part_recursive(
+        part: &GmailPart,
+        mime_type: &str,
+        allow_named: bool,
+        log: &mut Vec<String>,
+    ) -> Option<String> {
+        if !is_body_candidate(part, allow_named) {
+            return None;
+        }
         if part.mime_type == mime_type {
             match &part.body {
                 Some(body) => match (&body.data, &body.attachment_id) {
@@ -1115,7 +1165,7 @@ impl GmailClient {
 
         if let Some(ref nested) = part.parts {
             for nested_part in nested {
-                if let Some(decoded) = Self::find_body_part_recursive(nested_part, mime_type, log) {
+                if let Some(decoded) = Self::find_body_part_recursive(nested_part, mime_type, allow_named, log) {
                     return Some(decoded);
                 }
             }
@@ -1125,9 +1175,13 @@ impl GmailClient {
     }
 
     fn find_body_attachment_id(payload: &GmailPayload, mime_type: &str) -> Option<String> {
+        Self::find_body_attachment_id_in(payload, mime_type, false)
+    }
+
+    fn find_body_attachment_id_in(payload: &GmailPayload, mime_type: &str, allow_named: bool) -> Option<String> {
         if let Some(ref parts) = payload.parts {
             for part in parts {
-                if let Some(id) = Self::find_attachment_id_recursive(part, mime_type) {
+                if let Some(id) = Self::find_attachment_id_recursive(part, mime_type, allow_named) {
                     return Some(id);
                 }
             }
@@ -1135,7 +1189,10 @@ impl GmailClient {
         None
     }
 
-    fn find_attachment_id_recursive(part: &GmailPart, mime_type: &str) -> Option<String> {
+    fn find_attachment_id_recursive(part: &GmailPart, mime_type: &str, allow_named: bool) -> Option<String> {
+        if !is_body_candidate(part, allow_named) {
+            return None;
+        }
         if part.mime_type == mime_type {
             if let Some(ref body) = part.body {
                 if let Some(ref att_id) = body.attachment_id {
@@ -1145,7 +1202,7 @@ impl GmailClient {
         }
         if let Some(ref nested) = part.parts {
             for nested_part in nested {
-                if let Some(id) = Self::find_attachment_id_recursive(nested_part, mime_type) {
+                if let Some(id) = Self::find_attachment_id_recursive(nested_part, mime_type, allow_named) {
                     return Some(id);
                 }
             }
@@ -1190,7 +1247,34 @@ impl GmailClient {
         .await
     }
 
+    /// POST for sends and creates: a 5xx or a dropped connection may have
+    /// been carried out, so it is not re-sent (see [`RetryPolicy`]).
+    async fn send_post_json_no_resend(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        operation: &str,
+    ) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
+            client.post(url).bearer_auth(token).json(payload)
+        })
+        .await
+    }
+
     async fn send_request_with_retry<F>(&self, operation: &str, request_builder: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, request_builder)
+            .await
+    }
+
+    async fn send_request_with_policy<F>(
+        &self,
+        operation: &str,
+        policy: RetryPolicy,
+        request_builder: F,
+    ) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -1244,7 +1328,8 @@ impl GmailClient {
                             format_gmail_error(status, &body)
                         )));
                     }
-                    let should_retry = is_retryable_gmail_error(status, &body);
+                    let should_retry =
+                        is_retryable_gmail_error(status, &body) && policy.may_retry_status(status.as_u16());
 
                     if should_retry && attempt < GMAIL_MAX_RETRIES {
                         match plan_rate_limit_wait(&headers, &body, delay_ms, crate::services::clock::now_secs()) {
@@ -1270,7 +1355,10 @@ impl GmailClient {
                     )));
                 }
                 Err(error) => {
-                    if is_retryable_transport_error(&error) && attempt < GMAIL_MAX_RETRIES {
+                    if is_retryable_transport_error(&error)
+                        && policy.may_retry_transport(error.is_connect())
+                        && attempt < GMAIL_MAX_RETRIES
+                    {
                         self.emit_transport_retry_log(operation, attempt + 1, delay_ms, &error);
                         sleep(Duration::from_millis(delay_ms.min(GMAIL_MAX_BACKOFF_MS))).await;
                         delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
@@ -2086,6 +2174,46 @@ fn format_gmail_error(status: StatusCode, body: &str) -> String {
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
 }
 
+/// Split an address-list header into its entries, each kept verbatim
+/// (`"Name" <a@b>` or `a@b`, the shape Gmail rows store). Commas inside a
+/// quoted display name, an `<addr>` or a `(comment)` do not split.
+fn split_address_list(raw: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let (mut in_quotes, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
+    for c in raw.chars() {
+        if escaped {
+            escaped = false;
+        } else if in_quotes {
+            match c {
+                '\\' => escaped = true,
+                '"' => in_quotes = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                '"' => in_quotes = true,
+                '<' => angle += 1,
+                '>' => angle = angle.saturating_sub(1),
+                '(' => comment += 1,
+                ')' => comment = comment.saturating_sub(1),
+                ',' if angle == 0 && comment == 0 => {
+                    entries.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        current.push(c);
+    }
+    entries.push(current);
+    entries
+        .into_iter()
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
 fn parse_email_address(from: &str) -> (String, String) {
     // Parse "Name <email@example.com>" or "email@example.com"
     if let Some(start) = from.find('<') {
@@ -2370,7 +2498,7 @@ fn sanitize_filename_fragment(input: &str) -> String {
     out
 }
 
-fn mime_to_extension(mime_type: &str) -> &str {
+pub(crate) fn mime_to_extension(mime_type: &str) -> &str {
     match mime_type {
         "application/pdf" => "pdf",
         "application/zip" => "zip",
@@ -2678,6 +2806,68 @@ mod tests {
             "unexpected error: {err}"
         );
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// A 5xx on `messages.send` does not mean the mail was not sent; the
+    /// retry loop used to send it again.
+    #[tokio::test]
+    async fn a_send_that_fails_with_a_server_error_is_not_resent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m","threadId":"t"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .send_new_email(
+                "me@example.com",
+                None,
+                &["them@example.com".to_string()],
+                &[],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a failed send must surface, not be retried into success"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// Page tokens are opaque and may contain `+`, `/` or `=`; sent raw, a
+    /// `+` arrives as a space and the next page request is rejected.
+    #[tokio::test]
+    async fn list_messages_url_encodes_the_page_token() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages"))
+            .and(query_param("pageToken", "a+b/c="))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"messages":[]}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client
+            .list_messages(10, Some("a+b/c="), None, None, None)
+            .await
+            .expect("the mock only matches the decoded token");
     }
 
     #[test]
@@ -3014,7 +3204,126 @@ mod tests {
         assert_eq!(base64_url_decode(&encoded).unwrap(), html);
     }
 
+    /// A quoted display name may contain a comma; splitting the header on
+    /// every ',' cut such a recipient in two.
+    #[test]
+    fn address_list_split_respects_quoted_display_names() {
+        assert_eq!(
+            split_address_list(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            vec![r#""Doe, Jane" <jane@example.com>"#, "bob@example.com"]
+        );
+    }
+
+    #[test]
+    fn address_list_split_keeps_escaped_quotes_and_drops_empties() {
+        assert_eq!(
+            split_address_list(r#""A \"x, y\" B" <a@example.com>, , c@example.com"#),
+            vec![r#""A \"x, y\" B" <a@example.com>"#, "c@example.com"]
+        );
+    }
+
     // --- find_body_part tests ---
+
+    /// An `.html` file attached ahead of the real body used to be picked as
+    /// the message body because it was the first `text/html` part found.
+    #[test]
+    fn find_body_skips_an_attached_html_file() {
+        let client = gmail_client();
+        let mut attached = make_part("text/html", Some(&encode("<p>attached page</p>")), None);
+        attached.filename = Some("page.html".to_string());
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![
+                attached,
+                make_part("text/html", Some(&encode("<p>real body</p>")), None),
+            ]),
+        );
+        assert_eq!(
+            client.find_body_part(&payload, "text/html").unwrap(),
+            "<p>real body</p>"
+        );
+    }
+
+    /// Some mailers put a name on the ONLY html part. Skipping named parts
+    /// must not leave such a message with an empty body.
+    #[tokio::test]
+    async fn a_named_html_part_is_the_body_when_no_other_body_exists() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>only body</p>")), None);
+        named.filename = Some("body.html".to_string());
+        let payload = make_payload("multipart/mixed", None, Some(vec![named]));
+        assert_eq!(client.extract_body("m-1", &payload).await, "<p>only body</p>");
+    }
+
+    #[tokio::test]
+    async fn an_unnamed_plain_body_still_wins_over_a_named_html_part() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>attached page</p>")), None);
+        named.filename = Some("page.html".to_string());
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![named, make_part("text/plain", Some(&encode("real body")), None)]),
+        );
+        let body = client.extract_body("m-1", &payload).await;
+        assert!(body.contains("real body"), "{body}");
+        assert!(!body.contains("attached page"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_named_fallback_never_reads_a_forwarded_message() {
+        let client = gmail_client();
+        let mut named = make_part("text/html", Some(&encode("<p>forwarded</p>")), None);
+        named.filename = Some("body.html".to_string());
+        let forwarded = make_part("message/rfc822", None, Some(vec![named]));
+        let payload = make_payload("multipart/mixed", None, Some(vec![forwarded]));
+        assert_eq!(client.extract_body("m-1", &payload).await, "");
+    }
+
+    #[test]
+    fn find_body_skips_a_part_disposed_as_attachment() {
+        let client = gmail_client();
+        let mut attached = make_part("text/plain", Some(&encode("notes.txt contents")), None);
+        attached.headers = Some(vec![GmailHeader {
+            name: "Content-Disposition".to_string(),
+            value: "attachment".to_string(),
+        }]);
+        let payload = make_payload("multipart/mixed", None, Some(vec![attached]));
+        assert_eq!(client.find_body_part(&payload, "text/plain"), None);
+    }
+
+    /// A forwarded message (message/rfc822) carries its own body; that is not
+    /// the body of the message it is attached to.
+    #[test]
+    fn find_body_does_not_descend_into_an_attached_message() {
+        let client = gmail_client();
+        let forwarded = make_part(
+            "message/rfc822",
+            None,
+            Some(vec![make_part("text/html", Some(&encode("<p>forwarded</p>")), None)]),
+        );
+        let payload = make_payload(
+            "multipart/mixed",
+            None,
+            Some(vec![forwarded, make_part("text/plain", Some(&encode("outer")), None)]),
+        );
+        assert_eq!(client.find_body_part(&payload, "text/html"), None);
+        assert_eq!(client.find_body_part(&payload, "text/plain").unwrap(), "outer");
+    }
+
+    #[test]
+    fn body_attachment_id_ignores_attached_files() {
+        let mut attached = make_part("text/html", None, None);
+        attached.filename = Some("page.html".to_string());
+        attached.body = Some(GmailBody {
+            data: None,
+            size: 10,
+            attachment_id: Some("att-file".to_string()),
+        });
+        let payload = make_payload("multipart/mixed", None, Some(vec![attached]));
+        assert_eq!(GmailClient::find_body_attachment_id(&payload, "text/html"), None);
+    }
 
     #[test]
     fn find_body_direct_match() {

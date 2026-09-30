@@ -201,8 +201,44 @@ pub fn split_draft_body(body: &str) -> (String, Option<String>) {
     }
 }
 
+/// Replace every `cid:{content_id}` reference in `html` with `replacement`.
+///
+/// A reference only matches when the id ends there — at a quote, paren, `>`,
+/// whitespace or the end of the text. A plain substring replace let `cid:img1`
+/// also rewrite the front of `cid:img10`, corrupting that image.
+pub fn replace_cid_reference(html: &str, content_id: &str, replacement: &str) -> String {
+    let needle = format!("cid:{content_id}");
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(pos) = rest.find(&needle) {
+        let after = &rest[pos + needle.len()..];
+        let terminated = after
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '"' | '\'' | ')' | '>') || c.is_whitespace());
+        out.push_str(&rest[..pos]);
+        out.push_str(if terminated { replacement } else { &needle });
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cid_replacement_does_not_touch_a_longer_cid_sharing_the_prefix() {
+        let html = r#"<img src="cid:img1"><img src="cid:img10">"#;
+        let out = super::replace_cid_reference(html, "img1", "data:image/png;base64,AAA");
+        assert_eq!(out, r#"<img src="data:image/png;base64,AAA"><img src="cid:img10">"#);
+    }
+
+    #[test]
+    fn cid_replacement_matches_every_terminator() {
+        let html = "<img src='cid:a'> url(cid:a) cid:a\n<img src=cid:a>cid:a";
+        let out = super::replace_cid_reference(html, "a", "X");
+        assert_eq!(out, "<img src='X'> url(X) X\n<img src=X>X");
+    }
     use super::*;
 
     #[test]

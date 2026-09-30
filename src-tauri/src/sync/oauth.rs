@@ -161,11 +161,15 @@ pub async fn start_oauth_flow(config: &OAuthConfig) -> Result<OAuthTokens> {
     open::that_detached(auth_url.as_str())
         .map_err(|e| AppError::OAuthError(format!("Failed to open browser: {}", e)))?;
 
-    // Wait for the callback
-    let code = wait_for_callback(listener, csrf_token.secret())?;
+    // Wait for the callback. The accept loop blocks (polling up to 15 min),
+    // so it runs on the blocking pool instead of stalling an async worker.
+    let expected_state = csrf_token.secret().clone();
+    let code = tokio::task::spawn_blocking(move || wait_for_callback(listener, &expected_state))
+        .await
+        .map_err(|e| AppError::OAuthError(format!("OAuth callback listener failed: {e}")))??;
 
     // Exchange code for tokens
-    let http_client = reqwest::Client::new();
+    let http_client = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT);
     let token_result = client
         .exchange_code(AuthorizationCode::new(code))
         .set_pkce_verifier(pkce_verifier)
@@ -236,7 +240,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
 
     let client = oauth_client(config, None)?;
 
-    let http_client = reqwest::Client::new();
+    let http_client = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT);
     let token_result = client
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
         .request_async(&http_client)
@@ -261,7 +265,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
 /// refresh token ends the whole grant, so the app loses access immediately
 /// instead of when the user finds it in their Google Account settings.
 pub async fn revoke_token(revoke_url: &str, token: &str) -> Result<()> {
-    let response = reqwest::Client::new()
+    let response = crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT)
         .post(revoke_url)
         .form(&[("token", token)])
         .send()
@@ -294,9 +298,23 @@ fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<Stri
                 prepare_callback_stream(&stream)?;
 
                 match read_callback_request(&stream, expected_state) {
-                    Ok(code) => {
+                    Ok(Callback::Code(code)) => {
                         write_callback_response(&mut stream, success_response())?;
                         return Ok(code);
+                    }
+                    // The user cancelled or the provider refused: waiting on
+                    // cannot produce a code, so fail now instead of at the
+                    // 15-minute deadline.
+                    Ok(Callback::ProviderError(reason)) => {
+                        let message = format!("Authorization was not granted ({reason}). Please try again.");
+                        if let Err(e) = write_callback_response(&mut stream, &error_response(&message)) {
+                            crate::services::logger::log(
+                                "debug",
+                                "account",
+                                format!("OAuth error page not delivered: {e}"),
+                            );
+                        }
+                        return Err(AppError::OAuthError(message));
                     }
                     Err(error) => {
                         let _ = write_callback_response(&mut stream, &error_response(&error.to_string()));
@@ -333,7 +351,7 @@ fn prepare_callback_stream(stream: &TcpStream) -> Result<()> {
     Ok(())
 }
 
-fn read_callback_request(stream: &TcpStream, expected_state: &str) -> Result<String> {
+fn read_callback_request(stream: &TcpStream, expected_state: &str) -> Result<Callback> {
     let mut request_line = String::new();
     let mut reader = BufReader::new(stream);
     reader
@@ -348,30 +366,50 @@ fn read_callback_request(stream: &TcpStream, expected_state: &str) -> Result<Str
     extract_callback_code(url_path, expected_state)
 }
 
-fn extract_callback_code(url_path: &str, expected_state: &str) -> Result<String> {
+/// A callback that carried our `state`.
+#[derive(Debug, PartialEq)]
+enum Callback {
+    /// The authorization code to exchange.
+    Code(String),
+    /// The provider's `error` parameter (e.g. `access_denied`).
+    ProviderError(String),
+}
+
+fn extract_callback_code(url_path: &str, expected_state: &str) -> Result<Callback> {
     let full_url = format!("http://localhost{}", url_path);
     let parsed =
         url::Url::parse(&full_url).map_err(|e| AppError::OAuthError(format!("Failed to parse callback URL: {}", e)))?;
 
     let mut code: Option<String> = None;
     let mut state: Option<String> = None;
+    let mut error: Option<String> = None;
 
     for (key, value) in parsed.query_pairs() {
         if key == "code" {
             code = Some(value.to_string());
         } else if key == "state" {
             state = Some(value.to_string());
+        } else if key == "error" {
+            error = Some(value.to_string());
         }
     }
 
-    let code = code.ok_or_else(|| AppError::OAuthError("Missing authorization code in callback".to_string()))?;
     let state = state.ok_or_else(|| AppError::OAuthError("Missing OAuth state in callback".to_string()))?;
-
     if state != expected_state {
         return Err(AppError::OAuthError("CSRF token mismatch".to_string()));
     }
+    if let Some(error) = error {
+        // RFC 6749 error codes are `[a-z_]`; keeping only those characters
+        // stops the reflected value from carrying markup into the reply page.
+        let error: String = error
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        return Ok(Callback::ProviderError(error));
+    }
 
-    Ok(code)
+    let code = code.ok_or_else(|| AppError::OAuthError("Missing authorization code in callback".to_string()))?;
+    Ok(Callback::Code(code))
 }
 
 fn success_response() -> &'static str {
@@ -405,8 +443,8 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::extract_callback_code;
     use super::{authorization_url, oauth_client, revoke_token, OAuthConfig};
+    use super::{extract_callback_code, wait_for_callback, Callback};
     use super::{prepare_callback_stream, read_callback_request, OAUTH_CALLBACK_TIMEOUT};
 
     #[test]
@@ -525,7 +563,46 @@ mod tests {
     #[test]
     fn extracts_code_from_valid_callback() {
         let code = extract_callback_code("/?code=abc123&state=expected", "expected").unwrap();
-        assert_eq!(code, "abc123");
+        assert_eq!(code, Callback::Code("abc123".to_string()));
+    }
+
+    #[test]
+    fn a_provider_error_callback_is_reported_as_such() {
+        let outcome = extract_callback_code("/?error=access_denied&state=expected", "expected").unwrap();
+        assert_eq!(outcome, Callback::ProviderError("access_denied".to_string()));
+    }
+
+    #[test]
+    fn a_provider_error_with_a_foreign_state_is_rejected() {
+        // Anyone on the machine can hit the loopback port; only a redirect
+        // carrying our state may end the sign-in.
+        assert!(extract_callback_code("/?error=access_denied&state=wrong", "expected").is_err());
+    }
+
+    /// Clicking "Cancel" on the consent screen redirects with
+    /// `?error=access_denied`; the listener used to keep waiting 15 minutes.
+    #[test]
+    fn a_denied_consent_ends_the_wait_immediately() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(wait_for_callback(listener, "expected"));
+        });
+
+        let mut browser = std::net::TcpStream::connect(addr).unwrap();
+        browser
+            .write_all(b"GET /?error=access_denied&state=expected HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
+        let mut page = String::new();
+        let _ = browser.read_to_string(&mut page);
+
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the listener must stop waiting after a provider error");
+        let err = result.expect_err("a denied consent is a failure");
+        assert!(err.to_string().contains("access_denied"), "{err}");
     }
 
     #[test]
@@ -570,7 +647,7 @@ mod tests {
         });
         let code = read_callback_request(&server, "expected").unwrap();
         writer.join().unwrap();
-        assert_eq!(code, "late-code");
+        assert_eq!(code, Callback::Code("late-code".to_string()));
     }
 
     #[test]

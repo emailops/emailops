@@ -78,16 +78,39 @@ pub(crate) fn uid_search<T: Read + Write>(session: &mut imap::Session<T>, query:
 /// See the module docs for why this bypasses the crate's typed `Mailbox`
 /// parsing rather than making it lenient.
 pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_name: &str) -> Result<()> {
-    if mailbox_name.contains(['\r', '\n']) {
-        return Err(AppError::SyncError(
-            "IMAP SELECT rejected: mailbox name contains a line break".to_string(),
-        ));
-    }
-    let quoted = format!("\"{}\"", mailbox_name.replace('\\', "\\\\").replace('"', "\\\""));
+    let quoted = quote_mailbox("SELECT", mailbox_name)?;
     session
         .run_command_and_read_response(format!("SELECT {quoted}"))
         .map(|_| ())
         .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
+}
+
+/// `UID COPY <uid_set> <mailbox>` with the mailbox quoted. imap 2.4.1's own
+/// `uid_copy` sends the name raw (its `uid_mv` quotes it), so the COPY-based
+/// move fallback failed on any folder name with a space or quote.
+pub(crate) fn uid_copy<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uid_set: &str,
+    mailbox_name: &str,
+) -> Result<()> {
+    let quoted = quote_mailbox("COPY", mailbox_name)?;
+    session
+        .run_command_and_check_ok(format!("UID COPY {uid_set} {quoted}"))
+        .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {e}")))
+}
+
+/// Render a mailbox name as an IMAP quoted string. A raw line break would let
+/// the name inject a second command, so it is rejected before the wire.
+fn quote_mailbox(command: &str, mailbox_name: &str) -> Result<String> {
+    if mailbox_name.contains(['\r', '\n']) {
+        return Err(AppError::SyncError(format!(
+            "IMAP {command} rejected: mailbox name contains a line break"
+        )));
+    }
+    Ok(format!(
+        "\"{}\"",
+        mailbox_name.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
 }
 
 /// The FETCH attribute used for every body download.
@@ -103,7 +126,32 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
 ///
 /// `Fetch::body()` reads both `BODY[]` and `RFC822` responses, so the parser is
 /// indifferent; only the request changes.
-const FETCH_BODY_PEEK: &str = "BODY.PEEK[]";
+///
+/// `FLAGS` carries the read state (`\Seen`); `INTERNALDATE` rides along because it — not the sender-controlled `Date:`
+/// header — is the timestamp the incremental cursor can trust.
+const FETCH_BODY_PEEK: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[])";
+
+/// One message as the server returned it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FetchedMessage {
+    /// The full RFC 5322 bytes.
+    pub raw: Vec<u8>,
+    /// The server's INTERNALDATE (arrival time), epoch seconds. `None` when
+    /// the server omitted it or sent an unparseable value.
+    pub internal_date: Option<i64>,
+    /// Whether the server reports `\Seen` — the message's read state.
+    pub seen: bool,
+}
+
+impl FetchedMessage {
+    fn from_fetch(fetch: &imap::types::Fetch) -> Option<Self> {
+        Some(Self {
+            raw: fetch.body()?.to_vec(),
+            internal_date: fetch.internal_date().map(|d| d.timestamp()),
+            seen: fetch.flags().contains(&imap::types::Flag::Seen),
+        })
+    }
+}
 
 /// How many times to retry `UID FETCH … BODY.PEEK[]` after the typed parser
 /// rejects an interleaved untagged response before giving up. See the module
@@ -113,7 +161,7 @@ const FETCH_RETRY_ATTEMPTS: u32 = 3;
 /// Fetch the raw message body of `uid` without marking it read on the server
 /// (see [`FETCH_BODY_PEEK`]), retrying past interleaved-response failures. See
 /// the module docs for the tradeoff behind this approach.
-pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, uid: u32) -> Result<Vec<u8>> {
+pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, uid: u32) -> Result<FetchedMessage> {
     let mut last_err: Option<imap::Error> = None;
     for attempt in 1..=FETCH_RETRY_ATTEMPTS {
         match session.uid_fetch(uid.to_string(), FETCH_BODY_PEEK) {
@@ -121,8 +169,7 @@ pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, ui
                 return messages
                     .iter()
                     .next()
-                    .and_then(|f| f.body())
-                    .map(<[u8]>::to_vec)
+                    .and_then(FetchedMessage::from_fetch)
                     .ok_or_else(|| AppError::NotFound(format!("IMAP UID {uid}: body not found")));
             }
             // Interleaved untagged responses are ordinary protocol traffic
@@ -159,7 +206,7 @@ pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, ui
 pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
     session: &mut imap::Session<T>,
     uids: &[u32],
-) -> Result<std::collections::HashMap<u32, Vec<u8>>> {
+) -> Result<std::collections::HashMap<u32, FetchedMessage>> {
     if uids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
@@ -171,8 +218,8 @@ pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
             Ok(messages) => {
                 let mut bodies = std::collections::HashMap::with_capacity(uids.len());
                 for fetch in messages.iter() {
-                    if let (Some(uid), Some(body)) = (fetch.uid, fetch.body()) {
-                        bodies.insert(uid, body.to_vec());
+                    if let (Some(uid), Some(message)) = (fetch.uid, FetchedMessage::from_fetch(fetch)) {
+                        bodies.insert(uid, message);
                     }
                 }
                 return Ok(bodies);
@@ -472,6 +519,28 @@ mod tests {
         assert!(select(&mut session, "Alice's \"Inbox\"").is_ok());
     }
 
+    /// imap 2.4.1's `uid_copy` sends the mailbox name raw (unlike `uid_mv`),
+    /// so the non-MOVE fallback broke on any folder with a space or quote.
+    #[test]
+    fn uid_copy_quotes_and_escapes_the_target_mailbox() {
+        let (mut session, sent) = recorded_session_for("a2 OK Copy completed.\r\n");
+        assert!(uid_copy(&mut session, "7", "Projects/Q3 \"Plan\"").is_ok());
+        assert!(
+            sent.text().contains("UID COPY 7 \"Projects/Q3 \\\"Plan\\\"\"\r\n"),
+            "sent: {}",
+            sent.text()
+        );
+    }
+
+    #[test]
+    fn uid_copy_rejects_a_mailbox_name_with_a_line_break() {
+        let err = match uid_copy(&mut session_for("a2 OK done\r\n"), "7", "INBOX\r\nA2 LOGOUT") {
+            Ok(()) => panic!("expected a failure"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("line break"), "got: {err}");
+    }
+
     /// The same bug class, reproduced against `Session::uid_fetch`: an
     /// unsolicited SEARCH mid-FETCH makes the crate reject the whole command,
     /// even though the FETCH data itself parsed fine.
@@ -538,7 +607,56 @@ mod tests {
             Ok(body) => body,
             Err(e) => panic!("peeked fetch failed: {e}"),
         };
-        assert_eq!(body, b"hello");
+        assert_eq!(body.raw, b"hello");
+    }
+
+    /// The sender's `Date:` header is attacker/clock-skew controlled; the
+    /// server's INTERNALDATE (arrival time) is what the sync cursor must use,
+    /// so it has to be requested alongside the body.
+    #[test]
+    fn batch_fetch_requests_and_returns_the_internaldate() {
+        let response = "* 1 FETCH (UID 91 INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" BODY[] {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        let fetched = match uid_fetch_body_batch(&mut session, &[91]) {
+            Ok(fetched) => fetched,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+
+        assert!(sent.text().contains("INTERNALDATE"), "sent: {}", sent.text());
+        let message = fetched.get(&91).expect("uid 91 fetched");
+        assert_eq!(message.raw, b"hello");
+        // 1996-07-17T09:44:25Z
+        assert_eq!(message.internal_date, Some(837_596_665));
+    }
+
+    /// The sync used to hard-code every IMAP message as unread; the server's
+    /// `\Seen` flag is the truth and has to be fetched with the body.
+    #[test]
+    fn batch_fetch_requests_flags_and_reports_seen_state() {
+        let response = "* 1 FETCH (UID 91 FLAGS (\\Seen \\Answered) BODY[] {5}\r\nhello)\r\n\
+                        * 2 FETCH (UID 92 FLAGS () BODY[] {5}\r\nworld)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let (mut session, sent) = recorded_session_for(response);
+        let fetched = match uid_fetch_body_batch(&mut session, &[91, 92]) {
+            Ok(fetched) => fetched,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+
+        assert!(sent.text().contains("FLAGS"), "sent: {}", sent.text());
+        assert!(fetched.get(&91).expect("uid 91").seen);
+        assert!(!fetched.get(&92).expect("uid 92").seen);
+    }
+
+    #[test]
+    fn single_fetch_returns_the_internaldate() {
+        let response = "* 1 FETCH (UID 91 INTERNALDATE \"17-Jul-1996 02:44:25 -0700\" BODY[] {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let fetched = match uid_fetch_body(&mut session_for(response), 91) {
+            Ok(fetched) => fetched,
+            Err(e) => panic!("fetch failed: {e}"),
+        };
+        assert_eq!(fetched.internal_date, Some(837_596_665));
     }
 
     #[test]
@@ -551,8 +669,8 @@ mod tests {
             Ok(bodies) => bodies,
             Err(e) => panic!("batch fetch failed: {e}"),
         };
-        assert_eq!(bodies.get(&91).map(Vec::as_slice), Some(&b"hello"[..]));
-        assert_eq!(bodies.get(&92).map(Vec::as_slice), Some(&b"world"[..]));
+        assert_eq!(bodies.get(&91).map(|m| m.raw.as_slice()), Some(&b"hello"[..]));
+        assert_eq!(bodies.get(&92).map(|m| m.raw.as_slice()), Some(&b"world"[..]));
     }
 
     #[test]
@@ -568,7 +686,7 @@ mod tests {
             Ok(bodies) => bodies,
             Err(e) => panic!("batch fetch failed: {e}"),
         };
-        assert_eq!(bodies.get(&91).map(Vec::as_slice), Some(&b"hello"[..]));
+        assert_eq!(bodies.get(&91).map(|m| m.raw.as_slice()), Some(&b"hello"[..]));
     }
 
     #[test]
@@ -617,7 +735,7 @@ mod tests {
             Ok(body) => body,
             Err(e) => panic!("expected the retry to succeed, got: {e}"),
         };
-        assert_eq!(body, b"hello");
+        assert_eq!(body.raw, b"hello");
     }
 
     #[test]

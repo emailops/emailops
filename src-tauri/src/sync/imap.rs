@@ -171,6 +171,46 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
     (sorted, next_token)
 }
 
+/// Read/write timeout on every IMAP socket, so an unresponsive server cannot
+/// hang a blocking task forever.
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Stream wrapper for the IDLE session. imap 2.4.1's `Handle::wait_with_timeout`
+/// sets the read timeout for the wait and then resets it to `None`, after
+/// which the `DONE` reply and every later command read with no timeout — a
+/// half-dead socket then blocks the IDLE thread forever. This wrapper maps
+/// that `None` back to [`IO_TIMEOUT`], so the socket always keeps a floor.
+struct IdleStream<S> {
+    inner: S,
+}
+
+impl<S> IdleStream<S> {
+    fn new(inner: S) -> Self {
+        Self { inner }
+    }
+}
+
+impl<S: std::io::Read> std::io::Read for IdleStream<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<S: std::io::Write> std::io::Write for IdleStream<S> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<S: imap::extensions::idle::SetReadTimeout> imap::extensions::idle::SetReadTimeout for IdleStream<S> {
+    fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> imap::error::Result<()> {
+        self.inner.set_read_timeout(Some(timeout.unwrap_or(IO_TIMEOUT)))
+    }
+}
+
 /// Credentials for an IMAP account (stored in keychain as JSON).
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImapCredentials {
@@ -521,12 +561,21 @@ impl ImapClient {
     pub(crate) fn connect_sync(
         creds: &ImapCredentials,
     ) -> std::result::Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, imap::Error> {
+        let client = imap::Client::new(Self::open_tls_stream(creds)?);
+        let session = client.login(&creds.username, &creds.password).map_err(|(e, _)| e)?;
+        Ok(session)
+    }
+
+    /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
+    /// the socket. Shared by [`Self::connect_sync`] and the IDLE session.
+    fn open_tls_stream(
+        creds: &ImapCredentials,
+    ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, imap::Error> {
         use std::io;
         use std::net::{TcpStream, ToSocketAddrs};
         use std::time::Duration;
 
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-        const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
         let tls = native_tls::TlsConnector::new().map_err(|e| {
             // Wrap as a MissingMessageData error since there's no generic imap::Error variant for TLS
@@ -549,13 +598,8 @@ impl ImapClient {
         tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
         tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
 
-        let tls_stream = tls
-            .connect(creds.host.as_str(), tcp)
-            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))?;
-
-        let client = imap::Client::new(tls_stream);
-        let session = client.login(&creds.username, &creds.password).map_err(|(e, _)| e)?;
-        Ok(session)
+        tls.connect(creds.host.as_str(), tcp)
+            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -626,8 +670,9 @@ impl ImapClient {
 
     // ── Parse raw RFC 5322 bytes ──────────────────────────────────────────────
 
-    fn parse_message(uid: u32, raw: &[u8]) -> Result<(Email, Vec<AttachmentInfo>)> {
-        let parsed = parse_mail(raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
+    fn parse_message(uid: u32, fetched: &imap_search::FetchedMessage) -> Result<(Email, Vec<AttachmentInfo>)> {
+        let parsed =
+            parse_mail(&fetched.raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
 
         let hdrs = &parsed.headers;
 
@@ -641,10 +686,11 @@ impl ImapClient {
 
         let cc = parse_address_list(&hdrs.get_first_value("Cc").unwrap_or_default());
 
-        let timestamp = hdrs
-            .get_first_value("Date")
-            .and_then(|d| mailparse::dateparse(&d).ok())
-            .unwrap_or_else(|| chrono::Utc::now().timestamp());
+        let timestamp = message_timestamp(
+            fetched.internal_date,
+            hdrs.get_first_value("Date").and_then(|d| mailparse::dateparse(&d).ok()),
+            chrono::Utc::now().timestamp(),
+        );
 
         let message_id = hdrs.get_first_value("Message-ID").map(|s| s.trim().to_string());
 
@@ -658,7 +704,10 @@ impl ImapClient {
             &subject,
         );
 
-        let (body, snippet) = extract_body(&parsed);
+        let (mut body, snippet) = extract_body(&parsed);
+        if body.contains("cid:") {
+            body = inline_cid_images(&parsed, body);
+        }
         let attachments = extract_attachments(&parsed);
 
         // Preserve message order: `capture` depends on it for both the topmost
@@ -679,7 +728,7 @@ impl ImapClient {
             body,
             snippet,
             timestamp,
-            is_read: false,
+            is_read: fetched.seen,
             triage_status: None,
             category: "primary".to_string(),
             // Overridden by the caller per-mailbox (INBOX/Sent/Trash/Junk).
@@ -697,6 +746,15 @@ impl ImapClient {
 
         Ok((email, attachments))
     }
+}
+
+/// The timestamp stored for a message. The server's INTERNALDATE (arrival
+/// time) wins: the `Date:` header is whatever the sender's clock said, and the
+/// inbox cursor is MAX(timestamp), so one message dated in the future would
+/// stop every later incremental sync from finding new mail. Without an
+/// INTERNALDATE the header is used, clamped to `now`.
+fn message_timestamp(internal_date: Option<i64>, date_header: Option<i64>, now: i64) -> i64 {
+    internal_date.unwrap_or_else(|| date_header.map_or(now, |d| d.min(now)))
 }
 
 // ── Thread ID derivation ──────────────────────────────────────────────────────
@@ -744,10 +802,23 @@ fn parse_from_header(raw: &str) -> (String, String) {
     }
 }
 
-/// Parse a comma-separated list of addresses → Vec<email string>.
+/// Parse an address-list header → the bare addresses (groups flattened).
+/// `mailparse::addrparse` respects quoted display names such as
+/// `"Doe, Jane" <jane@…>`; the plain comma split below is only the fallback
+/// for headers it rejects.
 fn parse_address_list(raw: &str) -> Vec<String> {
     if raw.trim().is_empty() {
         return Vec::new();
+    }
+    if let Ok(list) = mailparse::addrparse(raw) {
+        return list
+            .iter()
+            .flat_map(|addr| match addr {
+                mailparse::MailAddr::Single(info) => vec![info.addr.clone()],
+                mailparse::MailAddr::Group(group) => group.addrs.iter().map(|info| info.addr.clone()).collect(),
+            })
+            .filter(|addr| !addr.is_empty())
+            .collect();
     }
     raw.split(',')
         .map(|s| {
@@ -765,7 +836,13 @@ fn parse_address_list(raw: &str) -> Vec<String> {
 // ── Body extraction ───────────────────────────────────────────────────────────
 
 fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
-    let (html, plain) = collect_body_parts(msg);
+    // A proper (unnamed, inline) body part always wins; only when none exists
+    // does a named text part count, since some mailers put a filename on the
+    // only body they send.
+    let (html, plain) = match collect_body_parts(msg, false) {
+        (None, None) => collect_body_parts(msg, true),
+        found => found,
+    };
 
     let body = if let Some(h) = html {
         h
@@ -787,9 +864,15 @@ fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
     (body, snippet)
 }
 
-fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<String>) {
+fn collect_body_parts(msg: &mailparse::ParsedMail, allow_named: bool) -> (Option<String>, Option<String>) {
     let ct = &msg.ctype;
     let mime = ct.mimetype.as_str();
+
+    // An attached file (`.html`, `.txt`) is not the body even when it is the
+    // first text part; neither is a forwarded `message/rfc822`.
+    if mime == "message/rfc822" || is_attached_file(msg, allow_named) {
+        return (None, None);
+    }
 
     if mime == "text/html" {
         let body = msg.get_body().unwrap_or_default();
@@ -804,7 +887,7 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     let mut plain: Option<String> = None;
 
     for sub in &msg.subparts {
-        let (sh, sp) = collect_body_parts(sub);
+        let (sh, sp) = collect_body_parts(sub, allow_named);
         if html.is_none() {
             html = sh;
         }
@@ -814,6 +897,40 @@ fn collect_body_parts(msg: &mailparse::ParsedMail) -> (Option<String>, Option<St
     }
 
     (html, plain)
+}
+
+/// Rewrite `cid:` references in `html` to data URIs built from the parts
+/// carrying the matching `Content-ID`, so inline images render (the same
+/// approach as the Gmail and Outlook adapters).
+fn inline_cid_images(msg: &mailparse::ParsedMail, mut html: String) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    let content_id = msg
+        .headers
+        .get_first_value("Content-ID")
+        .map(|v| v.trim().trim_matches(|c| c == '<' || c == '>').to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(cid) = content_id {
+        match msg.get_body_raw() {
+            Ok(bytes) => {
+                let data_uri = format!("data:{};base64,{}", msg.ctype.mimetype, STANDARD.encode(bytes));
+                html = crate::util::html::replace_cid_reference(&html, &cid, &data_uri);
+            }
+            Err(e) => crate::services::logger::log("debug", "sync", format!("IMAP inline image {cid} unreadable: {e}")),
+        }
+    }
+    for sub in &msg.subparts {
+        html = inline_cid_images(sub, html);
+    }
+    html
+}
+
+/// A part the sender attached as a file: disposed as `attachment`, or named.
+/// `allow_named` (the fallback pass) only excludes explicit attachments.
+fn is_attached_file(part: &mailparse::ParsedMail, allow_named: bool) -> bool {
+    let disposition = part.get_content_disposition();
+    let named = disposition.params.contains_key("filename") || part.ctype.params.contains_key("name");
+    disposition.disposition == mailparse::DispositionType::Attachment || (named && !allow_named)
 }
 
 fn strip_html_tags_owned(html: &str) -> String {
@@ -843,18 +960,18 @@ fn collect_attachments(part: &mailparse::ParsedMail, out: &mut Vec<AttachmentInf
 
     let ct = &part.ctype;
     let mime = ct.mimetype.as_str();
-    let disposition = part
-        .headers
-        .get_first_value("Content-Disposition")
-        .unwrap_or_default()
-        .to_lowercase();
+    // mailparse's parser keeps the filename's case, honours quoted `;` and
+    // decodes RFC 2231 (`filename*=UTF-8''…`) — a hand-rolled split on a
+    // lowercased header did none of that.
+    let disposition = part.get_content_disposition();
 
     // Extract filename: Content-Disposition filename= takes precedence, then Content-Type name=.
     let filename = disposition
-        .split(';')
-        .find(|p| p.trim().starts_with("filename"))
-        .and_then(|p| p.split_once('=').map(|x| x.1.trim().trim_matches('"').to_string()))
-        .or_else(|| ct.params.get("name").cloned());
+        .params
+        .get("filename")
+        .or_else(|| ct.params.get("name"))
+        .filter(|name| !name.trim().is_empty())
+        .cloned();
 
     // A MIME part counts as an attachment when:
     // 1. Content-Disposition explicitly says "attachment" (RFC 2183).
@@ -863,14 +980,23 @@ fn collect_attachments(part: &mailparse::ParsedMail, out: &mut Vec<AttachmentInf
     // 3. No Content-Disposition at all but the Content-Type carries a "name"
     //    parameter and the type is not text/plain, text/html, or multipart/*
     //    (common in older mail clients and IMAP Sent-folder copies).
-    let is_attachment = disposition.contains("attachment")
+    let is_attachment = disposition.disposition == mailparse::DispositionType::Attachment
         || (filename.is_some()
             && !mime.starts_with("text/plain")
             && !mime.starts_with("text/html")
             && !mime.starts_with("multipart/"));
 
     if is_attachment {
-        let filename = filename.unwrap_or_else(|| "attachment".to_string());
+        // `(email_id, filename)` is unique, so unnamed parts are numbered by
+        // their position among this message's attachments instead of all
+        // collapsing onto one "attachment" row.
+        let filename = filename.unwrap_or_else(|| {
+            format!(
+                "attachment-{}.{}",
+                out.len() + 1,
+                crate::sync::gmail::mime_to_extension(mime)
+            )
+        });
         if let Ok(data) = part.get_body_raw() {
             out.push(AttachmentInfo {
                 // Use "INLINE::<filename>" so fetch_email_attachment_bytes can look up
@@ -1042,7 +1168,7 @@ impl EmailProvider for ImapClient {
                         Ok(bodies) => {
                             for (index, uid) in items {
                                 let parsed = match bodies.get(uid) {
-                                    Some(raw) => Self::parse_message(*uid, raw),
+                                    Some(fetched) => Self::parse_message(*uid, fetched),
                                     None => Err(AppError::NotFound(format!("IMAP UID {uid}: body not found"))),
                                 };
                                 out.push((*index, parsed));
@@ -1119,10 +1245,10 @@ impl EmailProvider for ImapClient {
                 )));
             }
 
-            let raw = imap_search::uid_fetch_body(&mut session, uid)?;
+            let fetched = imap_search::uid_fetch_body(&mut session, uid)?;
 
             let _ = session.logout();
-            Self::parse_message(uid, &raw)
+            Self::parse_message(uid, &fetched)
         })
         .await
         .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
@@ -1524,9 +1650,7 @@ impl EmailProvider for ImapClient {
                 // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
                 // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
                 // folder are left alone.
-                session
-                    .uid_copy(&uid_set, &target_for_select)
-                    .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{target_for_select}' failed: {e}")))?;
+                imap_search::uid_copy(&mut session, &uid_set, &target_for_select)?;
                 session
                     .uid_store(&uid_set, "+FLAGS (\\Deleted)")
                     .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
@@ -1601,12 +1725,19 @@ impl ImapClient {
         // The IMAP spec allows up to 29 minutes; 30 s is well within that.
         const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-        let mut session = match Self::connect_sync(&creds) {
+        // Wrapped so the read timeout imap clears after each wait is restored
+        // (see [`IdleStream`]).
+        let mut session = match Self::open_tls_stream(&creds).and_then(|stream| {
+            imap::Client::new(IdleStream::new(stream))
+                .login(&creds.username, &creds.password)
+                .map_err(|(e, _)| e)
+        }) {
             Ok(s) => s,
-            Err(_) => return,
+            Err(e) => return Self::log_idle_stop(&creds, "connect", &e),
         };
 
-        if imap_search::select(&mut session, "INBOX").is_err() {
+        if let Err(e) = imap_search::select(&mut session, "INBOX") {
+            Self::log_idle_stop(&creds, "SELECT INBOX", &e);
             let _ = session.logout();
             return;
         }
@@ -1619,20 +1750,35 @@ impl ImapClient {
 
             let handle = match session.idle() {
                 Ok(h) => h,
-                Err(_) => return, // connection broken; outer watcher will reconnect
+                // Connection broken; the outer watcher reconnects.
+                Err(e) => return Self::log_idle_stop(&creds, "IDLE", &e),
             };
 
             // wait_with_timeout sends IDLE, blocks until mailbox change or timeout.
             let new_mail = match handle.wait_with_timeout(IDLE_TIMEOUT) {
                 Ok(WaitOutcome::MailboxChanged) => true,
                 Ok(WaitOutcome::TimedOut) => false, // keepalive — re-enter IDLE
-                Err(_) => return,                   // connection error
+                Err(e) => return Self::log_idle_stop(&creds, "IDLE wait", &e),
             };
 
             if tx.blocking_send(new_mail).is_err() {
                 return; // receiver dropped (scheduler stopped)
             }
         }
+    }
+
+    /// Record why the IDLE loop is giving up. The scheduler reconnects, but
+    /// without this line a dead push channel left no trace. Names the account
+    /// by login and host — never the password.
+    fn log_idle_stop(creds: &ImapCredentials, stage: &str, error: &dyn std::fmt::Display) {
+        crate::services::logger::log(
+            "warn",
+            "sync",
+            format!(
+                "IMAP IDLE for {} on {} stopped at {stage}: {error}",
+                creds.username, creds.host
+            ),
+        );
     }
 
     async fn smtp_send(&self, email: lettre::Message) -> Result<()> {
@@ -2138,6 +2284,306 @@ mod tests {
         assert_eq!(folder, ImapFolder::Inbox);
         let (folder, _) = client.parse_message_ref("acc-1::FOLDER::noseparator");
         assert_eq!(folder, ImapFolder::Inbox);
+    }
+
+    /// A scripted IMAP stream that records every read timeout imap asks for.
+    struct TimeoutRecordingStream {
+        script: std::io::Cursor<Vec<u8>>,
+        timeouts: std::sync::Arc<std::sync::Mutex<Vec<Option<std::time::Duration>>>>,
+    }
+
+    impl std::io::Read for TimeoutRecordingStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.script.read(buf)
+        }
+    }
+
+    impl std::io::Write for TimeoutRecordingStream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl imap::extensions::idle::SetReadTimeout for TimeoutRecordingStream {
+        fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> imap::error::Result<()> {
+            self.timeouts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(timeout);
+            Ok(())
+        }
+    }
+
+    /// imap 2.4.1's `wait_with_timeout` resets the socket read timeout to
+    /// `None` after every wait, and then reads the `DONE` reply — and every
+    /// later command — with no timeout at all. On a half-dead socket that
+    /// blocked the IDLE thread forever. The wrapper must never let `None`
+    /// through to the socket.
+    #[test]
+    fn idle_wait_never_leaves_the_socket_without_a_read_timeout() {
+        let timeouts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stream = IdleStream::new(TimeoutRecordingStream {
+            script: std::io::Cursor::new(
+                b"a1 OK Logged in.\r\n+ idling\r\n* 3 EXISTS\r\na2 OK IDLE terminated\r\n".to_vec(),
+            ),
+            timeouts: timeouts.clone(),
+        });
+        let mut session = match imap::Client::new(stream).login("u", "p") {
+            Ok(session) => session,
+            Err((e, _)) => panic!("scripted login failed: {e}"),
+        };
+
+        let outcome = session
+            .idle()
+            .expect("idle")
+            .wait_with_timeout(std::time::Duration::from_secs(30))
+            .expect("wait");
+
+        assert_eq!(outcome, imap::extensions::idle::WaitOutcome::MailboxChanged);
+        let recorded = timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert!(!recorded.is_empty(), "the wait must set a read timeout");
+        assert!(
+            recorded.iter().all(Option::is_some),
+            "a read timeout was cleared: {recorded:?}"
+        );
+        assert_eq!(recorded.last(), Some(&Some(IO_TIMEOUT)));
+    }
+
+    /// A multipart/mixed message with one text body and the given extra parts
+    /// (each a header block + body, without the boundary line).
+    fn mixed_message(parts: &[&str]) -> Vec<u8> {
+        let mut raw = String::from(
+            "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n\
+             Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+             --XX\r\nContent-Type: text/plain\r\n\r\nhello\r\n",
+        );
+        for part in parts {
+            raw.push_str("--XX\r\n");
+            raw.push_str(part);
+            raw.push_str("\r\n");
+        }
+        raw.push_str("--XX--\r\n");
+        raw.into_bytes()
+    }
+
+    fn attachment_names(raw: &[u8]) -> Vec<String> {
+        let parsed = parse_mail(raw).expect("parse");
+        extract_attachments(&parsed).into_iter().map(|a| a.filename).collect()
+    }
+
+    #[test]
+    fn attachment_filename_keeps_its_case() {
+        let raw = mixed_message(&[
+            "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"Report Q3.PDF\"\r\n\r\n%PDF",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["Report Q3.PDF"]);
+    }
+
+    #[test]
+    fn attachment_filename_decodes_rfc2231_encoding() {
+        let raw = mixed_message(&[
+            "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf\r\n\r\n%PDF",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["résumé.pdf"]);
+    }
+
+    #[test]
+    fn attachment_filename_may_contain_a_quoted_semicolon() {
+        let raw = mixed_message(&[
+            "Content-Type: text/csv\r\nContent-Disposition: attachment; filename=\"a;b.csv\"\r\n\r\nx,y",
+        ]);
+        assert_eq!(attachment_names(&raw), vec!["a;b.csv"]);
+    }
+
+    /// `(email_id, filename)` is unique, so two unnamed parts both called
+    /// "attachment" collapsed into one stored row.
+    #[test]
+    fn unnamed_attachments_get_distinct_names() {
+        let raw = mixed_message(&[
+            "Content-Type: image/png\r\nContent-Disposition: attachment\r\n\r\nAAAA",
+            "Content-Type: image/png\r\nContent-Disposition: attachment\r\n\r\nBBBB",
+        ]);
+        let names = attachment_names(&raw);
+        assert_eq!(names.len(), 2);
+        assert_ne!(names[0], names[1], "{names:?}");
+    }
+
+    fn body_of(raw: &[u8]) -> String {
+        extract_body(&parse_mail(raw).expect("parse")).0
+    }
+
+    #[test]
+    fn body_skips_an_attached_html_file() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html\r\nContent-Disposition: attachment; filename=\"page.html\"\r\n\r\n<p>attached page</p>\r\n\
+            --XX\r\nContent-Type: text/plain\r\n\r\nreal body\r\n--XX--\r\n";
+        let body = body_of(raw);
+        assert!(body.contains("real body"), "{body}");
+        assert!(!body.contains("attached page"), "{body}");
+    }
+
+    /// Some mailers put a name on the ONLY html part; it is still the body.
+    #[test]
+    fn a_named_html_part_is_the_body_when_no_other_body_exists() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html; name=\"body.html\"\r\n\r\n<p>only body</p>\r\n--XX--\r\n";
+        assert!(body_of(raw).contains("<p>only body</p>"), "{}", body_of(raw));
+    }
+
+    #[test]
+    fn a_single_part_named_html_message_keeps_its_body() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: text/html; name=\"body.html\"\r\n\r\n<p>only body</p>\r\n";
+        assert!(body_of(raw).contains("<p>only body</p>"), "{}", body_of(raw));
+    }
+
+    #[test]
+    fn body_ignores_a_forwarded_message() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/plain\r\n\r\nouter body\r\n\
+            --XX\r\nContent-Type: message/rfc822\r\n\r\n\
+            Subject: inner\r\nContent-Type: text/html\r\n\r\n<p>forwarded</p>\r\n--XX--\r\n";
+        let body = body_of(raw);
+        assert!(body.contains("outer body"), "{body}");
+        assert!(!body.contains("forwarded"), "{body}");
+    }
+
+    /// IMAP bodies referencing inline images by `cid:` rendered as broken
+    /// images; Gmail and Outlook already inline them as data URIs.
+    #[test]
+    fn inline_cid_images_are_rewritten_to_data_uris() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/related; boundary=\"XX\"\r\n\r\n\
+            --XX\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo1\"><img src=\"cid:logo10\">\r\n\
+            --XX\r\nContent-Type: image/png\r\nContent-ID: <logo1>\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw==\r\n\
+            --XX--\r\n";
+        let (email, _) = ImapClient::parse_message(1, &fetched(std::str::from_utf8(raw).unwrap(), Some(NOW))).unwrap();
+        assert!(
+            email
+                .body
+                .contains(r#"<img src="data:image/png;base64,iVBORw=="><img src="cid:logo10">"#),
+            "{}",
+            email.body
+        );
+    }
+
+    #[test]
+    fn address_list_respects_quoted_display_names() {
+        assert_eq!(
+            parse_address_list(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
+            vec!["jane@example.com", "bob@example.com"]
+        );
+    }
+
+    #[test]
+    fn address_list_flattens_groups() {
+        assert_eq!(
+            parse_address_list("Team: a@example.com, B <b@example.com>;"),
+            vec!["a@example.com", "b@example.com"]
+        );
+    }
+
+    /// The IDLE loop used to `return` on a failed connect without a trace, so
+    /// push notifications silently stopped. It must log a warning naming the
+    /// account (never the password) before it gives up.
+    #[test]
+    fn idle_logs_a_connect_failure_instead_of_dropping_it() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        // A port nothing listens on: the connect is refused at once.
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let creds = ImapCredentials {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "idle-user@example.com".to_string(),
+            password: "not-a-real-secret".to_string(),
+            smtp_host: "127.0.0.1".to_string(),
+            smtp_port: 587,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+        ImapClient::run_imap_idle_blocking(
+            creds,
+            tx,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+
+        let events = logger.events();
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        let warn = events
+            .iter()
+            .find(|e| e.level == "warn" && e.source == "sync")
+            .unwrap_or_else(|| panic!("no warn logged: {events:?}"));
+        assert!(warn.message.contains("idle-user@example.com"), "{}", warn.message);
+        assert!(!warn.message.contains("not-a-real-secret"), "{}", warn.message);
+    }
+
+    const NOW: i64 = 1_800_000_000;
+
+    fn fetched(raw: &str, internal_date: Option<i64>) -> imap_search::FetchedMessage {
+        imap_search::FetchedMessage {
+            raw: raw.as_bytes().to_vec(),
+            internal_date,
+            seen: false,
+        }
+    }
+
+    #[test]
+    fn read_state_follows_the_servers_seen_flag() {
+        let raw = "From: a@example.com\r\nSubject: s\r\n\r\nbody";
+        let seen = imap_search::FetchedMessage {
+            seen: true,
+            ..fetched(raw, Some(NOW))
+        };
+        assert!(ImapClient::parse_message(1, &seen).unwrap().0.is_read);
+        assert!(
+            !ImapClient::parse_message(1, &fetched(raw, Some(NOW)))
+                .unwrap()
+                .0
+                .is_read
+        );
+    }
+
+    /// A sender whose clock (or malice) stamps `Date:` in 2099 must not set
+    /// the stored timestamp: the inbox cursor is MAX(timestamp), so one such
+    /// row froze INBOX sync until 2099.
+    #[test]
+    fn stored_timestamp_is_the_servers_internaldate_not_the_date_header() {
+        let raw = "From: a@example.com\r\nDate: Thu, 01 Jan 2099 00:00:00 +0000\r\nSubject: s\r\n\r\nbody";
+        let (email, _) = ImapClient::parse_message(1, &fetched(raw, Some(NOW - 60))).unwrap();
+        assert_eq!(email.timestamp, NOW - 60);
+    }
+
+    #[test]
+    fn message_timestamp_prefers_internaldate() {
+        assert_eq!(message_timestamp(Some(100), Some(200), NOW), 100);
+    }
+
+    #[test]
+    fn message_timestamp_clamps_a_future_date_header_to_now() {
+        assert_eq!(message_timestamp(None, Some(NOW + 86_400 * 365), NOW), NOW);
+    }
+
+    #[test]
+    fn message_timestamp_keeps_a_past_date_header_without_internaldate() {
+        assert_eq!(message_timestamp(None, Some(NOW - 10), NOW), NOW - 10);
+    }
+
+    #[test]
+    fn message_timestamp_falls_back_to_now_when_nothing_is_known() {
+        assert_eq!(message_timestamp(None, None, NOW), NOW);
     }
 
     #[test]
