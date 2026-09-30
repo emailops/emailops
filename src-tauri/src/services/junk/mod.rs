@@ -579,6 +579,36 @@ mod feedback_tests {
         assert_eq!(chip.map(|t| t.tag_value).as_deref(), Some("phishing"));
     }
 
+    fn chip(db: &Database, id: &str) -> Option<String> {
+        db.get_email_tags(id)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_type == "junk")
+            .map(|t| t.tag_value)
+    }
+
+    #[tokio::test]
+    async fn marking_a_scored_message_as_junk_keeps_the_kind_it_was_scored_as() {
+        let db = db_with_an_impersonation();
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+
+        set_feedback(&db, "acct", "fake", true).await.unwrap();
+
+        assert_eq!(chip(&db, "fake").as_deref(), Some("phishing"));
+    }
+
+    #[tokio::test]
+    async fn a_message_marked_not_junk_stays_clear_when_it_is_scored_again() {
+        let db = db_with_an_impersonation();
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        set_feedback(&db, "acct", "fake", false).await.unwrap();
+
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+
+        assert_eq!(chip(&db, "fake"), None);
+    }
+
     #[tokio::test]
     async fn training_saves_a_model_for_each_axis() {
         let db = Arc::new(Database::new_for_testing().unwrap());

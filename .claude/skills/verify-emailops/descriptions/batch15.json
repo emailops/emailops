@@ -57,7 +57,12 @@
     "src-tauri/src/services/junk/model.rs::a_token_scores_by_its_laplace_smoothed_class_ratio": "El modelo estadístico puntúa una palabra por su frecuencia suavizada en cada clase (valor exacto comprobado).",
     "src-tauri/src/services/junk/model.rs::a_model_needs_the_floor_on_both_classes": "Un modelo no se usa hasta tener el mínimo de ejemplos en las dos clases.",
     "src-tauri/src/services/junk/model.rs::each_axis_round_trips_through_its_stored_name": "Los ejes del modelo se guardan como «spam» y «graymail» y se leen de vuelta; phishing no es un eje entrenable.",
-    "src-tauri/src/services/junk/signals.rs::a_configured_prior_replaces_the_default_only_when_it_is_a_probability": "La tasa base configurada sustituye a la de por defecto solo si es una probabilidad válida."
+    "src-tauri/src/services/junk/signals.rs::a_configured_prior_replaces_the_default_only_when_it_is_a_probability": "La tasa base configurada sustituye a la de por defecto solo si es una probabilidad válida.",
+    "src-tauri/src/services/junk/auth.rs::a_flag_at_exactly_the_marginal_ratio_is_decisive": "Un positivo del antispam justo en 1,25 veces su umbral ya cuenta como decisivo, no como marginal.",
+    "src-tauri/src/services/junk/auth.rs::decimals_in_the_score_count": "Los decimales de la puntuación del antispam cuentan: 2,6 sobre 5,0 es un aprobado por los pelos.",
+    "src-tauri/src/services/junk/tokens.rs::the_token_hash_does_not_change": "El hash de las palabras no cambia: los modelos entrenados guardados dependen de él.",
+    "src-tauri/src/services/junk/mod.rs::marking_a_scored_message_as_junk_keeps_the_kind_it_was_scored_as": "Marcar como no deseado un mensaje ya puntuado conserva su tipo (p. ej. phishing) en la etiqueta.",
+    "src-tauri/src/services/junk/mod.rs::a_message_marked_not_junk_stays_clear_when_it_is_scored_again": "Un mensaje marcado como «no es junk» sigue limpio al volver a puntuarlo."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",

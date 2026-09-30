@@ -622,4 +622,20 @@ mod tests {
             ServerSpamVerdict::Cleared
         );
     }
+    #[test]
+    fn a_flag_at_exactly_the_marginal_ratio_is_decisive() {
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: Yes, score=6.25 required=5.0")),
+            ServerSpamVerdict::Flagged
+        );
+    }
+
+    #[test]
+    fn decimals_in_the_score_count() {
+        // 2.6 / 5.0 = 0.52: past half the threshold, a marginal clearance.
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: No, score=2.6 required=5.0")),
+            ServerSpamVerdict::BarelyCleared
+        );
+    }
 }
