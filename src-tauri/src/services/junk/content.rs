@@ -687,6 +687,12 @@ mod tests {
     }
 
     #[test]
+    fn a_dotless_url_as_link_text_pointing_elsewhere_is_a_mismatch() {
+        let body = r#"<a href="https://other.example/login">http://intranet</a>"#;
+        assert!(analyse("", body, &[]).link_text_href_mismatch);
+    }
+
+    #[test]
     fn link_text_with_spaces_is_prose_not_a_shown_address() {
         let body = r#"<a href="https://other.example/login">see bank.example today</a>"#;
         assert!(!analyse("", body, &[]).link_text_href_mismatch);

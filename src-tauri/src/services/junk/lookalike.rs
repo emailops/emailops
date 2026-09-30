@@ -506,6 +506,11 @@ mod tests {
     // Short brands match tighter: at distance 2 almost every four-letter word
     // is "close" to every other.
     #[test]
+    fn latin_mixed_with_arabic_letters_is_mixed_scripts() {
+        assert!(has_mixed_scripts("Pay\u{0627}al"));
+    }
+
+    #[test]
     fn an_embedded_address_needs_a_real_looking_tld() {
         assert_eq!(embedded_address_domain("billing@acme.xy"), Some("acme.xy".to_string()));
         assert_eq!(embedded_address_domain("billing@acme.x"), None);

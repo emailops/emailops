@@ -94,7 +94,9 @@
     "src-tauri/src/db/emails/search.rs::a_tag_filter_reports_its_total_as_unknown": "El filtro por etiqueta no cuenta el total (lista infinita) y lo indica con -1.",
     "src-tauri/src/db/emails/search.rs::a_sender_or_domain_filter_reports_its_total_as_unknown": "El filtro por remitente o dominio tampoco cuenta el total y lo indica con -1.",
     "src-tauri/src/db/emails/search.rs::a_date_search_combines_categories_with_the_date_window": "Una búsqueda solo por fechas combina bien las categorías con la ventana de fechas.",
-    "src-tauri/src/db/emails/search.rs::an_addressee_splits_into_its_display_name_and_address": "Un destinatario «Nombre <dirección>» se separa en nombre visible y dirección; una dirección sola deja el nombre vacío."
+    "src-tauri/src/db/emails/search.rs::an_addressee_splits_into_its_display_name_and_address": "Un destinatario «Nombre <dirección>» se separa en nombre visible y dirección; una dirección sola deja el nombre vacío.",
+    "src-tauri/src/services/junk/lookalike.rs::latin_mixed_with_arabic_letters_is_mixed_scripts": "Mezclar letras latinas y árabes en un nombre cuenta como mezcla de alfabetos.",
+    "src-tauri/src/services/junk/content.rs::a_dotless_url_as_link_text_pointing_elsewhere_is_a_mismatch": "Un texto de enlace que es una URL sin punto (http://intranet) y lleva a otro sitio cuenta como engaño."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
