@@ -2457,3 +2457,41 @@ Mail.app would show.
 - *Treating documents with a risky reader (PDF, Office macros, archives) as dangerous*: they
   do not act on open by themselves; the quarantine mark lets their own apps apply Protected
   View and similar.
+
+## 2026-09-30 — Gmail stored-mail state follows the History API
+
+**Decision:** Gmail's stored mail is refreshed from `users.history.list` instead of being
+polled: a per-account cursor in preferences (`mailbox_history_cursor:<account>`), read
+under the same 2-minute throttle as the IMAP/Outlook refresh, at most 5 pages of 100 records
+per pass, asking only for `labelAdded`, `labelRemoved` and `messageDeleted`. No new OAuth
+scope: `gmail.modify` covers it.
+- **Cursor:** seeded from `users.getProfile` on the first run (nothing is replayed); moved
+  only past pages that were fully applied and written once per pass; cleared with the
+  account.
+- **What a change means locally:** the label deltas are folded onto the stored row and the
+  result goes through the mapping the sync already stores mail with
+  (`sync::gmail::mailbox_from_labels`). `UNREAD` is the read state; `TRASH` files the row
+  under `trash` and removing it puts it back; a permanent delete soft-deletes the row.
+  **Archiving is not a move**: the app has no archive mailbox and the sync already stores
+  mail without `INBOX` under `inbox`, so archiving and user labels change nothing here.
+  Spam is left to the Spam pass.
+- **Conflict rule:** unchanged — a row with a pending local push is never touched, checked
+  in the planner and again in each `UPDATE`. Because the log reports a change once, a page
+  that had to skip such a row is not counted as applied and is replayed after the push.
+- **Expired cursor (404):** the recent stored rows (the 30 days / 200 rows of the poll) are
+  checked against their current labels in `format=minimal` batches, and the cursor is
+  reseeded — from a position read before the check — only once every row was checked.
+**Context:** Gmail answered `None` to the state poll, so read/unread, trash and permanent
+deletes done in Gmail's web or mobile clients never reached stored mail; only Spam was
+reconciled. The developer chose the History API over polling.
+**Rejected:**
+- *Polling `format=minimal` for the recent ids every pass* (what IMAP/Outlook do): 200 gets
+  every two minutes against a quota-metered API, to learn that nothing changed.
+- *Soft-deleting a message trashed in Gmail*, like the app's own delete: it could never
+  come back when the user restores it in Gmail, and mail trashed there before it was ever
+  synced already shows under Trash.
+- *Looking each changed message up (`messages.get`) instead of folding the deltas*: exact,
+  but one request per change turns a bulk clean-up into hundreds of requests, and a lookup
+  cap would leave pages half applied.
+- *An archive mailbox*: a product change (a new view and its sync pass), not part of
+  following state.
