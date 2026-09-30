@@ -168,6 +168,10 @@
     "noTrainingNotice": "Anbieter, die deine E-Mails speichern oder damit trainieren, werden nie verwendet.",
     "zeroDataRetention": "Nur ohne Datenspeicherung",
     "zeroDataRetentionHelp": "Nur an Anbieter senden, die nach der Antwort nichts speichern. Es stehen weniger Modelle zur Verfügung.",
+    "contextBudget": "Kontextbudget (Tokens)",
+    "contextBudgetHelp": "Wie viel vom Kontextfenster eines entfernten Modells ein Aufruf im Recherchemodus füllen darf. Das Fenster des Modells bleibt die Obergrenze. Ein größeres Budget bedeutet weniger, größere Aufrufe: mehr gesendete E-Mails pro Anfrage und höhere Kosten pro Aufruf.",
+    "contextBudgetLoadFailed": "Kontextbudget konnte nicht geladen werden: {{error}}",
+    "contextBudgetSaveFailed": "Kontextbudget konnte nicht gespeichert werden: {{error}}",
     "chatModelPlaceholder": "z. B. google/gemma-3-27b-it"
   },
   "promptEditor": {

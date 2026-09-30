@@ -168,6 +168,10 @@
     "noTrainingNotice": "Nunca se usan proveedores que guarden o entrenen con tu correo.",
     "zeroDataRetention": "Solo retención cero",
     "zeroDataRetentionHelp": "Envía solo a proveedores que no guardan nada tras responder. Habrá menos modelos disponibles.",
+    "contextBudget": "Presupuesto de contexto (tokens)",
+    "contextBudgetHelp": "Cuánto de la ventana de contexto de un modelo remoto puede ocupar cada llamada del modo investigación. La ventana del propio modelo sigue siendo el tope. Un presupuesto mayor significa menos llamadas y más grandes: más correo enviado por petición y más coste por llamada.",
+    "contextBudgetLoadFailed": "No se pudo cargar el presupuesto de contexto: {{error}}",
+    "contextBudgetSaveFailed": "No se pudo guardar el presupuesto de contexto: {{error}}",
     "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it"
   },
   "promptEditor": {

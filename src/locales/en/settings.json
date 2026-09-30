@@ -168,6 +168,10 @@
     "noTrainingNotice": "Providers that store or train on your mail are never used.",
     "zeroDataRetention": "Zero data retention only",
     "zeroDataRetentionHelp": "Route only to providers that keep nothing after answering. Fewer models are available.",
+    "contextBudget": "Context budget (tokens)",
+    "contextBudgetHelp": "How much of a remote model's context window a research run may fill per call. The model's own window still caps it. A larger budget means fewer, bigger calls: more mail sent per request and a higher cost per call.",
+    "contextBudgetLoadFailed": "Failed to load context budget: {{error}}",
+    "contextBudgetSaveFailed": "Failed to save context budget: {{error}}",
     "chatModelPlaceholder": "e.g. google/gemma-3-27b-it"
   },
   "promptEditor": {

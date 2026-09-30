@@ -43,11 +43,26 @@ describe('OpenRouterPanel', () => {
     container.remove();
   });
 
-  function render(config: AiConfigState, setConfig = vi.fn()) {
+  function render(config: AiConfigState, setConfig = vi.fn(), onContextBudgetChange = vi.fn()) {
     act(() => {
-      root.render(<OpenRouterPanel config={config} setConfig={setConfig} apiKey="" setApiKey={vi.fn()} />);
+      root.render(
+        <OpenRouterPanel
+          config={config}
+          setConfig={setConfig}
+          apiKey=""
+          setApiKey={vi.fn()}
+          contextBudget={32768}
+          onContextBudgetChange={onContextBudgetChange}
+        />,
+      );
     });
     return setConfig;
+  }
+
+  function budgetInput(): HTMLInputElement {
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="settings:openRouter.contextBudget"]');
+    if (!input) throw new Error('context budget field not rendered');
+    return input;
   }
 
   function zdrToggle(): HTMLButtonElement {
@@ -70,6 +85,18 @@ describe('OpenRouterPanel', () => {
     expect(zdrToggle().getAttribute('aria-pressed')).toBe('true');
     act(() => zdrToggle().click());
     expect(setConfig).toHaveBeenCalledWith({ ...baseConfig, zeroDataRetention: false });
+  });
+
+  it('shows the context budget and reports a new value', () => {
+    const onContextBudgetChange = vi.fn();
+    render(baseConfig, vi.fn(), onContextBudgetChange);
+    expect(budgetInput().value).toBe('32768');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    act(() => {
+      setValue?.call(budgetInput(), '65536');
+      budgetInput().dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onContextBudgetChange).toHaveBeenCalledWith(65536);
   });
 
   it('states that providers may never train on mail', () => {

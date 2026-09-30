@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { MIN_CONTEXT_BUDGET } from './helpers';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState } from './types';
 import { UsageSummary } from './UsageSummary';
@@ -8,6 +9,9 @@ interface OpenRouterPanelProps {
   setConfig: (next: AiConfigState) => void;
   apiKey: string;
   setApiKey: (key: string) => void;
+  /** Prompt budget (tokens) for remote models, `chat.remote_n_ctx_budget`. */
+  contextBudget: number;
+  onContextBudgetChange: (tokens: number) => void;
 }
 
 /**
@@ -19,7 +23,14 @@ interface OpenRouterPanelProps {
  * the backend, see `ai/openrouter.rs`); zero data retention is the user's call
  * because it rules out many models.
  */
-export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRouterPanelProps) {
+export function OpenRouterPanel({
+  config,
+  setConfig,
+  apiKey,
+  setApiKey,
+  contextBudget,
+  onContextBudgetChange,
+}: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
   return (
     <div className="space-y-4">
@@ -61,6 +72,22 @@ export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRo
       {/* Directly under the cap it reports against, so hitting the budget and
           finding out what you spent are the same screen. */}
       <UsageSummary />
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:openRouter.contextBudget')}</label>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:openRouter.contextBudgetHelp')}</p>
+        <input
+          type="number"
+          aria-label={t('settings:openRouter.contextBudget')}
+          min={MIN_CONTEXT_BUDGET}
+          step={4096}
+          value={contextBudget}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (Number.isFinite(v)) onContextBudgetChange(v);
+          }}
+          className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+        />
+      </div>
       <p className="text-xs text-gray-500">{t('settings:openRouter.noTrainingNotice')}</p>
       <div className="flex items-center justify-between">
         <div>

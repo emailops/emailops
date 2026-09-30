@@ -11,6 +11,7 @@ import { AiSharedPreferences } from './AiSettings/AiSharedPreferences';
 import { ChatPromptsSection } from './AiSettings/ChatPromptsSection';
 import { ConfirmDisableDialog } from './AiSettings/ConfirmDisableDialog';
 import { EmbeddedPanel } from './AiSettings/EmbeddedPanel';
+import { contextBudgetFromPref, contextBudgetToPref, DEFAULT_CONTEXT_BUDGET } from './AiSettings/helpers';
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
@@ -58,6 +59,11 @@ export function AiSettings() {
   // when the user never touched the field and no explicit pref existed, so
   // saving unrelated settings can't pin the machine's auto choice.
   const nCtxLoadedRef = useRef<{ explicit: boolean; value: number }>({ explicit: false, value: 8192 });
+  // Prompt budget (tokens) for remote OpenRouter models, stored in
+  // `chat.remote_n_ctx_budget`; unset shows the default. Saved only when the
+  // user changed it, so the default is never pinned by an unrelated save.
+  const [contextBudget, setContextBudget] = useState<number>(DEFAULT_CONTEXT_BUDGET);
+  const contextBudgetLoadedRef = useRef<number>(DEFAULT_CONTEXT_BUDGET);
   // Whether the embedded runtime can actually run on this machine. False both
   // for builds compiled without llama.cpp and for Intel Macs, whose GPU cannot
   // execute the Metal kernels — selecting it there failed every turn with an
@@ -253,6 +259,14 @@ export function AiSettings() {
         nCtxLoadedRef.current = { explicit: false, value: 8192 };
         setNCtx(8192);
       }
+
+      try {
+        const budget = contextBudgetFromPref(await api.getPref('chat.remote_n_ctx_budget'));
+        contextBudgetLoadedRef.current = budget;
+        setContextBudget(budget);
+      } catch (err) {
+        addLog('error', 'ai', t('settings:openRouter.contextBudgetLoadFailed', { error: errorText(err) }));
+      }
     } catch (err) {
       setError(t('settings:ai.loadFailed', { error: errorText(err) }));
     } finally {
@@ -394,6 +408,17 @@ export function AiSettings() {
           nCtxLoadedRef.current = { explicit: true, value: tokens };
         } catch (err) {
           addLog('error', 'ai', t('settings:ai.contextWindowSaveFailed', { error: errorText(err) }));
+        }
+      }
+
+      if (config.provider === 'openrouter' && contextBudget !== contextBudgetLoadedRef.current) {
+        try {
+          const tokens = contextBudgetToPref(contextBudget);
+          await api.setPref('chat.remote_n_ctx_budget', tokens);
+          contextBudgetLoadedRef.current = Number(tokens);
+          setContextBudget(Number(tokens));
+        } catch (err) {
+          addLog('error', 'ai', t('settings:openRouter.contextBudgetSaveFailed', { error: errorText(err) }));
         }
       }
 
@@ -577,7 +602,14 @@ export function AiSettings() {
             )}
 
             {config.provider === 'openrouter' && (
-              <OpenRouterPanel config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={setApiKey} />
+              <OpenRouterPanel
+                config={config}
+                setConfig={setConfig}
+                apiKey={apiKey}
+                setApiKey={setApiKey}
+                contextBudget={contextBudget}
+                onContextBudgetChange={setContextBudget}
+              />
             )}
 
             {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
