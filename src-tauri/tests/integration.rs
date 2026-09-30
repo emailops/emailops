@@ -4734,10 +4734,16 @@ async fn resync_mailbox_full_recovers_gap_and_returns_delta() {
         vec![],
     );
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(
         inserted, 3,
@@ -4773,10 +4779,16 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
     // Provider has no messages, so resync just resets state and produces 0 inserts.
     let provider = FakeEmailProvider::new("reset@example.com", "Reset");
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(inserted, 0, "no provider messages → 0 inserted");
 
@@ -5256,6 +5268,7 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
         emailops_lib::sync::provider::ExtraMailbox::Sent,
         &provider,
         Some(&ctx),
+        Default::default(),
     )
     .await
     .expect("resync");
@@ -5326,4 +5339,194 @@ fn skill_lifecycle_through_the_service() {
         .join(skills::DELETED_DIR)
         .join("weekly-email-summary")
         .is_dir());
+}
+
+// ── redownload keeps local state ────────────────────────────────────────────
+
+/// Re-downloading a message replaces its content, not what the app knows about
+/// it: the provider's parse carries a default mailbox ("inbox" for Outlook),
+/// no sent flag, no triage and an unread state, and upserting it verbatim moved
+/// a Sent message into the inbox and wiped the user's triage.
+#[tokio::test]
+async fn redownload_keeps_mailbox_sent_read_and_triage_state() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-rd", "me@example.com")).unwrap();
+
+    let mut stored = make_email("msg-rd", "acc-rd", 1_700_000_000);
+    stored.mailbox = "sent".to_string();
+    stored.is_sent = true;
+    stored.is_read = true;
+    stored.body = String::new();
+    db.insert_email(&stored).unwrap();
+    db.update_triage_status("msg-rd", "done").unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    let mut fresh = make_email("msg-rd", "", 1_700_000_000);
+    fresh.body = "Recovered body".to_string();
+    provider.add_message(fresh, EmailCategory::Primary, vec![]);
+
+    emailops_lib::services::emails::redownload_email_with_provider(&db, "msg-rd", &provider)
+        .await
+        .expect("redownload");
+
+    let after = db.get_email("msg-rd").unwrap().expect("row kept");
+    assert_eq!(after.mailbox, "sent");
+    assert!(after.is_sent, "sent flag must survive");
+    assert!(after.is_read, "read state must survive");
+    assert_eq!(after.triage_status.as_deref(), Some("done"));
+    assert_eq!(db.get_email_body("msg-rd").unwrap(), "Recovered body");
+}
+
+// ── pending sent rows: stale sweep ordering and the retry path ──────────────
+
+async fn run_fake_sync(db: &Arc<Database>, account: &Account, provider: FakeEmailProvider) {
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        db,
+        account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+}
+
+/// A pending row inserted more than a day before the next sync (the app sat
+/// offline) used to be swept to a permanent row at sync *start*, before the
+/// ingest that brings the provider's copy could reconcile it — leaving the
+/// reply twice in the thread for good.
+#[tokio::test]
+async fn a_day_old_pending_sent_row_is_still_reconciled_by_the_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-stale", "me@example.com")).unwrap();
+    let account = db.get_account("acc-stale").unwrap().unwrap();
+    let sent_at = chrono::Utc::now().timestamp() - 2 * 86_400;
+
+    let mut pending = make_email_with("local-sent-old", "acc-stale", sent_at, "me@example.com", "sent");
+    pending.thread_id = "t-conv".to_string();
+    pending.message_id = Some("<old@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    let mut sent_copy = make_email_with("imap-sent-old", "acc-stale", sent_at + 5, "me@example.com", "sent");
+    sent_copy.thread_id = "t-conv".to_string();
+    sent_copy.message_id = Some("<old@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(
+        db.get_email("local-sent-old").unwrap().is_none(),
+        "the synthetic row must be reconciled away, not kept as a duplicate"
+    );
+    assert_eq!(db.get_thread("acc-stale", "t-conv").unwrap().len(), 1);
+}
+
+/// The provider's Sent copy can first fail to download and arrive through the
+/// failed-download retry instead; that path must reconcile too.
+#[tokio::test]
+async fn a_sent_copy_recovered_by_the_retry_path_reconciles_its_pending_row() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-retry", "me@example.com")).unwrap();
+    let account = db.get_account("acc-retry").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    let mut pending = make_email_with("local-sent-r", "acc-retry", now, "me@example.com", "sent");
+    pending.thread_id = "t-r".to_string();
+    pending.message_id = Some("<r@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    // Only reachable by id (no listing serves it): the retry path is the one
+    // bringing it in.
+    let mut sent_copy = make_email_with("srv-sent-r", "acc-retry", now + 5, "me@example.com", "unlisted");
+    sent_copy.thread_id = "t-r".to_string();
+    sent_copy.message_id = Some("<r@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+    // New inbox mail, so this case does not depend on the retry also running
+    // on a sync that found nothing new.
+    provider.add_message(
+        make_email("inbox-new", "acc-retry", now),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-retry", "srv-sent-r", "earlier failure")
+        .unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("srv-sent-r").unwrap().is_some(), "retried copy stored");
+    assert!(
+        db.get_email("local-sent-r").unwrap().is_none(),
+        "the retry path must reconcile the pending row it matches"
+    );
+}
+
+/// Failed downloads are retried even when the sync finds nothing new — an
+/// idle account used to keep its failures forever.
+#[tokio::test]
+async fn failed_downloads_are_retried_when_nothing_new_arrived() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-idle", "me@example.com")).unwrap();
+    let account = db.get_account("acc-idle").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(
+        make_email_with("lost-1", "acc-idle", 1_700_000_000, "x@example.com", "unlisted"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-idle", "lost-1", "earlier failure").unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("lost-1").unwrap().is_some(), "failed download retried");
+    assert!(db.get_failed_emails("acc-idle").unwrap().is_empty());
+}
+
+/// A burst bigger than the per-sync incremental cap: the listing is
+/// newest-first and capped, and the next sync's floor used to be the newest
+/// stored message — so the older part of the burst was never fetched.
+#[tokio::test]
+async fn an_inbox_burst_larger_than_the_incremental_cap_is_completed_by_later_syncs() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-burst", "me@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-burst").unwrap().unwrap();
+    let base = 1_700_000_000;
+    db.insert_email(&make_email("already-here", "acc-burst", base)).unwrap();
+
+    let burst = || {
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(
+            make_email("already-here", "acc-burst", base),
+            EmailCategory::Primary,
+            vec![],
+        );
+        for i in 1..=800 {
+            provider.add_message(
+                make_email(&format!("burst-{i}"), "acc-burst", base + i),
+                EmailCategory::Primary,
+                vec![],
+            );
+        }
+        provider
+    };
+
+    run_fake_sync(&db, &account, burst()).await;
+    run_fake_sync(&db, &account, burst()).await;
+
+    let missing: Vec<String> = (1..=800)
+        .map(|i| format!("burst-{i}"))
+        .filter(|id| db.get_email(id).unwrap().is_none())
+        .collect();
+    assert!(missing.is_empty(), "{} burst messages never fetched", missing.len());
 }

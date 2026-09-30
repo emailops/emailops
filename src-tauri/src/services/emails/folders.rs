@@ -479,7 +479,7 @@ mod tests {
         let old_prefix = folder_email_id_prefix("acc-1", "Kunden");
         db.insert_emails_batch(&[email(&format!("{old_prefix}5"), "acc-1", "folder:Kunden")])
             .unwrap();
-        let [old_fwd, _, _] = super::super::sync::custom_folder_pref_keys("acc-1", "Kunden");
+        let [old_fwd, ..] = super::super::sync::custom_folder_pref_keys("acc-1", "Kunden");
         db.set_preference(&old_fwd, "12345").unwrap();
         let provider = provider_with_folders(&["Kunden"]);
 
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(migrated.mailbox, "folder:Klienten");
 
         // Watermark carried over, old key removed.
-        let [new_fwd, _, _] = super::super::sync::custom_folder_pref_keys("acc-1", "Klienten");
+        let [new_fwd, ..] = super::super::sync::custom_folder_pref_keys("acc-1", "Klienten");
         assert_eq!(db.get_preference(&new_fwd).unwrap().as_deref(), Some("12345"));
         assert!(db.get_preference(&old_fwd).unwrap().is_none());
     }
@@ -559,7 +559,7 @@ mod tests {
         let prefix = folder_email_id_prefix("acc-1", "Alt");
         db.insert_emails_batch(&[email(&format!("{prefix}9"), "acc-1", "folder:Alt")])
             .unwrap();
-        let [fwd, done, cursor] = super::super::sync::custom_folder_pref_keys("acc-1", "Alt");
+        let [fwd, done, cursor, _] = super::super::sync::custom_folder_pref_keys("acc-1", "Alt");
         db.set_preference(&fwd, "1").unwrap();
         db.set_preference(&done, "1").unwrap();
         db.set_preference(&cursor, "1").unwrap();
@@ -578,6 +578,24 @@ mod tests {
         for key in [fwd, done, cursor] {
             assert!(db.get_preference(&key).unwrap().is_none(), "{key} cleaned up");
         }
+    }
+
+    /// The forward pass's unfinished catch-up window is folder state too: a
+    /// stale one would otherwise resurface if a folder of the same name came
+    /// back.
+    #[tokio::test]
+    async fn delete_folder_clears_an_open_catch_up_window() {
+        let db = test_db("acc-1");
+        seed_folder(&db, "acc-1", "Alt");
+        let gap_key = "extra_mailbox_forward_gap:acc-1:folder:Alt";
+        db.set_preference(gap_key, "10:20").unwrap();
+        let provider = provider_with_folders(&["Alt"]);
+
+        delete_folder(&db, &imap_account("acc-1"), &provider, "acc-1:Alt")
+            .await
+            .unwrap();
+
+        assert!(db.get_preference(gap_key).unwrap().is_none());
     }
 
     // ── move ─────────────────────────────────────────────────────────────
