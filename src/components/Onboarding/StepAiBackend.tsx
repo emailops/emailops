@@ -4,6 +4,9 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DEFAULT_OPENROUTER_CHAT_MODEL } from '@/components/Settings/AiSettings/helpers';
+import { RECOMMENDED_OPENROUTER_EMBEDDING_MODELS } from '@/components/Settings/AiSettings/openRouterEmbeddingModels';
+import { recommendedEmbeddingOptions } from '@/components/Settings/AiSettings/openRouterEmbeddingOptions';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isDataPolicyError } from '@/lib/errors';
@@ -12,6 +15,9 @@ import { useLogStore } from '@/stores/logStore';
 import type { AiConfig, CatalogModel, ModelDownloadProgress } from '@/types';
 
 const HUGGINGFACE_URL = 'https://huggingface.co';
+
+/** Selector value of the entry that reveals the free-text model id field. */
+const OTHER_EMBEDDING_MODEL = '__other__';
 
 type Backend = 'llamacpp' | 'ollama' | 'openrouter';
 
@@ -35,6 +41,9 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   // Optional: empty means keyword-only search. A typed model must pass the
   // backend's dimension probe before it is saved (see handleContinue).
   const [orEmbedModel, setOrEmbedModel] = useState<string>('');
+  // "Another model" is chosen: the id is typed instead of picked. The
+  // catalogue cannot be listed here — that needs a saved key.
+  const [orEmbedOther, setOrEmbedOther] = useState(false);
   // The OpenRouter embedding model that already passed the probe.
   const [orValidatedEmbed, setOrValidatedEmbed] = useState<string>('');
   // The models Ollama was last saved with, if it ever was (it has no picker
@@ -84,7 +93,9 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
         // (the saved provider's are the ones in use), whichever is saved now.
         const { llamacpp, ollama, openrouter } = cfg.remembered;
         setOrChatModel(openrouter.model || DEFAULT_OPENROUTER_CHAT_MODEL);
-        setOrEmbedModel(openrouter.embeddingModel ?? '');
+        const orEmbed = openrouter.embeddingModel ?? '';
+        setOrEmbedModel(orEmbed);
+        setOrEmbedOther(orEmbed !== '' && !RECOMMENDED_OPENROUTER_EMBEDDING_MODELS.some((m) => m.id === orEmbed));
         setOrValidatedEmbed(cfg.openRouterValidatedEmbeddingModel ?? '');
         setOrHasSavedKey(!!cfg.hasApiKey);
         setChatModelId(llamacpp.model ?? '');
@@ -216,6 +227,13 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
     setTestStatus(null);
     setTestError(null);
   };
+
+  const { none: noEmbedding, recommended: recommendedEmbeddings } = recommendedEmbeddingOptions(t);
+  const orEmbedOptions = [
+    noEmbedding,
+    ...recommendedEmbeddings,
+    { value: OTHER_EMBEDDING_MODEL, label: t('auth:onboarding.aiBackend.embeddingOther') },
+  ];
 
   const orHasKey = orHasSavedKey || orApiKey.trim().length > 0;
   const canContinue =
@@ -455,16 +473,29 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
               <label className="block text-xs font-medium text-gray-300 mb-1">
                 {t('auth:onboarding.aiBackend.embeddingModel')}
               </label>
-              <input
-                type="text"
-                value={orEmbedModel}
-                onChange={(e) => {
-                  setOrEmbedModel(e.target.value);
+              <Select
+                value={orEmbedOther ? OTHER_EMBEDDING_MODEL : orEmbedModel}
+                options={orEmbedOptions}
+                onChange={(value) => {
+                  setOrEmbedOther(value === OTHER_EMBEDDING_MODEL);
+                  setOrEmbedModel(value === OTHER_EMBEDDING_MODEL ? '' : value);
                   invalidateTest();
                 }}
-                placeholder={t('auth:onboarding.aiBackend.embeddingModelPlaceholder')}
-                className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                ariaLabel={t('auth:onboarding.aiBackend.embeddingModel')}
+                fullWidth
               />
+              {orEmbedOther && (
+                <input
+                  type="text"
+                  value={orEmbedModel}
+                  onChange={(e) => {
+                    setOrEmbedModel(e.target.value);
+                    invalidateTest();
+                  }}
+                  placeholder={t('auth:onboarding.aiBackend.embeddingModelPlaceholder')}
+                  className="mt-2 w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                />
+              )}
             </div>
           </div>
           <p className="text-[11px] text-gray-500">{t('settings:openRouter.embeddingNotice')}</p>
