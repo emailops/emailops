@@ -378,6 +378,26 @@ mod tests {
             .collect()
     }
 
+    // An account whose provider has no server-side mailbox writes deletes
+    // locally without building a provider at all (building one needs the
+    // keychain and the network, which the entry point would otherwise fail on).
+    #[tokio::test]
+    async fn delete_on_an_account_without_mailbox_writes_stays_local() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acc-l', 'local', 'local@example.com', 'Local', 0)",
+                [],
+            )
+            .unwrap();
+        db.insert_emails_batch(&[email("m-1", "acc-l", false)]).unwrap();
+
+        super::delete_email(&db, "m-1", None).await.unwrap();
+
+        assert!(inbox_ids(&db, "acc-l").is_empty());
+    }
+
     // ── read state ────────────────────────────────────────────────────────
 
     // Regression: marking read an email whose account was just removed logged
