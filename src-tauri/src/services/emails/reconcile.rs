@@ -411,4 +411,25 @@ mod tests {
         assert_eq!(bare_address("Ada L <Ada@X.com>"), "ada@x.com");
         assert_eq!(bare_address("  plain@x.com "), "plain@x.com");
     }
+    // The heuristic is only for rows that have no Message-ID (Outlook). A row
+    // that has one and found no exact copy stays pending rather than being
+    // matched on subject and recipients to a different message.
+    #[test]
+    fn a_pending_row_with_a_message_id_is_not_matched_by_the_heuristic() {
+        let pending = [email("local-1", "t-local", Some("<m1@local>"), "Hi", &["a@x.com"], 100)];
+        let incoming = [email(
+            "imap-9",
+            "t-local",
+            Some("<other@local>"),
+            "Hi",
+            &["a@x.com"],
+            105,
+        )];
+        assert!(plan_sent_reconciliation(&pending, &incoming, "me@example.com").is_empty());
+    }
+
+    #[test]
+    fn brackets_the_wrong_way_round_are_not_a_display_form() {
+        assert_eq!(bare_address("Odd> Name <"), "odd> name <");
+    }
 }

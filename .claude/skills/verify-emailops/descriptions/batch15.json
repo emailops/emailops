@@ -34,7 +34,9 @@
     "src-tauri/src/services/emails/history_refresh.rs::a_label_change_that_leaves_a_sent_message_in_sent_moves_nothing": "Un cambio de etiquetas en Gmail que deja un correo enviado en Enviados no lo mueve de buzón.",
     "src-tauri/src/services/emails/history_refresh.rs::the_history_cursor_is_kept_per_account": "El cursor del historial de cambios de Gmail se guarda por cuenta.",
     "src-tauri/src/services/emails/mailbox_state.rs::delete_on_an_account_without_mailbox_writes_stays_local": "Borrar un correo de una cuenta cuyo proveedor no admite cambios en el servidor lo borra en local sin intentar conectar con el proveedor.",
-    "src-tauri/src/db/emails/mailbox_state.rs::stored_states_carry_each_rows_read_and_sent_flags": "El estado guardado que se compara con el proveedor lleva bien los indicadores de leído y enviado de cada fila."
+    "src-tauri/src/db/emails/mailbox_state.rs::stored_states_carry_each_rows_read_and_sent_flags": "El estado guardado que se compara con el proveedor lleva bien los indicadores de leído y enviado de cada fila.",
+    "src-tauri/src/services/emails/reconcile.rs::a_pending_row_with_a_message_id_is_not_matched_by_the_heuristic": "Una copia enviada pendiente que tiene Message-ID solo se concilia por Message-ID exacto, nunca por asunto y destinatarios.",
+    "src-tauri/src/services/emails/reconcile.rs::brackets_the_wrong_way_round_are_not_a_display_form": "Un destinatario con los signos < y > al revés no se trata como «Nombre <dirección>» (y no provoca un cierre inesperado)."
   },
   "vitest": {
     "src/stores/memoryStore.test.ts::loads open tasks, threads awaiting the other side, and the counts": "Al abrir una cuenta se cargan sus tareas abiertas, los hilos en los que se espera respuesta del otro lado y los contadores.",
