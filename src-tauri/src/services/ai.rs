@@ -5,7 +5,7 @@ use std::sync::Arc;
 const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 
 use crate::ai::ollama::OllamaClient;
-use crate::ai::openrouter::OpenRouterClient;
+use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
 use crate::ai::provider::{
     AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
 };
@@ -41,6 +41,11 @@ const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
 const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
 const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
+/// The OpenRouter embedding model that passed the dimension probe, and how it
+/// is asked for vectors (`requested` / `native`). `ai_embedding_model` is
+/// shared by every provider, so OpenRouter embeds only while it equals this.
+const OPENROUTER_EMBED_VALIDATED_PREF: &str = "openrouter_embedding_validated_model";
+const OPENROUTER_EMBED_DIMENSIONS_PREF: &str = "openrouter_embedding_dimensions";
 
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
@@ -321,12 +326,9 @@ impl AiService {
                 OllamaClient::new_with_models(Some(model), None).with_keep_alive(ollama_keep_alive),
             )),
             "openrouter" => {
-                let key = Self::load_openrouter_api_key(db)?;
-                let zdr = Self::get_config(db)?.zero_data_retention;
-                Ok(Arc::new(
-                    OpenRouterClient::new(key, model.to_string(), "nomic-embed-text".to_string())
-                        .with_zero_data_retention(zdr),
-                ))
+                let mut config = Self::get_config(db)?;
+                config.model = model.to_string();
+                Ok(Arc::new(Self::openrouter_client(db, config)?))
             }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
@@ -363,6 +365,57 @@ impl AiService {
 
     pub fn load_provider(db: &Database) -> Result<Arc<dyn AIProvider>> {
         Self::load_provider_with_model(db, None)
+    }
+
+    /// The OpenRouter client for `config`: the stored key, the data policy,
+    /// and embeddings enabled only for a model that passed the probe.
+    fn openrouter_client(db: &Database, config: AiConfig) -> Result<OpenRouterClient> {
+        let key = Self::load_openrouter_api_key(db)?;
+        let dimensions = Self::openrouter_embedding_dimensions(db, &config.embedding_model)?;
+        Ok(OpenRouterClient::new(key, config.model, config.embedding_model)
+            .with_zero_data_retention(config.zero_data_retention)
+            .with_embedding_dimensions(dimensions))
+    }
+
+    /// How `embedding_model` was validated for OpenRouter, or `None` when it
+    /// is not the model that passed the probe.
+    pub fn openrouter_embedding_dimensions(
+        db: &Database,
+        embedding_model: &str,
+    ) -> Result<Option<EmbeddingDimensions>> {
+        let validated = db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF)?;
+        let mode = db.get_preference(OPENROUTER_EMBED_DIMENSIONS_PREF)?;
+        Ok(validated_embedding(
+            embedding_model,
+            validated.as_deref(),
+            mode.as_deref(),
+        ))
+    }
+
+    /// Probe `client`'s embedding model against the email index and, when it
+    /// fits, remember it (and how to ask it for vectors) so embedding requests
+    /// are allowed for it. The probe is a paid call: what it cost is recorded.
+    /// It is not refused for budget — it is one short fixed string, and the
+    /// user asked for it from Settings.
+    pub async fn validate_openrouter_embedding_model(
+        db: &Database,
+        client: &OpenRouterClient,
+    ) -> Result<EmbeddingDimensions> {
+        let probe = client.probe_embedding().await?;
+        if probe.cost_usd > 0.0 {
+            Self::record_provider_call(
+                db,
+                client,
+                client.embedding_model_name(),
+                "embed",
+                probe.tokens,
+                0,
+                probe.cost_usd,
+            )?;
+        }
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, client.embedding_model_name())?;
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, probe.dimensions.as_pref())?;
+        Ok(probe.dimensions)
     }
 
     /// Like [`load_provider`](Self::load_provider), but selects `model_override`
@@ -402,13 +455,7 @@ impl AiService {
                 OllamaClient::new_with_models(Some(&config.model), Some(&config.embedding_model))
                     .with_keep_alive(ollama_keep_alive),
             )),
-            "openrouter" => {
-                let key = Self::load_openrouter_api_key(db)?;
-                Ok(Arc::new(
-                    OpenRouterClient::new(key, config.model, config.embedding_model)
-                        .with_zero_data_retention(config.zero_data_retention),
-                ))
-            }
+            "openrouter" => Ok(Arc::new(Self::openrouter_client(db, config)?)),
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -1260,6 +1307,132 @@ mod budget_tests {
 
         assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
         assert_eq!(fake.embed_calls().len(), 1);
+    }
+
+    // ── OpenRouter embeddings ───────────────────────────────────────────────
+
+    /// A mock OpenRouter whose every embedding has `len` floats and costs
+    /// `cost` USD, and a client for `vendor/embed` pointed at it.
+    async fn openrouter_embedding(len: usize, cost: f64) -> (wiremock::MockServer, OpenRouterClient) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "embedding": vec![0.5_f32; len] }],
+                "usage": { "prompt_tokens": 12, "total_tokens": 12, "cost": cost }
+            })))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into())
+            .with_base_url(server.uri());
+        (server, client)
+    }
+
+    #[tokio::test]
+    async fn an_openrouter_embedding_records_what_the_provider_charged() {
+        let (_server, client) = openrouter_embedding(768, 0.0004).await;
+        let db = Arc::new(db_with_budget("1.0"));
+        let svc = AiService::with_provider(
+            db.clone(),
+            Arc::new(client.with_embedding_dimensions(Some(EmbeddingDimensions::Requested))),
+        );
+
+        assert_eq!(svc.embed("mail text").await.unwrap().len(), 768);
+
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert_eq!(usage.total_prompt_tokens, 12);
+        assert!((usage.total_cost_usd - 0.0004).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn an_openrouter_embedding_is_not_requested_once_the_budget_is_spent() {
+        let (server, client) = openrouter_embedding(768, 0.5).await;
+        let db = Arc::new(db_with_budget("0.5"));
+        let svc = AiService::with_provider(
+            db,
+            Arc::new(client.with_embedding_dimensions(Some(EmbeddingDimensions::Native))),
+        );
+        svc.embed("a").await.unwrap();
+
+        assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
+        assert_eq!(server.received_requests().await.unwrap_or_default().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_passes_the_probe_is_remembered_and_its_cost_recorded() {
+        let (_server, client) = openrouter_embedding(768, 0.0001).await;
+        let db = db_with_budget("1.0");
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            None
+        );
+
+        let mode = AiService::validate_openrouter_embedding_model(&db, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(mode, EmbeddingDimensions::Requested);
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            Some(EmbeddingDimensions::Requested)
+        );
+        // Validation is per model: another id is not covered by it.
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/other").unwrap(),
+            None
+        );
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.0001).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_fails_the_probe_is_not_remembered() {
+        let (_server, client) = openrouter_embedding(1536, 0.0).await;
+        let db = db_with_budget("0");
+
+        let err = AiService::validate_openrouter_embedding_model(&db, &client)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, AppError::InvalidInput(msg) if msg.contains("1536")),
+            "{err:?}"
+        );
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            None
+        );
+    }
+
+    /// The embedding preference is shared by every provider: the local model
+    /// id it holds by default must not be sent to OpenRouter.
+    #[test]
+    fn the_loaded_openrouter_client_embeds_only_with_a_validated_model() {
+        let db = db_with_budget("0");
+        db.set_preference("ai_provider", "openrouter").unwrap();
+        db.set_preference(OPENROUTER_DEV_KEY_PREF, "key").unwrap();
+        db.set_preference("openrouter_api_key_id", OPENROUTER_KEY_ID).unwrap();
+
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "native").unwrap();
+        assert!(AiService::load_provider(&db).unwrap().embedding_configured());
+        assert!(AiService::build_provider(&db, "openrouter", "vendor/other-chat")
+            .unwrap()
+            .embedding_configured());
+
+        db.set_preference("ai_embedding_model", "vendor/changed").unwrap();
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
     }
 
     /// No budget (0) never refuses, whatever was spent.

@@ -330,31 +330,39 @@ pub async fn retrieve_context_full(
         Ok::<(Vec<(String, f32)>, i64, i64, Vec<f32>), crate::models::error::AppError>((scores, emb_ms, vs_ms, emb))
     };
     let mut query_embedding: Option<Vec<f32>> = None;
-    let vector_scores: Vec<(String, f32)> = match timeout(VEC_SEARCH_TIMEOUT, vec_fut).await {
-        Ok(Ok((scores, emb_ms, vs_ms, emb))) => {
-            embedding_ms = Some(emb_ms);
-            vec_search_ms = Some(vs_ms);
-            query_embedding = Some(emb);
-            scores
-        }
-        Ok(Err(e)) => {
-            emit_log(
-                "warn",
-                &format!("vector search failed ({}); falling back to FTS-only", e),
-            );
-            vector_fallback = true;
-            Vec::new()
-        }
-        Err(_) => {
-            emit_log(
-                "warn",
-                &format!(
-                    "vector search exceeded {}s; falling back to FTS-only",
-                    VEC_SEARCH_TIMEOUT.as_secs()
-                ),
-            );
-            vector_fallback = true;
-            Vec::new()
+    let vector_scores: Vec<(String, f32)> = if !provider.embedding_configured() {
+        // No embedding model is set up (OpenRouter before one is chosen):
+        // nothing to ask, keyword search alone answers.
+        emit_log("debug", "no embedding model is set up; keyword search only");
+        vector_fallback = true;
+        Vec::new()
+    } else {
+        match timeout(VEC_SEARCH_TIMEOUT, vec_fut).await {
+            Ok(Ok((scores, emb_ms, vs_ms, emb))) => {
+                embedding_ms = Some(emb_ms);
+                vec_search_ms = Some(vs_ms);
+                query_embedding = Some(emb);
+                scores
+            }
+            Ok(Err(e)) => {
+                emit_log(
+                    "warn",
+                    &format!("vector search failed ({}); falling back to FTS-only", e),
+                );
+                vector_fallback = true;
+                Vec::new()
+            }
+            Err(_) => {
+                emit_log(
+                    "warn",
+                    &format!(
+                        "vector search exceeded {}s; falling back to FTS-only",
+                        VEC_SEARCH_TIMEOUT.as_secs()
+                    ),
+                );
+                vector_fallback = true;
+                Vec::new()
+            }
         }
     };
     let vec_ms = t_vec.elapsed().as_secs_f64() * 1000.0;
@@ -1020,6 +1028,24 @@ mod category_scope_tests {
 mod tests {
     use super::*;
     use crate::ai::provider::ProviderType;
+
+    /// With no embedding model set up (OpenRouter before one is chosen) the
+    /// question is not embedded at all: keyword search alone answers.
+    #[tokio::test]
+    async fn no_embedding_is_requested_when_no_embedding_model_is_set_up() {
+        use crate::ai::provider::FakeAiProvider;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = FakeAiProvider::new().without_embedding_model();
+
+        let (sources, trace, embedding) = retrieve_context_full(&db, &provider, "acct", "invoice", &[], 5)
+            .await
+            .expect("keyword-only retrieval");
+
+        assert!(sources.is_empty());
+        assert!(embedding.is_none());
+        assert!(trace.vector_fallback);
+        assert!(provider.embed_calls().is_empty());
+    }
 
     #[test]
     fn plan_aux_llm_table() {

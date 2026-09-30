@@ -38,6 +38,12 @@ pub async fn embed_pending_facts(db: &Arc<Database>, app: &AppHandle, account_id
         }
     };
 
+    // No embedding model set up (OpenRouter before one is chosen): facts stay
+    // pending and keyword search keeps finding them.
+    if !ai.provider().embedding_configured() {
+        return Ok(0);
+    }
+
     let model = db
         .get_preference("ai_embedding_model")
         .ok()

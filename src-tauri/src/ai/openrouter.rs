@@ -12,6 +12,7 @@ use crate::ai::provider::{
     AIProvider, AiMessage, BackendCapabilities, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult,
     ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
+use crate::db::embeddings::EMAIL_EMBEDDING_DIM;
 use crate::models::error::{AppError, Result};
 
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -214,8 +215,126 @@ struct OpenRouterEmbeddingRequest {
     model: String,
     input: String,
     encoding_format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<usize>,
     provider: ProviderPreferences,
 }
+
+/// How a validated embedding model is made to return vectors the email index
+/// can hold ([`EMAIL_EMBEDDING_DIM`] floats).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbeddingDimensions {
+    /// The model honours the `dimensions` parameter: send it on every request.
+    Requested,
+    /// The model returns the right size on its own: send no `dimensions`.
+    Native,
+}
+
+impl EmbeddingDimensions {
+    /// The value stored in preferences for this mode.
+    pub fn as_pref(self) -> &'static str {
+        match self {
+            Self::Requested => "requested",
+            Self::Native => "native",
+        }
+    }
+
+    fn from_pref(raw: &str) -> Option<Self> {
+        match raw {
+            "requested" => Some(Self::Requested),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+
+    fn request_value(self) -> Option<usize> {
+        match self {
+            Self::Requested => Some(EMAIL_EMBEDDING_DIM),
+            Self::Native => None,
+        }
+    }
+}
+
+/// Whether `configured` (the embedding-model preference, shared by every
+/// provider) may be used on OpenRouter: only when it is the model that passed
+/// the probe, and then with the mode the probe found. A local model id left
+/// over from another provider, an empty choice or a model changed since the
+/// probe all answer `None`, and no embedding request is sent.
+pub fn validated_embedding(
+    configured: &str,
+    validated_model: Option<&str>,
+    mode: Option<&str>,
+) -> Option<EmbeddingDimensions> {
+    if configured.is_empty() || validated_model != Some(configured) {
+        return None;
+    }
+    mode.and_then(EmbeddingDimensions::from_pref)
+}
+
+/// The fixed, neutral text the probe embeds — never mail content.
+const EMBEDDING_PROBE_TEXT: &str = "EmailOps embedding check";
+
+/// What one probe request came back with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeAttempt {
+    /// A vector of this many floats.
+    Vector(usize),
+    /// The request was refused (HTTP 4xx).
+    Rejected,
+}
+
+/// What the probe does next, or concludes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbePlan {
+    Compatible(EmbeddingDimensions),
+    RetryWithoutDimensions,
+    /// The model's own vectors have this many floats, not the index's.
+    WrongDimension(usize),
+    /// OpenRouter refused the model with and without `dimensions`.
+    Rejected,
+}
+
+/// Decide whether an embedding model fits the index from the attempt that
+/// asked for [`EMAIL_EMBEDDING_DIM`] via `dimensions` and, once made, the
+/// attempt without it. The catalogue publishes no vector size, so asking is
+/// the only way to know.
+pub fn plan_embedding_probe(with_dimensions: ProbeAttempt, without_dimensions: Option<ProbeAttempt>) -> ProbePlan {
+    if with_dimensions == ProbeAttempt::Vector(EMAIL_EMBEDDING_DIM) {
+        return ProbePlan::Compatible(EmbeddingDimensions::Requested);
+    }
+    match without_dimensions {
+        None => ProbePlan::RetryWithoutDimensions,
+        Some(ProbeAttempt::Vector(EMAIL_EMBEDDING_DIM)) => ProbePlan::Compatible(EmbeddingDimensions::Native),
+        Some(ProbeAttempt::Vector(len)) => ProbePlan::WrongDimension(len),
+        Some(ProbeAttempt::Rejected) => ProbePlan::Rejected,
+    }
+}
+
+/// A probe that found the model usable, with what the probe itself cost.
+#[derive(Debug)]
+pub struct EmbeddingProbe {
+    pub dimensions: EmbeddingDimensions,
+    pub tokens: u32,
+    pub cost_usd: f64,
+}
+
+/// A failed embedding request. `rejected` is true for an HTTP 4xx: OpenRouter
+/// answered and said no, as opposed to an outage or a broken connection.
+struct EmbeddingFailure {
+    rejected: bool,
+    error: AppError,
+}
+
+impl EmbeddingFailure {
+    fn other(error: AppError) -> Self {
+        Self { rejected: false, error }
+    }
+}
+
+/// Shown instead of sending a request when no embedding model has passed the
+/// probe.
+const EMBEDDING_NOT_SET_UP: &str =
+    "No OpenRouter embedding model is set up, so semantic search is off — choose one in Settings → AI";
 
 #[derive(Debug, Deserialize)]
 struct OpenRouterEmbeddingResponse {
@@ -239,6 +358,9 @@ pub struct OpenRouterClient {
     api_key: String,
     model: String,
     embedding_model: String,
+    /// `Some` only when `embedding_model` passed the probe; without it no
+    /// embedding request is sent.
+    embedding_dimensions: Option<EmbeddingDimensions>,
     zero_data_retention: bool,
     base_url: String,
     stream_idle_timeout: Duration,
@@ -256,6 +378,7 @@ impl OpenRouterClient {
             api_key,
             model,
             embedding_model,
+            embedding_dimensions: None,
             zero_data_retention: false,
             base_url: OPENROUTER_BASE_URL.to_string(),
             stream_idle_timeout: STREAM_IDLE_TIMEOUT,
@@ -272,6 +395,13 @@ impl OpenRouterClient {
     /// Route only to providers with a zero-data-retention policy.
     pub fn with_zero_data_retention(mut self, enabled: bool) -> Self {
         self.zero_data_retention = enabled;
+        self
+    }
+
+    /// Allow embedding with the configured model, in the mode the probe
+    /// validated it for (see [`validated_embedding`]).
+    pub fn with_embedding_dimensions(mut self, dimensions: Option<EmbeddingDimensions>) -> Self {
+        self.embedding_dimensions = dimensions;
         self
     }
 
@@ -303,12 +433,134 @@ impl OpenRouterClient {
         }
     }
 
-    fn embedding_request(&self, text: &str) -> OpenRouterEmbeddingRequest {
+    fn embedding_request(&self, text: &str, dimensions: Option<usize>) -> OpenRouterEmbeddingRequest {
         OpenRouterEmbeddingRequest {
             model: self.embedding_model.clone(),
             input: text.to_string(),
             encoding_format: "float".to_string(),
+            dimensions,
             provider: ProviderPreferences::new(self.zero_data_retention),
+        }
+    }
+
+    /// One `POST /embeddings` for `text`, asking for `dimensions` floats when
+    /// given.
+    async fn request_embedding(
+        &self,
+        text: &str,
+        dimensions: Option<usize>,
+    ) -> std::result::Result<EmbeddingResult, EmbeddingFailure> {
+        let url = format!("{}/embeddings", self.base_url);
+        let request = self.embedding_request(text, dimensions);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("HTTP-Referer", APP_URL)
+            .header("X-OpenRouter-Title", APP_NAME)
+            .header("Content-Type", "application/json")
+            .timeout(GENERATION_TIMEOUT)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                EmbeddingFailure::other(if e.is_timeout() {
+                    AppError::AiError(format!(
+                        "OpenRouter embedding timed out ({}s)",
+                        GENERATION_TIMEOUT.as_secs()
+                    ))
+                } else {
+                    AppError::AiError(format!("Failed to connect to OpenRouter embeddings: {}", e))
+                })
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(EmbeddingFailure {
+                rejected: status.is_client_error(),
+                error: request_error(
+                    status.as_u16(),
+                    &error_text,
+                    &self.embedding_model,
+                    "OpenRouter embedding error",
+                ),
+            });
+        }
+
+        let body: OpenRouterEmbeddingResponse = response.json().await.map_err(|e| {
+            EmbeddingFailure::other(AppError::AiError(format!(
+                "Failed to parse OpenRouter embedding response: {}",
+                e
+            )))
+        })?;
+
+        let embedding = body.data.first().map(|item| item.embedding.clone()).ok_or_else(|| {
+            EmbeddingFailure::other(AppError::AiError("OpenRouter returned no embedding vector".to_string()))
+        })?;
+
+        Ok(EmbeddingResult {
+            embedding,
+            tokens: body.usage.as_ref().and_then(|usage| usage.prompt_tokens).unwrap_or(0),
+            cost_usd: body.usage.as_ref().and_then(|usage| usage.cost).unwrap_or(0.0),
+        })
+    }
+
+    /// Find out whether the configured embedding model can fill the email
+    /// index, by embedding a fixed neutral string: first asking for
+    /// [`EMAIL_EMBEDDING_DIM`] floats via `dimensions`, then — if that is
+    /// refused or ignored — once more without it (see
+    /// [`plan_embedding_probe`]). An outage is returned as the error it is,
+    /// not as a verdict on the model.
+    pub async fn probe_embedding(&self) -> Result<EmbeddingProbe> {
+        let mut tokens = 0;
+        let mut cost_usd = 0.0;
+        let mut with_dimensions = None;
+        let mut last_rejection = None;
+        loop {
+            let dimensions = with_dimensions.is_none().then_some(EMAIL_EMBEDDING_DIM);
+            let attempt = match self.request_embedding(EMBEDDING_PROBE_TEXT, dimensions).await {
+                Ok(result) => {
+                    tokens += result.tokens;
+                    cost_usd += result.cost_usd;
+                    ProbeAttempt::Vector(result.embedding.len())
+                }
+                Err(failure) if failure.rejected => {
+                    last_rejection = Some(failure.error);
+                    ProbeAttempt::Rejected
+                }
+                Err(failure) => return Err(failure.error),
+            };
+            let plan = match with_dimensions {
+                None => plan_embedding_probe(attempt, None),
+                Some(first) => plan_embedding_probe(first, Some(attempt)),
+            };
+            match plan {
+                ProbePlan::Compatible(dimensions) => {
+                    return Ok(EmbeddingProbe {
+                        dimensions,
+                        tokens,
+                        cost_usd,
+                    })
+                }
+                ProbePlan::RetryWithoutDimensions => with_dimensions = Some(attempt),
+                ProbePlan::WrongDimension(len) => {
+                    return Err(AppError::InvalidInput(format!(
+                        "The embedding model {} returns {len}-dimension vectors; the email index needs \
+                         {EMAIL_EMBEDDING_DIM}. Choose a {EMAIL_EMBEDDING_DIM}-dimension embedding model.",
+                        self.embedding_model
+                    )))
+                }
+                ProbePlan::Rejected => {
+                    return Err(last_rejection.unwrap_or_else(|| {
+                        AppError::AiError(format!(
+                            "OpenRouter rejected the embedding model {}",
+                            self.embedding_model
+                        ))
+                    }))
+                }
+            }
         }
     }
 
@@ -590,63 +842,27 @@ impl AIProvider for OpenRouterClient {
         &self.embedding_model
     }
 
+    fn embedding_configured(&self) -> bool {
+        self.embedding_dimensions.is_some()
+    }
+
+    /// False, without asking the network, unless the embedding model passed
+    /// the probe.
+    async fn is_embedding_available(&self) -> bool {
+        self.embedding_configured() && self.is_available().await
+    }
+
     async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>> {
         self.list_embedding_models_from_api().await
     }
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
-        let url = format!("{}/embeddings", self.base_url);
-        let request = self.embedding_request(text);
-
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
-            .header("Content-Type", "application/json")
-            .timeout(GENERATION_TIMEOUT)
-            .json(&request)
-            .send()
+        let Some(dimensions) = self.embedding_dimensions else {
+            return Err(AppError::AiError(EMBEDDING_NOT_SET_UP.to_string()));
+        };
+        self.request_embedding(text, dimensions.request_value())
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    AppError::AiError(format!(
-                        "OpenRouter embedding timed out ({}s)",
-                        GENERATION_TIMEOUT.as_secs()
-                    ))
-                } else {
-                    AppError::AiError(format!("Failed to connect to OpenRouter embeddings: {}", e))
-                }
-            })?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(request_error(
-                status,
-                &error_text,
-                &self.embedding_model,
-                "OpenRouter embedding error",
-            ));
-        }
-
-        let body: OpenRouterEmbeddingResponse = response
-            .json()
-            .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter embedding response: {}", e)))?;
-
-        let embedding = body
-            .data
-            .first()
-            .map(|item| item.embedding.clone())
-            .ok_or_else(|| AppError::AiError("OpenRouter returned no embedding vector".to_string()))?;
-
-        Ok(EmbeddingResult {
-            embedding,
-            tokens: body.usage.as_ref().and_then(|usage| usage.prompt_tokens).unwrap_or(0),
-            cost_usd: body.usage.as_ref().and_then(|usage| usage.cost).unwrap_or(0.0),
-        })
+            .map_err(|failure| failure.error)
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>> {
@@ -795,9 +1011,9 @@ mod data_policy_tests {
 
     #[test]
     fn every_embedding_request_carries_the_same_policy() {
-        let body = serde_json::to_value(client(false).embedding_request("hi")).unwrap();
+        let body = serde_json::to_value(client(false).embedding_request("hi", None)).unwrap();
         assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
-        let body = serde_json::to_value(client(true).embedding_request("hi")).unwrap();
+        let body = serde_json::to_value(client(true).embedding_request("hi", None)).unwrap();
         assert_eq!(
             body["provider"],
             serde_json::json!({ "data_collection": "deny", "zdr": true })
@@ -1371,5 +1587,240 @@ mod context_window_tests {
         let client =
             OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
         assert_eq!(client.resolve_context_window().await, None);
+    }
+}
+
+#[cfg(test)]
+mod embedding_tests {
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    const DIM: usize = EMAIL_EMBEDDING_DIM;
+
+    fn client(server: &MockServer) -> OpenRouterClient {
+        OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into()).with_base_url(server.uri())
+    }
+
+    fn vector_reply(len: usize) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{ "embedding": vec![0.5_f32; len] }],
+            "usage": { "prompt_tokens": 4, "total_tokens": 4, "cost": 0.000_002 }
+        }))
+    }
+
+    async fn embedding_bodies(server: &MockServer) -> Vec<serde_json::Value> {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_probe_plan_follows_the_two_attempts() {
+        use EmbeddingDimensions::{Native, Requested};
+        use ProbeAttempt::{Rejected, Vector};
+        let cases = [
+            (Vector(DIM), None, ProbePlan::Compatible(Requested)),
+            (Vector(1536), None, ProbePlan::RetryWithoutDimensions),
+            (Rejected, None, ProbePlan::RetryWithoutDimensions),
+            (Rejected, Some(Vector(DIM)), ProbePlan::Compatible(Native)),
+            (Vector(1536), Some(Vector(DIM)), ProbePlan::Compatible(Native)),
+            (Rejected, Some(Vector(1024)), ProbePlan::WrongDimension(1024)),
+            (Vector(256), Some(Vector(1536)), ProbePlan::WrongDimension(1536)),
+            (Rejected, Some(Rejected), ProbePlan::Rejected),
+            (Vector(1536), Some(Rejected), ProbePlan::Rejected),
+        ];
+        for (with_dimensions, without, expected) in cases {
+            assert_eq!(
+                plan_embedding_probe(with_dimensions, without),
+                expected,
+                "{with_dimensions:?} then {without:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_model_that_passed_the_probe_is_usable() {
+        use EmbeddingDimensions::{Native, Requested};
+        let cases = [
+            ("vendor/embed", Some("vendor/embed"), Some("requested"), Some(Requested)),
+            ("vendor/embed", Some("vendor/embed"), Some("native"), Some(Native)),
+            // A local GGUF id left over from another provider, never probed.
+            ("local-embed-q4_k_m", None, None, None),
+            ("vendor/other", Some("vendor/embed"), Some("requested"), None),
+            ("", Some(""), Some("native"), None),
+            ("vendor/embed", Some("vendor/embed"), None, None),
+            ("vendor/embed", Some("vendor/embed"), Some("garbage"), None),
+        ];
+        for (configured, validated, mode, expected) in cases {
+            assert_eq!(
+                validated_embedding(configured, validated, mode),
+                expected,
+                "{configured:?} / {validated:?} / {mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_request_carries_dimensions_only_when_asked() {
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into());
+        let body = serde_json::to_value(client.embedding_request("hi", Some(DIM))).unwrap();
+        assert_eq!(body["dimensions"], DIM);
+        let body = serde_json::to_value(client.embedding_request("hi", None)).unwrap();
+        assert!(body.get("dimensions").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_model_that_honours_dimensions_is_compatible_via_the_parameter() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .and(body_partial_json(json!({ "dimensions": DIM })))
+            .respond_with(vector_reply(DIM))
+            .mount(&server)
+            .await;
+
+        let probe = client(&server).probe_embedding().await.unwrap();
+
+        assert_eq!(probe.dimensions, EmbeddingDimensions::Requested);
+        assert_eq!(probe.tokens, 4);
+        assert!((probe.cost_usd - 0.000_002).abs() < 1e-12);
+        let bodies = embedding_bodies(&server).await;
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0]["model"], "vendor/embed");
+        assert_eq!(bodies[0]["input"], EMBEDDING_PROBE_TEXT);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_rejects_dimensions_but_is_natively_the_right_size_is_compatible() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .and(body_partial_json(json!({ "dimensions": DIM })))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_string(r#"{"error":{"message":"dimensions not supported"}}"#),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(vector_reply(DIM))
+            .mount(&server)
+            .await;
+
+        let probe = client(&server).probe_embedding().await.unwrap();
+
+        assert_eq!(probe.dimensions, EmbeddingDimensions::Native);
+        let bodies = embedding_bodies(&server).await;
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[1].get("dimensions").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_model_of_another_size_is_refused_with_the_size_it_returned() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(vector_reply(1536))
+            .mount(&server)
+            .await;
+
+        let err = client(&server).probe_embedding().await.unwrap_err();
+
+        match err {
+            AppError::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("1536") && msg.contains("768") && msg.contains("vendor/embed"),
+                    "{msg}"
+                );
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+        assert_eq!(embedding_bodies(&server).await.len(), 2, "one retry, no more");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_model_is_refused_with_the_providers_answer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"error":{"message":"No such model"}}"#))
+            .mount(&server)
+            .await;
+
+        let err = client(&server).probe_embedding().await.unwrap_err();
+
+        assert!(
+            matches!(&err, AppError::AiError(msg) if msg.contains("No such model")),
+            "{err:?}"
+        );
+        assert_eq!(embedding_bodies(&server).await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_outage_is_an_error_not_a_verdict_and_is_not_retried() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream down"))
+            .mount(&server)
+            .await;
+
+        let err = client(&server).probe_embedding().await.unwrap_err();
+
+        assert!(matches!(err, AppError::AiError(_)), "{err:?}");
+        assert_eq!(embedding_bodies(&server).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn without_a_validated_model_nothing_is_sent() {
+        let server = MockServer::start().await;
+        let client = client(&server);
+
+        assert!(!client.embedding_configured());
+        assert!(!client.is_embedding_available().await);
+        let err = client.embed("mail text").await.unwrap_err();
+        assert!(
+            matches!(&err, AppError::AiError(msg) if msg.contains("Settings")),
+            "{err:?}"
+        );
+        assert!(client.embed_batch(&["a".to_string()]).await.is_err());
+
+        assert!(
+            embedding_bodies(&server).await.is_empty(),
+            "no request may leave the machine"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_validated_model_embeds_with_or_without_dimensions_and_reports_its_cost() {
+        for (mode, sends) in [
+            (EmbeddingDimensions::Requested, true),
+            (EmbeddingDimensions::Native, false),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/embeddings"))
+                .respond_with(vector_reply(DIM))
+                .mount(&server)
+                .await;
+            let client = client(&server).with_embedding_dimensions(Some(mode));
+            assert!(client.embedding_configured());
+
+            let result = client.embed("mail text").await.unwrap();
+
+            assert_eq!(result.embedding.len(), DIM);
+            assert_eq!(result.tokens, 4);
+            assert!((result.cost_usd - 0.000_002).abs() < 1e-12);
+            let bodies = embedding_bodies(&server).await;
+            assert_eq!(bodies[0].get("dimensions").is_some(), sends, "{mode:?}");
+            assert_eq!(bodies[0]["provider"]["data_collection"], "deny");
+        }
     }
 }

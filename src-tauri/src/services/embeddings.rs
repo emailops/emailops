@@ -95,6 +95,39 @@ fn compute_content_hash(embedding_model: &str, subject: &str, body: &str) -> Str
     hex::encode(hasher.finalize())
 }
 
+/// The log level and message for an embedding run skipped because `provider`
+/// cannot embed right now. `configured` is whether it has an embedding model
+/// set up at all ([`AIProvider::embedding_configured`]).
+///
+/// [`AIProvider::embedding_configured`]: crate::ai::provider::AIProvider::embedding_configured
+fn embedding_skip_reason(provider: &str, configured: bool) -> (&'static str, String) {
+    match (provider, configured) {
+        ("openrouter", false) => (
+            "info",
+            "Skipped: semantic search is off for OpenRouter — choose an embedding model in Settings → AI to turn it on"
+                .to_string(),
+        ),
+        ("openrouter", true) => (
+            "warn",
+            "Skipped: OpenRouter is not reachable — check the connection and the API key in Settings → AI".to_string(),
+        ),
+        ("ollama", _) => (
+            "warn",
+            "Skipped: Ollama is not reachable — check that Ollama is running, or change provider in Settings"
+                .to_string(),
+        ),
+        ("llamacpp", _) => (
+            "warn",
+            "Skipped: the in-app embedding model is not available — download or select one in Settings → AI"
+                .to_string(),
+        ),
+        (other, _) => (
+            "warn",
+            format!("Skipped: AI provider '{other}' is not reachable — change provider in Settings"),
+        ),
+    }
+}
+
 fn get_embedding_model(db: &Arc<Database>) -> Result<String> {
     Ok(db
         .get_preference("ai_embedding_model")?
@@ -327,15 +360,8 @@ async fn generate_embeddings_inner(
     let ai_service = AiService::new(db.clone())?;
 
     if !ai_service.is_embedding_available().await {
-        emit_log(
-            &app,
-            "warn",
-            "embeddings",
-            &format!(
-                "Skipped: AI provider '{}' is not reachable — check that Ollama is running, or change provider in Settings",
-                config.provider
-            ),
-        );
+        let (level, message) = embedding_skip_reason(&config.provider, ai_service.provider().embedding_configured());
+        emit_log(&app, level, "embeddings", &message);
         return Ok(0);
     }
 
@@ -640,6 +666,25 @@ mod tests {
                 "Chunk too large: {} chars",
                 chunk.len()
             );
+        }
+    }
+
+    #[test]
+    fn a_skipped_run_names_what_is_actually_wrong_for_each_provider() {
+        let cases = [
+            ("openrouter", false, "info", "choose an embedding model"),
+            ("openrouter", true, "warn", "OpenRouter is not reachable"),
+            ("ollama", true, "warn", "check that Ollama is running"),
+            ("llamacpp", true, "warn", "in-app embedding model"),
+            ("other", true, "warn", "'other' is not reachable"),
+        ];
+        for (provider, configured, level, fragment) in cases {
+            let (got_level, message) = embedding_skip_reason(provider, configured);
+            assert_eq!(got_level, level, "{provider}");
+            assert!(message.contains(fragment), "{provider}: {message}");
+            if provider != "ollama" {
+                assert!(!message.contains("Ollama"), "{provider}: {message}");
+            }
         }
     }
 

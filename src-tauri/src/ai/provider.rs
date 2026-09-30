@@ -214,6 +214,13 @@ pub trait AIProvider: Send + Sync {
     async fn is_embedding_available(&self) -> bool {
         self.is_available().await
     }
+    /// Whether an embedding model is set up at all — no I/O. False only for a
+    /// backend whose embedding model must be chosen and validated first
+    /// (OpenRouter) and has not been; callers then skip the vector path
+    /// instead of calling [`embed`](Self::embed) to collect its error.
+    fn embedding_configured(&self) -> bool {
+        true
+    }
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
     /// List models suitable for embedding generation.
     async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>>;
@@ -394,6 +401,8 @@ pub struct FakeAiProvider {
     embedding_dim: usize,
     /// What each `embed` call reports as charged (0 by default).
     embedding_cost_usd: f64,
+    /// What `embedding_configured` answers (true by default).
+    embedding_configured: bool,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -422,6 +431,7 @@ impl FakeAiProvider {
             embedding_model: "fake-embed-model".to_string(),
             embedding_dim: 8,
             embedding_cost_usd: 0.0,
+            embedding_configured: true,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -573,6 +583,12 @@ impl FakeAiProvider {
             .clone()
     }
 
+    /// Behave like a backend with no embedding model set up.
+    pub fn without_embedding_model(mut self) -> Self {
+        self.embedding_configured = false;
+        self
+    }
+
     /// Return `dim`-dimensional vectors from `embed` / `embed_batch`.
     pub fn with_embedding_dim(mut self, dim: usize) -> Self {
         self.embedding_dim = dim.max(1);
@@ -637,6 +653,10 @@ impl AIProvider for FakeAiProvider {
 
     fn embedding_model_name(&self) -> &str {
         &self.embedding_model
+    }
+
+    fn embedding_configured(&self) -> bool {
+        self.embedding_configured
     }
 
     async fn is_available(&self) -> bool {

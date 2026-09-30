@@ -125,11 +125,16 @@ pub async fn list_ai_models(state: State<'_, AppState>) -> Result<Vec<serde_json
         .collect())
 }
 
+/// Embedding models of `provider` — the saved provider when omitted. Settings
+/// passes the tab being edited, which may not be saved yet.
 #[tauri::command]
-pub async fn list_ai_embedding_models(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, AppError> {
+pub async fn list_ai_embedding_models(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Result<Vec<serde_json::Value>, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
 
-    if config.provider == "openrouter" {
+    if provider.as_deref().unwrap_or(&config.provider) == "openrouter" {
         let key = AiService::load_openrouter_api_key(&state.db)?;
         let client =
             crate::ai::openrouter::OpenRouterClient::new(key, config.model.clone(), config.embedding_model.clone());
@@ -176,6 +181,60 @@ pub async fn list_ai_embedding_models(state: State<'_, AppState>) -> Result<Vec<
         })
         .collect();
     Ok(models)
+}
+
+/// Check that an OpenRouter embedding model produces vectors the email index
+/// can hold, and remember it when it does. Settings calls this before saving
+/// a newly chosen model; until a model has passed, no embedding request is
+/// sent to OpenRouter. `api_key` and `zero_data_retention` carry values typed
+/// in Settings but not saved yet.
+#[tauri::command]
+pub async fn validate_openrouter_embedding_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: String,
+    api_key: Option<String>,
+    zero_data_retention: Option<bool>,
+) -> Result<(), AppError> {
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err(AppError::InvalidInput("No embedding model was given".to_string()));
+    }
+    emit_log(
+        &app,
+        "info",
+        "embeddings",
+        &format!("Checking embedding model {model}…"),
+    );
+
+    let config = AiService::get_config(&state.db)?;
+    let key = match api_key {
+        Some(key) if !key.is_empty() => key,
+        _ => AiService::load_openrouter_api_key(&state.db)?,
+    };
+    let client = crate::ai::openrouter::OpenRouterClient::new(key, config.model, model.clone())
+        .with_zero_data_retention(zero_data_retention.unwrap_or(config.zero_data_retention));
+
+    match AiService::validate_openrouter_embedding_model(&state.db, &client).await {
+        Ok(_) => {
+            emit_log(
+                &app,
+                "success",
+                "embeddings",
+                &format!("Embedding model {model} fits the email index"),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            emit_log(
+                &app,
+                "error",
+                "embeddings",
+                &format!("Embedding model {model} cannot be used: {e}"),
+            );
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]

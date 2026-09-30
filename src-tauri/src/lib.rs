@@ -303,6 +303,7 @@ macro_rules! app_commands {
             commands::ai_config::reset_ai_usage,
             commands::ai_config::list_ai_models,
             commands::ai_config::list_ai_embedding_models,
+            commands::ai_config::validate_openrouter_embedding_model,
             commands::ai_config::get_embeddings_config,
             commands::ai_config::set_embeddings_config,
             commands::ai_config::check_ai_available,

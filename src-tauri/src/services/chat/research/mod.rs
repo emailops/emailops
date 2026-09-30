@@ -453,25 +453,29 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[
 async fn gather_semantic(input: &PrepareInput<'_>, query: &str, keywords: Option<&str>) -> Vec<String> {
     let categories = (!input.categories.is_empty()).then_some(input.categories);
     let mut ids = Vec::new();
-    match input.provider.embed(query).await {
-        Ok(emb) => {
-            let req = crate::services::retrieval::VectorRequest {
-                account_id: input.account_id,
-                embedding: &emb.embedding,
-                categories,
-                limit: SEMANTIC_POOL,
-            };
-            match crate::services::retrieval::fetch_vector(input.db, req) {
-                Ok(mut hits) => {
-                    hits.sort_by(|a, b| b.1.total_cmp(&a.1));
-                    let sims: Vec<f32> = hits.iter().map(|h| h.1).collect();
-                    let keep = semantic_cutoff(&sims, SEMANTIC_BAND);
-                    ids.extend(hits.into_iter().take(keep).map(|h| h.0));
+    // With no embedding model set up there is no vector index to ask; the
+    // keyword hits below are the whole pool.
+    if input.provider.embedding_configured() {
+        match input.provider.embed(query).await {
+            Ok(emb) => {
+                let req = crate::services::retrieval::VectorRequest {
+                    account_id: input.account_id,
+                    embedding: &emb.embedding,
+                    categories,
+                    limit: SEMANTIC_POOL,
+                };
+                match crate::services::retrieval::fetch_vector(input.db, req) {
+                    Ok(mut hits) => {
+                        hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        let sims: Vec<f32> = hits.iter().map(|h| h.1).collect();
+                        let keep = semantic_cutoff(&sims, SEMANTIC_BAND);
+                        ids.extend(hits.into_iter().take(keep).map(|h| h.0));
+                    }
+                    Err(e) => super::emit_log("error", &format!("research: vector search failed: {e}")),
                 }
-                Err(e) => super::emit_log("error", &format!("research: vector search failed: {e}")),
             }
+            Err(e) => super::emit_log("error", &format!("research: embedding the question failed: {e}")),
         }
-        Err(e) => super::emit_log("error", &format!("research: embedding the question failed: {e}")),
     }
     if let Some(keywords) = keywords.filter(|k| !k.trim().is_empty()) {
         let req = crate::services::retrieval::FtsRequest {
@@ -1369,6 +1373,19 @@ mod tests {
             from: Some("billing@supplier.example".into()),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn the_semantic_gather_is_keyword_only_without_an_embedding_model() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 3);
+        let provider = crate::ai::provider::FakeAiProvider::new().without_embedding_model();
+        let categories: Vec<String> = Vec::new();
+
+        let ids = gather_semantic(&prepare_input(&db, &provider, &categories), "supplier invoices", None).await;
+
+        assert!(ids.is_empty());
+        assert!(provider.embed_calls().is_empty());
     }
 
     #[tokio::test]
