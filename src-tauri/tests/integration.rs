@@ -5416,7 +5416,7 @@ async fn a_sync_with_new_recurring_documents_proposes_a_rule() {
                 &format!("inv-{i}"),
                 "acc-sg",
                 now - days_ago * 86_400,
-                "billing@acme-synthetic.com",
+                "billing@acme.example",
                 "inbox",
             ),
             EmailCategory::Primary,
@@ -5456,7 +5456,7 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
         &db,
         "acc-hr",
         "Acme",
-        Some("billing@acme-synthetic.com"),
+        Some("billing@acme.example"),
         None,
         Some("*.pdf"),
         vec!["acme".into()],
@@ -5469,7 +5469,7 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
             "inv",
             "acc-hr",
             chrono::Utc::now().timestamp() - 86_400,
-            "billing@acme-synthetic.com",
+            "billing@acme.example",
             "inbox",
         ),
         EmailCategory::Primary,
@@ -5918,4 +5918,278 @@ async fn an_inbox_burst_larger_than_the_incremental_cap_is_completed_by_later_sy
         .filter(|id| db.get_email(id).unwrap().is_none())
         .collect();
     assert!(missing.is_empty(), "{} burst messages never fetched", missing.len());
+}
+
+// ── Retrieval: trashed and junk mail stays out of what the chat can cite ────
+
+/// Ids a query retrieves for `acc-ret` through both candidate fetches the
+/// chat, search and agent search share: `(keyword, vector)`.
+fn retrieved_ids(db: &Database) -> (Vec<String>, Vec<String>) {
+    use emailops_lib::services::retrieval::{fetch_fts, fetch_vector, FtsRequest, VectorRequest};
+    let mut keyword: Vec<String> = fetch_fts(
+        db,
+        FtsRequest {
+            account_id: "acc-ret",
+            query: "forecast",
+            categories: None,
+            sender_email_eq: None,
+            limit: 10,
+        },
+    )
+    .expect("fts")
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
+    let mut vector: Vec<String> = fetch_vector(
+        db,
+        VectorRequest {
+            account_id: "acc-ret",
+            embedding: &[0.1_f32; 768],
+            categories: None,
+            limit: 10,
+        },
+    )
+    .expect("vector")
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
+    keyword.sort();
+    vector.sort();
+    (keyword, vector)
+}
+
+/// A message the user trashed, or marked as junk, must not come back as a
+/// retrieval candidate by keyword or by meaning; taking the junk mark back
+/// makes it retrievable again, a trashed one stays out.
+#[tokio::test]
+async fn retrieval_leaves_out_trashed_and_junk_marked_messages() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-ret", "ret@example.com")).unwrap();
+    for (id, timestamp) in [("r-junk", 1000), ("r-live", 3000), ("r-trashed", 2000)] {
+        let mut message = make_email(id, "acc-ret", timestamp);
+        message.subject = format!("Quarterly forecast {id}");
+        db.insert_email(&message).unwrap();
+        db.store_embedding_chunks(id, "acc-ret", &[vec![0.1_f32; 768]], "test-model", id)
+            .unwrap();
+    }
+    let all = vec!["r-junk".to_string(), "r-live".to_string(), "r-trashed".to_string()];
+    assert_eq!(
+        retrieved_ids(&db),
+        (all.clone(), all),
+        "all three are candidates at first"
+    );
+
+    db.delete_email("r-trashed").unwrap();
+    emailops_lib::services::junk::set_feedback(&db, "acc-ret", "r-junk", true)
+        .await
+        .unwrap();
+    let live = vec!["r-live".to_string()];
+    assert_eq!(retrieved_ids(&db), (live.clone(), live));
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-ret", "r-junk", false)
+        .await
+        .unwrap();
+    let restored = vec!["r-junk".to_string(), "r-live".to_string()];
+    assert_eq!(retrieved_ids(&db), (restored.clone(), restored));
+}
+
+// ── Junk feedback: the chip and the company views ───────────────────────────
+
+/// Marking a message as junk shows its chip at once and takes it out of the
+/// company view and the sidebar count; "not junk" undoes both.
+#[tokio::test]
+async fn junk_feedback_shows_the_chip_and_hides_the_message_from_company_views() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-jf", "jf@example.com")).unwrap();
+    for (id, timestamp) in [("j-kept", 2000), ("j-marked", 1000)] {
+        db.insert_email(&make_email(id, "acc-jf", timestamp)).unwrap();
+        db.upsert_email_tag(id, "company", "acme", None).unwrap();
+    }
+    let scope = || emailops_lib::db::AccountScope::Account("acc-jf");
+    let listed = |db: &Database| -> Vec<String> {
+        let window = emailops_lib::models::EmailWindow::default();
+        let mut ids: Vec<String> = db
+            .get_filtered_emails(scope(), None, None, Some("company"), Some("acme"), None, &window, 50, 0)
+            .expect("filtered")
+            .emails
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let counted = |db: &Database| db.get_tag_stats(scope(), "company", 10).expect("stats");
+    let chip = |db: &Database| -> Option<String> {
+        db.get_email_tags("j-marked")
+            .expect("tags")
+            .into_iter()
+            .find(|t| t.tag_type == "junk")
+            .map(|t| t.tag_value)
+    };
+    assert_eq!(listed(&db), ["j-kept", "j-marked"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 2)]);
+    assert_eq!(chip(&db), None);
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-jf", "j-marked", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        chip(&db).as_deref(),
+        Some("spam"),
+        "an unscored message is shown as spam"
+    );
+    assert_eq!(listed(&db), ["j-kept"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 1)]);
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-jf", "j-marked", false)
+        .await
+        .unwrap();
+    assert_eq!(chip(&db), None);
+    assert_eq!(listed(&db), ["j-kept", "j-marked"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 2)]);
+}
+
+// ── Attachments: a collected file of a dangerous type ───────────────────────
+
+/// A web page collected by an attachment rule is stored like any other file,
+/// but opening it is refused until the user confirmed, and nothing is
+/// launched before that.
+#[tokio::test]
+async fn a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed() {
+    use emailops_lib::services::attachment_safety::open_attachment_file;
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-dg", "dg@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-dg"), "1")
+        .unwrap();
+    let account = db.get_account("acc-dg").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-dg",
+        "Statements",
+        Some("billing@acme.example"),
+        None,
+        Some("*.html"),
+        vec!["statements".into()],
+    )
+    .unwrap();
+    let provider = FakeEmailProvider::new("dg@example.com", "Dg");
+    provider.add_message(
+        make_email_with(
+            "stmt",
+            "acc-dg",
+            chrono::Utc::now().timestamp() - 86_400,
+            "billing@acme.example",
+            "inbox",
+        ),
+        EmailCategory::Primary,
+        vec![AttachmentInfo {
+            attachment_id: "att-stmt".to_string(),
+            filename: "statement.html".to_string(),
+            mime_type: "text/html".to_string(),
+            size: 13,
+            inline_data: None,
+        }],
+    );
+    provider.set_attachment_bytes("stmt", "att-stmt", b"<html></html>".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+    let collected = db.get_attachments_for_rule(&rule.id).unwrap();
+    assert_eq!(collected.len(), 1, "the rule collects the statement");
+    let stored = &collected[0];
+    let path = emailops_lib::services::attachments::safe_attachment_path(data_dir.path(), &stored.file_path).unwrap();
+
+    let launched = std::cell::RefCell::new(Vec::new());
+    let launch = |p: &std::path::Path| {
+        launched.borrow_mut().push(p.to_path_buf());
+        Ok(())
+    };
+    let refused = open_attachment_file(&path, &stored.filename, Some(&stored.mime_type), false, &launch);
+    assert!(
+        matches!(
+            &refused,
+            Err(AppError::AttachmentConfirmationRequired { filename, kind })
+                if filename == "statement.html" && *kind == "web_page"
+        ),
+        "got {refused:?}"
+    );
+    assert!(
+        launched.borrow().is_empty(),
+        "nothing is opened before the user confirms"
+    );
+
+    open_attachment_file(&path, &stored.filename, Some(&stored.mime_type), true, &launch).expect("confirmed open");
+    assert_eq!(*launched.borrow(), vec![path]);
+}
+
+// ── Calendar: the invite card of a stored message ───────────────────────────
+
+const INGESTED_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART:20260728T073000Z\r\nDTEND:20260728T083000Z\r\nORGANIZER;CN=Organizer:mailto:organizer@example.com\r\nUID:ingested-invite@example.com\r\nSUMMARY:Sprint planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+/// The invite card is built from the `.ics` part kept when the message was
+/// ingested — no second trip to the provider — and a message that only links
+/// to a meeting has no card.
+#[tokio::test]
+async fn calendar_invite_card_comes_from_the_ics_part_kept_at_ingest() {
+    use base64::Engine;
+    let db = test_db();
+    db.insert_account(&make_account("acc-cal", "cal@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-cal"), "1")
+        .unwrap();
+    let account = db.get_account("acc-cal").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let provider = FakeEmailProvider::new("cal@example.com", "Cal");
+    provider.add_message(
+        make_email_with("with-ics", "acc-cal", now - 3_600, "organizer@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![AttachmentInfo {
+            attachment_id: "att-ics".to_string(),
+            filename: "invite.ics".to_string(),
+            mime_type: "text/calendar".to_string(),
+            size: INGESTED_INVITE.len() as i64,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(INGESTED_INVITE)),
+        }],
+    );
+    let mut link_only = make_email_with("link-only", "acc-cal", now - 7_200, "organizer@example.com", "inbox");
+    link_only.body = "Join at https://meet.example.com/abc-defg-hij".to_string();
+    provider.add_message(link_only, EmailCategory::Primary, vec![]);
+    let data_dir = tempfile::tempdir().unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    // The account has no credentials: a fall-through to the provider fails.
+    let invite = emailops_lib::services::calendar::invite::get_calendar_invite(&db, data_dir.path(), "with-ics")
+        .await
+        .expect("read from what was stored")
+        .expect("an invite");
+    assert_eq!(invite.uid, "ingested-invite@example.com");
+    assert_eq!(invite.summary, "Sprint planning");
+    assert_eq!(invite.organizer, "organizer@example.com");
+    assert_eq!(invite.method, "REQUEST");
+
+    let none = emailops_lib::services::calendar::invite::get_calendar_invite(&db, data_dir.path(), "link-only")
+        .await
+        .expect("no invite is not an error");
+    assert_eq!(none, None);
 }

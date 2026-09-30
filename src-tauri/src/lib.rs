@@ -299,6 +299,8 @@ macro_rules! app_commands {
             commands::junk::get_junk_stats,
             commands::ai_config::get_ai_config,
             commands::ai_config::set_ai_config,
+            commands::ai_config::get_ai_provider_activity,
+            commands::ai_config::cancel_ai_provider_work,
             commands::ai_config::get_ai_usage,
             commands::ai_config::reset_ai_usage,
             commands::ai_config::list_ai_models,

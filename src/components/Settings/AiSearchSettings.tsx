@@ -2,6 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { embeddingRunEnded } from '@/lib/backgroundActivity';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { EmailCategory, EmbeddingsConfig } from '@/types';
@@ -36,10 +37,7 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
       if (status === 'starting' || status === 'clearing' || status === 'generating') {
         setIsRebuilding(true);
         setRebuildProgress(message);
-      } else if (status === 'complete') {
-        setIsRebuilding(false);
-        setRebuildProgress(null);
-      } else if (status === 'error') {
+      } else if (embeddingRunEnded(status)) {
         setIsRebuilding(false);
         setRebuildProgress(null);
       }

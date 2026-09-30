@@ -56,6 +56,7 @@
     "io": "File error: {{detail}}",
     "budget_exceeded": "AI budget exceeded: {{detail}}",
     "cancelled": "Cancelled.",
+    "attachment_confirmation_required": "“{{filename}}” needs your confirmation before it is opened.",
     "skill_no_frontmatter": "SKILL.md must start with a --- block holding name and description.",
     "skill_unclosed_frontmatter": "The frontmatter block is never closed with ---.",
     "skill_fence_not_on_own_line": "The closing --- of the frontmatter must be on its own line.",

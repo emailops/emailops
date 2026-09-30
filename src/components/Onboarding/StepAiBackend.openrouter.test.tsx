@@ -1,7 +1,8 @@
-// Onboarding with OpenRouter: the embedding model is optional, and one that is
-// typed must pass the same dimension probe Settings runs — with the API key
-// just typed — before anything is saved. Without that, the model was stored
-// unvalidated and semantic search stayed off until a Save in Settings.
+// Onboarding with OpenRouter: the embedding model is optional, chosen from the
+// models Settings recommends or typed in, and must pass the same dimension
+// probe Settings runs — with the API key just typed — before anything is
+// saved. Without that, the model was stored unvalidated and semantic search
+// stayed off until a Save in Settings.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -34,20 +35,38 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/api', () => api);
 
+import { RECOMMENDED_OPENROUTER_EMBEDDING_MODELS } from '@/components/Settings/AiSettings/openRouterEmbeddingModels';
 import { StepAiBackend } from './StepAiBackend';
 
+/** The selector entry that reveals the free-text field. */
+const OTHER = '__other__';
+
+const NOTHING = { model: null, embeddingModel: null };
+
+// What `get_ai_config` answers: the saved provider's models are its remembered
+// ones, and a saved OpenRouter embedding model has passed the probe.
 function savedConfig(over: Record<string, unknown> = {}) {
-  return {
+  const base = {
     provider: 'llamacpp',
     model: '',
     embeddingModel: '',
-    embeddingModelValidated: true,
     monthlyBudgetUsd: 0,
     periodStart: 0,
     hasApiKey: false,
     thinkingEnabled: false,
     zeroDataRetention: false,
     ...over,
+  };
+  return {
+    openRouterValidatedEmbeddingModel: base.provider === 'openrouter' ? base.embeddingModel : null,
+    ...base,
+    remembered: {
+      llamacpp: NOTHING,
+      ollama: NOTHING,
+      openrouter: NOTHING,
+      [base.provider]: { model: base.model, embeddingModel: base.embeddingModel },
+      ...(over.remembered as object | undefined),
+    },
   };
 }
 
@@ -84,6 +103,30 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
   }
 
   const embeddingField = () => field('auth:onboarding.aiBackend.embeddingModelPlaceholder');
+  const hasEmbeddingField = () =>
+    container.querySelector('input[placeholder="auth:onboarding.aiBackend.embeddingModelPlaceholder"]') !== null;
+
+  function embeddingSelect(): HTMLSelectElement {
+    const select = container.querySelector<HTMLSelectElement>(
+      'select[aria-label="auth:onboarding.aiBackend.embeddingModel"]',
+    );
+    if (!select) throw new Error('embedding model selector not rendered');
+    return select;
+  }
+
+  async function choose(value: string) {
+    act(() => {
+      embeddingSelect().value = value;
+      embeddingSelect().dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+  }
+
+  /** Pick "another model" and type its id. */
+  async function typeOtherModel(id: string) {
+    await choose(OTHER);
+    await type(embeddingField(), id);
+  }
 
   async function type(input: HTMLInputElement, value: string) {
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -116,8 +159,78 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
 
   it('starts with no embedding model and says what choosing one sends to OpenRouter', async () => {
     await mount();
-    expect(embeddingField().value).toBe('');
+    expect(embeddingSelect().value).toBe('');
+    expect(hasEmbeddingField()).toBe(false);
     expect(container.textContent).toContain('settings:openRouter.embeddingNotice');
+  });
+
+  it('offers none, the recommended models with what mail they suit, and another model', async () => {
+    await mount();
+    const options = Array.from(embeddingSelect().options).map((o) => [o.value, o.textContent]);
+
+    expect(options).toEqual([
+      ['', 'settings:openRouter.embeddingNone'],
+      ...RECOMMENDED_OPENROUTER_EMBEDDING_MODELS.map((m) => [
+        m.id,
+        `${m.id} — ${
+          m.languages === 'multilingual'
+            ? 'settings:openRouter.embeddingRecommendedMultilingual'
+            : 'settings:openRouter.embeddingRecommendedEnglish'
+        }`,
+      ]),
+      [OTHER, 'auth:onboarding.aiBackend.embeddingOther'],
+    ]);
+    expect(RECOMMENDED_OPENROUTER_EMBEDDING_MODELS.some((m) => m.languages === 'english')).toBe(true);
+  });
+
+  it('checks a recommended model with the typed key before saving it', async () => {
+    const recommended = RECOMMENDED_OPENROUTER_EMBEDDING_MODELS[0].id;
+    await mount();
+    await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
+    await choose(recommended);
+    expect(container.textContent).toContain('auth:onboarding.aiBackend.embeddingNeedsCheck');
+    await pressContinue();
+
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith(recommended, 'sk-test');
+    expect(api.setAiConfig.mock.calls[0].slice(0, 4)).toEqual([
+      'openrouter',
+      expect.any(String),
+      recommended,
+      'sk-test',
+    ]);
+    expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes back to keyword-only search when none is chosen again: no probe', async () => {
+    await mount();
+    await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
+    await choose(RECOMMENDED_OPENROUTER_EMBEDDING_MODELS[0].id);
+    await choose('');
+    await pressContinue();
+
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[0].slice(2, 3)).toEqual(['']);
+  });
+
+  it('drops a typed model when a recommended one is chosen instead', async () => {
+    const recommended = RECOMMENDED_OPENROUTER_EMBEDDING_MODELS[1].id;
+    await mount();
+    await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
+    await typeOtherModel('vendor/embed');
+    await choose(recommended);
+    expect(hasEmbeddingField()).toBe(false);
+    await pressContinue();
+
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith(recommended, 'sk-test');
+    expect(api.setAiConfig.mock.calls[0].slice(2, 3)).toEqual([recommended]);
+  });
+
+  it('shows a saved recommended model in the selector, without a text field', async () => {
+    const recommended = RECOMMENDED_OPENROUTER_EMBEDDING_MODELS[2].id;
+    await mount({ provider: 'openrouter', model: 'vendor/model', embeddingModel: recommended, hasApiKey: true });
+
+    expect(embeddingSelect().value).toBe(recommended);
+    expect(hasEmbeddingField()).toBe(false);
   });
 
   it('continues without an embedding model: keyword-only search, no probe', async () => {
@@ -133,7 +246,7 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
   it('checks a typed embedding model with the typed key before saving it', async () => {
     await mount();
     await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
-    await type(embeddingField(), ' vendor/embed ');
+    await typeOtherModel(' vendor/embed ');
     await pressContinue();
 
     expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed', 'sk-test');
@@ -153,7 +266,7 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
     api.validateOpenRouterEmbeddingModel.mockRejectedValueOnce('returns 1536-dimension vectors');
     await mount();
     await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
-    await type(embeddingField(), 'vendor/embed-large');
+    await typeOtherModel('vendor/embed-large');
     await pressContinue();
 
     expect(api.setAiConfig).not.toHaveBeenCalled();
@@ -173,7 +286,7 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
     });
     await mount({ zeroDataRetention: true });
     await type(field('auth:onboarding.aiBackend.apiKeyPlaceholder'), 'sk-test');
-    await type(embeddingField(), 'vendor/embed');
+    await typeOtherModel('vendor/embed');
     await pressContinue();
 
     expect(api.setAiConfig).not.toHaveBeenCalled();
@@ -188,14 +301,42 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
       provider: 'openrouter',
       model: 'vendor/model',
       embeddingModel: 'vendor/embed',
-      embeddingModelValidated: true,
       hasApiKey: true,
     });
+    expect(embeddingSelect().value).toBe(OTHER);
     expect(embeddingField().value).toBe('vendor/embed');
     await pressContinue();
 
     expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
     expect(api.setAiConfig.mock.calls[0].slice(0, 4)).toEqual(['openrouter', 'vendor/model', 'vendor/embed', null]);
     expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the OpenRouter models remembered while another provider is saved, without a second check', async () => {
+    await mount({
+      hasApiKey: true,
+      openRouterValidatedEmbeddingModel: 'vendor/embed',
+      remembered: { openrouter: { model: 'vendor/model', embeddingModel: 'vendor/embed' } },
+    });
+    expect(embeddingSelect().value).toBe(OTHER);
+    expect(embeddingField().value).toBe('vendor/embed');
+    await pressContinue();
+
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', 'vendor/embed']);
+  });
+
+  it('does not save the in-app embedding model for Ollama', async () => {
+    await mount({
+      embeddingModel: 'embed-gguf',
+      remembered: { ollama: { model: 'ollama-chat', embeddingModel: null } },
+    });
+    await act(async () => {
+      button('auth:onboarding.aiBackend.ollamaTitle').click();
+    });
+    await settle();
+    await pressContinue();
+
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['ollama', 'ollama-chat', null]);
   });
 });

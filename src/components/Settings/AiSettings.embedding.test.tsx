@@ -21,8 +21,9 @@ vi.mock('@/stores/aiStore', () => ({
   useAiStore: () => ({ enabled: true, setEnabled: vi.fn() }),
 }));
 
+const addLog = vi.hoisted(() => vi.fn());
 vi.mock('@/stores/logStore', () => ({
-  useLogStore: (selector: (s: { addLog: () => void }) => unknown) => selector({ addLog: vi.fn() }),
+  useLogStore: (selector: (s: { addLog: typeof addLog }) => unknown) => selector({ addLog }),
 }));
 
 vi.mock('@/stores/featureToggleStore', () => ({
@@ -80,6 +81,10 @@ const api = vi.hoisted(() => ({
   setPref: vi.fn(() => Promise.resolve()),
   setAiConfig: vi.fn(() => Promise.resolve()),
   regenerateEmbeddings: vi.fn(() => Promise.resolve()),
+  getAiProviderActivity: vi.fn(
+    (): Promise<{ provider: string; items: unknown[] }> => Promise.resolve({ provider: 'openrouter', items: [] }),
+  ),
+  cancelAiProviderWork: vi.fn(() => Promise.resolve(1)),
   currentPlatform: vi.fn(() => 'macos'),
 }));
 vi.mock('@/lib/api', () => api);
@@ -87,18 +92,32 @@ vi.mock('@/lib/api', () => api);
 import { AiSettings } from './AiSettings';
 import { DEFAULT_OPENROUTER_CHAT_MODEL } from './AiSettings/helpers';
 
+const NOTHING = { model: null, embeddingModel: null };
+
+// What `get_ai_config` answers: the saved provider's models are its remembered
+// ones, and a saved OpenRouter embedding model has passed the probe.
 function savedConfig(over: Record<string, unknown>) {
-  return {
+  const base = {
     provider: 'openrouter',
     model: 'vendor/model',
     embeddingModel: 'vendor/embed',
-    embeddingModelValidated: true,
     monthlyBudgetUsd: 0,
     periodStart: 0,
     hasApiKey: true,
     thinkingEnabled: false,
     zeroDataRetention: false,
     ...over,
+  };
+  return {
+    openRouterValidatedEmbeddingModel: base.provider === 'openrouter' ? base.embeddingModel : null,
+    ...base,
+    remembered: {
+      llamacpp: NOTHING,
+      ollama: NOTHING,
+      openrouter: NOTHING,
+      [base.provider]: { model: base.model, embeddingModel: base.embeddingModel },
+      ...(over.remembered as object | undefined),
+    },
   };
 }
 
@@ -277,7 +296,7 @@ describe('AiSettings — embedding model', () => {
   });
 
   it('checks on save a model that was saved without ever being validated', async () => {
-    await mount({ embeddingModelValidated: false });
+    await mount({ openRouterValidatedEmbeddingModel: null });
     await save();
     expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed', null, false);
   });
@@ -408,5 +427,166 @@ describe('AiSettings — embedding model', () => {
     expect(reindexDialogShown()).toBe(false);
     expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed', null, false);
     expect(api.setAiConfig).toHaveBeenCalled();
+  });
+
+  // The developer's sequence: OpenRouter with an embedding model, then the
+  // in-app provider, then back. The preferences are shared by every provider,
+  // so only what is remembered per provider can bring the choice back.
+  it('brings back the OpenRouter models after another provider was saved, without a second check', async () => {
+    await mount({});
+    await switchTo('settings:ai.providerEmbeddedLabel');
+    // The backend's answer once the in-app provider is saved.
+    api.getAiConfig.mockResolvedValue(
+      savedConfig({
+        provider: 'llamacpp',
+        model: 'chat-local-gguf',
+        embeddingModel: 'embed-local-gguf',
+        openRouterValidatedEmbeddingModel: 'vendor/embed',
+        remembered: { openrouter: { model: 'vendor/model', embeddingModel: 'vendor/embed' } },
+      }),
+    );
+    await save();
+    await confirmReindex();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'chat-local-gguf', 'embed-local-gguf']);
+
+    await switchTo('settings:ai.providerOpenRouterLabel');
+
+    expect(embeddingSelect().value).toBe('vendor/embed');
+    expect(chatModelInput().value).toBe('vendor/model');
+    expect(container.textContent).not.toContain('settings:openRouter.embeddingNeedsCheck');
+
+    await save();
+    expect(reindexDialogShown()).toBe(true);
+    await confirmReindex();
+
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[1].slice(0, 3)).toEqual(['openrouter', 'vendor/model', 'vendor/embed']);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not ask to re-index when returning to the saved provider restores the saved model', async () => {
+    await mount({});
+    await switchTo('settings:ai.providerEmbeddedLabel');
+    await switchTo('settings:ai.providerOpenRouterLabel');
+    await save();
+
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', 'vendor/embed']);
+    expect(api.regenerateEmbeddings).not.toHaveBeenCalled();
+  });
+
+  it('checks a remembered OpenRouter model that is not the one that passed the check', async () => {
+    await mount({
+      provider: 'llamacpp',
+      model: 'chat-local-gguf',
+      embeddingModel: 'embed-local-gguf',
+      openRouterValidatedEmbeddingModel: 'vendor/embed',
+      remembered: { openrouter: { model: 'vendor/model', embeddingModel: 'vendor/embed-large' } },
+    });
+    await switchTo('settings:ai.providerOpenRouterLabel');
+    expect(embeddingSelect().value).toBe('vendor/embed-large');
+    await save();
+    await confirmReindex();
+
+    expect(api.validateOpenRouterEmbeddingModel).toHaveBeenCalledWith('vendor/embed-large', null, false);
+  });
+
+  // The state a provider switch outside Settings could leave: the in-app
+  // provider saved with an OpenRouter embedding model it cannot run.
+  it('replaces a saved embedding model the provider cannot use, and asks before re-indexing', async () => {
+    await mount({
+      provider: 'llamacpp',
+      model: 'chat-local-gguf',
+      embeddingModel: 'vendor/embed',
+      remembered: {
+        llamacpp: { model: 'chat-local-gguf', embeddingModel: null },
+        openrouter: { model: null, embeddingModel: 'vendor/embed' },
+      },
+    });
+    await save();
+
+    expect(reindexDialogShown()).toBe(true);
+    await confirmReindex();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'chat-local-gguf', 'embed-local-gguf']);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+  // ── Work in progress ───────────────────────────────────────────────────
+
+  const REBUILD_RUNNING = {
+    provider: 'openrouter',
+    items: [{ kind: 'embeddingsRebuild', running: true, stopping: false, progress: { current: 40, total: 500 } }],
+  };
+  const workDialogShown = () => container.textContent?.includes('settings:aiWork.title') ?? false;
+
+  it('asks about the work in progress first, and about the re-index only after it', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+
+    expect(workDialogShown()).toBe(true);
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+
+    // Stopping ends the rebuild; the queue is empty on the next read.
+    await act(async () => {
+      button('settings:aiWork.stop').click();
+    });
+    await settle();
+
+    expect(api.cancelAiProviderWork).toHaveBeenCalledTimes(1);
+    expect(workDialogShown()).toBe(false);
+    expect(reindexDialogShown()).toBe(true);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+
+    await confirmReindex();
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+    expect(api.regenerateEmbeddings).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves nothing and keeps the form when the work-in-progress dialog is cancelled', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await choose('vendor/embed-large');
+    await save();
+    await act(async () => {
+      button('common:actions.cancel').click();
+    });
+    await settle();
+
+    expect(workDialogShown()).toBe(false);
+    expect(reindexDialogShown()).toBe(false);
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+    expect(api.cancelAiProviderWork).not.toHaveBeenCalled();
+    expect(embeddingSelect().value).toBe('vendor/embed-large');
+  });
+
+  it('does not ask when the work in progress does not use what changes', async () => {
+    api.getAiProviderActivity.mockResolvedValueOnce(REBUILD_RUNNING);
+    await mount({});
+    await typeChatModel('vendor/other-model');
+    await save();
+
+    expect(workDialogShown()).toBe(false);
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not look for work in progress when neither the provider nor a model changes', async () => {
+    await mount({});
+    await save();
+
+    expect(api.getAiProviderActivity).not.toHaveBeenCalled();
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it('still saves, and logs why, when the work in progress cannot be read', async () => {
+    api.getAiProviderActivity.mockRejectedValueOnce('queue unavailable');
+    await mount({});
+    await typeChatModel('vendor/other-model');
+    await save();
+
+    expect(addLog).toHaveBeenCalledWith('error', 'ai', 'settings:aiWork.checkFailed: queue unavailable');
+    expect(api.setAiConfig).toHaveBeenCalledTimes(1);
   });
 });

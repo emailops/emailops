@@ -216,6 +216,8 @@ fn account_pref_keys(account_id: &str) -> (Vec<String>, Vec<String>) {
         format!("extra_mailbox_backfill_reset_pending:{account_id}"),
         format!("spam_reconcile_last:{account_id}"),
         format!("spam_reconcile_gone:{account_id}"),
+        crate::services::emails::state_refresh_last_key(account_id),
+        crate::services::emails::history_cursor_key(account_id),
         crate::services::emails::backfill_done_key(account_id),
         crate::services::dashboard::server_total_pref_key(account_id),
     ];
@@ -1739,6 +1741,8 @@ mod tests {
             format!("extra_mailbox_backfill_reset_pending:{id}"),
             format!("spam_reconcile_last:{id}"),
             format!("spam_reconcile_gone:{id}"),
+            format!("mailbox_state_refresh_last:{id}"),
+            format!("mailbox_history_cursor:{id}"),
             format!("attachment_meta_backfill_done:{id}"),
             format!("dashboard.server_total.{id}"),
         ]

@@ -309,6 +309,53 @@ pub enum RemoteMessageState {
     Missing,
 }
 
+/// One change to a message, as the provider's change log reports it (Gmail's
+/// History API). Labels are the provider's own ids (`UNREAD`, `INBOX`, `TRASH`…).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageChange {
+    LabelsAdded {
+        id: String,
+        labels: Vec<String>,
+    },
+    LabelsRemoved {
+        id: String,
+        labels: Vec<String>,
+    },
+    /// Deleted for good — not moved to Trash, which is a label change.
+    Deleted {
+        id: String,
+    },
+}
+
+/// One page of the provider's change log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryPage {
+    /// Changes in the order they happened.
+    pub changes: Vec<MessageChange>,
+    /// The cursor a later listing starts from once this page is applied: the
+    /// page's last record, or the mailbox's current position on the last page.
+    pub resume_cursor: String,
+    /// Set while more pages follow for the same start cursor.
+    pub next_page_token: Option<String>,
+}
+
+/// What [`EmailProvider::list_history`] answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryListing {
+    Page(HistoryPage),
+    /// The provider no longer keeps the log back to the start cursor: what
+    /// changed since then cannot be replayed.
+    CursorExpired,
+}
+
+/// The labels the provider holds, right now, for a message the app stores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteLabels {
+    Present(Vec<String>),
+    /// Nothing answers to the id any more: deleted for good.
+    Missing,
+}
+
 /// The UIDVALIDITY an IMAP server reports for one mailbox the sync stores.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderUidValidity {
@@ -622,6 +669,27 @@ pub trait EmailProvider: Send + Sync {
         Ok(None)
     }
 
+    /// The current position of the provider's change log, to start following
+    /// it from. `Ok(None)` means the provider has no change log (everything
+    /// but Gmail), and the stored-mail refresh polls message states instead.
+    async fn history_cursor(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// One page of what changed after `cursor`. `page_token` continues a
+    /// listing started with the same `cursor`.
+    async fn list_history(&self, _cursor: &str, _page_token: Option<&str>) -> Result<HistoryListing> {
+        Err(AppError::InvalidInput("this provider has no change log".to_string()))
+    }
+
+    /// The current labels of stored messages, for the bounded reconciliation
+    /// that replaces the change log when its cursor expired. Like
+    /// [`Self::fetch_message_states`], the map holds only the ids the provider
+    /// actually checked.
+    async fn fetch_message_labels(&self, _message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        Ok(HashMap::new())
+    }
+
     /// The current UIDVALIDITY of every mailbox the sync stores mail from.
     /// IMAP only: its message ids embed a UID, which a server-side mailbox
     /// rebuild re-assigns. Gmail and Graph ids are never reused, so the default
@@ -771,6 +839,41 @@ pub struct FakeEmailProvider {
     uid_validities: std::sync::RwLock<Vec<FolderUidValidity>>,
     /// When `Some`, `list_mailbox_identities` fails with this message.
     identity_listing_failure: std::sync::RwLock<Option<String>>,
+    /// The change log `history_cursor` / `list_history` answer from — `None`
+    /// unless a test models Gmail with [`Self::enable_history`].
+    history: std::sync::RwLock<Option<FakeHistory>>,
+    /// When `Some`, `fetch_message_labels` fails with this message.
+    label_fetch_failure: std::sync::RwLock<Option<String>>,
+}
+
+/// The change log of a [`FakeEmailProvider`] modelling Gmail.
+#[derive(Debug, Clone)]
+struct FakeHistory {
+    /// `(record id, change)`, ids increasing.
+    records: Vec<(u64, MessageChange)>,
+    /// The mailbox's current position.
+    current: u64,
+    /// Cursors below this are no longer kept.
+    oldest_kept: u64,
+    /// Records per page.
+    page_size: usize,
+    /// When `Some`, `list_history` fails with this message.
+    failure: Option<String>,
+}
+
+/// The Gmail labels a fake message stands for.
+fn fake_labels(email: &Email) -> Vec<String> {
+    let mut labels = vec![match email.mailbox.as_str() {
+        "trash" => "TRASH",
+        "spam" => "SPAM",
+        "sent" => "SENT",
+        _ => "INBOX",
+    }
+    .to_string()];
+    if !email.is_read {
+        labels.push("UNREAD".to_string());
+    }
+    labels
 }
 
 /// How [`FakeEmailProvider`] fails a mailbox-state write.
@@ -858,6 +961,8 @@ impl FakeEmailProvider {
             unverifiable_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             uid_validities: std::sync::RwLock::new(Vec::new()),
             identity_listing_failure: std::sync::RwLock::new(None),
+            history: std::sync::RwLock::new(None),
+            label_fetch_failure: std::sync::RwLock::new(None),
         }
     }
 
@@ -879,6 +984,53 @@ impl FakeEmailProvider {
             .identity_listing_failure
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Some(message.into());
+    }
+
+    /// Give the fake a change log positioned at `current`, as Gmail has.
+    pub fn enable_history(&self, current: u64) {
+        *self.history.write().unwrap_or_else(PoisonError::into_inner) = Some(FakeHistory {
+            records: Vec::new(),
+            current,
+            oldest_kept: 0,
+            page_size: 100,
+            failure: None,
+        });
+    }
+
+    fn with_history(&self, change: impl FnOnce(&mut FakeHistory)) {
+        if let Some(history) = self.history.write().unwrap_or_else(PoisonError::into_inner).as_mut() {
+            change(history);
+        }
+    }
+
+    /// Append a change to the log the way another client's action would.
+    pub fn record_history(&self, change: MessageChange) {
+        self.with_history(|h| {
+            h.current += 1;
+            h.records.push((h.current, change));
+        });
+    }
+
+    /// Stop keeping the log for every cursor handed out so far.
+    pub fn expire_history(&self) {
+        self.with_history(|h| {
+            h.current += 1;
+            h.oldest_kept = h.current;
+        });
+    }
+
+    pub fn set_history_page_size(&self, page_size: usize) {
+        self.with_history(|h| h.page_size = page_size);
+    }
+
+    /// Make `list_history` fail (`Some`) or answer again (`None`).
+    pub fn fail_history_listing(&self, failure: Option<&str>) {
+        self.with_history(|h| h.failure = failure.map(str::to_string));
+    }
+
+    /// Make `fetch_message_labels` fail.
+    pub fn fail_label_fetch(&self, message: impl Into<String>) {
+        *self.label_fetch_failure.write().unwrap_or_else(PoisonError::into_inner) = Some(message.into());
     }
 
     /// Make `fetch_message_states` answer from the fake mailbox: a stored
@@ -1506,6 +1658,76 @@ impl EmailProvider for FakeEmailProvider {
                 id: m.email.id.clone(),
                 message_id: m.email.message_id.clone(),
                 timestamp: Some(m.email.timestamp),
+            })
+            .collect())
+    }
+
+    async fn history_cursor(&self) -> Result<Option<String>> {
+        let guard = self.history.read().unwrap_or_else(PoisonError::into_inner);
+        let Some(history) = guard.as_ref() else {
+            return Ok(None);
+        };
+        self.record_call("history_cursor");
+        Ok(Some(history.current.to_string()))
+    }
+
+    async fn list_history(&self, cursor: &str, page_token: Option<&str>) -> Result<HistoryListing> {
+        let guard = self.history.read().unwrap_or_else(PoisonError::into_inner);
+        let Some(history) = guard.as_ref() else {
+            return Err(AppError::InvalidInput("this provider has no change log".to_string()));
+        };
+        self.record_call("list_history");
+        if let Some(message) = &history.failure {
+            return Err(AppError::SyncError(message.clone()));
+        }
+        let parse = |value: &str| {
+            value
+                .parse::<u64>()
+                .map_err(|_| AppError::InvalidInput(format!("not a history position: {value}")))
+        };
+        let start = parse(cursor)?;
+        if start < history.oldest_kept {
+            return Ok(HistoryListing::CursorExpired);
+        }
+        let offset = page_token.map(parse).transpose()?.unwrap_or(0) as usize;
+        let after: Vec<&(u64, MessageChange)> = history.records.iter().filter(|(id, _)| *id > start).collect();
+        let page: Vec<&(u64, MessageChange)> = after.iter().skip(offset).take(history.page_size).copied().collect();
+        let end = offset + page.len();
+        let more = end < after.len();
+        Ok(HistoryListing::Page(HistoryPage {
+            changes: page.iter().map(|(_, change)| change.clone()).collect(),
+            resume_cursor: match page.last() {
+                Some((id, _)) if more => id.to_string(),
+                _ => history.current.to_string(),
+            },
+            next_page_token: more.then(|| end.to_string()),
+        }))
+    }
+
+    async fn fetch_message_labels(&self, message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        self.record_call("fetch_message_labels");
+        if let Some(message) = self
+            .label_fetch_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::SyncError(message));
+        }
+        let unverifiable = self
+            .unverifiable_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(message_ids
+            .iter()
+            .filter(|id| !unverifiable.contains(*id))
+            .map(|id| {
+                let labels = match guard.iter().find(|m| &m.email.id == id) {
+                    Some(m) => RemoteLabels::Present(fake_labels(&m.email)),
+                    None => RemoteLabels::Missing,
+                };
+                (id.clone(), labels)
             })
             .collect())
     }

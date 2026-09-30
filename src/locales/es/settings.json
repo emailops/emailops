@@ -192,6 +192,28 @@
     "confirm": "Guardar y regenerar",
     "confirmNone": "Guardar y eliminar"
   },
+  "aiWork": {
+    "title": "Hay trabajo de IA en curso",
+    "body": "Este cambio afecta a trabajo de IA en segundo plano que está en marcha o en cola con la configuración actual:",
+    "kinds": {
+      "embeddingsRebuild": "Regenerando todos los Embeddings",
+      "embeddingsGeneration": "Generando Embeddings",
+      "classification": "Clasificando correos",
+      "memoryExtraction": "Extracción de memoria",
+      "taskExtraction": "Extracción de tareas",
+      "lensExtraction": "Extracción de Lentes"
+    },
+    "queued": "{{n}} en cola",
+    "moreQueued": "+{{n}} en cola",
+    "openRouter": "Este trabajo está enviando el texto de tus correos a OpenRouter. Si lo detienes, esas peticiones terminan ahora; si esperas, continúan y se facturan hasta que el trabajo acabe.",
+    "help": "Detener y aplicar termina el trabajo en el correo que tiene entre manos y después aplica el cambio; lo ya hecho se conserva. Esperar y aplicar aplica el cambio cuando el trabajo termine por sí solo.",
+    "stopping": "Deteniendo… El cambio se aplica en cuanto el trabajo haya terminado.",
+    "waiting": "Esperando a que el trabajo termine. El cambio se aplica en cuanto lo haga.",
+    "stop": "Detener y aplicar",
+    "wait": "Esperar y aplicar",
+    "failed": "No se pudo detener ni seguir el trabajo de IA en curso: {{error}}",
+    "checkFailed": "No se pudo comprobar si hay trabajo de IA en curso: {{error}}"
+  },
   "promptEditor": {
     "resetTitle": "¿Restaurar el prompt por defecto?",
     "resetBody": "“{{label}}” volverá a su valor por defecto. Se perderán tus personalizaciones.",

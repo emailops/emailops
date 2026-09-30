@@ -169,6 +169,10 @@ describe('composeEditorExtensions — a draft written in a webmail client', () =
     expect(table?.getAttribute('cellpadding')).toBe('0');
     expect(body.querySelectorAll('tr')).toHaveLength(2);
     expect(body.querySelector('tr')?.style.height).toBe('21px');
+    expect(Array.from(body.querySelectorAll('colgroup > col')).map((col) => col.getAttribute('width'))).toEqual([
+      '100',
+      '100',
+    ]);
     const cells = body.querySelectorAll('td');
     expect(cells).toHaveLength(4);
     expect(cells[0].style.border).toBe('1px solid rgb(204, 204, 204)');
@@ -186,28 +190,149 @@ describe('composeEditorExtensions — a draft written in a webmail client', () =
   });
 });
 
-describe('composeEditorExtensions — known limits', () => {
-  it('folds thead/tfoot rows into tbody, turns the caption into a row and drops colgroup', () => {
-    const body = parse(
-      roundTrip(
-        '<table><caption>Totals</caption><colgroup><col width="80"></colgroup><thead><tr><th>Head</th></tr></thead>' +
-          '<tbody><tr><td>Body</td></tr></tbody><tfoot><tr><td>Foot</td></tr></tfoot></table>',
-      ),
-    );
-    expect(body.querySelector('thead, tfoot, caption, colgroup')).toBeNull();
-    expect(Array.from(body.querySelectorAll('tbody > tr')).map((row) => row.textContent)).toEqual([
-      'Totals',
-      'Head',
-      'Body',
-      'Foot',
+const SECTIONED_TABLE =
+  '<table width="300"><caption style="caption-side: bottom;" align="left">Totals</caption>' +
+  '<colgroup><col width="80"><col span="2" style="width: 110px;"></colgroup>' +
+  '<thead><tr><th>Item</th><th>Net</th><th>Gross</th></tr></thead>' +
+  '<tbody><tr><td>Hosting</td><td>100</td><td>121</td></tr><tr><td>Domain</td><td>10</td><td>12</td></tr></tbody>' +
+  '<tfoot><tr><td>Sum</td><td>110</td><td>133</td></tr></tfoot></table>';
+
+function rowTexts(section: Element | null): string[] {
+  if (!section) throw new Error('section not found');
+  return Array.from(section.querySelectorAll('tr')).map((row) => row.textContent ?? '');
+}
+
+describe('composeEditorExtensions — table sections, caption and column widths', () => {
+  it('keeps thead, tbody and tfoot with their rows', () => {
+    const table = parse(roundTrip(SECTIONED_TABLE)).querySelector('table');
+
+    expect(Array.from(table?.children ?? []).map((el) => el.tagName)).toEqual([
+      'CAPTION',
+      'COLGROUP',
+      'THEAD',
+      'TBODY',
+      'TFOOT',
     ]);
-    expect(body.querySelector('th')?.textContent).toBe('Head');
+    expect(rowTexts(table?.querySelector('thead') ?? null)).toEqual(['ItemNetGross']);
+    expect(rowTexts(table?.querySelector('tbody') ?? null)).toEqual(['Hosting100121', 'Domain1012']);
+    expect(rowTexts(table?.querySelector('tfoot') ?? null)).toEqual(['Sum110133']);
+    expect(table?.querySelector('thead th')?.textContent).toBe('Item');
   });
 
-  it('unwraps <center>, <sub>, <sup> and <small> to plain text', () => {
-    expect(roundTrip('<center>mid</center><p>H<sub>2</sub>O x<sup>2</sup> <small>fine</small></p>')).toBe(
-      '<p>mid</p><p>H2O x2 fine</p>',
+  it('keeps the caption with its text, style and alignment', () => {
+    const caption = parse(roundTrip(SECTIONED_TABLE)).querySelector('caption');
+    expect(caption?.textContent).toBe('Totals');
+    expect(attrs(caption)).toEqual({ style: 'caption-side: bottom;', align: 'left' });
+  });
+
+  it('keeps the column widths of colgroup', () => {
+    const cols = parse(roundTrip(SECTIONED_TABLE)).querySelectorAll('colgroup > col');
+    expect(Array.from(cols).map(attrs)).toEqual([{ width: '80' }, { span: '2', style: 'width: 110px;' }]);
+  });
+
+  it('keeps sections, caption and widths when text inside a cell is edited', () => {
+    const editor = createEditor(SECTIONED_TABLE);
+    let end = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'Hosting') end = pos + node.nodeSize;
+    });
+    editor.commands.insertContentAt(end, ' plan');
+    const table = parse(editor.getHTML()).querySelector('table');
+    editor.destroy();
+
+    expect(rowTexts(table?.querySelector('tbody') ?? null)).toEqual(['Hosting plan100121', 'Domain1012']);
+    expect(rowTexts(table?.querySelector('thead') ?? null)).toEqual(['ItemNetGross']);
+    expect(rowTexts(table?.querySelector('tfoot') ?? null)).toEqual(['Sum110133']);
+    expect(table?.querySelector('caption')?.textContent).toBe('Totals');
+    expect(table?.querySelectorAll('colgroup > col')).toHaveLength(2);
+    expect(table?.getAttribute('width')).toBe('300');
+  });
+
+  it('puts the footer after the body even when the source has it first', () => {
+    const table = parse(
+      roundTrip(
+        '<table><thead><tr><th>H</th></tr></thead><tfoot><tr><td>F</td></tr></tfoot><tbody><tr><td>B</td></tr></tbody></table>',
+      ),
+    ).querySelector('table');
+    expect(Array.from(table?.children ?? []).map((el) => el.tagName)).toEqual(['THEAD', 'TBODY', 'TFOOT']);
+  });
+
+  it('writes a table that is all header rows without an empty tbody', () => {
+    expect(roundTrip('<table><thead><tr><th>Only</th></tr></thead></table>')).toBe(
+      '<table><thead><tr><th colspan="1" rowspan="1"><p>Only</p></th></tr></thead></table>',
     );
+  });
+
+  it('reduces markup inside a caption to its text', () => {
+    const caption = parse(
+      roundTrip('<table><caption><b>Q3</b> totals</caption><tbody><tr><td>x</td></tr></tbody></table>'),
+    ).querySelector('caption');
+    expect(caption?.innerHTML).toBe('Q3 totals');
+  });
+
+  it('drops a colgroup that no longer describes the columns', () => {
+    const editor = createEditor(SECTIONED_TABLE);
+    let inCell = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === 'Hosting') inCell = pos;
+    });
+    editor.commands.setTextSelection(inCell);
+    expect(editor.commands.addColumnAfter()).toBe(true);
+    const table = parse(editor.getHTML()).querySelector('table');
+    editor.destroy();
+
+    expect(table?.querySelectorAll('thead th')).toHaveLength(4);
+    expect(table?.querySelector('colgroup')).toBeNull();
+    expect(table?.querySelector('caption')?.textContent).toBe('Totals');
+  });
+
+  it('shows the caption in the editor, above the rows and not editable', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: composeEditorExtensions,
+      content: SECTIONED_TABLE,
+    });
+    const caption = editor.view.dom.querySelector('table > caption');
+    const text = caption?.textContent;
+    const editable = caption?.getAttribute('contenteditable');
+    const headerCells = editor.view.dom.querySelectorAll('table th').length;
+    editor.destroy();
+
+    expect(text).toBe('Totals');
+    expect(editable).toBe('false');
+    expect(headerCells).toBe(3);
+  });
+});
+
+describe('composeEditorExtensions — legacy inline and block tags', () => {
+  it('keeps subscript, superscript and small text', () => {
+    const html = '<p>H<sub>2</sub>O x<sup>2</sup> <small>fine print</small></p>';
+    expect(roundTrip(html)).toBe(html);
+  });
+
+  it('keeps them together with other formatting', () => {
+    const body = parse(roundTrip('<p><b>E = mc<sup>2</sup></b> <span style="color: red;"><sub>low</sub></span></p>'));
+    expect(body.querySelector('strong sup, sup strong')?.textContent).toBe('2');
+    expect(body.querySelector('sub')?.textContent).toBe('low');
+    expect(body.querySelector('span')?.getAttribute('style')).toBe('color: red;');
+  });
+
+  it('keeps <center> around its text, as a centred block', () => {
+    expect(roundTrip('<center>mid</center><p>after</p>')).toBe('<center><p>mid</p></center><p>after</p>');
+  });
+
+  it('keeps <center> around a table', () => {
+    const body = parse(roundTrip('<center><table><tbody><tr><td>Cell</td></tr></tbody></table></center>'));
+    expect(body.querySelector('center > table td')?.textContent).toBe('Cell');
+  });
+});
+
+describe('composeEditorExtensions — known limits', () => {
+  it('drops the attributes of thead, tbody and tfoot themselves', () => {
+    const body = parse(
+      roundTrip('<table><thead bgcolor="#eeeeee" style="color: red;"><tr><th>H</th></tr></thead></table>'),
+    );
+    expect(attrs(body.querySelector('thead'))).toEqual({});
   });
 
   it('drops the wrapper of a <div> that holds other blocks', () => {

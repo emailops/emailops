@@ -258,7 +258,7 @@ pub async fn start_memory_backfill(
             emit_log(&app, "info", &format!("Memory backfill started for {account_id}"));
             let mut total_processed: u32 = 0;
             loop {
-                if cancel.load(Ordering::SeqCst) {
+                if cancel.load(Ordering::SeqCst) || services::task_queue::cancel_requested() {
                     emit_log(&app, "info", "Memory backfill cancelled");
                     break;
                 }
@@ -275,7 +275,9 @@ pub async fn start_memory_backfill(
                 }
                 match services::memory::extractor::extract_batch(&db, &app, &account_id, &mem_cfg, Some(&cancel)).await
                 {
-                    Ok(0) => {
+                    // A batch stopped from the queue is not a finished backfill:
+                    // fall through to the cancel check at the top of the loop.
+                    Ok(0) if !services::task_queue::cancel_requested() => {
                         emit_log(
                             &app,
                             "success",
@@ -367,7 +369,7 @@ pub async fn start_task_backfill(
             );
             let mut total_processed: u32 = 0;
             loop {
-                if cancel.load(Ordering::SeqCst) {
+                if cancel.load(Ordering::SeqCst) || services::task_queue::cancel_requested() {
                     emit_source_log(&app, "info", "tasks", "Task backfill cancelled");
                     break;
                 }
@@ -388,7 +390,9 @@ pub async fn start_task_backfill(
                     break;
                 }
                 match services::tasks::extractor::extract_batch(&db, &app, &account_id, &cfg, Some(&cancel)).await {
-                    Ok(0) => {
+                    // A batch stopped from the queue is not a finished backfill:
+                    // fall through to the cancel check at the top of the loop.
+                    Ok(0) if !services::task_queue::cancel_requested() => {
                         emit_source_log(
                             &app,
                             "success",

@@ -102,7 +102,9 @@ fn build_body_object(body: &EmailBody) -> Value {
     }
 }
 
-fn build_attachment_json(att: &EmailAttachment, force_inline: bool) -> Value {
+/// One `fileAttachment`, as it sits in a message's `attachments` array and as
+/// `POST /me/messages/{id}/attachments` takes it on its own.
+pub(crate) fn build_attachment_json(att: &EmailAttachment, force_inline: bool) -> Value {
     // Graph expects standard base64 (not URL-safe). Re-encode defensively in
     // case the frontend handed us URL-safe data.
     let clean: String = att.data.chars().filter(|c| !c.is_ascii_whitespace()).collect();

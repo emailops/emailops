@@ -33,7 +33,6 @@ const baseConfig: AiConfigState = {
   provider: 'openrouter',
   model: 'vendor/model',
   embeddingModel: '',
-  embeddingModelValidated: false,
   monthlyBudgetUsd: 0,
   hasApiKey: true,
   thinkingEnabled: false,

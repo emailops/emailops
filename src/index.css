@@ -94,6 +94,18 @@ body {
   outline-offset: -1px;
   min-width: 1.5rem;
 }
+/* Header cells and the caption, which Preflight leaves looking like any
+ * other text. The caption is shown read-only: it is an attribute of the
+ * table, not editable content. */
+.ProseMirror th {
+  font-weight: 600;
+  background-color: #f3f4f6;
+}
+.ProseMirror caption {
+  padding: 0.25rem 0;
+  color: #4b5563;
+  font-style: italic;
+}
 .ProseMirror .selectedCell {
   background-color: #e0f2fe;
 }

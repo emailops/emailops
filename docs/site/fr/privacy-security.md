@@ -146,6 +146,12 @@ L'e-mail est une surface d'attaque. Les défenses côté client :
 - **Rendu assaini** — le HTML des messages est débarrassé des scripts, gestionnaires
   d'événements et objets embarqués avant affichage, des deux côtés de l'application. Les
   pièces jointes ne sont jamais ouvertes à votre place. <!-- claim:priv-protection-from-5 -->
+- **Protection des pièces jointes** — chaque pièce jointe qu'EmailOps enregistre sur le disque
+  est marquée comme reçue de l'extérieur (la quarantaine sous macOS, le Mark-of-the-Web sous
+  Windows), de sorte que les contrôles du système s'appliquent à sa première ouverture. Ouvrir
+  une pièce jointe capable d'exécuter du code — un programme, un script, un programme
+  d'installation, un raccourci ou une page web locale — demande d'abord votre confirmation, en
+  nommant le fichier. <!-- claim:priv-protection-from-6 -->
 
 ## Verrouiller l'application {#locking-the-app}
 

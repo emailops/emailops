@@ -107,5 +107,20 @@
   "download": {
     "savedTo": "« {{filename}} » enregistré dans Téléchargements",
     "showInFinder": "Afficher dans le Finder"
+  },
+  "openConfirm": {
+    "title": "Ouvrir cette pièce jointe ?",
+    "fromEmail": "« {{filename}} » est arrivé en pièce jointe d’un e-mail.",
+    "kinds": {
+      "program": "C’est un programme : l’ouvrir l’exécute sur cet ordinateur.",
+      "script": "C’est un script : l’ouvrir peut exécuter des commandes sur cet ordinateur.",
+      "installer": "C’est un programme d’installation ou une image disque : l’ouvrir peut installer des logiciels.",
+      "shortcut": "C’est un raccourci : l’ouvrir peut lancer un autre fichier, une autre application ou une adresse.",
+      "web_page": "C’est une page web : elle s’ouvre dans votre navigateur, hors des protections qu’EmailOps applique au contenu des e-mails.",
+      "other": "C’est un type de fichier qui peut exécuter du code à l’ouverture."
+    },
+    "advice": "Ne l’ouvrez que si vous faites confiance à l’expéditeur et attendiez ce fichier.",
+    "open": "Ouvrir quand même",
+    "failed": "Impossible d’ouvrir « {{filename}} » : {{error}}"
   }
 }

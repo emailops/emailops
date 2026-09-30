@@ -7,6 +7,9 @@
 //! state of the account's recent stored messages
 //! ([`EmailProvider::fetch_message_states`]) and applies the difference.
 //!
+//! A provider that keeps a change log (Gmail) is not polled this way: the pass
+//! hands it to [`super::history_refresh`], under the same throttle.
+//!
 //! **Conflict rule:** a row with a read-state change still owed to the provider
 //! (`read_push_pending_since`) is left alone — the pending local change wins.
 //! For every other row the server wins.
@@ -26,20 +29,21 @@ use crate::models::Account;
 use crate::sync::provider::{EmailProvider, RemoteMessageState};
 
 use super::emit_account_log;
+use super::history_refresh::HistoryRefresh;
 use super::optimistic::LOCAL_SENT_ID_PREFIX;
 
 /// How far back the refresh looks. State changes made elsewhere are
 /// overwhelmingly about recent mail, and the pass has to stay cheap enough to
 /// run on every few syncs.
-const REFRESH_WINDOW_SECS: i64 = 30 * 86_400;
+pub(super) const REFRESH_WINDOW_SECS: i64 = 30 * 86_400;
 
 /// Most rows one pass checks. IMAP answers this in one `UID FETCH` per folder;
 /// Graph in one `$batch` per twenty ids, i.e. at most ten requests.
-const MAX_REFRESH_ROWS: usize = 200;
+pub(super) const MAX_REFRESH_ROWS: usize = 200;
 
 /// Minimum gap between two passes on one account. Gmail-style minute polling
 /// would otherwise repeat the whole check sixty times an hour.
-const REFRESH_INTERVAL_SECS: i64 = 2 * 60;
+pub(super) const REFRESH_INTERVAL_SECS: i64 = 2 * 60;
 
 /// Most vanished messages one pass looks for. Finding where a message went is
 /// one provider lookup each — on IMAP a connection and a header search in up to
@@ -47,7 +51,7 @@ const REFRESH_INTERVAL_SECS: i64 = 2 * 60;
 /// over a few passes instead of stalling one sync.
 const MAX_VANISHED_PER_PASS: usize = 25;
 
-fn last_refresh_key(account_id: &str) -> String {
+pub(crate) fn last_refresh_key(account_id: &str) -> String {
     format!("mailbox_state_refresh_last:{account_id}")
 }
 
@@ -110,6 +114,17 @@ pub(super) async fn refresh_stored_mail_state(
         return;
     }
 
+    // A provider with a change log (Gmail) is followed through it instead of
+    // being polled.
+    match super::history_refresh::refresh_from_history(db, account, email_provider, now).await {
+        HistoryRefresh::Unsupported => {}
+        HistoryRefresh::Answered => {
+            stamp_refresh(db, account, &last_key, now);
+            return;
+        }
+        HistoryRefresh::Failed => return,
+    }
+
     let mut stored = match db.state_refresh_candidates(&account.id, now - REFRESH_WINDOW_SECS, MAX_REFRESH_ROWS) {
         Ok(rows) => rows,
         Err(e) => {
@@ -137,14 +152,7 @@ pub(super) async fn refresh_stored_mail_state(
             return;
         }
     };
-    // Stamped once the provider has answered, so a failed pass is retried on
-    // the next sync rather than a whole interval later.
-    if let Err(e) = db.set_preference(&last_key, &now.to_string()) {
-        warn(
-            account,
-            &format!("Could not record when stored mail was last refreshed: {e}"),
-        );
-    }
+    stamp_refresh(db, account, &last_key, now);
 
     let mut read_changes: u32 = 0;
     let mut moved: u32 = 0;
@@ -184,7 +192,19 @@ pub(super) async fn refresh_stored_mail_state(
     }
 }
 
-fn warn(account: &Account, message: &str) {
+/// Record that the provider answered a refresh at `now`. Stamped only then, so
+/// a failed pass is retried on the next sync rather than a whole interval
+/// later.
+fn stamp_refresh(db: &Database, account: &Account, last_key: &str, now: i64) {
+    if let Err(e) = db.set_preference(last_key, &now.to_string()) {
+        warn(
+            account,
+            &format!("Could not record when stored mail was last refreshed: {e}"),
+        );
+    }
+}
+
+pub(super) fn warn(account: &Account, message: &str) {
     emit_account_log("warn", "sync", &account.email, message);
 }
 

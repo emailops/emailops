@@ -142,6 +142,11 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
 - **Renderizado saneado** — al HTML de los mensajes se le quitan scripts, manejadores de
   eventos y objetos incrustados antes de mostrarlo, en ambos lados de la app. Los adjuntos
   nunca se abren por su cuenta. <!-- claim:priv-protection-from-5 -->
+- **Protección de adjuntos** — cada adjunto que EmailOps guarda en disco queda marcado como
+  recibido del exterior (la marca de cuarentena en macOS, la Mark-of-the-Web en Windows), de
+  modo que las comprobaciones del propio sistema se aplican la primera vez que se abre. Abrir
+  un adjunto que puede ejecutar código — un programa, un script, un instalador, un acceso
+  directo o una página web local — pide antes tu confirmación, indicando el archivo. <!-- claim:priv-protection-from-6 -->
 
 ## Bloquear la app {#locking-the-app}
 

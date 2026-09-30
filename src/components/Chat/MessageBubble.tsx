@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
+import { errorText, isAppErrorPayload } from '@/lib/errors';
 import { formatDuration, remainingSeconds } from '@/lib/researchTime';
 import { budgetAffectsAnswer } from '@/lib/traceFlow';
 import { useChatStore } from '@/stores/chatStore';
@@ -325,28 +327,30 @@ export function MessageBubble({
   const { t } = useTranslation(['chat']);
   const isUser = message.role === 'user';
   const addLog = useLogStore((s) => s.addLog);
+  const { openAttachment, confirmDialog } = useOpenAttachment();
   const referencedEmailIds = isUser ? [] : collectReferencedEmailIds(message);
 
   const handleOpenAttachment = async (ns: 'meta' | 'attach', id: string) => {
+    const openIn = (namespace: 'meta' | 'attach', confirmed: boolean) =>
+      namespace === 'meta'
+        ? api.openEmailAttachmentMeta(accountId, id, confirmed)
+        : api.openAttachmentExternally(accountId, id, confirmed);
     try {
-      if (ns === 'meta') {
-        await api.openEmailAttachmentMeta(accountId, id);
-      } else {
-        await api.openAttachmentExternally(accountId, id);
-      }
-    } catch (err) {
-      // Try the other namespace as a fallback — the tool's preference for
-      // `meta` over `attach` can miss when the meta row was never materialized
-      // for a rule-matched download, and vice versa.
-      try {
-        if (ns === 'meta') {
-          await api.openAttachmentExternally(accountId, id);
-        } else {
-          await api.openEmailAttachmentMeta(accountId, id);
+      await openAttachment(async (confirmed) => {
+        try {
+          await openIn(ns, confirmed);
+        } catch (err) {
+          // The file exists and needs the user's confirmation: ask, do not
+          // look for it elsewhere.
+          if (isAppErrorPayload(err) && err.code === 'attachment_confirmation_required') throw err;
+          // Try the other namespace as a fallback — the tool's preference for
+          // `meta` over `attach` can miss when the meta row was never
+          // materialized for a rule-matched download, and vice versa.
+          await openIn(ns === 'meta' ? 'attach' : 'meta', confirmed);
         }
-      } catch (err2) {
-        addLog('error', 'chat', `Failed to open attachment: ${err2 ?? err}`);
-      }
+      });
+    } catch (err) {
+      addLog('error', 'chat', `Failed to open attachment: ${errorText(err)}`);
     }
   };
 
@@ -365,6 +369,7 @@ export function MessageBubble({
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} my-2`}>
+      {confirmDialog}
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed break-words ${
           isUser ? 'bg-primary-600 text-white whitespace-pre-wrap' : 'bg-gray-100 text-gray-900 border border-gray-200'

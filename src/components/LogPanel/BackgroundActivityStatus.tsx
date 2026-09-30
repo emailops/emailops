@@ -1,7 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Activity } from '@/lib/backgroundActivity';
+import { type Activity, embeddingRunEnded } from '@/lib/backgroundActivity';
 import { useActivityStore } from '@/stores/activityStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useLensStore } from '@/stores/lensStore';
@@ -43,7 +43,7 @@ function useActivityFeed() {
         );
       }),
       listen<EmbeddingProgressEvent>('embedding-progress', ({ payload }) => {
-        const done = payload.status === 'complete' || payload.status === 'error';
+        const done = embeddingRunEnded(payload.status);
         setProgress('embeddings', null, done ? null : { current: payload.current, total: payload.total });
       }),
       listen<ModelDownloadProgressEvent>('model-download-progress', ({ payload }) => {

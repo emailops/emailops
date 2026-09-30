@@ -129,7 +129,22 @@ export function htmlToPlainText(html: string): string {
       flush();
       return;
     }
-    const blockTags = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'hr']);
+    const blockTags = new Set([
+      'p',
+      'div',
+      'li',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'h6',
+      'blockquote',
+      'pre',
+      'hr',
+      'center',
+      'caption',
+    ]);
     const isBlock = blockTags.has(tag);
     if (isBlock && current.length > 0) flush();
     for (const child of Array.from(el.childNodes)) walk(child);

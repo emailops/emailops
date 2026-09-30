@@ -332,12 +332,45 @@ export interface AiConfig {
   provider: 'ollama' | 'openrouter' | 'llamacpp';
   model: string;
   embeddingModel: string;
-  embeddingModelValidated: boolean;
+  /** The OpenRouter embedding model that passed the dimension check, if any. */
+  openRouterValidatedEmbeddingModel: string | null;
+  /** The models to offer when switching to each provider: the ones it was
+   *  last saved with (for the saved provider, the ones in use). Null when
+   *  nothing usable is known; an empty embedding model is OpenRouter's "none". */
+  remembered: Record<AiConfig['provider'], { model: string | null; embeddingModel: string | null }>;
   monthlyBudgetUsd: number;
   periodStart: number;
   hasApiKey: boolean;
   thinkingEnabled: boolean;
   zeroDataRetention: boolean;
+}
+
+/** A kind of AI background work that uses the configured provider
+ *  (`services::ai_activity::AiWorkKind`, minus the kinds that do not). */
+export type AiWorkKind =
+  | 'embeddingsRebuild'
+  | 'embeddingsGeneration'
+  | 'classification'
+  | 'memoryExtraction'
+  | 'taskExtraction'
+  | 'lensExtraction';
+
+/** One running or queued task that uses the AI provider. */
+export interface AiWorkItem {
+  kind: AiWorkKind;
+  /** False while the task waits in the queue. */
+  running: boolean;
+  /** Asked to stop and not finished yet. */
+  stopping: boolean;
+  /** Emails done out of the batch in hand, for the kinds that report it. */
+  progress: { current: number; total: number } | null;
+}
+
+/** What `get_ai_provider_activity` answers. */
+export interface AiProviderActivity {
+  /** The provider in use (the saved one). */
+  provider: string;
+  items: AiWorkItem[];
 }
 
 /** A model entry in the curated llama.cpp download catalog. */

@@ -9,11 +9,16 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 
 - Instance started by `$V launch`: Vite/Tauri on port 1421, WebDriver on 4445, data dir
   `.emailops-demo-data`, synthetic persona `ulises@emailopslabs.dev` (`demo-acct-work`,
-  selected by default) and `ulises@fastmail.com` (`demo-acct-personal`), both IMAP, 79 emails,
+  selected by default) and `ulises@fastmail.com` (`demo-acct-personal`), both IMAP, about 100 emails,
   embeddings present, AI on (embedded llama.cpp, `qwen3.5-4b-q4_k_m`). A third,
   credential-less Gmail account `ulises.emailopslabs@gmail.com` (`demo-acct-calendar`) owns
   the demo calendar `demo-cal-work` (six events around today; tomorrow 10:00 is "Sprint 6
   planning — Faro Logistics") because calendar features are only offered to Gmail/Outlook.
+- The instance holds no remote-provider key: `launch` starts it with `OPENROUTER_API_KEY` set and empty, so the
+  developer's key in `.env.local` is not loaded and nothing in the UI can reach OpenRouter.
+- Verification fixtures (`insert_verification_fixtures` in `scripts/generate_demo_db.py`): a trashed quote and its
+  correction (Larkspur Freight, with a shortcut and a web-page attachment), a renewal notice and a junk-marked
+  lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly), a draft with a table.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's
   own app on port 1420 usually holds the production mailbox).
 - The red "Authentication required for account …" banners are expected on all three accounts.
@@ -42,7 +47,9 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 ## Feature entry contract
 
 Each file has an H1, one paragraph of user-visible behaviour, then exactly four H2s:
-`Sub-features`, `How to get to it (user POV)`, `Driving it with verify.sh`, `Gotchas`.
+`Sub-features`, `How to get to it (user POV)`, `Driving it with verify.sh`, `Gotchas`, and ends
+with a "test kind per case" table. A layer a feature does not have is a row of that table
+that says `n/a` and why.
 
 ## Features
 
@@ -51,3 +58,12 @@ Each file has an H1, one paragraph of user-visible behaviour, then exactly four 
 - [Chat with the inbox](./chat.md) — panel, ask, sources, new chat. Selectors confirmed present, not yet driven.
 - [Tag Board](./tag-board.md) — blocks per classified tag, range filter, tag search. Entry button confirmed, not yet driven.
 - [Compose](./compose.md) — new email, fields, discard, send-without-credentials path. Entry button confirmed, not yet driven.
+- [AI providers and models](./ai-providers.md) — backend tabs, OpenRouter fields, Logs status bar. **Driven live 30/09/2026.**
+- [Accounts and sync](./accounts-sync.md) — account switching; sync itself is proven against the fake provider.
+- [Junk mail](./junk.md) — chip, feedback, exclusion from views and retrieval. **Chip driven live 30/09/2026.**
+- [Lenses, tasks and attachments](./lenses-tasks-attachments.md) — views, dangerous-type confirmation, sandboxed preview. **Attachments driven live 30/09/2026.**
+- [Calendar](./calendar.md) — view, invite card.
+- [Contacts and Dashboard](./contacts-dashboard.md) — the two views.
+- [Settings, language and updates](./settings.md) — dialog, tabs, Escape.
+- [CLI and agents](./cli.md) — envelope, read-only open, exit codes (no window).
+- [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.

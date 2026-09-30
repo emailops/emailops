@@ -18,8 +18,10 @@ use super::emit_log;
 use super::extractor::{self, ExtractionStatus};
 use super::scope;
 
+/// Stopped by the user from the Lens itself (`flag`), or from the queue
+/// because the AI provider is about to change.
 fn is_cancelled(flag: Option<&Arc<AtomicBool>>) -> bool {
-    flag.is_some_and(|f| f.load(Ordering::Relaxed))
+    flag.is_some_and(|f| f.load(Ordering::Relaxed)) || crate::services::task_queue::cancel_requested()
 }
 
 /// Run a backfill: extract every scope-matching email that isn't already
@@ -260,6 +262,14 @@ pub async fn on_emails_synced(
         };
 
         for email_id in email_ids {
+            if is_cancelled(None) {
+                emit_log(
+                    app,
+                    "info",
+                    "Lens incremental extraction stopped by the user".to_string(),
+                );
+                return Ok(total);
+            }
             let matches = match scope::email_matches(&db, &lens.scope, email_id) {
                 Ok(m) => m,
                 Err(e) => {
@@ -642,6 +652,57 @@ mod tests {
         assert_eq!(runs[0].status, "complete");
         assert_eq!(runs[0].succeeded, 1);
         assert_eq!(runs[0].failed, 0);
+    }
+
+    /// A run stopped from the queue (the provider is about to change) ends
+    /// like one the user cancelled: no model call, and a `cancelled` run row
+    /// instead of one left `running`.
+    #[tokio::test]
+    async fn a_run_stopped_from_the_queue_ends_cancelled_without_calling_the_model() {
+        use crate::services::task_queue::run_cancelled;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let acct = "acct1";
+        insert_account(&db, acct, "owner@example.com");
+        let email_id = "19e3f60ef87746cc";
+        insert_invoice_email(
+            &db,
+            email_id,
+            acct,
+            "Example Supplies",
+            "billing@example.com",
+            "Tu factura de marzo",
+            "Hola, adjuntamos tu factura número INV-2026-0142 por un importe de 145,00 EUR.",
+            "inbox",
+            "Primary",
+            now_secs() - 86_400,
+        );
+        let lens = db.create_lens(&invoices_lens_input(acct)).expect("create lens");
+        let provider = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Example Supplies",
+                "amount": { "amount": 145.0, "currency": "EUR" },
+                "invoice_number": "INV-2026-0142",
+                "status": "unpaid",
+            }),
+        });
+
+        run_cancelled(backfill_lens(db.clone(), provider.clone(), lens.id.clone(), None, None))
+            .await
+            .expect("backfill");
+        let synced = run_cancelled(on_emails_synced(
+            db.clone(),
+            provider.clone(),
+            &[email_id.to_string()],
+            None,
+        ))
+        .await
+        .expect("incremental");
+
+        assert_eq!(synced, 0);
+        assert!(db.get_lens_rows(&lens.id, None, 50, 0).expect("rows").rows.is_empty());
+        let runs = db.list_lens_runs(&lens.id, 5).expect("list runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "cancelled");
     }
 
     /// The sync hook must select exactly what `scope::evaluate` selects. When

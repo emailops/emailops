@@ -2389,3 +2389,230 @@ the other rules in one line each. Checked on the embedded runtime only, with
 against 36 of 41 with 39 prompts truncated before; three of the five failures also fail at
 the default window, and which other cases fail moved between runs of near-identical
 prompts. Ollama and OpenRouter were not run.
+
+## 2026-09-30 — AI models are remembered per provider; a save never keeps an unusable embedding model
+
+**Decision:** Supersedes the "Remembering a last-used model per provider" rejection in the
+entry above on onboarding and provider switches.
+- **Remembered per provider:** `ai_model` / `ai_embedding_model` stay the models in use,
+  and every save also records them under `ai_model:<provider>` /
+  `ai_embedding_model:<provider>` (preferences only, no migration). Leaving a provider
+  records the models it was using at that moment. `get_ai_config` returns the remembered
+  models for every provider, and Settings and onboarding offer them on a provider switch
+  before falling back to the defaults. Existing installs are seeded from what they already
+  store: the saved provider's models, and `openrouter_embedding_validated_model` as
+  OpenRouter's embedding model. A remembered OpenRouter model that is still the validated
+  one is not probed again.
+- **Save never keeps an embedding model the provider cannot use:** `save_config` decides
+  with a pure planner (`plan_embedding_model`). OpenRouter takes a `vendor/model` id or
+  none; the in-app runtime takes a catalogue embedding model; Ollama refuses a catalogue
+  GGUF id and the model remembered for OpenRouter. Anything else is replaced by the model
+  remembered for that provider, else by the provider default, and the correction is logged.
+- **Quick switcher does not cross an Embeddings boundary:** the log panel's backend
+  selector only performs a switch when the target provider is remembered with the very
+  embedding model in use. Every other switch is disabled there with a hint to do it in AI
+  Settings, the only place that asks before the email index is replaced.
+**Context:** After saving OpenRouter with an embedding model, switching to the in-app
+provider and coming back showed no embedding model; and the quick switcher, which named no
+embedding model, left the in-app provider saved with OpenRouter's, so local Embeddings
+could not run. Onboarding with Ollama likewise saved the in-app GGUF id for Ollama.
+**Rejected:**
+- *Refusing every `vendor/model` id under Ollama*: Ollama has namespaced models of its
+  own, so a slash alone does not make an id OpenRouter's.
+- *Letting the quick switcher switch and re-index*: it has no room for the warning, and a
+  re-index sends every indexed email to OpenRouter when that is the target.
+- *A migration to per-provider columns*: preferences hold it, and the seeding covers
+  existing installs.
+**Limit:** the in-app runtime and Ollama name the same nomic model differently, so the
+quick switcher no longer switches between them either unless the ids happen to match; in
+practice every backend change now goes through AI Settings.
+
+## 2026-09-30 — Changing the AI provider or a model asks about background AI work first
+
+**Decision:** Before a change to the AI provider, the chat model or the embedding model is
+saved — in Settings → AI and in the log panel's quick selector — the app reads the AI
+background queue. If work the change cuts across is running or queued, one dialog lists it
+and offers **Stop and apply**, **Wait and apply** or **Cancel**; with nothing affected there
+is no dialog. The re-index confirmation stays a separate, later step.
+- **What counts:** tasks on the AI background queue that call the provider, by the kind
+  their name maps to (`services::ai_activity::work_kind`): Embeddings rebuild and
+  generation, classification, memory extraction, task extraction, Lens extraction. A chat
+  model change cuts across the kinds that write with it, an embedding model change across
+  the ones that embed, a provider change across all. Junk scoring (no model) and unknown
+  tasks are never listed or stopped. Chat turns, drafts, translations and searches run on
+  the interactive queue or inline, finish with the provider they started with and have their
+  own controls: they do not block the change.
+- **Stopping is cooperative:** `TaskQueue::cancel_matching` raises a per-task flag that the
+  loops read between emails (`task_queue::cancel_requested`). The task leaves through its
+  normal exit, so its terminal events and clean-up run; Embeddings emit
+  `embedding-progress` with status `cancelled`. A queued task is not dropped either: it
+  starts already cancelled and exits at its first check — a rebuild before deleting the
+  index.
+- **Waiting is polled:** while stopping or waiting the dialog re-reads the queue every
+  second and applies the change when nothing affected is left, so work a sync queues
+  meanwhile is waited for (or stopped) too.
+**Context:** An embedding run loaded its provider once per batch of up to 500 emails. After
+switching away from OpenRouter, the batch in hand kept sending email text there, billed;
+the rest of the task continued with the new provider and the rebuild the save queued redid
+everything. Nothing told the user.
+**Rejected:**
+- *Aborting the task's future at the queue*: simpler, but a dropped future skips what the
+  task does on its way out — the Lens run registry, the memory and task backfill "running"
+  flags, `lens_runs` rows left `running`, progress indicators waiting for a terminal event.
+  The same holds for dropping queued futures unpolled.
+- *Reloading the provider for every email*: fixes which provider is used, not that the
+  user is never asked, and the rebuild queued by the save would still redo the work.
+- *One dialog for the work in progress and the re-index*: they are two decisions; the
+  second only exists when the embedding model changes.
+- *A drain event from the queue*: a poll of the same snapshot is robust to tasks queued
+  between the event and the save, and needs no new event.
+**Limit:** a task stops at its next email, so the request in flight when the user stops
+completes (one email, at most six chunk requests for Embeddings). A single-row Lens
+re-extract has no loop and finishes its one call. A task queued in the instant between
+the last poll and the save starts with the old settings for one batch.
+
+## 2026-09-30 — The AI backend is changed only in Settings
+
+**Decision:** The status bar of the Logs panel no longer has a backend selector. It names
+the backend in use and keeps the chat-model selector of that backend; the backend is
+changed in Settings → AI only.
+**Context:** A backend change can replace the Embeddings, needs a provider-valid chat and
+embedding model and may cut across running AI work. Settings asks about all three; the
+quick selector had to be disabled for nearly every switch to stay safe, and it was the
+path that left an OpenRouter embedding model under the in-app provider.
+**Rejected:** *Keeping the selector with most options disabled* — a control that almost
+never works is worse than none.
+
+## 2026-09-30 — Attachments are quarantined one by one; dangerous types need confirmation
+
+**Decision:** Every attachment file the app writes (rule collection, auto-download, save to
+Downloads, bulk download) is marked as received from outside — `com.apple.quarantine` on
+macOS (`0081;<hex time>;EmailOps;<uuid>`), the `Zone.Identifier` stream on Windows, nothing on
+Linux — and "open in the default app" marks the file again before the hand-off, which also
+covers files stored before this. Types whose default action runs code or opens another
+location (one extension table in `services/attachment_safety.rs`, plus the declared MIME type)
+are opened only after a dialog that names the file, its kind and that it came by email; the
+backend enforces it with a `confirmed` argument and refuses with
+`attachment_confirmation_required` otherwise.
+- **When the mark cannot be written:** a save still succeeds and the failure is logged; an
+  open is refused with the error, for every type — the OS would launch the file unchecked.
+- **Reveal:** "Show in Finder" selects, never opens. A directory with a launchable name (an
+  app bundle) is selected in its folder instead of opened.
+**Context:** A security review found attachments stored under the sender's extension and
+handed to `open::that` with no quarantine attribute and no type check, so a `.terminal`,
+`.fileloc`, `.jar`, `.command` or local `.html` launched without the first-open prompt
+Mail.app would show.
+**Rejected:**
+- *`LSFileQuarantineEnabled` for the whole app*: it quarantines every file the app creates —
+  the database, models, exports, skills — not only what a sender controls.
+- *Refusing dangerous types outright*: people do receive installers and scripts they asked
+  for; the OS check plus an explicit confirmation is the Mail.app behaviour.
+- *Classifying in the frontend*: a second copy of the list, and a direct IPC call would
+  bypass it.
+- *Treating documents with a risky reader (PDF, Office macros, archives) as dangerous*: they
+  do not act on open by themselves; the quarantine mark lets their own apps apply Protected
+  View and similar.
+
+## 2026-09-30 — Gmail stored-mail state follows the History API
+
+**Decision:** Gmail's stored mail is refreshed from `users.history.list` instead of being
+polled: a per-account cursor in preferences (`mailbox_history_cursor:<account>`), read
+under the same 2-minute throttle as the IMAP/Outlook refresh, at most 5 pages of 100 records
+per pass, asking only for `labelAdded`, `labelRemoved` and `messageDeleted`. No new OAuth
+scope: `gmail.modify` covers it.
+- **Cursor:** seeded from `users.getProfile` on the first run (nothing is replayed); moved
+  only past pages that were fully applied and written once per pass; cleared with the
+  account.
+- **What a change means locally:** the label deltas are folded onto the stored row and the
+  result goes through the mapping the sync already stores mail with
+  (`sync::gmail::mailbox_from_labels`). `UNREAD` is the read state; `TRASH` files the row
+  under `trash` and removing it puts it back; a permanent delete soft-deletes the row.
+  **Archiving is not a move**: the app has no archive mailbox and the sync already stores
+  mail without `INBOX` under `inbox`, so archiving and user labels change nothing here.
+  Spam is left to the Spam pass.
+- **Conflict rule:** unchanged — a row with a pending local push is never touched, checked
+  in the planner and again in each `UPDATE`. Because the log reports a change once, a page
+  that had to skip such a row is not counted as applied and is replayed after the push.
+- **Expired cursor (404):** the recent stored rows (the 30 days / 200 rows of the poll) are
+  checked against their current labels in `format=minimal` batches, and the cursor is
+  reseeded — from a position read before the check — only once every row was checked.
+**Context:** Gmail answered `None` to the state poll, so read/unread, trash and permanent
+deletes done in Gmail's web or mobile clients never reached stored mail; only Spam was
+reconciled. The developer chose the History API over polling.
+**Rejected:**
+- *Polling `format=minimal` for the recent ids every pass* (what IMAP/Outlook do): 200 gets
+  every two minutes against a quota-metered API, to learn that nothing changed.
+- *Soft-deleting a message trashed in Gmail*, like the app's own delete: it could never
+  come back when the user restores it in Gmail, and mail trashed there before it was ever
+  synced already shows under Trash.
+- *Looking each changed message up (`messages.get`) instead of folding the deltas*: exact,
+  but one request per change turns a bulk clean-up into hundreds of requests, and a lookup
+  cap would leave pages half applied.
+- *An archive mailbox*: a product change (a new view and its sync pass), not part of
+  following state.
+
+## 2026-09-30 — The compose editor also keeps table sections, captions, column widths and sub/sup/small/center
+
+**Decision:** Follow-up to "The compose editor carries tables and verbatim inline styles",
+which listed these as a limit. A formatted draft now keeps them through load → edit →
+save, with no new dependency:
+- **`thead` / `tfoot`:** each row remembers the section it was written in (a row attribute,
+  not rendered on the `<tr>`) and the table's serializer regroups the rows into `thead`,
+  `tbody`, `tfoot`, in that order. A table without body rows gets no empty `tbody`.
+- **`caption`:** an attribute of the table holding its text and its `style` / `align`,
+  written back as `<caption>` and shown read-only above the rows in the editor.
+- **`colgroup` / `col`:** an attribute of the table holding each column's `span`, `width`
+  and `style`, written back as one `<colgroup>` — and left out once it no longer adds up to
+  the table's columns.
+- **`sub`, `sup`, `small`:** three marks written with `Mark.create`.
+- **`center`:** a block node written back as `<center>`; text directly inside it becomes a
+  paragraph inside it.
+**Context:** ProseMirror's table model (`prosemirror-tables`, under Tiptap 3's table
+extension) requires a table's children to be rows, so sections, captions and column groups
+cannot be nodes of their own without replacing the table plugin.
+**Rejected:**
+- *`@tiptap/extension-subscript` / `-superscript`*: not installed; two five-line marks do
+  the same without a dependency.
+- *Turning `<center>` into a paragraph with `align="center"`*: it cannot hold a table, which
+  is what newsletters centre with it.
+- *Keeping the caption as HTML*: the editor would have to show markup it did not parse
+  through the schema.
+**Limit:** markup inside a caption is reduced to its text and the caption cannot be edited
+in the app; attributes on `thead` / `tbody` / `tfoot` themselves are dropped (those on rows
+and cells are kept); several `colgroup`s are merged into one. A `div` wrapping other blocks
+is still unwrapped, and style strings are still rewritten in normalised form.
+
+## 2026-09-30 — Outlook attachments past one request go through a draft and upload sessions
+
+**Decision:** Outlook keeps sending everything in one Graph request while every attachment
+is under 3 MB and they stay under 3 MB together. Past that — for new mail, replies
+(`createReply`), and draft create/update — the message is created as a draft without
+attachments, each attachment is added on its own (one `POST …/attachments` under 3 MB, an
+upload session from 3 MB to Graph's 150 MB maximum, in 2,949,120-byte ranges), and the
+draft is sent with `POST …/send`. A file over 150 MB is refused with `InvalidInput`,
+naming it, before any request. No new scope: `Mail.ReadWrite` + `Mail.Send` cover it.
+- **Ranges** are idempotent and are re-sent up to five times (retryable status, transport
+  error, or an answer that does not move the upload forward); the upload continues from the
+  `nextExpectedRanges` Graph reports. The final send keeps the no-retry-after-send policy.
+- **Clean-up:** when an attachment cannot be added, the upload session is cancelled and the
+  draft this client created is deleted. When the final send fails, the draft is **kept**:
+  the send may have gone through, and if it did not the draft still holds the uploaded
+  attachments; the error says so.
+- **Draft updates** replace the provider draft's attachments (list, delete, add), because
+  an upload session can only add.
+- **Memory:** attachments reach the provider as base64 text; ranges are decoded from that
+  text one at a time instead of decoding the whole file next to it.
+**Context:** Every attachment was inlined as base64 in one JSON request, with no size check,
+so an attachment over about 3 MB failed with Graph's request-too-large error. Graph documents
+"under 3 MB" for an inline attachment, 3–150 MB for an upload session (which it refuses for a
+smaller file), ranges under 4 MB, and a request limit of about 4 MB.
+**Rejected:**
+- *Always using the draft route*: three requests instead of one for the common small
+  attachment, and a changed payload for a path that works.
+- *Sending the file's MIME through `sendMail`*: still one request under the same limit.
+- *Deleting the draft after a failed send*: a 5xx does not say whether the message left.
+- *Skipping attachments that look unchanged on a draft update* (same name): a replaced file
+  of the same name would stay stale in the provider's copy, and Graph does not report the
+  content size to compare with.
+**Limit:** a draft with large attachments is uploaded again on every push of that draft; the
+base64 text itself is still built in memory by the compose layer.

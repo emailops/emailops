@@ -40,6 +40,12 @@ vi.mock('@/lib/api', () => ({
       provider: 'llamacpp',
       model: 'qwen3.5-4b',
       embeddingModel: 'nomic-embed-text',
+      remembered: {
+        llamacpp: { model: 'qwen3.5-4b', embeddingModel: 'nomic-embed-text' },
+        ollama: { model: null, embeddingModel: null },
+        openrouter: { model: null, embeddingModel: null },
+      },
+      openRouterValidatedEmbeddingModel: null,
       monthlyBudgetUsd: 0,
       hasApiKey: false,
       thinkingEnabled: false,

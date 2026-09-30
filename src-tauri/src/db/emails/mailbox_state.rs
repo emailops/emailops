@@ -65,6 +65,70 @@ impl Database {
         Ok(rows)
     }
 
+    /// The account's stored rows among `ids` that a change reported by the
+    /// provider may be applied to — the same exclusions as
+    /// [`Self::state_refresh_candidates`], without its window: soft-deleted
+    /// rows, optimistic Sent rows and Spam are left out.
+    pub fn stored_states_for_ids(&self, account_id: &str, ids: &[String]) -> Result<Vec<StoredMessageState>> {
+        let conn = self.reader();
+        let mut rows = Vec::new();
+        // SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; chunk to stay safe.
+        for chunk in ids.chunks(900) {
+            let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{i}")).collect();
+            let sql = format!(
+                "SELECT id, message_id, mailbox, is_read, is_sent, read_push_pending_since IS NOT NULL
+                 FROM emails
+                 WHERE account_id = ?1 AND is_deleted = 0 AND pending_sync = 0 AND mailbox != 'spam'
+                   AND id IN ({})",
+                placeholders.join(",")
+            );
+            let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() + 1);
+            bound.push(&account_id);
+            for id in chunk {
+                bound.push(id);
+            }
+            let mut stmt = conn.prepare(&sql)?;
+            let found = stmt
+                .query_map(bound.as_slice(), |row| {
+                    Ok(StoredMessageState {
+                        id: row.get(0)?,
+                        message_id: row.get(1)?,
+                        mailbox: row.get(2)?,
+                        is_read: row.get::<_, i32>(3)? != 0,
+                        is_sent: row.get::<_, i32>(4)? != 0,
+                        read_push_pending: row.get(5)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows.extend(found);
+        }
+        Ok(rows)
+    }
+
+    /// File a row under the mailbox the provider has it in. Refuses —
+    /// returning `false` — for a row with a pending local change, a
+    /// soft-deleted row and a row in Spam (the spam reconciliation owns those).
+    pub fn apply_server_mailbox(&self, email_id: &str, mailbox: &str) -> Result<bool> {
+        let changed = self.connection().execute(
+            "UPDATE emails SET mailbox = ?2
+             WHERE id = ?1 AND mailbox != ?2 AND mailbox != 'spam' AND is_deleted = 0
+               AND read_push_pending_since IS NULL",
+            params![email_id, mailbox],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Soft-delete a row the provider deleted for good. Refuses — returning
+    /// `false` — for a row with a pending local change.
+    pub fn apply_server_delete(&self, email_id: &str) -> Result<bool> {
+        let changed = self.connection().execute(
+            "UPDATE emails SET is_deleted = 1
+             WHERE id = ?1 AND is_deleted = 0 AND read_push_pending_since IS NULL",
+            params![email_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Take the provider's read state for a row. Refuses — returning `false` —
     /// when a local change is still pending for it: the check is in the
     /// statement itself, so a change made while the refresh was talking to the
@@ -253,6 +317,106 @@ mod tests {
             ]
         );
         assert_eq!(db.state_refresh_candidates("acc-1", 100, 1).unwrap().len(), 1, "capped");
+    }
+
+    fn mailbox_of(db: &Database, id: &str) -> (String, bool) {
+        db.reader()
+            .query_row("SELECT mailbox, is_deleted FROM emails WHERE id = ?1", [id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)? != 0))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn stored_states_for_ids_returns_the_accounts_live_provider_backed_rows() {
+        let db = Database::new_for_testing().unwrap();
+        for (id, account) in [
+            ("kept", "acc-1"),
+            ("pending", "acc-1"),
+            ("deleted", "acc-1"),
+            ("spam", "acc-1"),
+            ("unsent", "acc-1"),
+            ("not-asked", "acc-1"),
+            ("other-account", "acc-2"),
+        ] {
+            insert_email(&db, id, account, "t-1", 1_000);
+        }
+        db.delete_email("deleted").unwrap();
+        db.connection()
+            .execute_batch(
+                "UPDATE emails SET mailbox = 'spam' WHERE id = 'spam';
+                 UPDATE emails SET pending_sync = 1 WHERE id = 'unsent';",
+            )
+            .unwrap();
+        db.mark_as_read_pending_push("pending", 500).unwrap();
+        let asked: Vec<String> = [
+            "kept",
+            "pending",
+            "deleted",
+            "spam",
+            "unsent",
+            "other-account",
+            "unknown",
+        ]
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+
+        let mut rows = db.stored_states_for_ids("acc-1", &asked).unwrap();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let ids: Vec<(&str, bool)> = rows.iter().map(|r| (r.id.as_str(), r.read_push_pending)).collect();
+        assert_eq!(ids, vec![("kept", false), ("pending", true)]);
+        assert!(db.stored_states_for_ids("acc-1", &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stored_states_for_ids_handles_more_ids_than_one_statement_binds() {
+        let db = Database::new_for_testing().unwrap();
+        let ids: Vec<String> = (0..1_000).map(|i| format!("m-{i:04}")).collect();
+        for id in &ids {
+            insert_email(&db, id, "acc-1", "t-1", 1_000);
+        }
+        assert_eq!(db.stored_states_for_ids("acc-1", &ids).unwrap().len(), 1_000);
+    }
+
+    #[test]
+    fn the_servers_mailbox_is_applied_once() {
+        let db = db_with(&["m-1"]);
+
+        assert!(db.apply_server_mailbox("m-1", "trash").unwrap());
+        assert_eq!(mailbox_of(&db, "m-1"), ("trash".to_string(), false));
+        assert!(!db.apply_server_mailbox("m-1", "trash").unwrap(), "already there");
+    }
+
+    #[test]
+    fn the_servers_mailbox_never_moves_a_pending_a_deleted_or_a_spam_row() {
+        let db = db_with(&["pending", "deleted", "spam"]);
+        db.mark_as_read_pending_push("pending", 500).unwrap();
+        db.delete_email("deleted").unwrap();
+        db.connection()
+            .execute("UPDATE emails SET mailbox = 'spam' WHERE id = 'spam'", [])
+            .unwrap();
+
+        for id in ["pending", "deleted", "spam"] {
+            assert!(!db.apply_server_mailbox(id, "trash").unwrap(), "{id}");
+        }
+        assert_eq!(mailbox_of(&db, "pending").0, "inbox");
+        assert_eq!(mailbox_of(&db, "deleted").0, "inbox");
+        assert_eq!(mailbox_of(&db, "spam").0, "spam");
+    }
+
+    #[test]
+    fn a_server_side_delete_hides_the_row_but_not_one_with_a_pending_change() {
+        let db = db_with(&["m-1", "pending"]);
+        db.mark_as_read_pending_push("pending", 500).unwrap();
+
+        assert!(db.apply_server_delete("m-1").unwrap());
+        assert!(!db.apply_server_delete("m-1").unwrap(), "already deleted");
+        assert!(!db.apply_server_delete("pending").unwrap());
+
+        assert!(mailbox_of(&db, "m-1").1);
+        assert!(!mailbox_of(&db, "pending").1);
     }
 
     /// The ALTER runs against mailboxes that already hold mail: every existing

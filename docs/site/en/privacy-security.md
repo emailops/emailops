@@ -138,6 +138,11 @@ Email is an attack surface. The client-side defences:
 - **Sanitised rendering** — message HTML is stripped of scripts, event handlers and embedded
   objects before it is displayed, on both sides of the app. Attachments are never opened on
   your behalf. <!-- claim:priv-protection-from-5 -->
+- **Attachment safeguards** — every attachment EmailOps saves to disk is marked as received
+  from outside (the quarantine flag on macOS, the Mark-of-the-Web on Windows), so the system's
+  own checks apply the first time it is opened. Opening an attachment that can run code — a
+  program, a script, an installer, a shortcut or a local web page — asks for your confirmation
+  first, naming the file. <!-- claim:priv-protection-from-6 -->
 
 ## Locking the app {#locking-the-app}
 

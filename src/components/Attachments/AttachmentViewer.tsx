@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
+import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useLogStore } from '@/stores/logStore';
 import type { Attachment } from '@/types';
 
 interface AttachmentViewerProps {
@@ -19,6 +21,8 @@ function formatFileSize(bytes: number): string {
 export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerProps) {
   const { t } = useTranslation(['attachments']);
   const fmt = useFormatters();
+  const addLog = useLogStore((s) => s.addLog);
+  const { openAttachment, confirmDialog } = useOpenAttachment();
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,9 +62,9 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
   const handleOpenExternally = async () => {
     if (!attachment) return;
     try {
-      await api.openAttachmentExternally(attachment.accountId, attachment.id);
+      await openAttachment((confirmed) => api.openAttachmentExternally(attachment.accountId, attachment.id, confirmed));
     } catch (err) {
-      console.error('Failed to open externally:', err);
+      addLog('error', 'system', `Failed to open ${attachment.filename}: ${errorText(err)}`);
     }
   };
 
@@ -94,6 +98,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
 
   return (
     <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      {confirmDialog}
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-200">
         <div className="flex items-center justify-between">

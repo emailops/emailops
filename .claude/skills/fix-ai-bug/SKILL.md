@@ -63,8 +63,7 @@ moment you need the data.
 not need the chat model loaded. Use `cli-run` whenever the path under
 investigation needs the local model.
 
-Direct `sqlite3` is also pre-authorised (`Bash(sqlite3:*)`); reach for it
-only when the CLI cannot answer the question (custom joins, schema
+Reach for direct `sqlite3` only when the CLI cannot answer the question (custom joins, schema
 inspection, `PRAGMA` probes) — see `src-tauri/CLAUDE.md` "Inspecting the
 database while debugging" for the canonical paths.
 
@@ -113,13 +112,12 @@ failing surface — see `src-tauri/CLAUDE.md` "AI replies must be verified by
 an eval" for the list.
 
 If the bug touches AI-reply content, **add a focused case** to the matching
-`examples/*_eval.rs` so the fix lands with a regression guard.
+eval's cases directory (`src-tauri/evals/<area>/`, synthetic; see Phase 5b for
+private-data cases) so the fix lands with a regression guard.
 
 ## Phase 3 — Run the repro
 
-Execute the chosen command **without asking the user first** — the `make
-cli-*`, `cargo run`, and `sqlite3` commands the skill uses are all
-pre-authorised. While it runs, the only on-screen update should be a
+Execute the chosen command. While it runs, the only on-screen update should be a
 one-line status (`Reproducing on cli-run chat …`). Do not paste the raw
 output.
 
@@ -269,8 +267,6 @@ failing-round output, or the system prompt? Ask and I'll paste."
 
 ## Common pitfalls (avoid)
 
-- **Pasting the whole `--json` blob into chat.** The user reads only the
-  chat-style summary; everything else lives in the persisted tool result.
 - **Running the full eval suite** for a parser bug. Use `--case <id>` or the
   smallest scoped flag.
 - **Mutating the local data dir** silently. `sync`/`classify`/`embed` are

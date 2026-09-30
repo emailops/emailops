@@ -33,6 +33,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -2050,6 +2051,7 @@ def insert_email(
     category: str,
     thread_id: str | None = None,
     recipient_email: str | None = None,
+    html_body: str | None = None,
 ) -> str:
     # Deliberately NOT keyed on `timestamp`: demo mail is anchored to "now", so
     # timestamps shift on every generation and would re-key everything. `body`
@@ -2063,7 +2065,7 @@ def insert_email(
     recipients_json = json.dumps([recipient_email or account.email])
     cc_json = "[]"
     now = now_s()
-    html_body = make_email_html(body, sender_name)
+    html_body = html_body or make_email_html(body, sender_name)
 
     conn.execute(
         """INSERT INTO emails
@@ -2831,7 +2833,143 @@ def insert_thread_states(conn: sqlite3.Connection, locale: Locale) -> int:
     return n
 
 
-def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
+# ──────────────────────────────────────────────────────────────────────────────
+# Verification fixtures
+#
+# Rows the UI sweep (`.claude/skills/verify-emailops/scripts/sweep.mjs`) and the
+# chat evals (`src-tauri/evals/chat/cases/retrieval_exclusions.yaml`) are
+# written against. Every address is on the reserved `.example` TLD. Keyed by
+# content like everything else, and skipped when already present, so both a
+# rebuild and `--append` leave one copy with the same ids.
+# ──────────────────────────────────────────────────────────────────────────────
+
+FIXTURE_TRASHED_SUBJECT = "Larkspur Freight renewal quote"
+FIXTURE_JUNK_SUBJECT = "Tessellate Hosting: payment failed, plan suspended"
+FIXTURE_REMOTE_IMAGE_SUBJECT = "Harborlight Weekly: shipping notes"
+FIXTURE_ATTACHMENT_FILENAME = "larkspur-renewal-terms.html"
+FIXTURE_SHORTCUT_FILENAME = "larkspur-client-portal.webloc"
+FIXTURE_TABLE_DRAFT_SUBJECT = "Milestone dates (table)"
+
+
+def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> int:
+    """Seed the verification rows into the work account. Returns how many
+    emails were added (0 when they were all there already)."""
+    account = locale.work
+    now = now_s()
+    added = 0
+
+    def email(sender_name: str, sender_email: str, subject: str, body: str, days_ago: int,
+              html_body: str | None = None) -> tuple[str, bool]:
+        email_id = demo_id("demo_", account.id, sender_email, subject, "inbox", body, length=16)
+        if conn.execute("SELECT 1 FROM emails WHERE id = ?", (email_id,)).fetchone():
+            return email_id, False
+        insert_email(
+            conn, account=account, sender_name=sender_name, sender_email=sender_email, subject=subject,
+            body=body, timestamp=now - days_ago * 86400, is_read=True, mailbox="inbox", category="primary",
+            html_body=html_body,
+        )
+        insert_tags(conn, email_id, subject, body, sender_email)
+        return email_id, True
+
+    # A quote sent with the wrong figure, which the owner trashed, and its
+    # correction. Only the correction may be retrieved or cited.
+    trashed_id, new = email(
+        "Ines Okafor", "ines@larkspur-freight.example", FIXTURE_TRASHED_SUBJECT,
+        "Hi Ulises,\n\nThe renewal quote for the Larkspur Freight support retainer is 3100 EUR "
+        "for twelve months.\n\nInes", 9)
+    added += new
+    conn.execute("UPDATE emails SET is_deleted = 1 WHERE id = ?", (trashed_id,))
+    quote_id, new = email(
+        "Ines Okafor", "ines@larkspur-freight.example", "Corrected Larkspur Freight renewal quote",
+        "Hi Ulises,\n\nApologies, my earlier message had the wrong figure, please delete it. The renewal "
+        "quote for the Larkspur Freight support retainer is 4200 EUR for twelve months. The terms are "
+        "attached as a web page.\n\nInes", 8)
+    added += new
+
+    # The real renewal notice and a lookalike the owner marked as junk. The
+    # detector only found it suspicious (below the junk band), so it is the
+    # owner's mark alone that hides it; that mark outranks any later re-score.
+    _, new = email(
+        "Tessellate Hosting", "billing@tessellate-hosting.example", "Your Tessellate Hosting plan renews in March",
+        "Hello Ulises,\n\nYour Tessellate Hosting Studio plan renews on 14 March at 89 EUR per month. "
+        "No action is needed.\n\nTessellate Hosting", 6)
+    added += new
+    junk_id, new = email(
+        "Tessellate Hosting Billing", "billing@tessellate-hosting-secure.example", FIXTURE_JUNK_SUBJECT,
+        "Your Tessellate Hosting plan has been suspended. Pay the outstanding 640 EUR today at "
+        "http://tessellate-hosting-secure.example/pay to restore service.", 5)
+    added += new
+    conn.execute(
+        """INSERT OR IGNORE INTO email_junk
+           (email_id, account_id, spam_score, phish_score, gray_score, band, primary_kind, reasons_json,
+            method, model_version, scored_at, user_override, overridden_at)
+           VALUES (?, ?, 0.2, 0.55, 0.0, 'uncertain', 'phishing', '[]', 'deterministic', 0, ?, 'junk', ?)""",
+        (junk_id, account.id, now, now),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO email_tags (email_id, tag_type, tag_value, confidence, created_at) "
+        "VALUES (?, 'junk', 'phishing', NULL, ?)",
+        (junk_id, now),
+    )
+
+    # An email whose HTML loads an image from the sender's server.
+    newsletter = ("This week: customs delays at two northern ports, and a new rate card for "
+                  "refrigerated freight.")
+    _, new = email(
+        "Harborlight Weekly", "news@harborlight-weekly.example", FIXTURE_REMOTE_IMAGE_SUBJECT, newsletter, 3,
+        html_body='<div style="font-family: sans-serif; font-size: 14px;">'
+                  '<img src="https://images.harborlight-weekly.example/header.png" alt="Harborlight Weekly" '
+                  f'width="600" height="120"><p>{newsletter}</p></div>')
+    added += new
+
+    # Attachments of types that can run code when opened. The web page is kept
+    # inline, as IMAP sync keeps a small part, and the app previews it itself in
+    # a sandbox; the shortcut is a file on disk that only the OS can open, so
+    # opening it asks for confirmation first. Both are inert.
+    page = "<!doctype html><html><body><p>Larkspur Freight renewal terms (synthetic).</p></body></html>\n"
+    shortcut = ('<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>URL</key>'
+                "<string>https://example.com/</string></dict></plist>\n")
+    relative = f"attachments/{account.id}/{demo_id('', quote_id, FIXTURE_SHORTCUT_FILENAME, length=32)}.webloc"
+    stored = demo_dir / relative
+    if not stored.is_file():
+        stored.parent.mkdir(parents=True, exist_ok=True)
+        stored.write_text(shortcut, encoding="utf-8")
+    for filename, mime_type, provider_id, size, file_path, inline_data in (
+        (FIXTURE_ATTACHMENT_FILENAME, "text/html", f"INLINE::{FIXTURE_ATTACHMENT_FILENAME}", len(page), None,
+         base64.b64encode(page.encode("utf-8")).decode("ascii")),
+        (FIXTURE_SHORTCUT_FILENAME, "application/octet-stream", "", len(shortcut), relative, None),
+    ):
+        conn.execute(
+            """INSERT OR IGNORE INTO email_attachment_meta
+               (id, email_id, account_id, provider_attachment_id, filename, mime_type, file_size, file_path,
+                inline_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (demo_id("att_", quote_id, filename), quote_id, account.id, provider_id, filename, mime_type, size,
+             file_path, inline_data),
+        )
+
+    # A draft whose body is a table, for the compose editor.
+    conn.execute(
+        """INSERT OR IGNORE INTO drafts
+           (id, email_id, account_id, to_addresses_json, subject, body, ai_generated, status, created_at,
+            updated_at, provider_draft_id, cc_addresses_json, body_html, provider_message_id, dirty)
+           VALUES (?, NULL, ?, ?, ?, ?, 0, 'draft', ?, ?, NULL, '[]', ?, NULL, 0)""",
+        (
+            demo_id("draft_", account.id, FIXTURE_TABLE_DRAFT_SUBJECT), account.id,
+            json.dumps(["ines@larkspur-freight.example"]), FIXTURE_TABLE_DRAFT_SUBJECT,
+            "Milestone\tDate\nM6\t14 March\nM7\t28 March",
+            now - 2 * 86400, now - 2 * 86400,
+            "<p>Hi Ines, the dates we agreed:</p><table><tbody>"
+            "<tr><th><p>Milestone</p></th><th><p>Date</p></th></tr>"
+            "<tr><td><p>M6</p></td><td><p>14 March</p></td></tr>"
+            "<tr><td><p>M7</p></td><td><p>28 March</p></td></tr>"
+            "</tbody></table><p>Ulises</p>",
+        ),
+    )
+    return added
+
+
+def append_missing(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> dict[str, int]:
     """Insert the generator's threads and memory facts that an existing demo DB
     does not have yet. Emails match on (sender_email, subject) of the first
     message, facts on their text; existing rows and ids are never touched, so a
@@ -2848,6 +2986,8 @@ def append_missing(conn: sqlite3.Connection, locale: Locale) -> dict[str, int]:
             _insert_thread(conn, account, thread)
             added["threads"] += 1
     added["facts"] = append_memory_facts(conn, locale)
+    if locale.work_threads is not None:
+        added["threads"] += insert_verification_fixtures(conn, locale, demo_dir)
     added["thread_states"] = insert_thread_states(conn, locale)
     return added
 
@@ -2931,7 +3071,7 @@ def main() -> int:
         conn.execute("PRAGMA foreign_keys = ON")
         try:
             with conn:
-                added = append_missing(conn, locale)
+                added = append_missing(conn, locale, demo_dir)
         finally:
             conn.close()
         print(f"[demo-db] appended {added['threads']} threads, {added['facts']} memory facts; {added['thread_states']} thread states refreshed in {demo_db}")
@@ -2983,6 +3123,8 @@ def main() -> int:
                 populate_emails(conn, locale)
             populate_invoice_emails(conn, locale, rule_ids, demo_dir)
             insert_attachments_meta(conn, locale)
+            if locale.work_threads is not None:
+                insert_verification_fixtures(conn, locale, demo_dir)
             insert_pending_tasks(conn, locale)
             insert_memory_facts(conn, locale)
             insert_thread_states(conn, locale)

@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import type { AiModelInfo } from '@/types';
 import { MIN_CONTEXT_BUDGET } from './helpers';
-import { RECOMMENDED_OPENROUTER_EMBEDDING_MODELS } from './openRouterEmbeddingModels';
+import { recommendedEmbeddingOptions } from './openRouterEmbeddingOptions';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState } from './types';
 import { UsageSummary } from './UsageSummary';
@@ -48,20 +48,13 @@ export function OpenRouterPanel({
   const { t } = useTranslation(['common', 'settings']);
   // Recommended models lead the list (they are offered before the catalogue
   // has loaded too); the rest of the catalogue follows, each model once.
-  const recommended = RECOMMENDED_OPENROUTER_EMBEDDING_MODELS.map((m) => ({
-    value: m.id,
-    label: `${m.id} — ${t(
-      m.languages === 'multilingual'
-        ? 'settings:openRouter.embeddingRecommendedMultilingual'
-        : 'settings:openRouter.embeddingRecommendedEnglish',
-    )}`,
-  }));
+  const { none, recommended } = recommendedEmbeddingOptions(t);
   const listed = embeddingModels
     .filter((m) => !recommended.some((r) => r.value === m.id))
     .map((m) => ({ value: m.id, label: m.id }));
   const known = [...recommended, ...listed];
   const embeddingOptions = [
-    { value: '', label: t('settings:openRouter.embeddingNone') },
+    none,
     // A saved model the list no longer has (or could not load) stays selectable.
     ...(config.embeddingModel !== '' && !known.some((o) => o.value === config.embeddingModel)
       ? [{ value: config.embeddingModel, label: config.embeddingModel }]

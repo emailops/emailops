@@ -2,6 +2,7 @@ use crate::services::app_handle::AppHandle;
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::time::Duration;
 #[cfg(feature = "desktop")]
 use tauri::Emitter;
@@ -10,7 +11,9 @@ use tokio::time::sleep;
 use crate::models::error::{AppError, Result};
 use crate::models::{AppLogEvent, Email};
 use crate::sync::http_retry::RetryPolicy;
-use crate::sync::provider::{self, EmailBody, EmailProvider, MessageRef};
+use crate::sync::provider::{
+    self, EmailBody, EmailProvider, HistoryListing, HistoryPage, MessageChange, MessageRef, RemoteLabels,
+};
 
 pub use crate::sync::provider::EmailAttachment;
 
@@ -22,7 +25,7 @@ pub use crate::sync::provider::EmailAttachment;
 ///
 /// Self-sent emails (the user emailing themselves) carry both `INBOX` and
 /// `SENT` — they stay in the inbox.
-fn mailbox_from_labels(labels: &[String]) -> &'static str {
+pub(crate) fn mailbox_from_labels(labels: &[String]) -> &'static str {
     let has = |label: &str| labels.iter().any(|l| l == label);
     if has("TRASH") {
         "trash"
@@ -38,6 +41,11 @@ fn mailbox_from_labels(labels: &[String]) -> &'static str {
 const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 const GMAIL_BATCH_URL: &str = "https://www.googleapis.com/batch/gmail/v1";
 const GMAIL_MAX_RETRIES: u32 = 5;
+/// Records per `users.history.list` page (the API default; its maximum is 500).
+const GMAIL_HISTORY_PAGE_SIZE: u32 = 100;
+/// Sub-requests per `format=minimal` batch. Google caps a batch at 100 calls
+/// and recommends staying at or below 50.
+const GMAIL_LABEL_BATCH_SIZE: usize = 50;
 const GMAIL_INITIAL_BACKOFF_MS: u64 = 1_000;
 const GMAIL_MAX_BACKOFF_MS: u64 = 30_000;
 
@@ -47,6 +55,86 @@ struct GmailProfile {
     email_address: String,
     #[serde(rename = "messagesTotal")]
     messages_total: Option<i64>,
+    /// The mailbox's current history record id.
+    #[serde(rename = "historyId")]
+    history_id: Option<String>,
+}
+
+/// `users.history.list` response.
+#[derive(Debug, Deserialize)]
+struct GmailHistoryList {
+    #[serde(default)]
+    history: Vec<GmailHistoryRecord>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
+    /// The mailbox's current history record id.
+    #[serde(rename = "historyId")]
+    history_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GmailHistoryRecord {
+    id: String,
+    #[serde(rename = "labelsAdded", default)]
+    labels_added: Vec<GmailHistoryLabelChange>,
+    #[serde(rename = "labelsRemoved", default)]
+    labels_removed: Vec<GmailHistoryLabelChange>,
+    #[serde(rename = "messagesDeleted", default)]
+    messages_deleted: Vec<GmailHistoryMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GmailHistoryLabelChange {
+    message: GmailHistoryMessageRef,
+    /// The labels added or removed — not the message's label set.
+    #[serde(rename = "labelIds", default)]
+    label_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GmailHistoryMessage {
+    message: GmailHistoryMessageRef,
+}
+
+#[derive(Debug, Deserialize)]
+struct GmailHistoryMessageRef {
+    id: String,
+}
+
+/// Pure: a `users.history.list` answer as a provider-neutral page, records in
+/// order. Once this page is applied a later listing resumes from the
+/// mailbox's current position when it was the last page, otherwise from the
+/// page's last record (`start` when the page carried none).
+fn history_page_from(list: GmailHistoryList, start: &str) -> HistoryPage {
+    let last_record = list.history.last().map(|record| record.id.clone());
+    let mut changes = Vec::new();
+    for record in list.history {
+        for change in record.labels_removed {
+            changes.push(MessageChange::LabelsRemoved {
+                id: change.message.id,
+                labels: change.label_ids,
+            });
+        }
+        for change in record.labels_added {
+            changes.push(MessageChange::LabelsAdded {
+                id: change.message.id,
+                labels: change.label_ids,
+            });
+        }
+        for deleted in record.messages_deleted {
+            changes.push(MessageChange::Deleted { id: deleted.message.id });
+        }
+    }
+    let resume_cursor = if list.next_page_token.is_some() {
+        last_record
+    } else {
+        list.history_id.or(last_record)
+    };
+    HistoryPage {
+        changes,
+        resume_cursor: resume_cursor.unwrap_or_else(|| start.to_string()),
+        next_page_token: list.next_page_token,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,6 +305,9 @@ pub struct GmailClient {
     /// via [`GmailClient::with_base_url`] in tests so the client can be
     /// pointed at a `MockProviderServer` (see `sync::mock`).
     base_url: String,
+    /// Batch endpoint. Defaults to [`GMAIL_BATCH_URL`] and moves with
+    /// [`GmailClient::with_base_url`], so a test never reaches Google's.
+    batch_url: String,
 }
 
 /// Metadata about a file attachment in an email (not inline body parts).
@@ -285,6 +376,7 @@ impl GmailClient {
             app,
             account_id,
             base_url: GMAIL_API_BASE.to_string(),
+            batch_url: GMAIL_BATCH_URL.to_string(),
         }
     }
 
@@ -293,6 +385,7 @@ impl GmailClient {
     /// at a `wiremock` instance loaded from a recorded cassette.
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self.batch_url = format!("{}/batch/gmail/v1", self.base_url);
         self
     }
 
@@ -353,6 +446,74 @@ impl GmailClient {
 
         let list: GmailSendAsList = response.json().await?;
         Ok(pick_send_as_display_name(&list.send_as, email))
+    }
+
+    /// The mailbox's current history id (`users.getProfile`), where following
+    /// the change log starts.
+    async fn get_history_id(&self) -> Result<String> {
+        let url = format!("{}/users/me/profile", self.base_url);
+        let response = self.send_get_with_retry(&url, "get profile (history id)").await?;
+        let profile: GmailProfile = response.json().await?;
+        profile
+            .history_id
+            .ok_or_else(|| AppError::SyncError("Gmail's profile carries no history id".to_string()))
+    }
+
+    /// One page of `users.history.list` after `start_history_id`.
+    ///
+    /// Only label changes and permanent deletions are asked for: new messages
+    /// are the fetch passes' business. Gmail answers 404 when it no longer
+    /// keeps the log back to `start_history_id` (it promises about a week),
+    /// which is reported as [`HistoryListing::CursorExpired`].
+    async fn list_history(&self, start_history_id: &str, page_token: Option<&str>) -> Result<HistoryListing> {
+        let mut url = format!(
+            "{}/users/me/history?startHistoryId={}&maxResults={}\
+             &historyTypes=labelAdded&historyTypes=labelRemoved&historyTypes=messageDeleted",
+            self.base_url,
+            urlencoding::encode(start_history_id),
+            GMAIL_HISTORY_PAGE_SIZE
+        );
+        if let Some(token) = page_token {
+            url.push_str(&format!("&pageToken={}", urlencoding::encode(token)));
+        }
+        match self.send_get_with_retry(&url, "list mailbox history").await {
+            Ok(response) => {
+                let list: GmailHistoryList = response.json().await?;
+                Ok(HistoryListing::Page(history_page_from(list, start_history_id)))
+            }
+            Err(AppError::NotFound(_)) => Ok(HistoryListing::CursorExpired),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The current labels of `message_ids`, read in batches of
+    /// `format=minimal` gets.
+    /// A 404 sub-response means the message was deleted for good; any other
+    /// failed or unanswered sub-request leaves its id out of the map ("not
+    /// checked").
+    async fn fetch_message_labels(&self, message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        const BOUNDARY: &str = "batch_emailops_labels";
+        let mut labels = HashMap::new();
+        for chunk in message_ids.chunks(GMAIL_LABEL_BATCH_SIZE) {
+            let ids: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            let parts = self
+                .send_batch_and_parse(&ids, "minimal", BOUNDARY, "batch read message labels")
+                .await?;
+            for (id, part) in chunk.iter().zip(slot_batch_parts(parts, chunk.len())) {
+                match part {
+                    Some(Ok(json)) => {
+                        let message: GmailMessageLabels = serde_json::from_str(&json)
+                            .map_err(|e| AppError::SyncError(format!("Failed to parse batch message labels: {e}")))?;
+                        labels.insert(id.clone(), RemoteLabels::Present(message.label_ids));
+                    }
+                    Some(Err(404)) => {
+                        labels.insert(id.clone(), RemoteLabels::Missing);
+                    }
+                    Some(Err(_)) | None => {}
+                }
+            }
+        }
+        Ok(labels)
     }
 
     /// Returns Gmail's `messagesTotal` from the profile endpoint — the number
@@ -1444,6 +1605,7 @@ impl GmailClient {
     async fn send_batch_and_parse(
         &self,
         message_ids: &[&str],
+        format: &str,
         boundary: &str,
         operation: &str,
     ) -> Result<Vec<BatchPart>> {
@@ -1455,8 +1617,8 @@ impl GmailClient {
             body.push_str(&format!("Content-ID: <item{}>\r\n", i));
             body.push_str("\r\n");
             body.push_str(&format!(
-                "GET /gmail/v1/users/me/messages/{}?format=full HTTP/1.1\r\n\r\n",
-                id
+                "GET /gmail/v1/users/me/messages/{}?format={} HTTP/1.1\r\n\r\n",
+                id, format
             ));
         }
         body.push_str(&format!("--{}--\r\n", boundary));
@@ -1467,7 +1629,7 @@ impl GmailClient {
         let response = self
             .send_request_with_retry(operation, |client, token| {
                 client
-                    .post(GMAIL_BATCH_URL)
+                    .post(&self.batch_url)
                     .bearer_auth(token)
                     .header("Content-Type", content_type.clone())
                     .body(body_bytes.clone())
@@ -1600,6 +1762,18 @@ impl EmailProvider for GmailClient {
             Err(AppError::NotFound(_)) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    async fn history_cursor(&self) -> Result<Option<String>> {
+        self.get_history_id().await.map(Some)
+    }
+
+    async fn list_history(&self, cursor: &str, page_token: Option<&str>) -> Result<HistoryListing> {
+        self.list_history(cursor, page_token).await
+    }
+
+    async fn fetch_message_labels(&self, message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        self.fetch_message_labels(message_ids).await
     }
 
     async fn list_mailbox_messages(
@@ -1784,7 +1958,7 @@ impl EmailProvider for GmailClient {
 
         // Send the first batch and parse all sub-responses.
         let initial_parts = self
-            .send_batch_and_parse(message_ids, BOUNDARY, "batch get messages")
+            .send_batch_and_parse(message_ids, "full", BOUNDARY, "batch get messages")
             .await?;
 
         // Slot results by original index. 429s are tracked for retry.
@@ -1828,7 +2002,7 @@ impl EmailProvider for GmailClient {
 
             let retry_ids: Vec<&str> = rate_limited.iter().map(|&i| message_ids[i]).collect();
             let retry_parts = match self
-                .send_batch_and_parse(&retry_ids, BOUNDARY, "retry rate-limited batch sub-requests")
+                .send_batch_and_parse(&retry_ids, "full", BOUNDARY, "retry rate-limited batch sub-requests")
                 .await
             {
                 Ok(parts) => parts,
@@ -3887,6 +4061,233 @@ mod tests {
         };
 
         assert!(collect_inline_image_refs(&payload).is_empty());
+    }
+
+    // ── History API ───────────────────────────────────────────────────────
+
+    const HISTORY_PAGE: &str = r#"{
+        "history": [
+            {"id": "1001", "messages": [{"id": "m-1", "threadId": "t-1"}],
+             "labelsRemoved": [{"message": {"id": "m-1", "threadId": "t-1", "labelIds": ["INBOX"]}, "labelIds": ["UNREAD"]}]},
+            {"id": "1002", "messages": [{"id": "m-2", "threadId": "t-2"}],
+             "labelsRemoved": [{"message": {"id": "m-2", "threadId": "t-2"}, "labelIds": ["INBOX"]}],
+             "labelsAdded": [{"message": {"id": "m-2", "threadId": "t-2"}, "labelIds": ["TRASH"]}]},
+            {"id": "1003", "messages": [{"id": "m-3", "threadId": "t-3"}],
+             "messagesDeleted": [{"message": {"id": "m-3", "threadId": "t-3"}}]},
+            {"id": "1004", "messages": [{"id": "m-4", "threadId": "t-4"}]}
+        ],
+        "historyId": "1050"
+    }"#;
+
+    fn label_change(id: &str, labels: &[&str], added: bool) -> MessageChange {
+        let (id, labels) = (id.to_string(), labels.iter().map(|l| l.to_string()).collect());
+        if added {
+            MessageChange::LabelsAdded { id, labels }
+        } else {
+            MessageChange::LabelsRemoved { id, labels }
+        }
+    }
+
+    #[tokio::test]
+    async fn history_is_listed_after_the_cursor_for_label_changes_and_deletions_only() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/history"))
+            .and(query_param("startHistoryId", "1000"))
+            .and(query_param("maxResults", "100"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(HISTORY_PAGE, "application/json"))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let listing = client.list_history("1000", None).await.unwrap();
+
+        assert_eq!(
+            listing,
+            HistoryListing::Page(HistoryPage {
+                changes: vec![
+                    label_change("m-1", &["UNREAD"], false),
+                    label_change("m-2", &["INBOX"], false),
+                    label_change("m-2", &["TRASH"], true),
+                    MessageChange::Deleted { id: "m-3".to_string() },
+                ],
+                // The last page: the mailbox's current position.
+                resume_cursor: "1050".to_string(),
+                next_page_token: None,
+            })
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let types: Vec<String> = requests[0]
+            .url
+            .query_pairs()
+            .filter(|(key, _)| key == "historyTypes")
+            .map(|(_, value)| value.into_owned())
+            .collect();
+        assert_eq!(types, vec!["labelAdded", "labelRemoved", "messageDeleted"]);
+        assert!(
+            !requests[0].url.query_pairs().any(|(key, _)| key == "pageToken"),
+            "no page token on the first page"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_history_page_with_more_to_come_resumes_after_its_last_record() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/history"))
+            .and(query_param("startHistoryId", "1000"))
+            .and(query_param("pageToken", "a+b/c="))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"history":[{"id":"1001","messagesDeleted":[{"message":{"id":"m-1"}}]},
+                               {"id":"1007","labelsAdded":[{"message":{"id":"m-2"},"labelIds":["UNREAD"]}]}],
+                    "nextPageToken":"next/1","historyId":"1050"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let HistoryListing::Page(page) = client.list_history("1000", Some("a+b/c=")).await.unwrap() else {
+            panic!("expected a page");
+        };
+
+        assert_eq!(page.changes.len(), 2);
+        assert_eq!(page.resume_cursor, "1007");
+        assert_eq!(page.next_page_token.as_deref(), Some("next/1"));
+    }
+
+    #[tokio::test]
+    async fn an_empty_history_answer_keeps_the_mailbox_position() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/history"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"historyId":"1000"}"#, "application/json"))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(
+            client.list_history("1000", None).await.unwrap(),
+            HistoryListing::Page(HistoryPage {
+                changes: vec![],
+                resume_cursor: "1000".to_string(),
+                next_page_token: None,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_start_history_id_gmail_no_longer_keeps_is_reported_as_expired() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/history"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(
+            client.list_history("12", None).await.unwrap(),
+            HistoryListing::CursorExpired
+        );
+    }
+
+    #[tokio::test]
+    async fn any_other_history_failure_is_an_error_not_an_expired_cursor() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/history"))
+            .respond_with(ResponseTemplate::new(403).set_body_raw(
+                r#"{"error":{"code":403,"message":"Insufficient Permission","status":"PERMISSION_DENIED"}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert!(client.list_history("1000", None).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_history_cursor_is_the_profiles_history_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/profile"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"emailAddress":"me@example.com","messagesTotal":10,"threadsTotal":8,"historyId":"4711"}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        assert_eq!(client.history_cursor().await.unwrap().as_deref(), Some("4711"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1, "the profile only");
+    }
+
+    #[tokio::test]
+    async fn message_labels_are_read_in_one_minimal_batch() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let part = |i: usize, status: u16, json: &str| {
+            format!(
+                "--resp\r\nContent-Type: application/http\r\nContent-ID: <response-item{i}>\r\n\r\nHTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\r\n{json}\r\n"
+            )
+        };
+        let body = format!(
+            "{}{}{}--resp--\r\n",
+            part(0, 200, r#"{"id":"m-1","threadId":"t-1","labelIds":["INBOX","UNREAD"]}"#),
+            part(1, 404, r#"{"error":{"code":404}}"#),
+            part(2, 429, r#"{"error":{"code":429}}"#),
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/batch/gmail/v1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "multipart/mixed; boundary=resp"))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids: Vec<String> = ["m-1", "gone", "throttled"].iter().map(|id| id.to_string()).collect();
+
+        let labels = client.fetch_message_labels(&ids).await.unwrap();
+
+        assert_eq!(
+            labels.get("m-1"),
+            Some(&RemoteLabels::Present(vec!["INBOX".to_string(), "UNREAD".to_string()]))
+        );
+        assert_eq!(labels.get("gone"), Some(&RemoteLabels::Missing));
+        assert_eq!(labels.get("throttled"), None, "not checked, so not reported");
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let sent = String::from_utf8_lossy(&requests[0].body).into_owned();
+        assert!(
+            sent.contains("GET /gmail/v1/users/me/messages/m-1?format=minimal HTTP/1.1"),
+            "{sent}"
+        );
+        assert!(!sent.contains("format=full"), "{sent}");
     }
 
     #[test]

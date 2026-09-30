@@ -1116,6 +1116,16 @@ async fn classify_email_ids(
     let mut write_buffer: Vec<(String, String, String, String, Option<f64>)> = Vec::with_capacity(BATCH_SIZE);
 
     for (i, email_id) in email_ids.iter().enumerate() {
+        // Stopped from the queue because the AI provider or model is about to
+        // change: what is classified so far is written below, the rest stays
+        // unclassified for the next run.
+        if crate::services::task_queue::cancel_requested() {
+            emit_log(
+                "info",
+                &format!("Classification stopped by the user after {i} of {total} emails"),
+            );
+            break;
+        }
         // Fetch email data
         let email_data = {
             let conn = db.connection();
@@ -1198,6 +1208,7 @@ async fn classify_email_ids(
             write_buffer.clear();
         }
 
+        crate::services::task_queue::report_progress((i + 1) as u32, total as u32);
         if (i + 1) % 10 == 0 || i + 1 == email_ids.len() {
             emit_progress(&ClassificationProgress {
                 account_id: account_id.to_string(),
@@ -1759,6 +1770,57 @@ mod tests {
         assert_eq!(by_sender, vec!["u".to_string()]);
         let by_subject = find_emails_matching_rule(&db, &rule(None, Some("*50%*"))).unwrap();
         assert_eq!(by_subject, vec!["u".to_string()]);
+    }
+
+    /// Rules classify without the model, so this runs the real loop with no
+    /// provider: stopped, it classifies nothing; not stopped, both emails.
+    #[tokio::test]
+    async fn a_stopped_classification_takes_no_further_email() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+            for id in ["a", "b"] {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct',?1,'Weekly digest','S','news@example.com','example.com','[]','[]',
+                             'a snippet long enough to pass the length filter',100,0,'primary',0)",
+                    rusqlite::params![id],
+                )
+                .unwrap();
+            }
+        }
+        let rules = [ClassificationRule {
+            id: "r".into(),
+            account_id: "acct".into(),
+            name: "r".into(),
+            sender_pattern: Some("news@example.com".into()),
+            subject_pattern: None,
+            priority: "normal".into(),
+            intent: "notification".into(),
+            topic: "operations".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        }];
+        let ids = ["a".to_string(), "b".to_string()];
+        let config = taxonomy_config();
+
+        let stopped =
+            crate::services::task_queue::run_cancelled(classify_email_ids(&db, "acct", &ids, &config, &rules))
+                .await
+                .unwrap();
+        assert!(stopped.is_empty(), "{stopped:?}");
+
+        let resumed = classify_email_ids(&db, "acct", &ids, &config, &rules).await.unwrap();
+        assert_eq!(resumed.len(), 2);
     }
 
     #[test]

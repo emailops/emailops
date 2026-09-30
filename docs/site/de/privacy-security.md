@@ -144,6 +144,11 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 - **Bereinigtes Rendering** — das HTML der Nachrichten wird vor der Anzeige von Skripten,
   Event-Handlern und eingebetteten Objekten befreit, und zwar auf beiden Seiten der App.
   Anhänge werden nie eigenmächtig geöffnet. <!-- claim:priv-protection-from-5 -->
+- **Schutz bei Anhängen** — jeder Anhang, den EmailOps auf der Festplatte speichert, wird als
+  von außen empfangen markiert (die Quarantäne unter macOS, das Mark-of-the-Web unter
+  Windows), sodass beim ersten Öffnen die Prüfungen des Systems greifen. Das Öffnen eines
+  Anhangs, der Code ausführen kann — ein Programm, ein Skript, ein Installationsprogramm, eine
+  Verknüpfung oder eine lokale Webseite — verlangt vorher Ihre Bestätigung und nennt die Datei. <!-- claim:priv-protection-from-6 -->
 
 ## Die App sperren {#locking-the-app}
 

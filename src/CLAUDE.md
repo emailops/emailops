@@ -53,7 +53,7 @@ export function EmailList({ contextId, onSelectEmail }: EmailListProps) {
 
 ### Tauri API Calls — centralized invoke + generated types
 - All Tauri `invoke(…)` calls live in `src/lib/api.ts`. Components and hooks import typed wrappers from there. A lint rule (`no-invoke-outside-api`) enforces this — do not bypass it.
-- TypeScript types for backend structs are **generated from Rust** (via `specta` / `ts-rs`), not hand-maintained. Editing a Rust struct without regenerating the TS type is a bug, not a chore.
+- TypeScript types for backend structs are **generated from Rust** (via `ts-rs`), not hand-maintained. Editing a Rust struct without regenerating the TS type is a bug, not a chore.
 
 ```typescript
 // src/lib/api.ts
@@ -117,9 +117,8 @@ export const useAccountStore = create<AccountStore>((set) => ({
 - Backend-initiated events arrive via the Tauri `app-log` event — subscribe once at the app root and pipe into `useLogStore`.
 
 ## Testing
-- Component tests with React Testing Library.
-- Hook tests with @testing-library/react-hooks.
-- E2E tests with Playwright (post-MVP).
+- Component and hook tests run in vitest + jsdom, rendering with `createRoot` inside `act` (see `AiSettings.scroll.test.tsx`).
+- End-to-end checks drive the real app over WebDriver (`verify-emailops` skill, `make verify`).
 - Zustand stores: test the pure reducers and selectors directly — no React render needed.
 
 ## Lessons Learned

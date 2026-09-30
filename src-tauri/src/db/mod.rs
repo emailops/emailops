@@ -1168,6 +1168,49 @@ mod schema_parity_tests {
         }
     }
 
+    /// V028: a draft row written without the marker (a provider pull, a test
+    /// fixture) must read as clean, so only a local edit can make it dirty.
+    #[test]
+    fn a_draft_row_without_a_dirty_marker_is_clean() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        let (not_null, default): (bool, Option<String>) = conn
+            .query_row(
+                "SELECT \"notnull\", dflt_value FROM pragma_table_info('drafts') WHERE name = 'dirty'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("`drafts.dirty` column");
+        assert!(not_null, "`drafts.dirty` must be NOT NULL");
+        assert_eq!(default.as_deref(), Some("0"));
+    }
+
+    /// V029: the pending read-state pushes of an account are read on every
+    /// sync; the partial index keeps that a seek over the (normally empty)
+    /// set of pending rows instead of a scan of the account's mail.
+    #[test]
+    fn pending_read_pushes_are_looked_up_through_their_partial_index() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        let mut stmt = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT id, is_read, read_push_pending_since FROM emails
+                 WHERE account_id = ?1 AND read_push_pending_since IS NOT NULL
+                 ORDER BY read_push_pending_since, id",
+            )
+            .expect("prepare explain");
+        let plan: Vec<String> = stmt
+            .query_map(["acc-1"], |row| row.get::<_, String>(3))
+            .expect("explain")
+            .map(|r| r.expect("plan row"))
+            .collect();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH") && step.contains("idx_emails_read_push_pending")),
+            "pending read pushes must search `idx_emails_read_push_pending`, got plan: {plan:?}"
+        );
+    }
+
     #[test]
     fn test_db_has_critical_tables() {
         let db = Database::new_for_testing().expect("create test db");
