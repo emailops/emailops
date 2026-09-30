@@ -14,6 +14,7 @@ use base64::Engine;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, Draft, DraftAttachment, DraftAttachmentInput, SaveDraftRequest};
+use crate::sync::draft_plan::{plan_draft_sync, DraftSyncAction, LocalDraftState, UpstreamDraftState};
 use crate::sync::provider::{provider_supports_drafts, EmailAttachment, EmailBody, EmailProvider};
 
 /// An attachment with filename + mime resolved from its path (still just a
@@ -99,7 +100,9 @@ fn guess_mime(filename: &str) -> &'static str {
 /// Pure planner: build the persistable draft request + resolved attachment
 /// records from raw compose inputs. No validation that would reject a partial
 /// draft — drafts are allowed to be incomplete; recipient/subject guards live
-/// in the send path.
+/// in the send path. The HTML body is sanitized here, at the service boundary,
+/// so neither the stored draft nor the copy pushed to the provider carries
+/// markup the compose editor could never have produced.
 pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
     let attachments: Option<Vec<ResolvedAttachment>> = input
         .attachments
@@ -113,7 +116,7 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
         cc_addresses: input.cc.clone(),
         subject: input.subject.clone(),
         body: input.body.clone(),
-        body_html: input.body_html.clone(),
+        body_html: input.body_html.as_deref().map(super::sanitize_outgoing_html),
         // The provider link is preserved on the DB row via COALESCE; never
         // cleared by a plain re-save.
         provider_draft_id: None,
@@ -149,9 +152,74 @@ fn draft_body(body: &str, body_html: Option<&str>) -> EmailBody {
     }
 }
 
+/// Serializes draft pushes. The composer's save and the sync can both decide to
+/// push the same draft; without this, two pushes of a draft that has no
+/// provider id yet would each create one upstream and leave a duplicate.
+static DRAFT_PUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Push a dirty local draft to the provider's Drafts folder and mark the
+/// revision that was sent as clean. A no-op when the draft is already clean or
+/// no longer exists (another push got there first, or it was sent/deleted).
+///
+/// `gone_upstream` is the provider draft id the caller already knows is absent
+/// from the provider's listing; a draft still linked to it is created afresh
+/// rather than updated. An update the provider answers with not-found (the
+/// draft was sent or deleted from another device since) falls back to a create
+/// as well. Either way the stale id is replaced by the new one.
+async fn push_draft(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn EmailProvider,
+    draft_id: &str,
+    gone_upstream: Option<&str>,
+) -> Result<()> {
+    let _pushing = DRAFT_PUSH_LOCK.lock().await;
+    let Some((draft, revision)) = db.draft_for_push(draft_id)? else {
+        return Ok(());
+    };
+    if revision == 0 {
+        return Ok(());
+    }
+
+    let attachments = load_attachments(&draft.attachments)?;
+    let body = draft_body(&draft.body, draft.body_html.as_deref());
+    let from = account.email.as_str();
+    let (to, cc, subject) = (&draft.to_addresses, &draft.cc_addresses, draft.subject.as_str());
+
+    let linked = draft
+        .provider_draft_id
+        .as_deref()
+        .filter(|id| Some(*id) != gone_upstream);
+    let updated = match linked {
+        Some(existing) => match provider
+            .update_draft(existing, from, to, cc, subject, &body, &attachments)
+            .await
+        {
+            Ok(id) => Some(id),
+            Err(AppError::NotFound(_)) => None,
+            Err(e) => return Err(e),
+        },
+        None => None,
+    };
+    let provider_id = match updated {
+        Some(id) => id,
+        None => {
+            provider
+                .create_draft(from, to, cc, subject, &body, &attachments)
+                .await?
+        }
+    };
+    db.mark_draft_pushed(&draft.id, &provider_id, revision)
+}
+
 /// Save a composed draft locally and, when the account's provider supports
 /// server-side drafts, push it to the Drafts folder (create or update) and
 /// store the returned provider draft id. Returns the persisted draft.
+///
+/// The local save marks the draft dirty in the same write. A push that cannot
+/// happen now (no provider) or fails leaves it dirty, and the next
+/// [`pull_provider_drafts`] pushes it; a failed push is still returned as an
+/// error so the caller can tell the user the provider copy is behind.
 pub async fn compose_draft(
     db: &Arc<Database>,
     account: &Account,
@@ -159,7 +227,7 @@ pub async fn compose_draft(
     provider: Option<&dyn EmailProvider>,
 ) -> Result<Draft> {
     let plan = plan_compose(&input);
-    let saved = db.save_draft(&plan.save_req)?;
+    let saved = db.save_user_draft(&plan.save_req)?;
 
     // Persist attachment references (full swap) only when the caller manages
     // them — `None` leaves the existing files intact so a text-only auto-save
@@ -182,30 +250,7 @@ pub async fn compose_draft(
     // attachments (which may pre-date this save when `attachments` was `None`).
     if provider_supports_drafts(&account.provider) {
         if let Some(provider) = provider {
-            let current = db.list_draft_attachments(&saved.id)?;
-            let email_atts = load_attachments(&current)?;
-            let body = draft_body(&input.body, input.body_html.as_deref());
-            let provider_id = match saved.provider_draft_id.as_deref() {
-                Some(existing) => {
-                    provider
-                        .update_draft(
-                            existing,
-                            &account.email,
-                            &input.to,
-                            &input.cc,
-                            &input.subject,
-                            &body,
-                            &email_atts,
-                        )
-                        .await?
-                }
-                None => {
-                    provider
-                        .create_draft(&account.email, &input.to, &input.cc, &input.subject, &body, &email_atts)
-                        .await?
-                }
-            };
-            db.set_provider_draft_id(&saved.id, Some(&provider_id))?;
+            push_draft(db, account, provider, &saved.id, None).await?;
         }
     }
 
@@ -233,8 +278,10 @@ pub async fn send_draft(
 
     let attachments = load_attachments(&draft.attachments)?;
     // Footer-free body; `send_new_email_with_provider` appends the footer once.
+    // Sanitized again here: a draft pulled from the provider's Drafts folder is
+    // stored with the provider's raw HTML, which never went through compose.
     let body = match draft.body_html.as_deref() {
-        Some(html) => EmailBody::with_html(&draft.body, html),
+        Some(html) => EmailBody::with_html(&draft.body, super::sanitize_outgoing_html(html)),
         None => EmailBody::plain(&draft.body),
     };
 
@@ -320,10 +367,6 @@ pub async fn delete_draft(
     db.delete_draft(draft_id, &account.id)
 }
 
-/// Pull the provider's drafts into the local table, keyed by provider draft id,
-/// and prune local provider-linked drafts that no longer exist upstream.
-/// Returns the number of drafts pulled. Best-effort — the caller (sync) logs
-/// and continues on error.
 /// Minimum gap between two **on-demand** draft pulls for one account.
 ///
 /// The sync's own pull is unaffected. This only bounds the UI triggers —
@@ -355,10 +398,11 @@ static LAST_ON_DEMAND_PULL: std::sync::LazyLock<std::sync::Mutex<std::collection
 /// a global clock.
 pub async fn refresh_provider_drafts(
     db: &Arc<Database>,
-    account_id: &str,
+    account: &Account,
     provider: &dyn EmailProvider,
     now: i64,
 ) -> Result<usize> {
+    let account_id = account.id.as_str();
     {
         let mut last = LAST_ON_DEMAND_PULL
             .lock()
@@ -370,20 +414,99 @@ pub async fn refresh_provider_drafts(
         // get through while the first is still in flight.
         last.insert(account_id.to_string(), now);
     }
-    pull_provider_drafts(db, account_id, provider).await
+    pull_provider_drafts(db, account, provider).await
 }
 
-pub async fn pull_provider_drafts(db: &Arc<Database>, account_id: &str, provider: &dyn EmailProvider) -> Result<usize> {
+/// Reconcile the local drafts of an account with the provider's Drafts folder,
+/// one [`plan_draft_sync`] decision per draft: pull what changed upstream, push
+/// what changed here, re-create a dirty draft whose provider copy is gone, and
+/// prune clean drafts that were sent or deleted elsewhere. Returns the number
+/// of drafts pulled. Best-effort — the caller (sync) logs and continues on
+/// error.
+///
+/// A draft with unpushed local edits is never pruned or overwritten: when both
+/// sides changed, the local draft wins and is pushed.
+pub async fn pull_provider_drafts(
+    db: &Arc<Database>,
+    account: &Account,
+    provider: &dyn EmailProvider,
+) -> Result<usize> {
+    let account_id = account.id.as_str();
+    // Snapshot the local rows before listing. A draft pushed while the listing
+    // is in flight is then simply not part of this pass, instead of looking
+    // like a linked draft that is missing upstream.
+    let locals = db.draft_sync_states(account_id)?;
     // Hand the provider what we already have so it can skip re-reading drafts
     // that have not changed upstream. At steady state this makes the pass one
     // listing call and zero content reads.
     let known = db.provider_draft_change_tokens(account_id)?;
     let pull = provider.list_drafts(&known).await?;
-    for pd in &pull.changed {
-        db.upsert_provider_draft(account_id, pd)?;
+
+    let changed: std::collections::HashMap<&str, &crate::models::ProviderDraft> = pull
+        .changed
+        .iter()
+        .map(|pd| (pd.provider_draft_id.as_str(), pd))
+        .collect();
+    let present: std::collections::HashSet<&str> = pull.present_ids.iter().map(String::as_str).collect();
+
+    let mut pulled = 0usize;
+    let mut to_prune = Vec::new();
+    let mut linked_locally = std::collections::HashSet::new();
+    for local in &locals {
+        let provider_id = local.provider_draft_id.as_deref();
+        let upstream = match provider_id {
+            Some(id) if changed.contains_key(id) => UpstreamDraftState::Changed,
+            Some(id) if present.contains(id) => UpstreamDraftState::Unchanged,
+            _ => UpstreamDraftState::Absent,
+        };
+        linked_locally.extend(provider_id);
+        let state = LocalDraftState {
+            linked: provider_id.is_some(),
+            dirty: local.dirty,
+        };
+        let action = plan_draft_sync(Some(state), upstream);
+        match action {
+            DraftSyncAction::Push | DraftSyncAction::Recreate => {
+                let gone_upstream = if action == DraftSyncAction::Recreate {
+                    provider_id
+                } else {
+                    None
+                };
+                // One draft that cannot be pushed (an attachment file that was
+                // moved, a provider refusal) must not stop the others. It
+                // stays dirty, so the next pass tries again.
+                if let Err(e) = push_draft(db, account, provider, &local.id, gone_upstream).await {
+                    crate::services::logger::log(
+                        "warn",
+                        "drafts",
+                        format!("Could not push draft {} to the provider: {e}", local.id),
+                    );
+                }
+            }
+            DraftSyncAction::Pull => {
+                if let Some(pd) = provider_id.and_then(|id| changed.get(id)) {
+                    db.upsert_provider_draft(account_id, pd)?;
+                    pulled += 1;
+                }
+            }
+            DraftSyncAction::Prune => to_prune.push(local.id.clone()),
+            DraftSyncAction::Keep => {}
+        }
     }
-    db.prune_provider_drafts(account_id, &pull.present_ids)?;
-    Ok(pull.changed.len())
+
+    // Drafts written on another device that this one has never stored.
+    for pd in &pull.changed {
+        if linked_locally.contains(pd.provider_draft_id.as_str()) {
+            continue;
+        }
+        if plan_draft_sync(None, UpstreamDraftState::Changed) == DraftSyncAction::Pull {
+            db.upsert_provider_draft(account_id, pd)?;
+            pulled += 1;
+        }
+    }
+
+    db.prune_provider_drafts(account_id, &to_prune)?;
+    Ok(pulled)
 }
 
 #[cfg(test)]
@@ -438,6 +561,68 @@ mod tests {
         assert_eq!(atts[0].mime_type, "application/pdf");
         assert_eq!(atts[1].filename, "custom.bin");
         assert_eq!(atts[1].mime_type, "application/x-thing");
+    }
+
+    const UNSAFE_HTML: &str =
+        "<p>Hi</p><script>alert(1)</script><img src=\"https://example.com/a.png\" onerror=\"alert(2)\">";
+
+    fn assert_html_is_sanitized(html: &str) {
+        assert!(html.contains("<p>Hi</p>"), "safe markup must survive: {html}");
+        assert!(!html.contains("<script"), "script must be stripped: {html}");
+        assert!(!html.contains("onerror"), "event handlers must be stripped: {html}");
+    }
+
+    #[test]
+    fn plan_compose_sanitizes_the_html_body() {
+        let mut inp = input("a1", "Hi", "hello");
+        inp.body_html = Some(UNSAFE_HTML.to_string());
+        let plan = plan_compose(&inp);
+        assert_html_is_sanitized(plan.save_req.body_html.as_deref().expect("html kept"));
+    }
+
+    #[tokio::test]
+    async fn compose_draft_pushes_sanitized_html_to_the_provider() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+
+        let mut inp = input("a1", "Hi", "hello");
+        inp.body_html = Some(UNSAFE_HTML.to_string());
+        let draft = compose_draft(&db, &account, inp, Some(&provider))
+            .await
+            .expect("compose");
+
+        assert_html_is_sanitized(draft.body_html.as_deref().expect("stored html"));
+        let pushed = provider.provider_drafts();
+        assert_html_is_sanitized(pushed[0].body_html.as_deref().expect("pushed html"));
+    }
+
+    /// A draft pulled from the provider's Drafts folder is stored with the
+    /// provider's raw HTML; sending it must not forward that HTML unsanitized.
+    #[tokio::test]
+    async fn send_draft_sanitizes_stored_html_before_sending() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = db
+            .save_draft(&SaveDraftRequest {
+                id: None,
+                email_id: None,
+                account_id: "a1".to_string(),
+                to_addresses: vec!["dest@example.com".to_string()],
+                cc_addresses: Vec::new(),
+                subject: "Pulled".to_string(),
+                body: "hello".to_string(),
+                body_html: Some(UNSAFE_HTML.to_string()),
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .expect("save raw draft");
+
+        send_draft(&db, &account, &draft.id, &provider).await.expect("send");
+
+        let sent = provider.sent();
+        assert_html_is_sanitized(sent[0].body.html.as_deref().expect("html sent"));
     }
 
     #[tokio::test]
@@ -548,7 +733,7 @@ mod tests {
     #[tokio::test]
     async fn pull_provider_drafts_upserts_and_prunes() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
-        seed_account(&db, "a1", "gmail");
+        let account = seed_account(&db, "a1", "gmail");
         let provider = FakeEmailProvider::new("a1@example.com", "A One");
         provider.add_provider_draft(crate::models::ProviderDraft {
             provider_draft_id: "srv-1".to_string(),
@@ -561,7 +746,7 @@ mod tests {
             provider_message_id: Some("msg-1".to_string()),
         });
 
-        let pulled = pull_provider_drafts(&db, "a1", &provider).await.expect("pull");
+        let pulled = pull_provider_drafts(&db, &account, &provider).await.expect("pull");
         assert_eq!(pulled, 1);
         let drafts = db.list_drafts("a1").expect("list");
         assert_eq!(drafts.len(), 1);
@@ -574,7 +759,7 @@ mod tests {
 
         // Remove it upstream → next pull prunes the local copy.
         provider.delete_draft("srv-1").await.expect("del");
-        let pulled2 = pull_provider_drafts(&db, "a1", &provider).await.expect("pull2");
+        let pulled2 = pull_provider_drafts(&db, &account, &provider).await.expect("pull2");
         assert_eq!(pulled2, 0);
         assert!(db.list_drafts("a1").expect("list").is_empty());
     }
@@ -584,7 +769,7 @@ mod tests {
         // Regression: the pull pass re-downloaded every draft in full on every
         // 60-second sync tick, because it had no way to spot an untouched one.
         let db = Arc::new(Database::new_for_testing().expect("db"));
-        seed_account(&db, "a1", "gmail");
+        let account = seed_account(&db, "a1", "gmail");
         let provider = FakeEmailProvider::new("a1@example.com", "A One");
         provider.add_provider_draft(crate::models::ProviderDraft {
             provider_draft_id: "srv-1".to_string(),
@@ -598,12 +783,12 @@ mod tests {
         });
 
         assert_eq!(
-            pull_provider_drafts(&db, "a1", &provider).await.expect("first"),
+            pull_provider_drafts(&db, &account, &provider).await.expect("first"),
             1,
             "first pull reads the draft it has never seen"
         );
         assert_eq!(
-            pull_provider_drafts(&db, "a1", &provider).await.expect("second"),
+            pull_provider_drafts(&db, &account, &provider).await.expect("second"),
             0,
             "unchanged draft must not be read again"
         );
@@ -641,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn on_demand_refresh_pulls_once_then_waits_out_the_cooldown() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
-        seed_account(&db, "cooldown-1", "gmail");
+        let account = seed_account(&db, "cooldown-1", "gmail");
         let provider = FakeEmailProvider::new("cooldown-1@example.com", "A One");
         provider.add_provider_draft(crate::models::ProviderDraft {
             provider_draft_id: "srv-1".to_string(),
@@ -655,7 +840,7 @@ mod tests {
         });
 
         assert_eq!(
-            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_000)
+            refresh_provider_drafts(&db, &account, &provider, 1_000)
                 .await
                 .expect("first"),
             1
@@ -673,7 +858,7 @@ mod tests {
             provider_message_id: Some("msg-2".to_string()),
         });
         assert_eq!(
-            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_001)
+            refresh_provider_drafts(&db, &account, &provider, 1_001)
                 .await
                 .expect("throttled"),
             0,
@@ -682,7 +867,7 @@ mod tests {
         assert_eq!(db.list_drafts("cooldown-1").expect("list").len(), 1);
 
         assert_eq!(
-            refresh_provider_drafts(&db, "cooldown-1", &provider, 1_000 + DRAFT_REFRESH_COOLDOWN_SECS)
+            refresh_provider_drafts(&db, &account, &provider, 1_000 + DRAFT_REFRESH_COOLDOWN_SECS)
                 .await
                 .expect("after cooldown"),
             1,
@@ -694,8 +879,8 @@ mod tests {
     #[tokio::test]
     async fn on_demand_refresh_cooldowns_are_per_account() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
-        seed_account(&db, "cooldown-a", "gmail");
-        seed_account(&db, "cooldown-b", "gmail");
+        let account_a = seed_account(&db, "cooldown-a", "gmail");
+        let account_b = seed_account(&db, "cooldown-b", "gmail");
         let provider = FakeEmailProvider::new("a@example.com", "A");
         provider.add_provider_draft(crate::models::ProviderDraft {
             provider_draft_id: "srv-1".to_string(),
@@ -708,11 +893,11 @@ mod tests {
             provider_message_id: Some("msg-1".to_string()),
         });
 
-        refresh_provider_drafts(&db, "cooldown-a", &provider, 2_000)
+        refresh_provider_drafts(&db, &account_a, &provider, 2_000)
             .await
             .expect("a");
         assert_eq!(
-            refresh_provider_drafts(&db, "cooldown-b", &provider, 2_000)
+            refresh_provider_drafts(&db, &account_b, &provider, 2_000)
                 .await
                 .expect("b"),
             1,
@@ -751,7 +936,7 @@ mod tests {
             provider_message_id: Some("msg-2".to_string()),
         });
 
-        assert_eq!(pull_provider_drafts(&db, "a1", &provider).await.expect("pull"), 1);
+        assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
 
         let drafts = db.list_drafts("a1").expect("list");
         assert_eq!(drafts.len(), 1, "updated in place, not duplicated");
@@ -763,7 +948,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft_edited_upstream_is_read_again() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
-        seed_account(&db, "a1", "gmail");
+        let account = seed_account(&db, "a1", "gmail");
         let provider = FakeEmailProvider::new("a1@example.com", "A One");
         provider.add_provider_draft(crate::models::ProviderDraft {
             provider_draft_id: "srv-1".to_string(),
@@ -775,7 +960,7 @@ mod tests {
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
         });
-        pull_provider_drafts(&db, "a1", &provider).await.expect("first");
+        pull_provider_drafts(&db, &account, &provider).await.expect("first");
 
         // Same draft id, new change token — Gmail's behaviour on a re-save.
         provider.add_provider_draft(crate::models::ProviderDraft {
@@ -790,7 +975,7 @@ mod tests {
         });
 
         assert_eq!(
-            pull_provider_drafts(&db, "a1", &provider).await.expect("second"),
+            pull_provider_drafts(&db, &account, &provider).await.expect("second"),
             1,
             "a moved change token must trigger a fresh read"
         );

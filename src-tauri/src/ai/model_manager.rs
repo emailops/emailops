@@ -210,9 +210,6 @@ pub async fn download_model<F>(
 where
     F: Fn(ModelDownloadProgress) + Send + 'static,
 {
-    use futures::StreamExt;
-    use std::io::Write as _;
-
     let entry = crate::ai::model_catalog::find(model_id)
         .ok_or_else(|| AppError::NotFound(format!("Model '{}' not in catalog", model_id)))?;
 
@@ -238,80 +235,13 @@ where
         0
     };
 
-    // ── HTTP request with optional Range header ───────────────────────────────
-    let client = reqwest::Client::builder()
-        // connect_timeout only covers TCP connection establishment.
-        // Do NOT set .timeout() here — that caps the entire transfer duration,
-        // which kills large GGUF downloads (4-10 GB) after just 30 seconds.
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| AppError::AiError(format!("Failed to build HTTP client: {}", e)))?;
-
-    let mut req = client.get(entry.url);
-    if already_downloaded > 0 {
-        req = req.header("Range", format!("bytes={}-", already_downloaded));
-    }
-
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::AiError(format!("Download request failed: {}", e)))?;
-
-    let status = resp.status();
-    if !status.is_success() && status.as_u16() != 206 {
-        return Err(AppError::AiError(format!(
-            "Download failed with HTTP {}: {}",
-            status.as_u16(),
-            entry.display_name
-        )));
-    }
-
-    // Content-Length gives the size of the *remaining* chunk; add already-downloaded.
-    let total_bytes = resp
-        .content_length()
-        .map(|len| len + already_downloaded)
-        .unwrap_or(entry.size_bytes);
-
-    // ── Stream to file ────────────────────────────────────────────────────────
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&partial)
-        .map_err(|e| AppError::IoError(format!("Cannot open partial file for writing: {}", e)))?;
-
-    let mut stream = resp.bytes_stream();
-    let mut downloaded = already_downloaded;
-
-    while let Some(chunk) = stream.next().await {
-        // Check for user cancellation between chunks. Bail out cleanly so
-        // the `.partial` file is left intact for resume on next download.
-        if let Some(ref h) = cancel {
-            if h.is_cancelled() {
-                let _ = file.flush();
-                return Err(AppError::Cancelled);
-            }
+    let (downloaded, total_bytes) = match plan_download_start(already_downloaded, entry.size_bytes) {
+        // A previous attempt finished the transfer but not the verification.
+        DownloadStart::VerifyOnly => (already_downloaded, entry.size_bytes),
+        DownloadStart::Request { resume_from } => {
+            fetch_to_partial(entry, model_id, &partial, resume_from, cancel.as_ref(), &on_progress).await?
         }
-
-        let chunk = chunk.map_err(|e| AppError::AiError(format!("Download stream error: {}", e)))?;
-
-        file.write_all(&chunk)
-            .map_err(|e| AppError::IoError(format!("Failed to write chunk: {}", e)))?;
-
-        downloaded += chunk.len() as u64;
-
-        on_progress(ModelDownloadProgress {
-            model_id: model_id.to_string(),
-            downloaded_bytes: downloaded,
-            total_bytes,
-            status: "downloading".to_string(),
-            error: None,
-        });
-    }
-
-    // Flush and close before hashing.
-    file.flush()
-        .map_err(|e| AppError::IoError(format!("Failed to flush model file: {}", e)))?;
-    drop(file);
+    };
 
     // ── Completeness check (independent of SHA-256) ───────────────────────────
     // The HTTP stream can end prematurely without surfacing an error chunk —
@@ -340,7 +270,15 @@ where
         // cancellation here (or any IO error) leaves the `.partial` file in
         // place — the download itself already completed, so a future attempt
         // resumes straight into re-verifying rather than re-downloading.
-        let hash = hash_file_sha256(&partial, cancel.as_ref())?;
+        // Hashing a multi-GB file is blocking IO: keep it off the async
+        // worker threads.
+        let hash = {
+            let partial = partial.clone();
+            let cancel = cancel.clone();
+            tokio::task::spawn_blocking(move || hash_file_sha256(&partial, cancel.as_ref()))
+                .await
+                .map_err(|e| AppError::IoError(format!("Model verification task failed: {e}")))??
+        };
 
         if hash != entry.sha256 {
             // Remove the corrupted file so the user can retry.
@@ -356,6 +294,159 @@ where
     std::fs::rename(&partial, &dest).map_err(|e| AppError::IoError(format!("Failed to finalise model file: {}", e)))?;
 
     Ok(dest)
+}
+
+/// How a download starts, given what an earlier attempt left in `.partial`.
+#[derive(Debug, PartialEq, Eq)]
+enum DownloadStart {
+    /// Fetch from the server, from byte `resume_from` when set.
+    Request { resume_from: Option<u64> },
+    /// The partial file already holds every byte: only verify it. Asking the
+    /// server for bytes past the end answers 416.
+    VerifyOnly,
+}
+
+fn plan_download_start(partial_len: u64, expected_size: u64) -> DownloadStart {
+    if expected_size > 0 && partial_len >= expected_size {
+        DownloadStart::VerifyOnly
+    } else if partial_len > 0 {
+        DownloadStart::Request {
+            resume_from: Some(partial_len),
+        }
+    } else {
+        DownloadStart::Request { resume_from: None }
+    }
+}
+
+/// What to do with the server's answer to a download request.
+#[derive(Debug, PartialEq, Eq)]
+enum ResponsePlan {
+    /// Write the body after what the partial file holds.
+    Append,
+    /// The server ignored `Range` and sent the whole file: start the partial
+    /// file over.
+    Restart,
+    /// 416 on a resume: nothing lies past what the partial file holds.
+    AlreadyComplete,
+    Fail,
+}
+
+fn plan_response(status: u16, resumed_from: u64) -> ResponsePlan {
+    match status {
+        206 => ResponsePlan::Append,
+        200 if resumed_from > 0 => ResponsePlan::Restart,
+        200..=299 => ResponsePlan::Append,
+        416 if resumed_from > 0 => ResponsePlan::AlreadyComplete,
+        _ => ResponsePlan::Fail,
+    }
+}
+
+/// A stalled transfer (no bytes for this long) fails instead of hanging the
+/// download forever. Resets on every read, so a slow link is fine.
+const DOWNLOAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Stream `entry` from the server into `partial`, resuming from
+/// `resume_from`. Returns the bytes the partial file holds afterwards and the
+/// file's full size.
+async fn fetch_to_partial<F>(
+    entry: &crate::ai::model_catalog::CatalogModel,
+    model_id: &str,
+    partial: &Path,
+    resume_from: Option<u64>,
+    cancel: Option<&CancelHandle>,
+    on_progress: &F,
+) -> Result<(u64, u64)>
+where
+    F: Fn(ModelDownloadProgress),
+{
+    use futures::StreamExt;
+    use std::io::Write as _;
+
+    let already_downloaded = resume_from.unwrap_or(0);
+    let client = reqwest::Client::builder()
+        // connect_timeout only covers TCP connection establishment.
+        // Do NOT set .timeout() here — that caps the entire transfer duration,
+        // which kills large GGUF downloads (4-10 GB) after just 30 seconds.
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(DOWNLOAD_READ_TIMEOUT)
+        .build()
+        .map_err(|e| AppError::AiError(format!("Failed to build HTTP client: {}", e)))?;
+
+    let mut req = client.get(entry.url);
+    if already_downloaded > 0 {
+        req = req.header("Range", format!("bytes={}-", already_downloaded));
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::AiError(format!("Download request failed: {}", e)))?;
+
+    let status = resp.status().as_u16();
+    let append = match plan_response(status, already_downloaded) {
+        ResponsePlan::Append => true,
+        ResponsePlan::Restart => false,
+        ResponsePlan::AlreadyComplete => return Ok((already_downloaded, entry.size_bytes)),
+        ResponsePlan::Fail => {
+            return Err(AppError::AiError(format!(
+                "Download failed with HTTP {}: {}",
+                status, entry.display_name
+            )))
+        }
+    };
+    let start = if append { already_downloaded } else { 0 };
+
+    // Content-Length gives the size of the *remaining* chunk; add already-downloaded.
+    let total_bytes = resp.content_length().map(|len| len + start).unwrap_or(entry.size_bytes);
+
+    // ── Stream to file ────────────────────────────────────────────────────────
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(append)
+        .write(true)
+        .truncate(!append)
+        .open(partial)
+        .map_err(|e| AppError::IoError(format!("Cannot open partial file for writing: {}", e)))?;
+
+    let mut stream = resp.bytes_stream();
+    let mut downloaded = start;
+
+    while let Some(chunk) = stream.next().await {
+        // Check for user cancellation between chunks. Bail out cleanly so
+        // the `.partial` file is left intact for resume on next download.
+        if let Some(h) = cancel {
+            if h.is_cancelled() {
+                if let Err(e) = file.flush() {
+                    crate::services::logger::log(
+                        "warn",
+                        "ai",
+                        format!("model download: flushing the partial file on cancel failed: {e}"),
+                    );
+                }
+                return Err(AppError::Cancelled);
+            }
+        }
+
+        let chunk = chunk.map_err(|e| AppError::AiError(format!("Download stream error: {}", e)))?;
+
+        file.write_all(&chunk)
+            .map_err(|e| AppError::IoError(format!("Failed to write chunk: {}", e)))?;
+
+        downloaded += chunk.len() as u64;
+
+        on_progress(ModelDownloadProgress {
+            model_id: model_id.to_string(),
+            downloaded_bytes: downloaded,
+            total_bytes,
+            status: "downloading".to_string(),
+            error: None,
+        });
+    }
+
+    // Flush and close before hashing.
+    file.flush()
+        .map_err(|e| AppError::IoError(format!("Failed to flush model file: {}", e)))?;
+    Ok((downloaded, total_bytes))
 }
 
 // ── Link (use an already-downloaded file in place) ────────────────────────────
@@ -501,6 +592,58 @@ fn hash_file_sha256(path: &Path, cancel: Option<&CancelHandle>) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resume planning ──────────────────────────────────────────────────────
+
+    #[test]
+    fn no_partial_file_downloads_from_the_start() {
+        assert_eq!(
+            plan_download_start(0, 1000),
+            DownloadStart::Request { resume_from: None }
+        );
+    }
+
+    #[test]
+    fn a_partial_file_resumes_where_it_stopped() {
+        assert_eq!(
+            plan_download_start(400, 1000),
+            DownloadStart::Request { resume_from: Some(400) }
+        );
+    }
+
+    /// A download that finished but failed (or was cancelled during)
+    /// verification leaves a complete `.partial`. Asking for `bytes=N-` past
+    /// the end got HTTP 416 and failed forever.
+    #[test]
+    fn a_complete_partial_file_goes_straight_to_verification() {
+        assert_eq!(plan_download_start(1000, 1000), DownloadStart::VerifyOnly);
+        assert_eq!(plan_download_start(1200, 1000), DownloadStart::VerifyOnly);
+    }
+
+    #[test]
+    fn a_resumed_request_appends_a_206() {
+        assert_eq!(plan_response(206, 400), ResponsePlan::Append);
+        assert_eq!(plan_response(200, 0), ResponsePlan::Append);
+    }
+
+    #[test]
+    fn a_416_on_resume_means_the_partial_file_is_already_complete() {
+        assert_eq!(plan_response(416, 400), ResponsePlan::AlreadyComplete);
+        assert_eq!(plan_response(416, 0), ResponsePlan::Fail);
+    }
+
+    /// A server that ignores `Range` answers 200 with the whole file;
+    /// appending it to the partial would corrupt the model.
+    #[test]
+    fn a_full_body_answer_to_a_resume_restarts_the_file() {
+        assert_eq!(plan_response(200, 400), ResponsePlan::Restart);
+    }
+
+    #[test]
+    fn other_statuses_fail() {
+        assert_eq!(plan_response(404, 0), ResponsePlan::Fail);
+        assert_eq!(plan_response(500, 400), ResponsePlan::Fail);
+    }
 
     #[test]
     fn validate_download_size_rejects_truncated() {

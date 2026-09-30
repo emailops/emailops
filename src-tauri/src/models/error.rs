@@ -73,6 +73,13 @@ pub enum AppError {
     #[error("Cancelled by user")]
     Cancelled,
 
+    /// Opening `filename` with the default app needs the user's explicit
+    /// confirmation: its type (`kind`, a `DangerKind` identifier) runs code or
+    /// opens another location. The frontend asks and repeats the call with
+    /// the confirmation set.
+    #[error("Opening {filename} needs confirmation: it arrived by email and is of a type ({kind}) that can run code")]
+    AttachmentConfirmationRequired { filename: String, kind: &'static str },
+
     /// A skill could not be loaded, saved, created or deleted; the problem
     /// carries its own translation code (`skill_*`) and params.
     #[error("{0}")]
@@ -103,6 +110,7 @@ impl AppError {
             AppError::IoError(_) => "io",
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
+            AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::Skill(problem) => problem.code(),
         }
     }
@@ -141,6 +149,10 @@ impl AppError {
                 p.insert("model", model.clone());
             }
             AppError::AiDisabled | AppError::Cancelled => {}
+            AppError::AttachmentConfirmationRequired { filename, kind } => {
+                p.insert("filename", filename.clone());
+                p.insert("kind", (*kind).to_string());
+            }
             AppError::Skill(problem) => {
                 p = problem.params();
             }

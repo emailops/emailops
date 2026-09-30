@@ -2,8 +2,8 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError};
 use tokio::sync::{mpsc, Mutex, Semaphore};
 
 /// How many recently-completed tasks each queue retains for the dashboard.
@@ -29,7 +29,63 @@ struct QueuedTask {
     id: u64,
     name: String,
     priority: TaskPriority,
+    context: Arc<TaskContext>,
     fut: BoxFuture,
+}
+
+/// How far a running task says it is, in its own units (emails, for the AI
+/// work that reports it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskProgress {
+    pub current: u32,
+    pub total: u32,
+}
+
+/// What the queue and one of its tasks share while the task is queued or
+/// running: the cancel request going in, the progress coming out.
+#[derive(Debug, Default)]
+struct TaskContext {
+    cancel_requested: AtomicBool,
+    progress: std::sync::Mutex<Option<TaskProgress>>,
+}
+
+tokio::task_local! {
+    /// The context of the queue task this code runs in. Set by the consumer
+    /// around each task, so a task reads it without any of the ~30 submit
+    /// sites having to thread a handle through.
+    static CURRENT_TASK: Arc<TaskContext>;
+}
+
+/// Whether the queue task this code runs in was asked to stop
+/// ([`TaskQueue::cancel_matching`]). Always `false` outside a queue task.
+///
+/// Cancellation is cooperative: a task that loops over emails checks this
+/// between emails and leaves through its normal exit, so its own clean-up and
+/// terminal events still run. It is task-local, so it must be read in the
+/// task itself, not in something the task `tokio::spawn`s.
+pub fn cancel_requested() -> bool {
+    CURRENT_TASK
+        .try_with(|task| task.cancel_requested.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+/// Run `fut` as a queue task that was already asked to stop — for tests of
+/// the loops that check [`cancel_requested`].
+#[cfg(test)]
+pub(crate) async fn run_cancelled<T>(fut: impl Future<Output = T>) -> T {
+    let context = Arc::new(TaskContext::default());
+    context.cancel_requested.store(true, Ordering::Relaxed);
+    CURRENT_TASK.scope(context, fut).await
+}
+
+/// Record how far the queue task this code runs in has got. A no-op outside
+/// a queue task.
+pub fn report_progress(current: u32, total: u32) {
+    // Outside a queue task there is nobody to report to.
+    let _ = CURRENT_TASK.try_with(|task| {
+        *task.progress.lock().unwrap_or_else(PoisonError::into_inner) = Some(TaskProgress { current, total });
+    });
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +96,20 @@ pub struct TaskInfo {
     /// Unix timestamp (seconds) when the task started running. For pending
     /// tasks this is when it was submitted to the queue.
     pub started_at: i64,
+    #[serde(skip)]
+    context: Arc<TaskContext>,
+}
+
+impl TaskInfo {
+    /// Whether the task was asked to stop and has not finished yet.
+    pub fn cancel_requested(&self) -> bool {
+        self.context.cancel_requested.load(Ordering::Relaxed)
+    }
+
+    /// The last progress the task reported, if it reports any.
+    pub fn progress(&self) -> Option<TaskProgress> {
+        *self.context.progress.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 /// One entry in a queue's recent-completions ring buffer. Surfaces in the
@@ -193,10 +263,12 @@ impl TaskQueue {
         }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let context = Arc::new(TaskContext::default());
         let info = TaskInfo {
             id,
             name: name.to_string(),
             started_at: chrono::Utc::now().timestamp(),
+            context: context.clone(),
         };
 
         // Record as pending before sending so a dashboard read between
@@ -209,6 +281,7 @@ impl TaskQueue {
             id,
             name: name.to_string(),
             priority,
+            context,
             fut,
         };
 
@@ -226,6 +299,26 @@ impl TaskQueue {
                 ),
             );
         }
+    }
+
+    /// Ask every running or queued task whose name `matches` to stop, and
+    /// return how many were asked for the first time.
+    ///
+    /// The request is cooperative ([`cancel_requested`]). A queued task is not
+    /// dropped: it still starts, already cancelled, so it leaves through the
+    /// same exit as a running one. Several tasks pair a flag set at submit
+    /// time with a reset at the end of their future (the lens run registry,
+    /// the memory and task backfill "running" flags); a future that is never
+    /// polled would leave those set until the app restarts.
+    pub fn cancel_matching(&self, matches: impl Fn(&str) -> bool) -> usize {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .running
+            .iter()
+            .chain(state.pending.iter())
+            .filter(|task| matches(&task.name))
+            .filter(|task| !task.context.cancel_requested.swap(true, Ordering::Relaxed))
+            .count()
     }
 
     /// Snapshot of the queue's current running + pending tasks plus the most
@@ -297,7 +390,8 @@ async fn run_consumer(
         let task_state = state.clone();
         let id = queued.id;
         let name = queued.name;
-        let fut = queued.fut;
+        let context = queued.context;
+        let fut = CURRENT_TASK.scope(context.clone(), queued.fut);
         tokio::spawn(async move {
             // Move from pending → running, refreshing started_at to the
             // moment execution actually begins.
@@ -306,6 +400,7 @@ async fn run_consumer(
                 id,
                 name: name.clone(),
                 started_at,
+                context,
             };
             if let Ok(mut s) = task_state.lock() {
                 s.pending.retain(|t| t.id != id);
@@ -586,6 +681,139 @@ mod tests {
             }
         }
         panic!("history did not stabilise: {:?}", q.snapshot().history);
+    }
+
+    /// Occupy the single slot of `q` until the returned sender fires.
+    async fn block_queue(q: &TaskQueue, name: &str) -> tokio::sync::oneshot::Sender<()> {
+        let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+        q.submit_named(name, async move {
+            let _ = gate_rx.await;
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        gate_tx
+    }
+
+    async fn drain(q: &TaskQueue) {
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let s = q.snapshot();
+            if s.running.is_empty() && s.pending.is_empty() {
+                return;
+            }
+        }
+        panic!("queue did not drain: {:?}", q.snapshot());
+    }
+
+    #[tokio::test]
+    async fn cancel_is_never_requested_outside_a_queue_task() {
+        assert!(!cancel_requested());
+        // Reporting progress outside a task is a no-op, not a panic.
+        report_progress(1, 2);
+    }
+
+    #[tokio::test]
+    async fn a_running_task_that_matches_sees_the_cancel_request() {
+        let q = TaskQueue::new(1, "test_cancel_running");
+        let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel::<u32>();
+        q.submit_named("embeddings:rebuild:all", async move {
+            let mut emails = 0u32;
+            while !cancel_requested() {
+                emails += 1;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let _ = stopped_tx.send(emails);
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let cancelled = q.cancel_matching(|name| name.starts_with("embeddings:"));
+
+        assert_eq!(cancelled, 1);
+        let emails = tokio::time::timeout(Duration::from_secs(2), stopped_rx)
+            .await
+            .expect("the running task must stop once cancelled")
+            .expect("task dropped its sender");
+        assert!(emails > 0, "the task was running before the cancel");
+    }
+
+    #[tokio::test]
+    async fn queued_matching_tasks_start_cancelled_and_the_others_are_untouched() {
+        let q = TaskQueue::new(1, "test_cancel_queued");
+        let gate = block_queue(&q, "blocker").await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<(String, bool)>::new()));
+        for name in [
+            "embeddings:generate:a",
+            "junk:score:a:final",
+            "embeddings:after_sync:a:final",
+        ] {
+            let seen = seen.clone();
+            q.submit_named(name, async move {
+                seen.lock().unwrap().push((name.to_string(), cancel_requested()));
+            })
+            .await;
+        }
+
+        let cancelled = q.cancel_matching(|name| name.starts_with("embeddings:"));
+        assert_eq!(cancelled, 2, "the blocker and the junk task do not match");
+        // Asking twice does not count a task twice.
+        assert_eq!(q.cancel_matching(|name| name.starts_with("embeddings:")), 0);
+        let pending = q.snapshot().pending;
+        assert_eq!(
+            pending.iter().map(|t| t.cancel_requested()).collect::<Vec<_>>(),
+            vec![true, false, true]
+        );
+
+        let _ = gate.send(());
+        drain(&q).await;
+        // Every task still starts — so whatever it cleans up on exit runs —
+        // but the matching ones are cancelled before their first step.
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ("embeddings:generate:a".to_string(), true),
+                ("junk:score:a:final".to_string(), false),
+                ("embeddings:after_sync:a:final".to_string(), true),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_queue_keeps_working_after_a_cancel() {
+        let q = TaskQueue::new(1, "test_cancel_then_run");
+        let gate = block_queue(&q, "embeddings:rebuild:all").await;
+        assert_eq!(q.cancel_matching(|_| true), 1);
+        let _ = gate.send(());
+        drain(&q).await;
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+        q.submit_named("embeddings:rebuild:all", async move {
+            let _ = tx.send(cancel_requested());
+        })
+        .await;
+        let cancelled = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .expect("queue stuck after a cancel")
+            .expect("task dropped its sender");
+        assert!(!cancelled, "a task queued after the cancel is a new task");
+    }
+
+    #[tokio::test]
+    async fn a_running_task_reports_its_progress_to_the_snapshot() {
+        let q = TaskQueue::new(1, "test_progress");
+        let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+        q.submit_named("embeddings:generate:a", async move {
+            report_progress(3, 50);
+            let _ = gate_rx.await;
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let running = q.snapshot().running;
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].progress(), Some(TaskProgress { current: 3, total: 50 }));
+        let _ = gate_tx.send(());
+        drain(&q).await;
     }
 
     #[tokio::test]

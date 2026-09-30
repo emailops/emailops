@@ -845,6 +845,15 @@ checks = [
   { app = true },
 ]
 
+[ai-semantic-search-2]
+checks = [
+  { tests = ['ai::openrouter::embedding_tests::without_a_validated_model_nothing_is_sent', 'services::ai::budget_tests::the_loaded_openrouter_client_embeds_only_with_a_validated_model'], covers = ["With OpenRouter it happens only if you pick an Embedding Model in its panel"] },
+  { tests = ['services::ai::budget_tests::an_openrouter_embedding_records_what_the_provider_charged', 'services::ai::budget_tests::an_openrouter_embedding_is_not_requested_once_the_budget_is_spent'], covers = ["counts against the monthly budget"] },
+  { tests = ['services::chat::retrieval::tests::no_embedding_is_requested_when_no_embedding_model_is_set_up', 'services::embeddings::tests::a_skipped_run_names_what_is_actually_wrong_for_each_provider'], covers = ["With none picked, semantic search is off and search is keyword-only."] },
+  { tests = ['ai::openrouter::embedding_tests::a_model_of_another_size_is_refused_with_the_size_it_returned'], covers = ["one that does not produce the 768-dimension vectors the index needs is refused"] },
+  { manual = 'OpenRouter is not configured on the demo instance and the checks never call its API: the selector and the check on save are covered by OpenRouterPanel.test.tsx and AiSettings.embedding.test.tsx, and what is sent by the request-shape tests, not by a live run.', covers = ["With the two local backends, embedding happens on your machine.", "the text of every email that gets indexed, and of every search and chat question, is then sent to OpenRouter", "The model is checked when you save"] },
+]
+
 [ai-translation-1]
 checks = [
   { app = true },
@@ -984,6 +993,13 @@ checks = [
   { manual = 'OpenRouter is not configured on the demo instance, so the panel toggle is covered by OpenRouterPanel.test.tsx rather than a live run.', covers = ["**Zero data retention only**, in the same panel"] },
 ]
 
+[priv-there-no-4]
+checks = [
+  { tests = ['ai::openrouter::embedding_tests::without_a_validated_model_nothing_is_sent', 'services::ai::budget_tests::the_loaded_openrouter_client_embeds_only_with_a_validated_model'], covers = ["OpenRouter embeds your mail only if you have picked an embedding model in that panel", "With none picked, nothing is sent for indexing and search is keyword-only."] },
+  { tests = ['ai::openrouter::data_policy_tests::every_embedding_request_carries_the_same_policy', 'ai::openrouter::embedding_tests::a_validated_model_embeds_with_or_without_dimensions_and_reports_its_cost'], covers = ["then goes out under the same provider rules"] },
+  { manual = 'OpenRouter is not configured on the demo instance and the checks never call its API, so which texts reach it is covered by the request-shape tests rather than a live run.', covers = ["The same goes for search.", "the text of every indexed email, and of every search and chat question"] },
+]
+
 [priv-what-emailops-1]
 checks = [
   { tests = ['services::emails::mailbox_state::tests::mark_read_updates_the_row_and_pushes_to_the_provider', 'services::emails::compose::tests::delete_draft_removes_local_and_provider_copies'], covers = ["Marking a message read or unread", "Saving a draft"] },
@@ -1047,6 +1063,13 @@ checks = [
 checks = [
   { tests = ['services::emails::html_sanitizer::tests::keeps_basic_formatting'], covers = ["message HTML is stripped of scripts, event handlers and embedded objects before it is displayed"] },
   { manual = 'The frontend (DOMPurify) half of the sanitising is not exercised by a named test here.' },
+]
+
+[priv-protection-from-6]
+checks = [
+  { tests = ['services::attachment_safety::tests::quarantine_writes_the_attribute_macos_reads_back', 'services::attachments::tests::an_attachment_collected_by_a_rule_is_quarantined', 'services::attachments::tests::an_auto_downloaded_attachment_is_quarantined', 'services::attachments::tests::a_file_saved_to_downloads_is_quarantined'], covers = ["every attachment EmailOps saves to disk is marked as received from outside (the quarantine flag on macOS, the Mark-of-the-Web on Windows)"] },
+  { tests = ['services::attachment_safety::tests::a_dangerous_attachment_is_refused_without_confirmation', 'services::attachment_safety::tests::classifies_types_that_act_when_opened'], covers = ["Opening an attachment that can run code — a program, a script, an installer, a shortcut or a local web page — asks for your confirmation first, naming the file."] },
+  { manual = 'The tests run on macOS only, so the Windows mark is not exercised; and the first-open prompt belongs to the operating system, which the docs check cannot drive.', covers = ["so the system's own checks apply the first time it is opened."] },
 ]
 
 [priv-locking-app-1]
@@ -1224,6 +1247,13 @@ checks = [
 [trbl-search-returns-2]
 checks = [
   { app = true },
+]
+
+[trbl-search-returns-3]
+checks = [
+  { tests = ['services::embeddings::tests::a_skipped_run_names_what_is_actually_wrong_for_each_provider', 'services::ai::budget_tests::the_loaded_openrouter_client_embeds_only_with_a_validated_model'], covers = ["semantic search stays off until you pick an Embedding Model"] },
+  { manual = 'OpenRouter is not configured on the demo instance; the selector in Settings → AI Backend & Models is covered by OpenRouterPanel.test.tsx.', covers = ["in Settings → AI Backend & Models and save", "until then, keyword-only results are expected"] },
+  { manual = 'The wizard is not driven with OpenRouter by the docs check (it never calls the OpenRouter API): the check on Continue is covered by StepAiBackend.openrouter.test.tsx.', covers = ["or enter one in the first-run wizard, which checks it before moving on"] },
 ]
 
 [trbl-classification-tagging-1]

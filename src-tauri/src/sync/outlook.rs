@@ -33,6 +33,9 @@ use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
 use crate::models::{AppLogEvent, Email};
+use crate::sync::http_retry::RetryPolicy;
+use crate::sync::outlook_payload::{self, OutlookSendParams};
+use crate::sync::outlook_upload::{self, AttachmentPlan, AttachmentRoute, EncodedContent, UPLOAD_CHUNK_SIZE};
 use crate::sync::provider::{self, AttachmentInfo, EmailBody, EmailCategory, EmailProvider, MessageRef};
 
 pub use crate::sync::provider::EmailAttachment;
@@ -208,7 +211,7 @@ impl OutlookClient {
         account_id: Option<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::MAIL_REQUEST_TIMEOUT),
             access_token: std::sync::Mutex::new(access_token),
             refresh_token,
             app,
@@ -351,7 +354,7 @@ impl OutlookClient {
         if !inline_images.is_empty() && email.body.contains("cid:") {
             for (cid, mime, b64) in &inline_images {
                 let data_uri = format!("data:{};base64,{}", mime, b64);
-                email.body = email.body.replace(&format!("cid:{}", cid), &data_uri);
+                email.body = crate::util::html::replace_cid_reference(&email.body, cid, &data_uri);
             }
         }
 
@@ -461,6 +464,27 @@ impl OutlookClient {
             ));
         }
 
+        let outgoing = outgoing_attachments(body, attachments);
+        let plan = plan_outgoing(&outgoing)?;
+        if !plan.single_request {
+            // Too much for one request: a reply draft, filled, then sent.
+            let bare = body_without_inline_images(body);
+            let payload = outlook_payload::build_reply_payload(&OutlookSendParams {
+                to_emails,
+                cc_emails,
+                subject,
+                body: &bare,
+                attachments: &[],
+            });
+            let url = format!(
+                "{}/me/messages/{}/createReply",
+                self.base_url,
+                urlencoding::encode(item_id)
+            );
+            let draft_id = self.create_message(&url, &payload, "create reply draft").await?;
+            return self.fill_and_send(&draft_id, &outgoing, &plan).await;
+        }
+
         let payload =
             crate::sync::outlook_payload::build_reply_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
@@ -470,7 +494,7 @@ impl OutlookClient {
                 attachments,
             });
         let url = format!("{}/me/messages/{}/reply", self.base_url, urlencoding::encode(item_id),);
-        let response = self.send_post_json_with_retry(&url, &payload, "send reply").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send reply").await?;
         // /reply returns 202 Accepted with no body on success — Graph reports
         // nothing about the created Sent message, so the meta stays empty and
         // the optimistic local row is reconciled heuristically at sync time.
@@ -490,6 +514,16 @@ impl OutlookClient {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<crate::sync::provider::SentMessageMeta> {
+        let outgoing = outgoing_attachments(body, attachments);
+        let plan = plan_outgoing(&outgoing)?;
+        if !plan.single_request {
+            // Too much for one request: a draft, filled, then sent.
+            let draft_id = self
+                .create_bare_draft(to_emails, cc_emails, subject, body, "create draft to send")
+                .await?;
+            return self.fill_and_send(&draft_id, &outgoing, &plan).await;
+        }
+
         let payload =
             crate::sync::outlook_payload::build_send_mail_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
@@ -500,7 +534,7 @@ impl OutlookClient {
             });
 
         let url = format!("{}/me/sendMail", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "send new email").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "send new email").await?;
         if !response.status().is_success() {
             let error_text = response.text().await.unwrap_or_default();
             return Err(AppError::SyncError(format!("Failed to send email: {}", error_text)));
@@ -519,6 +553,21 @@ impl OutlookClient {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<String> {
+        let outgoing = outgoing_attachments(body, attachments);
+        let plan = plan_outgoing(&outgoing)?;
+        if !plan.single_request {
+            let draft_id = self
+                .create_bare_draft(to_emails, cc_emails, subject, body, "create draft")
+                .await?;
+            // A draft that could not be filled is not recorded by the caller,
+            // which would create another one on the next save: remove it.
+            if let Err(e) = self.add_attachments(&draft_id, &outgoing, &plan).await {
+                self.discard_draft(&draft_id).await;
+                return Err(e);
+            }
+            return Ok(draft_id);
+        }
+
         let payload =
             crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
@@ -529,7 +578,7 @@ impl OutlookClient {
             });
         // POST to /me/messages creates the message as a draft.
         let url = format!("{}/me/messages", self.base_url);
-        let response = self.send_post_json_with_retry(&url, &payload, "create draft").await?;
+        let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let msg: GraphMessage = response.json().await?;
         Ok(msg.id)
     }
@@ -543,6 +592,15 @@ impl OutlookClient {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<String> {
+        let outgoing = outgoing_attachments(body, attachments);
+        let plan = plan_outgoing(&outgoing)?;
+        // Too much for one request: the text goes in the update, and the
+        // draft's attachments are replaced one by one after it.
+        let bare = (!plan.single_request).then(|| body_without_inline_images(body));
+        let (body, attachments) = match &bare {
+            Some(bare) => (bare, &[][..]),
+            None => (body, attachments),
+        };
         let payload =
             crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
@@ -562,7 +620,331 @@ impl OutlookClient {
             })
             .await?;
         let msg: GraphMessage = response.json().await?;
+        if !plan.single_request {
+            self.remove_attachments(&msg.id).await?;
+            self.add_attachments(&msg.id, &outgoing, &plan).await?;
+        }
         Ok(msg.id)
+    }
+
+    // ── Attachments that do not fit in one request ───────────────────────────
+    //
+    // Graph takes an attachment inline only under 3 MB and a request only up to
+    // about 4 MB (see `outlook_upload`). Past that the message has to exist as
+    // a draft first; each attachment is then added to it on its own — a small
+    // one with one POST, a large one through an upload session — and the draft
+    // is sent.
+
+    /// `POST` a message payload that creates a draft and return the draft's id.
+    /// Not re-sent on a 5xx: it may have created the draft already.
+    async fn create_message(&self, url: &str, payload: &serde_json::Value, operation: &str) -> Result<String> {
+        let response = self.send_post_json_no_resend(url, payload, operation).await?;
+        let msg: GraphMessage = response.json().await?;
+        Ok(msg.id)
+    }
+
+    /// Create a draft carrying the message without any attachment.
+    async fn create_bare_draft(
+        &self,
+        to_emails: &[String],
+        cc_emails: &[String],
+        subject: &str,
+        body: &EmailBody,
+        operation: &str,
+    ) -> Result<String> {
+        let bare = body_without_inline_images(body);
+        let payload = outlook_payload::build_draft_payload(&OutlookSendParams {
+            to_emails,
+            cc_emails,
+            subject,
+            body: &bare,
+            attachments: &[],
+        });
+        self.create_message(&format!("{}/me/messages", self.base_url), &payload, operation)
+            .await
+    }
+
+    /// Add the attachments to a draft and send it.
+    ///
+    /// - An attachment that cannot be added: the draft is removed, nothing was
+    ///   sent.
+    /// - A send that fails: the draft is **kept**. A 5xx or a dropped
+    ///   connection may have sent it all the same (which is why the send is
+    ///   never repeated), and deleting it then could take a message out of the
+    ///   Outbox; when it really was not sent, the draft still holds the
+    ///   uploaded attachments and can be sent from Outlook.
+    async fn fill_and_send(
+        &self,
+        draft_id: &str,
+        outgoing: &[OutgoingAttachment<'_>],
+        plan: &AttachmentPlan,
+    ) -> Result<crate::sync::provider::SentMessageMeta> {
+        if let Err(e) = self.add_attachments(draft_id, outgoing, plan).await {
+            self.discard_draft(draft_id).await;
+            return Err(e);
+        }
+        let url = format!("{}/me/messages/{}/send", self.base_url, urlencoding::encode(draft_id));
+        let sent = self
+            .send_request_with_policy("send message", RetryPolicy::NoRetryAfterSend, |client, token| {
+                client
+                    .post(&url)
+                    .bearer_auth(token)
+                    .header(reqwest::header::CONTENT_LENGTH, 0)
+            })
+            .await;
+        match sent {
+            // 202 Accepted with no body, like /sendMail: no meta available.
+            Ok(_) => Ok(crate::sync::provider::SentMessageMeta::default()),
+            Err(e) => {
+                let message = format!(
+                    "{}. The message and its attachments were left in the account's Drafts folder; \
+                     check Sent before sending it again",
+                    error_detail(&e)
+                );
+                crate::services::logger::log("error", "sync", message.clone());
+                Err(AppError::SyncError(message))
+            }
+        }
+    }
+
+    /// Add each attachment to an existing draft by the route planned for it.
+    async fn add_attachments(
+        &self,
+        draft_id: &str,
+        outgoing: &[OutgoingAttachment<'_>],
+        plan: &AttachmentPlan,
+    ) -> Result<()> {
+        for (item, route) in outgoing.iter().zip(&plan.routes) {
+            match route {
+                AttachmentRoute::Inline => {
+                    let url = format!(
+                        "{}/me/messages/{}/attachments",
+                        self.base_url,
+                        urlencoding::encode(draft_id)
+                    );
+                    let payload = outlook_payload::build_attachment_json(item.attachment, item.force_inline);
+                    // Not re-sent on a 5xx: a second copy would be attached.
+                    self.send_post_json_no_resend(&url, &payload, "add attachment").await?;
+                }
+                AttachmentRoute::UploadSession => self.upload_in_session(draft_id, item).await?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete every attachment a draft has at the provider.
+    async fn remove_attachments(&self, draft_id: &str) -> Result<()> {
+        let list_url = format!(
+            "{}/me/messages/{}/attachments?$select=id",
+            self.base_url,
+            urlencoding::encode(draft_id)
+        );
+        let response = self.send_get_with_retry(&list_url, "list draft attachments").await?;
+        let listed: GraphAttachmentIds = response.json().await?;
+        for attachment in listed.value {
+            let url = format!(
+                "{}/me/messages/{}/attachments/{}",
+                self.base_url,
+                urlencoding::encode(draft_id),
+                urlencoding::encode(&attachment.id)
+            );
+            match self
+                .send_request_with_retry("delete draft attachment", |client, token| {
+                    client.delete(&url).bearer_auth(token)
+                })
+                .await
+            {
+                // Already gone: that is the state asked for.
+                Ok(_) | Err(AppError::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a draft this client created and could not complete. Best effort:
+    /// the failure that led here is the one reported, and a draft that could
+    /// not be removed is logged.
+    async fn discard_draft(&self, draft_id: &str) {
+        match self.delete_draft(draft_id).await {
+            Ok(()) | Err(AppError::NotFound(_)) => {}
+            Err(e) => crate::services::logger::log(
+                "error",
+                "sync",
+                format!("An incomplete draft could not be removed from Outlook's Drafts folder: {e}"),
+            ),
+        }
+    }
+
+    /// Attach one file to a draft through an upload session: create the
+    /// session, then `PUT` the content range by range to its pre-authenticated
+    /// URL. A session that cannot be completed is cancelled.
+    async fn upload_in_session(&self, draft_id: &str, item: &OutgoingAttachment<'_>) -> Result<()> {
+        use crate::services::logger::log;
+
+        let name = item.attachment.filename.as_str();
+        let content = EncodedContent::new(&item.attachment.data);
+        log(
+            "info",
+            "sync",
+            format!(
+                "Uploading attachment \"{name}\" ({:.1} MB) to Outlook",
+                megabytes(content.len())
+            ),
+        );
+
+        let session_url = format!(
+            "{}/me/messages/{}/attachments/createUploadSession",
+            self.base_url,
+            urlencoding::encode(draft_id)
+        );
+        let payload = outlook_upload::upload_session_payload(item.attachment, content.len(), item.force_inline);
+        let uploaded = async {
+            // Safe to repeat: a session nothing was uploaded to simply expires.
+            let response = self
+                .send_post_json_with_retry(&session_url, &payload, "create upload session")
+                .await?;
+            let session: GraphUploadSession = response.json().await?;
+            self.check_upload_url(&session.upload_url)?;
+            if let Err(e) = self.put_ranges(&session.upload_url, &content, name).await {
+                self.cancel_upload_session(&session.upload_url).await;
+                return Err(e);
+            }
+            Ok(())
+        }
+        .await;
+
+        match uploaded {
+            Ok(()) => {
+                log("success", "sync", format!("Uploaded attachment \"{name}\" to Outlook"));
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!(
+                    "Could not upload attachment \"{name}\" to Outlook: {}",
+                    error_detail(&e)
+                );
+                log("error", "sync", message.clone());
+                Err(match e {
+                    AppError::InvalidInput(_) => AppError::InvalidInput(message),
+                    _ => AppError::SyncError(message),
+                })
+            }
+        }
+    }
+
+    /// The upload URL comes from Graph and receives the file's bytes: it has
+    /// to be HTTPS. (A test server's own origin is accepted too.)
+    fn check_upload_url(&self, upload_url: &str) -> Result<()> {
+        let refuse = || AppError::SyncError("Graph returned an upload URL that cannot be used".to_string());
+        let url = reqwest::Url::parse(upload_url).map_err(|_| refuse())?;
+        let same_origin_as_api = reqwest::Url::parse(&self.base_url)
+            .map(|base| base.origin() == url.origin())
+            .unwrap_or(false);
+        if url.scheme() == "https" || same_origin_as_api {
+            Ok(())
+        } else {
+            Err(refuse())
+        }
+    }
+
+    /// `PUT` the content to an upload session, [`UPLOAD_CHUNK_SIZE`] bytes at a
+    /// time and in order, without an `Authorization` header (the URL carries
+    /// its own token). Graph answers 200 with where it expects the upload to
+    /// continue, and 201 once the last byte is in. A range that fails with a
+    /// retryable status, a transport error, or an answer that does not move
+    /// the upload forward is sent again — a range is idempotent — up to
+    /// [`MAX_RETRIES`] times in a row.
+    async fn put_ranges(&self, upload_url: &str, content: &EncodedContent<'_>, name: &str) -> Result<()> {
+        let total = content.len();
+        let mut offset: u64 = 0;
+        let mut failures: u32 = 0;
+        let mut delay_ms = INITIAL_BACKOFF_MS;
+        loop {
+            let end = (offset + UPLOAD_CHUNK_SIZE).min(total);
+            let bytes = content.range(offset, end)?;
+            let response = self
+                .client
+                .put(upload_url)
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .header(
+                    reqwest::header::CONTENT_RANGE,
+                    outlook_upload::content_range(offset, end, total),
+                )
+                .body(bytes)
+                .send()
+                .await;
+
+            let problem = match response {
+                Ok(response) if response.status() == StatusCode::CREATED => return Ok(()),
+                Ok(response) if response.status().is_success() => {
+                    let progress: GraphUploadProgress = response.json().await?;
+                    let next = outlook_upload::next_offset(&progress.next_expected_ranges).unwrap_or(end);
+                    if next > offset && next < total {
+                        offset = next;
+                        failures = 0;
+                        delay_ms = INITIAL_BACKOFF_MS;
+                        crate::services::logger::log(
+                            "debug",
+                            "sync",
+                            format!(
+                                "Uploaded {:.1} of {:.1} MB of \"{name}\"",
+                                megabytes(offset),
+                                megabytes(total)
+                            ),
+                        );
+                        continue;
+                    }
+                    format!(
+                        "Graph expects byte {next} next, after bytes {offset}-{} of {total}",
+                        end - 1
+                    )
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let retry_after = retry_after_ms(response.headers());
+                    let body = response.text().await.unwrap_or_default();
+                    let problem = format_graph_error(status, &body);
+                    if !is_retryable_graph_status(status) {
+                        return Err(AppError::SyncError(problem));
+                    }
+                    if let Some(wait_ms) = retry_after {
+                        delay_ms = wait_ms;
+                    }
+                    problem
+                }
+                Err(error) if is_retryable_transport_error(&error) => error.to_string(),
+                Err(error) => return Err(error.into()),
+            };
+
+            failures += 1;
+            if failures > MAX_RETRIES {
+                return Err(AppError::SyncError(format!("{problem} (after {MAX_RETRIES} retries)")));
+            }
+            crate::services::logger::log(
+                "debug",
+                "sync",
+                format!("Retrying a part of \"{name}\" ({failures}/{MAX_RETRIES}): {problem}"),
+            );
+            sleep(Duration::from_millis(delay_ms.min(MAX_BACKOFF_MS))).await;
+            delay_ms = (delay_ms * 2).min(MAX_BACKOFF_MS);
+        }
+    }
+
+    /// Cancel an upload session that will not be completed. Best effort: an
+    /// abandoned session expires by itself.
+    async fn cancel_upload_session(&self, upload_url: &str) {
+        let cancelled = self.client.delete(upload_url).send().await;
+        let failure = match cancelled {
+            Ok(response) if response.status().is_success() => return,
+            Ok(response) => format!("HTTP {}", response.status().as_u16()),
+            Err(e) => e.to_string(),
+        };
+        crate::services::logger::log(
+            "debug",
+            "sync",
+            format!("An abandoned Outlook upload session could not be cancelled and will expire: {failure}"),
+        );
     }
 
     pub async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
@@ -665,7 +1047,34 @@ impl OutlookClient {
         .await
     }
 
+    /// POST for sends and creates: a 5xx or a dropped connection may have
+    /// been carried out, so it is not re-sent (see [`RetryPolicy`]).
+    async fn send_post_json_no_resend(
+        &self,
+        url: &str,
+        payload: &serde_json::Value,
+        operation: &str,
+    ) -> Result<Response> {
+        self.send_request_with_policy(operation, RetryPolicy::NoRetryAfterSend, |client, token| {
+            client.post(url).bearer_auth(token).json(payload)
+        })
+        .await
+    }
+
     async fn send_request_with_retry<F>(&self, operation: &str, request_builder: F) -> Result<Response>
+    where
+        F: Fn(&Client, &str) -> reqwest::RequestBuilder,
+    {
+        self.send_request_with_policy(operation, RetryPolicy::Idempotent, request_builder)
+            .await
+    }
+
+    async fn send_request_with_policy<F>(
+        &self,
+        operation: &str,
+        policy: RetryPolicy,
+        request_builder: F,
+    ) -> Result<Response>
     where
         F: Fn(&Client, &str) -> reqwest::RequestBuilder,
     {
@@ -695,7 +1104,18 @@ impl OutlookClient {
 
                     let retry_after = retry_after_ms(response.headers());
                     let body = response.text().await.unwrap_or_default();
-                    let should_retry = is_retryable_graph_status(status);
+                    // Typed so callers can tell "the resource is gone" from a
+                    // failure — a draft push re-creates a draft that was sent
+                    // or deleted elsewhere. Same message text as every other
+                    // failure.
+                    if status == StatusCode::NOT_FOUND {
+                        return Err(AppError::NotFound(format!(
+                            "Failed to {}: {}",
+                            operation,
+                            format_graph_error(status, &body)
+                        )));
+                    }
+                    let should_retry = is_retryable_graph_status(status) && policy.may_retry_status(status.as_u16());
 
                     if should_retry && attempt < MAX_RETRIES {
                         let wait_ms = retry_after.unwrap_or(delay_ms).min(MAX_BACKOFF_MS);
@@ -705,14 +1125,20 @@ impl OutlookClient {
                         continue;
                     }
 
-                    return Err(AppError::SyncError(format!(
-                        "Failed to {}: {}",
-                        operation,
-                        format_graph_error(status, &body)
-                    )));
+                    let message = format!("Failed to {}: {}", operation, format_graph_error(status, &body));
+                    // Typed so callers can tell "Graph no longer has this id"
+                    // (a moved or deleted message) from an outage.
+                    return Err(if status == StatusCode::NOT_FOUND {
+                        AppError::NotFound(message)
+                    } else {
+                        AppError::SyncError(message)
+                    });
                 }
                 Err(error) => {
-                    if is_retryable_transport_error(&error) && attempt < MAX_RETRIES {
+                    if is_retryable_transport_error(&error)
+                        && policy.may_retry_transport(error.is_connect())
+                        && attempt < MAX_RETRIES
+                    {
                         self.emit_transport_retry_log(operation, attempt + 1, delay_ms, &error);
                         sleep(Duration::from_millis(delay_ms.min(MAX_BACKOFF_MS))).await;
                         delay_ms = (delay_ms * 2).min(MAX_BACKOFF_MS);
@@ -1003,6 +1429,50 @@ impl EmailProvider for OutlookClient {
             }
         }
         Ok(None)
+    }
+
+    /// One `$batch` of `GET /me/messages/{id}?$select=id,isRead` per
+    /// [`GRAPH_BATCH_LIMIT`] ids. Asking by id rather than listing folders
+    /// needs no "was the listing complete?" reasoning: every answer is about
+    /// exactly one stored message.
+    async fn fetch_message_states(
+        &self,
+        message_ids: &[String],
+    ) -> Result<Option<std::collections::HashMap<String, provider::RemoteMessageState>>> {
+        let mut states = std::collections::HashMap::with_capacity(message_ids.len());
+        let url = format!("{}/$batch", self.base_url);
+        for chunk in message_ids.chunks(GRAPH_BATCH_LIMIT) {
+            let ids: Vec<&str> = chunk.iter().map(String::as_str).collect();
+            let payload = build_batch_payload(&ids, "id,isRead");
+            let response = self
+                .send_post_json_with_retry(&url, &payload, "refresh message states")
+                .await?;
+            let envelope: serde_json::Value = response.json().await?;
+            states.extend(states_from_batch(chunk, &envelope));
+        }
+        Ok(Some(states))
+    }
+
+    /// `PATCH /me/messages/{id}` with `isRead` (`Mail.ReadWrite`). Setting
+    /// the same value twice is a no-op at Graph, so it is safe to retry.
+    async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        let url = format!("{}/me/messages/{}", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "isRead": read });
+        self.send_request_with_retry("set read state", |client, token| {
+            client.patch(&url).bearer_auth(token).json(&payload)
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
+    /// `DELETE /me/messages/{id}`: the app's delete action is the reversible
+    /// one, so the message stays recoverable from the account's own clients.
+    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+        let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "destinationId": "deleteditems" });
+        self.send_post_json_no_resend(&url, &payload, "trash message").await?;
+        Ok(())
     }
 
     async fn list_mailbox_messages(
@@ -1363,6 +1833,11 @@ struct GraphBatchSubResponse {
 /// finds its way back to the right slot. The `$select` projection matches the
 /// single-message path so both produce the same `GraphMessage`.
 fn build_message_batch_payload(message_ids: &[&str]) -> serde_json::Value {
+    build_batch_payload(message_ids, MESSAGE_SELECT_FIELDS)
+}
+
+/// A `$batch` of message GETs projecting `select`, one sub-request per id.
+fn build_batch_payload(message_ids: &[&str], select: &str) -> serde_json::Value {
     let requests: Vec<serde_json::Value> = message_ids
         .iter()
         .enumerate()
@@ -1373,12 +1848,33 @@ fn build_message_batch_payload(message_ids: &[&str]) -> serde_json::Value {
                 "url": format!(
                     "/me/messages/{}?$select={}",
                     urlencoding::encode(message_id),
-                    MESSAGE_SELECT_FIELDS
+                    select
                 ),
             })
         })
         .collect();
     serde_json::json!({ "requests": requests })
+}
+
+/// Read one chunk's answers out of a state-refresh `$batch`: 200 is the
+/// message's read flag, 404 means Graph no longer has that id (deleted, or
+/// moved and re-keyed). Any other status — a throttled sub-request above all —
+/// says nothing about the message and is left out.
+fn states_from_batch(chunk: &[String], envelope: &serde_json::Value) -> Vec<(String, provider::RemoteMessageState)> {
+    parse_batch_response(envelope)
+        .into_iter()
+        .filter_map(|sub| {
+            let id = chunk.get(sub.index)?;
+            let state = match sub.status {
+                200 => provider::RemoteMessageState::Present {
+                    is_read: sub.body.as_ref()?.get("isRead")?.as_bool()?,
+                },
+                404 => provider::RemoteMessageState::Missing,
+                _ => return None,
+            };
+            Some((id.clone(), state))
+        })
+        .collect()
 }
 
 /// Pull the sub-responses out of a `$batch` envelope.
@@ -1437,6 +1933,97 @@ fn format_graph_error(status: StatusCode, body: &str) -> String {
     message
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
+}
+
+// ── Attachments of an outgoing message ────────────────────────────────────────
+
+/// `createUploadSession` response.
+#[derive(Debug, Deserialize)]
+struct GraphUploadSession {
+    #[serde(rename = "uploadUrl")]
+    upload_url: String,
+}
+
+/// What a `PUT` of a byte range answers while more is expected. The upload
+/// endpoint is Outlook's own and capitalises differently from Graph.
+#[derive(Debug, Deserialize)]
+struct GraphUploadProgress {
+    #[serde(rename = "nextExpectedRanges", alias = "NextExpectedRanges", default)]
+    next_expected_ranges: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphAttachmentIds {
+    #[serde(default)]
+    value: Vec<GraphAttachmentId>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphAttachmentId {
+    id: String,
+}
+
+/// One attachment of an outgoing message.
+struct OutgoingAttachment<'a> {
+    attachment: &'a provider::EmailAttachment,
+    /// One of the body's inline images, which the payload marks `isInline`
+    /// whatever the attachment says.
+    force_inline: bool,
+    /// Size of the content in bytes.
+    size: u64,
+}
+
+/// Every attachment of an outgoing message, in the order the JSON payload
+/// lists them: the body's inline images, then the files.
+fn outgoing_attachments<'a>(
+    body: &'a EmailBody,
+    attachments: &'a [provider::EmailAttachment],
+) -> Vec<OutgoingAttachment<'a>> {
+    let with_size = |attachment: &'a provider::EmailAttachment, force_inline: bool| OutgoingAttachment {
+        attachment,
+        force_inline,
+        size: outlook_upload::decoded_len(&attachment.data),
+    };
+    body.inline_images
+        .iter()
+        .map(|image| with_size(image, true))
+        .chain(attachments.iter().map(|file| with_size(file, false)))
+        .collect()
+}
+
+fn plan_outgoing(outgoing: &[OutgoingAttachment<'_>]) -> Result<AttachmentPlan> {
+    let files: Vec<(&str, u64)> = outgoing
+        .iter()
+        .map(|item| (item.attachment.filename.as_str(), item.size))
+        .collect();
+    outlook_upload::plan_attachments(&files)
+}
+
+/// The body as the draft is created with when its attachments follow on their
+/// own: the inline images are attachments too.
+fn body_without_inline_images(body: &EmailBody) -> EmailBody {
+    // Field by field: a `clone()` would copy the images only to drop them.
+    EmailBody {
+        text: body.text.clone(),
+        html: body.html.clone(),
+        inline_images: Vec::new(),
+        language: body.language,
+        append_footer: body.append_footer,
+    }
+}
+
+/// The error's own text, without the variant's prefix, for wrapping it in a
+/// message that names what was being done.
+fn error_detail(error: &AppError) -> String {
+    error
+        .params()
+        .get("detail")
+        .cloned()
+        .unwrap_or_else(|| error.to_string())
+}
+
+fn megabytes(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1614,6 +2201,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_send_mail_that_fails_with_a_server_error_is_not_resent() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .send_new_email(
+                "me@example.com",
+                &["them@example.com".to_string()],
+                &[],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a failed send must surface, not be retried into success"
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn reply_addresses_the_graph_item_id() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1682,6 +2306,38 @@ mod tests {
         )
         .await
         .expect("a missing internetMessageId must not block a reply");
+    }
+
+    #[tokio::test]
+    async fn updating_a_draft_that_is_gone_reports_not_found() {
+        // A draft sent or deleted from another device 404s. The caller has to
+        // tell that apart from a transient failure to re-create the draft.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/gone-1"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let result = client
+            .update_draft(
+                "gone-1",
+                &["dest@example.com".to_string()],
+                &[],
+                "Subject",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
     }
 
     #[tokio::test]
@@ -1924,6 +2580,179 @@ mod tests {
         assert!(msg.contains("nginx fail"));
     }
 
+    #[test]
+    fn batch_states_read_the_flag_a_missing_id_and_skip_everything_else() {
+        let chunk: Vec<String> = ["read", "unread", "gone", "throttled", "unanswered", "malformed"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Out of order on purpose: Graph does not answer in request order.
+        let envelope = serde_json::json!({ "responses": [
+            { "id": "2", "status": 404, "body": { "error": { "code": "ErrorItemNotFound" } } },
+            { "id": "0", "status": 200, "body": { "id": "read", "isRead": true } },
+            { "id": "3", "status": 429, "body": {} },
+            { "id": "1", "status": 200, "body": { "id": "unread", "isRead": false } },
+            { "id": "5", "status": 200, "body": { "id": "malformed" } },
+            { "id": "9", "status": 404 },
+        ]});
+
+        let mut states = states_from_batch(&chunk, &envelope);
+        states.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(
+            states,
+            vec![
+                ("gone".to_string(), provider::RemoteMessageState::Missing),
+                (
+                    "read".to_string(),
+                    provider::RemoteMessageState::Present { is_read: true }
+                ),
+                (
+                    "unread".to_string(),
+                    provider::RemoteMessageState::Present { is_read: false }
+                ),
+            ],
+            "a throttled, unanswered or malformed slot says nothing about its message"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_refresh_asks_for_is_read_in_batches_of_twenty() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/$batch"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"responses":[{"id":"0","status":200,"body":{"id":"x","isRead":true}},{"id":"1","status":404}]}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let ids: Vec<String> = (0..25).map(|i| format!("m-{i}")).collect();
+        let states = EmailProvider::fetch_message_states(&client, &ids)
+            .await
+            .expect("refresh")
+            .expect("supported");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2, "25 ids = one batch of 20 and one of 5");
+        let first: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(first["requests"].as_array().map(Vec::len), Some(20));
+        assert_eq!(first["requests"][0]["url"], "/me/messages/m-0?$select=id,isRead");
+        // Slot 0 and 1 of each batch were answered; the rest are unknown.
+        assert_eq!(states.len(), 4);
+        assert_eq!(
+            states.get("m-0"),
+            Some(&provider::RemoteMessageState::Present { is_read: true })
+        );
+        assert_eq!(states.get("m-21"), Some(&provider::RemoteMessageState::Missing));
+        assert_eq!(states.get("m-5"), None);
+    }
+
+    #[tokio::test]
+    async fn marking_read_patches_is_read_on_the_message() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/m-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-1"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::set_read_state(&client, "m-1", true)
+            .await
+            .expect("mark read");
+        EmailProvider::set_read_state(&client, "m-1", false)
+            .await
+            .expect("mark unread");
+
+        let requests = server.received_requests().await.expect("requests");
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).expect("json body"))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                serde_json::json!({ "isRead": true }),
+                serde_json::json!({ "isRead": false })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn trashing_moves_the_message_to_deleted_items() {
+        // A move, never `DELETE /me/messages/{id}`: the message must stay
+        // recoverable from the account's Deleted Items.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-3/move"))
+            .respond_with(ResponseTemplate::new(201).set_body_raw(r#"{"id":"m-3-moved"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::trash_message(&client, "m-3", None).await.expect("trash");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "deleteditems" }));
+    }
+
+    #[tokio::test]
+    async fn a_write_to_a_message_graph_no_longer_has_is_reported_as_not_found() {
+        // Graph re-keys a message on every move, so an id stored before the
+        // user filed the message elsewhere answers 404. Callers tell that
+        // apart from an outage: it is not worth retrying.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let err = EmailProvider::set_read_state(&client, "stale-id", true)
+            .await
+            .expect_err("404");
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_trash_that_fails_with_a_server_error_is_not_resent() {
+        // The move may have been carried out; replaying it would address an id
+        // Graph has already retired.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        assert!(EmailProvider::trash_message(&client, "m-3", None).await.is_err());
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
+    }
+
     #[tokio::test]
     async fn locate_message_finds_a_moved_message_by_its_internet_message_id() {
         // Graph re-keys a message when it is moved, so the id stored locally
@@ -2008,5 +2837,729 @@ mod tests {
 
         assert_eq!(located.id, "archived-id");
         assert_eq!(located.mailbox, "inbox");
+    }
+
+    // ── Attachments that do not fit in one request ────────────────────────
+
+    use crate::sync::outlook_upload::{INLINE_ATTACHMENT_LIMIT, MAX_ATTACHMENT_SIZE, UPLOAD_CHUNK_SIZE};
+    use crate::sync::provider::EmailAttachment;
+    use base64::Engine as _;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    /// Two ranges: one full chunk and a rest.
+    const LARGE: usize = UPLOAD_CHUNK_SIZE as usize + 500_000;
+    // Large enough to need an upload session.
+    const _: () = assert!(LARGE as u64 >= INLINE_ATTACHMENT_LIMIT);
+
+    fn content(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i * 31 % 251) as u8).collect()
+    }
+
+    fn file(name: &str, len: usize) -> EmailAttachment {
+        EmailAttachment {
+            filename: name.to_string(),
+            mime_type: "application/octet-stream".to_string(),
+            data: base64::engine::general_purpose::STANDARD.encode(content(len)),
+            content_id: None,
+            is_inline: false,
+        }
+    }
+
+    fn range_header(start: usize, end: usize, total: usize) -> String {
+        format!("bytes {}-{}/{}", start, end - 1, total)
+    }
+
+    fn client_for(server: &MockServer) -> OutlookClient {
+        OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri())
+    }
+
+    async fn mount_json(server: &MockServer, verb: &str, at: &str, status: u16, body: serde_json::Value) {
+        Mock::given(method(verb))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(server)
+            .await;
+    }
+
+    /// A draft `d1`, an upload session for it at `/upload/d1`, and the two
+    /// ranges of a [`LARGE`] file accepted.
+    async fn mount_large_upload(server: &MockServer) {
+        mount_json(
+            server,
+            "POST",
+            "/me/messages/d1/attachments/createUploadSession",
+            201,
+            serde_json::json!({
+                "uploadUrl": format!("{}/upload/d1", server.uri()),
+                "expirationDateTime": "2026-09-30T20:00:00Z",
+                "nextExpectedRanges": ["0-"],
+            }),
+        )
+        .await;
+        Mock::given(method("PUT"))
+            .and(path("/upload/d1"))
+            .and(header(
+                "content-range",
+                range_header(0, UPLOAD_CHUNK_SIZE as usize, LARGE).as_str(),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "nextExpectedRanges": [UPLOAD_CHUNK_SIZE.to_string()] })),
+            )
+            .mount(server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/upload/d1"))
+            .and(header(
+                "content-range",
+                range_header(UPLOAD_CHUNK_SIZE as usize, LARGE, LARGE).as_str(),
+            ))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(server)
+            .await;
+    }
+
+    /// Run a scenario that uploads, holding the log seam and returning what it
+    /// logged: an upload reports to the output panel through the process
+    /// logger, whose events other tests count. A sync test on its own
+    /// runtime, because the guard must not be held across an await.
+    fn with_log_seam<F: std::future::Future>(scenario: F) -> Vec<AppLogEvent> {
+        let _seam = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(scenario);
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        logger.events()
+    }
+
+    /// `METHOD /path` of every request the server saw, in order.
+    async fn requests(server: &MockServer) -> Vec<String> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.url.path()))
+            .collect()
+    }
+
+    async fn requests_to(server: &MockServer, verb: &str, at: &str) -> Vec<Request> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() == verb && r.url.path() == at)
+            .collect()
+    }
+
+    async fn send_new(client: &OutlookClient, attachments: &[EmailAttachment]) -> Result<provider::SentMessageMeta> {
+        client
+            .send_new_email(
+                "me@example.com",
+                &["them@example.com".to_string()],
+                &[],
+                "Files",
+                &EmailBody::plain("see attached"),
+                attachments,
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_small_attachment_still_travels_in_the_send_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+        let small = file("notes.txt", 2_000);
+
+        send_new(&client_for(&server), std::slice::from_ref(&small))
+            .await
+            .expect("sent");
+
+        assert_eq!(requests(&server).await, vec!["POST /me/sendMail"]);
+        let body: serde_json::Value =
+            serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
+        assert_eq!(body["message"]["attachments"][0]["contentBytes"], small.data);
+    }
+
+    #[test]
+    fn a_large_attachment_is_uploaded_in_ranges_to_a_draft_that_is_then_sent() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_large_upload(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+
+            send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect("sent");
+
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "POST /me/messages",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "PUT /upload/d1",
+                    "POST /me/messages/d1/send",
+                ]
+            );
+            // The draft carries the message, not the file.
+            let draft: serde_json::Value =
+                serde_json::from_slice(&requests_to(&server, "POST", "/me/messages").await[0].body).unwrap();
+            assert_eq!(draft["subject"], "Files");
+            assert!(draft.get("attachments").is_none(), "{draft}");
+            // The session describes the file.
+            let session: serde_json::Value = serde_json::from_slice(
+                &requests_to(&server, "POST", "/me/messages/d1/attachments/createUploadSession").await[0].body,
+            )
+            .unwrap();
+            assert_eq!(session["AttachmentItem"]["attachmentType"], "file");
+            assert_eq!(session["AttachmentItem"]["name"], "video.bin");
+            assert_eq!(session["AttachmentItem"]["size"], LARGE);
+            // The ranges are the file's bytes, in order, without the bearer token.
+            let puts = requests_to(&server, "PUT", "/upload/d1").await;
+            let uploaded: Vec<u8> = puts.iter().flat_map(|r| r.body.clone()).collect();
+            assert_eq!(uploaded, content(LARGE));
+            for put in &puts {
+                assert!(
+                    put.headers.get("authorization").is_none(),
+                    "the upload URL is pre-authenticated"
+                );
+                assert_eq!(put.headers.get("content-type").unwrap(), "application/octet-stream");
+                assert_eq!(
+                    put.headers.get("content-length").unwrap().to_str().unwrap(),
+                    put.body.len().to_string()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_failed_range_is_sent_again() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            // The first range is refused once with a retryable status.
+            Mock::given(method("PUT"))
+                .and(path("/upload/d1"))
+                .respond_with(ResponseTemplate::new(503))
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+            mount_large_upload(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+
+            send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect("sent");
+
+            let ranges: Vec<String> = requests_to(&server, "PUT", "/upload/d1")
+                .await
+                .iter()
+                .map(|r| r.headers.get("content-range").unwrap().to_str().unwrap().to_string())
+                .collect();
+            let first = range_header(0, UPLOAD_CHUNK_SIZE as usize, LARGE);
+            assert_eq!(
+                ranges,
+                vec![
+                    first.clone(),
+                    first,
+                    range_header(UPLOAD_CHUNK_SIZE as usize, LARGE, LARGE)
+                ]
+            );
+            assert_eq!(requests_to(&server, "POST", "/me/messages/d1/send").await.len(), 1);
+        });
+    }
+
+    #[test]
+    fn the_upload_continues_where_graph_says() {
+        with_log_seam(async {
+            // Graph kept less of the first range than was sent.
+            let server = MockServer::start().await;
+            let kept = 1_000_000usize;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments/createUploadSession",
+                201,
+                serde_json::json!({ "uploadUrl": format!("{}/upload/d1", server.uri()), "nextExpectedRanges": ["0-"] }),
+            )
+            .await;
+            Mock::given(method("PUT"))
+                .and(path("/upload/d1"))
+                .and(header(
+                    "content-range",
+                    range_header(0, UPLOAD_CHUNK_SIZE as usize, LARGE).as_str(),
+                ))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "NextExpectedRanges": [format!("{kept}-")] })),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("PUT"))
+                .and(path("/upload/d1"))
+                .and(header("content-range", range_header(kept, LARGE, LARGE).as_str()))
+                .respond_with(ResponseTemplate::new(201))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+
+            send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect("sent");
+
+            let puts = requests_to(&server, "PUT", "/upload/d1").await;
+            assert_eq!(puts.len(), 2);
+            assert_eq!(puts[1].body, content(LARGE)[kept..]);
+        });
+    }
+
+    #[test]
+    fn a_refused_range_cancels_the_session_and_removes_the_draft() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments/createUploadSession",
+                201,
+                serde_json::json!({ "uploadUrl": format!("{}/upload/d1", server.uri()), "nextExpectedRanges": ["0-"] }),
+            )
+            .await;
+            mount_json(
+                &server,
+                "PUT",
+                "/upload/d1",
+                400,
+                serde_json::json!({ "error": { "code": "ErrorInvalidRange", "message": "bad range" } }),
+            )
+            .await;
+            for at in ["/upload/d1", "/me/messages/d1"] {
+                Mock::given(method("DELETE"))
+                    .and(path(at))
+                    .respond_with(ResponseTemplate::new(204))
+                    .mount(&server)
+                    .await;
+            }
+
+            let err = send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect_err("the send fails");
+
+            assert!(err.to_string().contains("video.bin"), "{err}");
+            assert!(err.to_string().contains("bad range"), "{err}");
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "POST /me/messages",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "DELETE /upload/d1",
+                    "DELETE /me/messages/d1",
+                ],
+                "nothing is sent, and no draft is left behind"
+            );
+            let cancel = &requests_to(&server, "DELETE", "/upload/d1").await[0];
+            assert!(cancel.headers.get("authorization").is_none());
+        });
+    }
+
+    #[tokio::test]
+    async fn an_attachment_over_the_maximum_is_refused_before_any_request() {
+        let server = MockServer::start().await;
+        // All-zero content: the size is what matters.
+        let symbols = (MAX_ATTACHMENT_SIZE as usize + 3) / 3 * 4;
+        let too_large = EmailAttachment {
+            data: "A".repeat(symbols),
+            ..file("archive.zip", 0)
+        };
+
+        let client = client_for(&server);
+        let sent = send_new(&client, std::slice::from_ref(&too_large)).await;
+        let drafted = client
+            .create_draft(
+                &[],
+                &[],
+                "Files",
+                &EmailBody::plain("x"),
+                std::slice::from_ref(&too_large),
+            )
+            .await;
+
+        for err in [sent.expect_err("refused"), drafted.expect_err("refused")] {
+            assert!(matches!(err, AppError::InvalidInput(_)), "{err:?}");
+            assert!(err.to_string().contains("archive.zip"), "{err}");
+        }
+        assert!(requests(&server).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn small_attachments_too_big_together_are_added_to_the_draft_one_by_one() {
+        let server = MockServer::start().await;
+        mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+        mount_json(
+            &server,
+            "POST",
+            "/me/messages/d1/attachments",
+            201,
+            serde_json::json!({ "id": "a1" }),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/d1/send"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+        let half = INLINE_ATTACHMENT_LIMIT as usize / 2;
+        let files = [file("one.bin", half), file("two.bin", half)];
+
+        send_new(&client_for(&server), &files).await.expect("sent");
+
+        assert_eq!(
+            requests(&server).await,
+            vec![
+                "POST /me/messages",
+                "POST /me/messages/d1/attachments",
+                "POST /me/messages/d1/attachments",
+                "POST /me/messages/d1/send",
+            ]
+        );
+        let added = requests_to(&server, "POST", "/me/messages/d1/attachments").await;
+        let names: Vec<serde_json::Value> = added
+            .iter()
+            .map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["name"].clone())
+            .collect();
+        assert_eq!(names, vec!["one.bin", "two.bin"]);
+        let first: serde_json::Value = serde_json::from_slice(&added[0].body).unwrap();
+        assert_eq!(first["@odata.type"], "#microsoft.graph.fileAttachment");
+        assert_eq!(first["contentBytes"], files[0].data);
+    }
+
+    #[test]
+    fn a_small_file_next_to_a_large_one_is_posted_and_the_large_one_uploaded() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments",
+                201,
+                serde_json::json!({ "id": "a1" }),
+            )
+            .await;
+            mount_large_upload(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+
+            send_new(
+                &client_for(&server),
+                &[file("notes.txt", 2_000), file("video.bin", LARGE)],
+            )
+            .await
+            .expect("sent");
+
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "POST /me/messages",
+                    "POST /me/messages/d1/attachments",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "PUT /upload/d1",
+                    "POST /me/messages/d1/send",
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn a_reply_with_a_large_attachment_goes_through_a_reply_draft() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/orig-1/createReply",
+                201,
+                serde_json::json!({ "id": "d1" }),
+            )
+            .await;
+            mount_large_upload(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+
+            client_for(&server)
+                .send_reply(
+                    "me@example.com",
+                    &["them@example.com".to_string()],
+                    &[],
+                    "orig-1",
+                    "Re: Files",
+                    &EmailBody::plain("here it is"),
+                    &[file("video.bin", LARGE)],
+                )
+                .await
+                .expect("sent");
+
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "POST /me/messages/orig-1/createReply",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "PUT /upload/d1",
+                    "POST /me/messages/d1/send",
+                ]
+            );
+            let reply: serde_json::Value =
+                serde_json::from_slice(&requests_to(&server, "POST", "/me/messages/orig-1/createReply").await[0].body)
+                    .unwrap();
+            assert!(reply["comment"].as_str().unwrap().starts_with("here it is"), "{reply}");
+            assert_eq!(
+                reply["message"]["toRecipients"][0]["emailAddress"]["address"],
+                "them@example.com"
+            );
+        });
+    }
+
+    #[test]
+    fn a_send_that_fails_after_the_upload_keeps_the_draft_and_says_so() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_large_upload(&server).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/send",
+                500,
+                serde_json::json!({ "error": { "code": "InternalServerError", "message": "try later" } }),
+            )
+            .await;
+
+            let err = send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect_err("the send fails");
+
+            assert!(err.to_string().contains("try later"), "{err}");
+            assert!(err.to_string().contains("Drafts"), "{err}");
+            assert_eq!(
+                requests_to(&server, "POST", "/me/messages/d1/send").await.len(),
+                1,
+                "a send is never repeated"
+            );
+            assert!(
+                requests_to(&server, "DELETE", "/me/messages/d1").await.is_empty(),
+                "it may have been sent: the draft is not removed"
+            );
+        });
+    }
+
+    #[test]
+    fn a_new_draft_with_a_large_attachment_is_created_and_then_filled() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_large_upload(&server).await;
+
+            let id = client_for(&server)
+                .create_draft(
+                    &["them@example.com".to_string()],
+                    &[],
+                    "Files",
+                    &EmailBody::plain("draft").without_footer(),
+                    &[file("video.bin", LARGE)],
+                )
+                .await
+                .expect("created");
+
+            assert_eq!(id, "d1");
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "POST /me/messages",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "PUT /upload/d1",
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn a_new_draft_whose_attachment_cannot_be_added_is_removed_again() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments/createUploadSession",
+                400,
+                serde_json::json!({ "error": { "code": "ErrorInvalidRequest", "message": "no session" } }),
+            )
+            .await;
+            Mock::given(method("DELETE"))
+                .and(path("/me/messages/d1"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&server)
+                .await;
+
+            let result = client_for(&server)
+                .create_draft(
+                    &[],
+                    &[],
+                    "Files",
+                    &EmailBody::plain("draft"),
+                    &[file("video.bin", LARGE)],
+                )
+                .await;
+
+            assert!(result.is_err());
+            assert_eq!(requests_to(&server, "DELETE", "/me/messages/d1").await.len(), 1);
+        });
+    }
+
+    #[test]
+    fn updating_a_draft_with_a_large_attachment_replaces_its_attachments() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(
+                &server,
+                "PATCH",
+                "/me/messages/d1",
+                200,
+                serde_json::json!({ "id": "d1" }),
+            )
+            .await;
+            mount_json(
+                &server,
+                "GET",
+                "/me/messages/d1/attachments",
+                200,
+                serde_json::json!({ "value": [{ "id": "old-1" }, { "id": "old-2" }] }),
+            )
+            .await;
+            for old in ["old-1", "old-2"] {
+                Mock::given(method("DELETE"))
+                    .and(path(format!("/me/messages/d1/attachments/{old}")))
+                    .respond_with(ResponseTemplate::new(204))
+                    .mount(&server)
+                    .await;
+            }
+            mount_large_upload(&server).await;
+
+            let id = client_for(&server)
+                .update_draft(
+                    "d1",
+                    &["them@example.com".to_string()],
+                    &[],
+                    "Files",
+                    &EmailBody::plain("draft").without_footer(),
+                    &[file("video.bin", LARGE)],
+                )
+                .await
+                .expect("updated");
+
+            assert_eq!(id, "d1");
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "PATCH /me/messages/d1",
+                    "GET /me/messages/d1/attachments",
+                    "DELETE /me/messages/d1/attachments/old-1",
+                    "DELETE /me/messages/d1/attachments/old-2",
+                    "POST /me/messages/d1/attachments/createUploadSession",
+                    "PUT /upload/d1",
+                    "PUT /upload/d1",
+                ]
+            );
+            let patch: serde_json::Value =
+                serde_json::from_slice(&requests_to(&server, "PATCH", "/me/messages/d1").await[0].body).unwrap();
+            assert!(patch.get("attachments").is_none(), "{patch}");
+        });
+    }
+
+    #[test]
+    fn an_upload_url_on_another_plain_http_host_is_refused() {
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments/createUploadSession",
+                201,
+                serde_json::json!({ "uploadUrl": "http://uploads.example.com/session/1", "nextExpectedRanges": ["0-"] }),
+            )
+            .await;
+            Mock::given(method("DELETE"))
+                .and(path("/me/messages/d1"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&server)
+                .await;
+
+            let err = send_new(&client_for(&server), &[file("video.bin", LARGE)])
+                .await
+                .expect_err("refused");
+
+            assert!(err.to_string().contains("upload URL"), "{err}");
+            assert!(requests_to(&server, "PUT", "/upload/d1").await.is_empty());
+        });
+    }
+
+    #[test]
+    fn an_upload_is_reported_to_the_output_panel() {
+        let events = with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(&server, "POST", "/me/messages", 201, serde_json::json!({ "id": "d1" })).await;
+            mount_large_upload(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/me/messages/d1/send"))
+                .respond_with(ResponseTemplate::new(202))
+                .mount(&server)
+                .await;
+            send_new(&client_for(&server), &[file("panel-video.bin", LARGE)])
+                .await
+                .expect("sent");
+        });
+
+        let about_file: Vec<_> = events
+            .iter()
+            .filter(|e| e.source == "sync" && e.message.contains("panel-video.bin"))
+            .collect();
+        assert!(about_file.iter().any(|e| e.level == "info"), "{events:?}");
+        assert!(about_file.iter().any(|e| e.level == "success"), "{events:?}");
     }
 }

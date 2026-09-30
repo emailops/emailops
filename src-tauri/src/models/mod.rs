@@ -1187,6 +1187,22 @@ pub struct ChatTrace {
     /// a `load_skill` call instead.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub applied_skills: Vec<AppliedSkill>,
+    /// The conversation's `search_emails` page as this turn left it: the next
+    /// turn's `next_page` continues it. `None` on a turn that keeps no search
+    /// state (a form fill) and on traces written before it was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_page: Option<SearchPageTrace>,
+}
+
+/// A `search_emails` page, persisted on the trace: the call's arguments and
+/// where the next page starts. Recorded explicitly so a later turn never has
+/// to read the position back out of the result text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPageTrace {
+    pub args: serde_json::Value,
+    pub next_offset: i32,
+    pub total: i32,
 }
 
 /// A user skill applied to a turn before the model saw it.

@@ -168,7 +168,51 @@
     "noTrainingNotice": "Nunca se usan proveedores que guarden o entrenen con tu correo.",
     "zeroDataRetention": "Solo retención cero",
     "zeroDataRetentionHelp": "Envía solo a proveedores que no guardan nada tras responder. Habrá menos modelos disponibles.",
-    "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it"
+    "contextBudget": "Presupuesto de contexto (tokens)",
+    "contextBudgetHelp": "Cuánto de la ventana de contexto de un modelo remoto puede ocupar cada llamada del modo investigación. La ventana del propio modelo sigue siendo el tope. Un presupuesto mayor significa menos llamadas y más grandes: más correo enviado por petición y más coste por llamada.",
+    "contextBudgetLoadFailed": "No se pudo cargar el presupuesto de contexto: {{error}}",
+    "contextBudgetSaveFailed": "No se pudo guardar el presupuesto de contexto: {{error}}",
+    "chatModelPlaceholder": "p. ej. google/gemma-3-27b-it",
+    "chatModelRequired": "Introduce el ID de un modelo de chat de OpenRouter antes de guardar; no se ha guardado nada.",
+    "embeddingNone": "Ninguno — solo búsqueda por palabras clave",
+    "embeddingRecommendedMultilingual": "recomendado, multilingüe",
+    "embeddingRecommendedEnglish": "recomendado, solo inglés",
+    "embeddingNotice": "Con un modelo de Embeddings seleccionado, el texto de cada correo que se indexa, y de cada búsqueda y pregunta del chat, se envía a OpenRouter y cuenta para el presupuesto mensual. Sin ninguno, la búsqueda semántica está desactivada y solo se busca por palabras clave.",
+    "embeddingNeedsKey": "Guarda tu clave de API para cargar la lista de modelos de Embeddings.",
+    "embeddingNeedsCheck": "Al guardar se comprueba que este modelo genera los vectores de 768 dimensiones que necesita el índice de correo.",
+    "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
+    "embeddingZdrBlocked": "No se ha guardado nada: ningún proveedor del modelo de Embeddings {{model}} cumple el ajuste de retención cero. Desactiva «Solo retención cero» en Ajustes → IA → OpenRouter, o no uses ningún modelo de Embeddings (solo búsqueda por palabras clave).",
+    "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
+  },
+  "confirmReindex": {
+    "title": "¿Regenerar todos los Embeddings?",
+    "body": "El modelo de Embeddings ha cambiado. Al guardar se eliminan todos los Embeddings existentes y se regeneran con el nuevo modelo. La búsqueda semántica queda reducida hasta que termine.",
+    "bodyNone": "No hay ningún modelo de Embeddings seleccionado. Al guardar se eliminan todos los Embeddings existentes y la búsqueda semántica se desactiva: solo se busca por palabras clave hasta que elijas un modelo.",
+    "openRouter": "El texto de cada correo indexado se enviará a OpenRouter y se facturará en tu cuenta de OpenRouter.",
+    "confirm": "Guardar y regenerar",
+    "confirmNone": "Guardar y eliminar"
+  },
+  "aiWork": {
+    "title": "Hay trabajo de IA en curso",
+    "body": "Este cambio afecta a trabajo de IA en segundo plano que está en marcha o en cola con la configuración actual:",
+    "kinds": {
+      "embeddingsRebuild": "Regenerando todos los Embeddings",
+      "embeddingsGeneration": "Generando Embeddings",
+      "classification": "Clasificando correos",
+      "memoryExtraction": "Extracción de memoria",
+      "taskExtraction": "Extracción de tareas",
+      "lensExtraction": "Extracción de Lentes"
+    },
+    "queued": "{{n}} en cola",
+    "moreQueued": "+{{n}} en cola",
+    "openRouter": "Este trabajo está enviando el texto de tus correos a OpenRouter. Si lo detienes, esas peticiones terminan ahora; si esperas, continúan y se facturan hasta que el trabajo acabe.",
+    "help": "Detener y aplicar termina el trabajo en el correo que tiene entre manos y después aplica el cambio; lo ya hecho se conserva. Esperar y aplicar aplica el cambio cuando el trabajo termine por sí solo.",
+    "stopping": "Deteniendo… El cambio se aplica en cuanto el trabajo haya terminado.",
+    "waiting": "Esperando a que el trabajo termine. El cambio se aplica en cuanto lo haga.",
+    "stop": "Detener y aplicar",
+    "wait": "Esperar y aplicar",
+    "failed": "No se pudo detener ni seguir el trabajo de IA en curso: {{error}}",
+    "checkFailed": "No se pudo comprobar si hay trabajo de IA en curso: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "¿Restaurar el prompt por defecto?",
@@ -437,6 +481,8 @@
     "allowRemoteToggleDesc": "Cuando está desactivado, se bloquean imágenes externas y rastreadores. Un aviso te permite cargarlos por correo.",
     "privacyPolicyLink": "Política de privacidad",
     "loading": "Cargando...",
+    "loadFailed": "No se pudieron cargar los ajustes de privacidad: {{error}}",
+    "saveFailed": "No se pudo guardar el ajuste: {{error}}",
     "passwordDialog": {
       "setTitle": "Definir contraseña principal",
       "changeTitle": "Cambiar contraseña principal",

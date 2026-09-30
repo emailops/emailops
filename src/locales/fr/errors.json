@@ -56,6 +56,7 @@
     "io": "Erreur de fichier : {{detail}}",
     "budget_exceeded": "Budget d'IA dépassé : {{detail}}",
     "cancelled": "Annulé.",
+    "attachment_confirmation_required": "« {{filename}} » nécessite votre confirmation avant d’être ouvert.",
     "skill_no_frontmatter": "SKILL.md doit commencer par un bloc --- contenant name et description.",
     "skill_unclosed_frontmatter": "Le bloc d'en-tête n'est jamais fermé par ---.",
     "skill_fence_not_on_own_line": "Le --- qui ferme l'en-tête doit être sur sa propre ligne.",

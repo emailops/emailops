@@ -76,7 +76,9 @@ fn fts_heading(c: &crate::models::HelpChunk) -> String {
 pub async fn ensure_embeddings(db: &Arc<Database>, provider: &dyn AIProvider) -> Result<u32> {
     let model = embedding_model_label(db);
     let pending = db.list_help_chunks_needing_embedding(&model, i32::MAX)?;
-    if pending.is_empty() {
+    // A provider with no embedding model set up has nothing to embed with;
+    // the text index keeps answering.
+    if pending.is_empty() || !provider.embedding_configured() {
         return Ok(0);
     }
     log(
@@ -174,6 +176,18 @@ mod tests {
         assert_eq!(embedding_model_label(&db), DEFAULT_EMBEDDING_MODEL);
         db.set_preference("ai_embedding_model", "bge-m3").unwrap();
         assert_eq!(embedding_model_label(&db), "bge-m3");
+    }
+
+    #[tokio::test]
+    async fn ensure_embeddings_asks_nothing_of_a_provider_without_an_embedding_model() {
+        use crate::ai::provider::FakeAiProvider;
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        ensure_text_index(&db).unwrap();
+        let provider = FakeAiProvider::default().without_embedding_model();
+
+        assert_eq!(ensure_embeddings(&db, &provider).await.unwrap(), 0);
+
+        assert!(provider.embed_calls().is_empty());
     }
 
     #[tokio::test]

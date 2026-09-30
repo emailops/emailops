@@ -7,6 +7,7 @@
 //! general iCalendar implementation. Invites are UNTRUSTED input: parsing is
 //! purely structural and the output is rendered as plain text.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -178,13 +179,17 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
 }
 
 /// Whether an attachment looks like a calendar invite part.
-fn is_invite_attachment(meta: &crate::models::EmailAttachmentMeta) -> bool {
+pub(crate) fn is_invite_attachment(meta: &crate::models::EmailAttachmentMeta) -> bool {
     meta.mime_type.to_ascii_lowercase().contains("calendar") || meta.filename.to_ascii_lowercase().ends_with(".ics")
 }
 
 /// Find and parse the calendar invite attached to an email, fetching the ICS
 /// bytes from disk, inline data, or the mail provider (in that order).
-pub async fn get_calendar_invite(db: &Arc<Database>, email_id: &str) -> Result<Option<CalendarInvite>> {
+pub async fn get_calendar_invite(
+    db: &Arc<Database>,
+    app_data_dir: &Path,
+    email_id: &str,
+) -> Result<Option<CalendarInvite>> {
     let Some(email) = db.get_email_by_id(email_id)? else {
         return Err(AppError::NotFound(format!("email '{email_id}' not found")));
     };
@@ -193,11 +198,10 @@ pub async fn get_calendar_invite(db: &Arc<Database>, email_id: &str) -> Result<O
         return Ok(None);
     };
 
-    let ics = if let Some(path) = meta.file_path.as_deref() {
-        std::fs::read_to_string(path).ok()
-    } else {
-        None
-    };
+    let ics = meta
+        .file_path
+        .as_deref()
+        .and_then(|path| read_stored_invite(app_data_dir, path));
     let ics = match ics {
         Some(content) => content,
         None => {
@@ -218,6 +222,35 @@ pub async fn get_calendar_invite(db: &Arc<Database>, email_id: &str) -> Result<O
     Ok(parse_ics_invite(&ics))
 }
 
+/// Read a locally stored invite part. `relative_path` is relative to the data
+/// dir (as every stored attachment path is) and must resolve inside it.
+/// Failures are logged and return `None` so the caller falls back to inline
+/// data or the provider.
+fn read_stored_invite(app_data_dir: &Path, relative_path: &str) -> Option<String> {
+    let read = crate::services::attachments::safe_attachment_path(app_data_dir, relative_path).and_then(|path| {
+        std::fs::read_to_string(&path)
+            .map_err(|e| AppError::IoError(format!("Failed to read stored invite '{relative_path}': {e}")))
+    });
+    match read {
+        Ok(content) => Some(content),
+        Err(e) => {
+            // A missing file just means it was never downloaded (or was
+            // cleaned up); the provider fallback covers it.
+            let level = if matches!(e, AppError::NotFound(_)) {
+                "debug"
+            } else {
+                "error"
+            };
+            crate::services::logger::log(
+                level,
+                "system",
+                format!("Stored calendar invite unavailable, fetching it again: {e}"),
+            );
+            None
+        }
+    }
+}
+
 fn decode_ics_base64(b64: &str) -> Result<String> {
     use base64::Engine;
     let cleaned: String = b64.chars().filter(|c| !c.is_whitespace()).collect();
@@ -233,6 +266,94 @@ mod tests {
     use super::*;
 
     const SAMPLE_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Madrid:20260728T073000\r\nDTEND;TZID=Europe/Madrid:20260728T083000\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nDTSTAMP:20260723T103000Z\r\nORGANIZER;CN=Organizer:mailto:Organizer@Example.com\r\nUID:abc123DEF@example.com\r\nSUMMARY:Team sync\\, weekly\r\nLOCATION:Room 4\\; floor 2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    /// Seed an IMAP account + email whose `.ics` part is recorded as stored at
+    /// the data-dir-relative `relative` path. The IMAP account has no
+    /// credentials, so any fall-through to the provider fails.
+    fn seed_stored_invite(db: &Database, relative: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('acc-inv', 'imap', 'me@example.com', 'Test', 0, 0, 1)",
+                [],
+            )
+            .expect("insert account");
+        db.insert_email(&crate::models::Email {
+            id: "msg-inv".into(),
+            account_id: "acc-inv".into(),
+            thread_id: "msg-inv".into(),
+            message_id: None,
+            references: None,
+            subject: "Invitation".into(),
+            sender: "Organizer".into(),
+            sender_email: "organizer@example.com".into(),
+            recipients: vec!["me@example.com".into()],
+            cc: vec![],
+            body: "body".into(),
+            snippet: "snippet".into(),
+            timestamp: 1_700_000_000,
+            is_read: false,
+            triage_status: None,
+            category: "primary".into(),
+            mailbox: "inbox".into(),
+            is_sent: false,
+            headers: None,
+        })
+        .expect("insert email");
+        db.insert_email_attachment_meta("msg-inv", "acc-inv", "att-1", "invite.ics", "text/calendar", 10)
+            .expect("insert meta");
+        db.set_email_attachment_file_path("msg-inv", "invite.ics", relative)
+            .expect("set file path");
+    }
+
+    // Regression: the stored path is relative to the data dir but was read
+    // against the process CWD, so a locally stored invite was never found.
+    #[tokio::test]
+    async fn reads_a_locally_stored_invite_from_the_data_dir() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let data_dir = tempfile::tempdir().expect("tmp dir");
+        let relative = "attachments/acc-inv/auto/invite.ics";
+        let absolute = data_dir.path().join(relative);
+        std::fs::create_dir_all(absolute.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&absolute, SAMPLE_INVITE).expect("write ics");
+        seed_stored_invite(&db, relative);
+
+        let invite = get_calendar_invite(&db, data_dir.path(), "msg-inv")
+            .await
+            .expect("stored invite must be read without the provider")
+            .expect("invite");
+
+        assert_eq!(invite.uid, "abc123DEF@example.com");
+    }
+
+    // The read error used to be swallowed by `.ok()`.
+    #[test]
+    fn a_stored_invite_that_cannot_be_read_is_logged() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logs = crate::services::logger::install_for_testing();
+        let data_dir = tempfile::tempdir().expect("tmp dir");
+
+        let content = read_stored_invite(data_dir.path(), "attachments/acc-inv/auto/missing.ics");
+
+        assert_eq!(content, None);
+        assert!(
+            logs.events().iter().any(|e| e.message.contains("missing.ics")),
+            "the failed read must be logged, got {:?}",
+            logs.events()
+        );
+    }
+
+    #[test]
+    fn a_stored_invite_path_outside_the_data_dir_is_not_read() {
+        let _seam = crate::services::events::seam_test_lock();
+        let _logs = crate::services::logger::install_for_testing();
+        let root = tempfile::tempdir().expect("tmp dir");
+        let data_dir = root.path().join("data");
+        std::fs::create_dir_all(&data_dir).expect("mkdir");
+        std::fs::write(root.path().join("outside.ics"), SAMPLE_INVITE).expect("write ics");
+
+        assert_eq!(read_stored_invite(&data_dir, "../outside.ics"), None);
+    }
 
     #[test]
     fn parses_a_google_style_request_invite() {

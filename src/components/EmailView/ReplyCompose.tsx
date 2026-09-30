@@ -7,6 +7,7 @@ import { TranslateComposeControl } from '@/components/shared/TranslateComposeCon
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
+import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
 import { useTranslationStore } from '@/stores/translationStore';
@@ -304,7 +305,11 @@ export function ReplyCompose({
   const handleSend = async (force = false) => {
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (toRecipients.length === 0 || !plain) return;
+    // A valid address still in the input box (typed, not tokenised) is a
+    // recipient the user means — it must not be dropped from the send.
+    const to = mergePendingRecipient(toRecipients, toInput);
+    const cc = mergePendingRecipient(ccRecipients, ccInput);
+    if (to.length === 0 || !plain) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       const warnings = findSendWarnings(plain, attachments.length);
@@ -319,8 +324,8 @@ export function ReplyCompose({
     try {
       await onSend({
         fromAccountId,
-        toEmails: toRecipients,
-        ccEmails: ccRecipients,
+        toEmails: to,
+        ccEmails: cc,
         body: plain,
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
@@ -562,7 +567,9 @@ export function ReplyCompose({
         <button
           type="button"
           onClick={() => void handleSend()}
-          disabled={isSending || isLoadingDraft || toRecipients.length === 0 || !bodyHtml.trim()}
+          disabled={
+            isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
+          }
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSending

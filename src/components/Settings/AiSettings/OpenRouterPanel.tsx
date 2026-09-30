@@ -1,4 +1,8 @@
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
+import type { AiModelInfo } from '@/types';
+import { MIN_CONTEXT_BUDGET } from './helpers';
+import { recommendedEmbeddingOptions } from './openRouterEmbeddingOptions';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState } from './types';
 import { UsageSummary } from './UsageSummary';
@@ -8,19 +12,55 @@ interface OpenRouterPanelProps {
   setConfig: (next: AiConfigState) => void;
   apiKey: string;
   setApiKey: (key: string) => void;
+  /** Prompt budget (tokens) for remote models, `chat.remote_n_ctx_budget`. */
+  contextBudget: number;
+  onContextBudgetChange: (tokens: number) => void;
+  /** OpenRouter's embedding models; empty until a saved key lets them load. */
+  embeddingModels: AiModelInfo[];
+  /** The selected embedding model will be checked by the backend on Save. */
+  embeddingNeedsCheck: boolean;
 }
 
 /**
- * Cloud OpenRouter panel — API key, free-form chat model id, and an optional
- * monthly USD budget cap. No embedding model field: OpenRouter is chat-only,
- * embeddings always run locally via the configured embedded backend.
+ * Cloud OpenRouter panel — API key, free-form chat model id, an optional
+ * embedding model and a monthly USD budget cap.
+ *
+ * With OpenRouter selected, embeddings run on OpenRouter too: the text of
+ * every indexed email and every search or chat query is sent there, which is
+ * why the selector starts at "none" (keyword-only search) and carries a
+ * notice. A chosen model is checked on Save against the email index's vector
+ * size before it is stored — see `validate_openrouter_embedding_model`.
  *
  * Requests always forbid providers that train on or store prompts (fixed in
  * the backend, see `ai/openrouter.rs`); zero data retention is the user's call
  * because it rules out many models.
  */
-export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRouterPanelProps) {
+export function OpenRouterPanel({
+  config,
+  setConfig,
+  apiKey,
+  setApiKey,
+  contextBudget,
+  onContextBudgetChange,
+  embeddingModels,
+  embeddingNeedsCheck,
+}: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
+  // Recommended models lead the list (they are offered before the catalogue
+  // has loaded too); the rest of the catalogue follows, each model once.
+  const { none, recommended } = recommendedEmbeddingOptions(t);
+  const listed = embeddingModels
+    .filter((m) => !recommended.some((r) => r.value === m.id))
+    .map((m) => ({ value: m.id, label: m.id }));
+  const known = [...recommended, ...listed];
+  const embeddingOptions = [
+    none,
+    // A saved model the list no longer has (or could not load) stays selectable.
+    ...(config.embeddingModel !== '' && !known.some((o) => o.value === config.embeddingModel)
+      ? [{ value: config.embeddingModel, label: config.embeddingModel }]
+      : []),
+    ...known,
+  ];
   return (
     <div className="space-y-4">
       <div>
@@ -47,6 +87,23 @@ export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRo
         />
       </div>
       <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
+        <Select
+          value={config.embeddingModel}
+          options={embeddingOptions}
+          onChange={(value) => setConfig({ ...config, embeddingModel: value })}
+          ariaLabel={t('settings:ai.embeddingModel')}
+          fullWidth
+        />
+        <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
+        {!config.hasApiKey && (
+          <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNeedsKey')}</p>
+        )}
+        {embeddingNeedsCheck && (
+          <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
+        )}
+      </div>
+      <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.monthlyBudget')}</label>
         <input
           type="number"
@@ -61,6 +118,22 @@ export function OpenRouterPanel({ config, setConfig, apiKey, setApiKey }: OpenRo
       {/* Directly under the cap it reports against, so hitting the budget and
           finding out what you spent are the same screen. */}
       <UsageSummary />
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:openRouter.contextBudget')}</label>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:openRouter.contextBudgetHelp')}</p>
+        <input
+          type="number"
+          aria-label={t('settings:openRouter.contextBudget')}
+          min={MIN_CONTEXT_BUDGET}
+          step={4096}
+          value={contextBudget}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (Number.isFinite(v)) onContextBudgetChange(v);
+          }}
+          className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+        />
+      </div>
       <p className="text-xs text-gray-500">{t('settings:openRouter.noTrainingNotice')}</p>
       <div className="flex items-center justify-between">
         <div>

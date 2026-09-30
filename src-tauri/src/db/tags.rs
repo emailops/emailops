@@ -274,7 +274,8 @@ impl Database {
     /// `db::emails::search::get_filtered_emails` (tag branch) shows a thread when
     /// ANY email in the thread carries the tag, displaying the thread's latest
     /// email as the representative. We count the same set: distinct threads with
-    /// at least one tagged, non-deleted, inbox/sent email.
+    /// at least one tagged, non-deleted, inbox/sent email that the junk
+    /// detector did not flag (the list applies the same `exclude_junk_sql`).
     ///
     /// Under `AllEnabled`, threads dedup per `(account_id, thread_id)` — thread
     /// ids are not globally unique across accounts.
@@ -291,6 +292,7 @@ impl Database {
                 ("e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)", None)
             }
         };
+        let junk_sql = crate::db::exclude_junk_sql("e", false);
         let sql = format!(
             "SELECT tag_value, COUNT(*) AS cnt FROM (
                  SELECT DISTINCT t.tag_value AS tag_value, e.account_id, e.thread_id
@@ -300,6 +302,7 @@ impl Database {
                    AND t.tag_type = ?1
                    AND e.is_deleted = 0
                    AND e.mailbox IN ('inbox', 'sent')
+                   {junk_sql}
              )
              GROUP BY tag_value
              ORDER BY cnt DESC
@@ -310,12 +313,10 @@ impl Database {
         let stats = match account_param {
             Some(id) => stmt
                 .query_map(params![tag_type, limit, id], map_row)?
-                .filter_map(|r| r.ok())
-                .collect(),
+                .collect::<rusqlite::Result<Vec<_>>>()?,
             None => stmt
                 .query_map(params![tag_type, limit], map_row)?
-                .filter_map(|r| r.ok())
-                .collect(),
+                .collect::<rusqlite::Result<Vec<_>>>()?,
         };
         Ok(stats)
     }
@@ -765,6 +766,39 @@ mod tests {
             "acme should count 1 thread, got {:?}",
             stats
         );
+    }
+
+    // Regression: the sidebar count included threads whose only tagged email
+    // the junk detector flagged, which the filtered list hides.
+    #[test]
+    fn get_tag_stats_excludes_junk_like_the_filtered_list() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+
+        insert_email_with_mailbox(&db, "live", account, "thread-live", 100, "inbox", 0);
+        insert_email_with_mailbox(&db, "spam", account, "thread-spam", 200, "inbox", 0);
+        tag_email(&db, "live", "company", "globex");
+        tag_email(&db, "spam", "company", "globex");
+        db.set_junk_override("spam", account, Some("junk"), 10).unwrap();
+
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "company", 15)
+            .unwrap();
+        let listed = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                None,
+                Some("company"),
+                Some("globex"),
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        assert_eq!(listed.emails.len(), 1);
+        assert_eq!(stat_for(&stats, "globex"), Some(1), "got {:?}", stats);
     }
 
     #[test]

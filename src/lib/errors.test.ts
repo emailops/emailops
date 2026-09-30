@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { initI18n } from '../i18n';
-import { errorText, isAppErrorPayload, isAuthError } from './errors';
+import { errorText, isAppErrorPayload, isAuthError, isDataPolicyError } from './errors';
 
 beforeAll(async () => {
   await initI18n('en');
@@ -17,6 +17,14 @@ describe('isAppErrorPayload', () => {
     expect(isAppErrorPayload(new Error('x'))).toBe(false);
     expect(isAppErrorPayload(null)).toBe(false);
     expect(isAppErrorPayload({ message: 'no code' })).toBe(false);
+  });
+});
+
+describe('isDataPolicyError', () => {
+  it('recognises only the backend data-policy refusal', () => {
+    expect(isDataPolicyError({ code: 'ai_data_policy', params: { model: 'vendor/embed' }, message: 'x' })).toBe(true);
+    expect(isDataPolicyError({ code: 'ai', params: { detail: 'data policy' }, message: 'x' })).toBe(false);
+    expect(isDataPolicyError('No endpoints found matching your data policy')).toBe(false);
   });
 });
 

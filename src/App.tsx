@@ -87,7 +87,7 @@ import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useReminderStore } from '@/stores/reminderStore';
-import { useTagStore } from '@/stores/tagStore';
+import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
 import { useUpdateStore } from '@/stores/updateStore';
@@ -412,7 +412,6 @@ function AppInner() {
     silentRefetch: silentRefetchEmails,
     error: emailError,
     clearError: clearEmailError,
-    reset: resetEmails,
   } = useEmails(selectedCategoriesList, viewModeToMailbox(viewMode));
 
   // Keep stable refs so the sync effects always call the latest version.
@@ -838,18 +837,12 @@ function AppInner() {
 
     // Listen for email classification events (real-time tag updates)
     unlisteners.push(
-      listen<{ emailId: string; tags: { priority: string; intent: string; topic: string; confidence: number | null } }>(
-        'email-classified',
-        (event) => {
-          const { emailId, tags } = event.payload;
-          const now = Math.floor(Date.now() / 1000);
-          useTagStore.getState().setEmailTags(emailId, [
-            { emailId, tagType: 'priority', tagValue: tags.priority, confidence: tags.confidence, createdAt: now },
-            { emailId, tagType: 'intent', tagValue: tags.intent, confidence: tags.confidence, createdAt: now },
-            { emailId, tagType: 'topic', tagValue: tags.topic, confidence: tags.confidence, createdAt: now },
-          ]);
-        },
-      ),
+      listen<{ emailId: string; tags: ClassifiedTags }>('email-classified', (event) => {
+        const { emailId, tags } = event.payload;
+        const now = Math.floor(Date.now() / 1000);
+        const existing = useTagStore.getState().tagsByEmail[emailId] ?? [];
+        useTagStore.getState().setEmailTags(emailId, mergeClassifiedTags(existing, emailId, tags, now));
+      }),
     );
 
     // Chat streaming — tokens and source citations from the backend chat service.
@@ -948,9 +941,10 @@ function AppInner() {
     // every enabled account. The backend runs per-account queues, so the
     // syncs proceed independently; progress events drive list refreshes.
     if (isUnified) {
-      resetEmails();
       // Keyed on the account: this effect also re-runs when the account list
-      // reloads, and a same-account reset emptied the chat mid-conversation.
+      // reloads, and a same-account reset closed every tab and emptied the
+      // chat mid-conversation.
+      useEmailStore.getState().resetForAccount(activeAccountId);
       useChatStore.getState().resetForAccount(activeAccountId);
 
       if (!useConnectivityStore.getState().isOnline) {
@@ -977,10 +971,9 @@ function AppInner() {
     // Track if this effect was cleaned up (account changed)
     const abortController = { cancelled: false };
 
-    // Reset emails when switching accounts to avoid showing stale data
-    resetEmails();
-    // Also clear any chat state held from the previous account — only on a
-    // real switch (see `resetForAccount`).
+    // Reset emails and chat state when switching accounts to avoid showing
+    // stale data — only on a real switch (see `resetForAccount`).
+    useEmailStore.getState().resetForAccount(activeAccountId);
     useChatStore.getState().resetForAccount(activeAccountId);
 
     // Skip sync for disabled accounts — still load cached emails
@@ -1544,9 +1537,9 @@ function AppInner() {
                 const handleOpenInTab = !activeTab && selectedEmail ? () => openTab(selectedEmail) : undefined;
                 const hasEmailToShow = activeTab !== null || selectedEmail !== null;
 
-                const handleInboxSelect = (email: Email) => {
+                const handleInboxSelect = (email: Email, opts?: { auto?: boolean }) => {
                   setActiveTab(null);
-                  selectEmail(email);
+                  selectEmail(email, undefined, { markRead: !opts?.auto });
                 };
 
                 const emailPane = (
@@ -1870,7 +1863,11 @@ function AppInner() {
             setIsComposeOpen(false);
             setComposePrefillTo(undefined);
             setViewMode('inbox');
-            openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml);
+            openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml, {
+              draftId: state.draftId,
+              ccAddresses: state.ccAddresses,
+              fileAttachments: state.attachments,
+            });
           }}
         />
       )}

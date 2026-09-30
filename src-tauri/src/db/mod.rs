@@ -85,7 +85,8 @@ pub struct Database {
 /// block legitimately holds, so dropping them is the user's call (the same
 /// `junk_flagged_action` preference the inbox's "Hide junk" checkbox writes).
 /// Only the `junk` band is dropped — `uncertain` and `unknown` would hide real
-/// mail on a maybe.
+/// mail on a maybe. A user's `junk` override is always dropped, whatever the
+/// scores say (mirrors `StoredJunkVerdict::is_flagged`).
 ///
 /// `{alias}` is the `emails` alias to correlate against.
 pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
@@ -98,9 +99,10 @@ pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
         "AND NOT EXISTS (
              SELECT 1 FROM email_junk j
              WHERE j.email_id = {alias}.id
-               AND j.band = 'junk'
-               AND j.primary_kind IN {kinds}
-               AND (j.user_override IS NULL OR j.user_override <> 'not_junk')
+               AND (j.user_override = 'junk'
+                    OR (j.band = 'junk'
+                        AND j.primary_kind IN {kinds}
+                        AND (j.user_override IS NULL OR j.user_override <> 'not_junk')))
          )"
     )
 }
@@ -688,8 +690,9 @@ impl Database {
             .expect("seed test account");
     }
 
-    /// Open an existing database read-only for benchmarks / diagnostics.
-    #[cfg(test)]
+    /// Open an existing database read-only for benchmarks / diagnostics and
+    /// the CLI's read commands. Runs no migrations.
+    #[cfg(any(test, feature = "cli"))]
     pub fn open_readonly(db_path: PathBuf) -> Result<Self> {
         unsafe {
             sqlite3_auto_extension(Some(std::mem::transmute::<
@@ -750,6 +753,54 @@ mod ai_enabled_tests {
         let db = Database::new_for_testing().expect("create test db");
         db.set_preference("ai_enabled", "TRUE").expect("write pref");
         assert!(db.is_ai_enabled().expect("read pref"));
+    }
+}
+
+#[cfg(test)]
+mod exclude_junk_sql_tests {
+    use super::*;
+
+    fn visible_ids(db: &Database, hide_graymail: bool) -> Vec<String> {
+        let conn = db.reader();
+        let sql = format!(
+            "SELECT e.id FROM emails e WHERE 1 = 1 {} ORDER BY e.id",
+            exclude_junk_sql("e", hide_graymail)
+        );
+        let mut stmt = conn.prepare(&sql).expect("prepare");
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).expect("query");
+        rows.collect::<rusqlite::Result<Vec<_>>>().expect("rows")
+    }
+
+    fn insert_email(db: &Database, id: &str) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'gmail', 'me@example.com', 'Test', 0)",
+            [],
+        )
+        .expect("insert account");
+        conn.execute(
+            "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES (?1, 'acc1', ?1, 's', 'x', 'x@example.com', 'example.com', '[]', '[]', '', 1, 0, 'primary', 0)",
+            rusqlite::params![id],
+        )
+        .expect("insert email");
+    }
+
+    // Regression: the user marking a message as junk (override on an
+    // unscored or clean-scored row) must hide it, the same as the badge
+    // logic in `StoredJunkVerdict::is_flagged`.
+    #[test]
+    fn user_marked_junk_is_excluded() {
+        let db = Database::new_for_testing().expect("create test db");
+        insert_email(&db, "e-marked");
+        insert_email(&db, "e-clean");
+        db.set_junk_override("e-marked", "acc1", Some("junk"), 10)
+            .expect("override");
+
+        assert_eq!(visible_ids(&db, false), vec!["e-clean"]);
     }
 }
 
@@ -1087,6 +1138,79 @@ mod schema_parity_tests {
         }
     }
 
+    /// Every child column that references `emails(id)` needs its own index:
+    /// SQLite looks the child rows up by that column on each parent delete, so
+    /// without one an account deletion full-scans the child table once per
+    /// deleted email while holding the write lock.
+    #[test]
+    fn email_foreign_key_child_columns_are_indexed() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        for (table, column, index) in [
+            ("drafts", "email_id", "idx_drafts_email"),
+            ("chat_message_sources", "email_id", "idx_chat_sources_email"),
+            ("memory_facts", "source_email_id", "idx_memory_facts_source_email"),
+            ("lens_rows", "email_id", "idx_lens_rows_email"),
+            ("lens_exclusions", "email_id", "idx_lens_exclusions_email"),
+        ] {
+            let mut stmt = conn
+                .prepare(&format!("EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE {column} = ?1"))
+                .expect("prepare explain");
+            let plan: Vec<String> = stmt
+                .query_map(["e-1"], |row| row.get::<_, String>(3))
+                .expect("explain")
+                .map(|r| r.expect("plan row"))
+                .collect();
+            assert!(
+                plan.iter().any(|step| step.contains("SEARCH") && step.contains(index)),
+                "`{table}.{column}` lookup must search `{index}`, got plan: {plan:?}"
+            );
+        }
+    }
+
+    /// V028: a draft row written without the marker (a provider pull, a test
+    /// fixture) must read as clean, so only a local edit can make it dirty.
+    #[test]
+    fn a_draft_row_without_a_dirty_marker_is_clean() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        let (not_null, default): (bool, Option<String>) = conn
+            .query_row(
+                "SELECT \"notnull\", dflt_value FROM pragma_table_info('drafts') WHERE name = 'dirty'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("`drafts.dirty` column");
+        assert!(not_null, "`drafts.dirty` must be NOT NULL");
+        assert_eq!(default.as_deref(), Some("0"));
+    }
+
+    /// V029: the pending read-state pushes of an account are read on every
+    /// sync; the partial index keeps that a seek over the (normally empty)
+    /// set of pending rows instead of a scan of the account's mail.
+    #[test]
+    fn pending_read_pushes_are_looked_up_through_their_partial_index() {
+        let db = Database::new_for_testing().expect("create test db");
+        let conn = db.connection();
+        let mut stmt = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT id, is_read, read_push_pending_since FROM emails
+                 WHERE account_id = ?1 AND read_push_pending_since IS NOT NULL
+                 ORDER BY read_push_pending_since, id",
+            )
+            .expect("prepare explain");
+        let plan: Vec<String> = stmt
+            .query_map(["acc-1"], |row| row.get::<_, String>(3))
+            .expect("explain")
+            .map(|r| r.expect("plan row"))
+            .collect();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH") && step.contains("idx_emails_read_push_pending")),
+            "pending read pushes must search `idx_emails_read_push_pending`, got plan: {plan:?}"
+        );
+    }
+
     #[test]
     fn test_db_has_critical_tables() {
         let db = Database::new_for_testing().expect("create test db");
@@ -1111,6 +1235,7 @@ mod schema_parity_tests {
             "calendars",
             "help_doc_chunks",
             "attachment_rule_suggestions",
+            "folder_uid_validity",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

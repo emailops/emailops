@@ -322,7 +322,7 @@ pub async fn lookup_help(
         return Ok((Vec::new(), trace));
     }
     let model = embedding_model_label(db);
-    let vector_available = db.count_help_chunks_embedded_with(&model)? > 0;
+    let vector_available = provider.embedding_configured() && db.count_help_chunks_embedded_with(&model)? > 0;
     trace.vector_available = vector_available;
 
     let embedding: Option<Vec<f32>> = if vector_available {
@@ -468,6 +468,27 @@ fn log(level: &str, message: impl Into<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sections embedded under another provider must not make a provider
+    /// without an embedding model embed the question.
+    #[tokio::test]
+    async fn a_lookup_asks_no_embedding_of_a_provider_without_an_embedding_model() {
+        use crate::ai::provider::FakeAiProvider;
+        let db = Arc::new(crate::db::Database::new_for_testing().unwrap());
+        crate::services::help_docs::ensure_text_index(&db).unwrap();
+        let indexer = FakeAiProvider::default().with_embedding_dim(768);
+        crate::services::help_docs::ensure_embeddings(&db, &indexer)
+            .await
+            .unwrap();
+        let provider = FakeAiProvider::default().without_embedding_model();
+
+        let (sources, _trace) = lookup_help(&db, &provider, "OpenRouter", None, "en", 3, None)
+            .await
+            .unwrap();
+
+        assert!(!sources.is_empty(), "text search still answers");
+        assert!(provider.embed_calls().is_empty());
+    }
 
     fn chunk(lang: &str, page: &str, section: i32, part: i32, heading: &str) -> HelpChunk {
         HelpChunk {

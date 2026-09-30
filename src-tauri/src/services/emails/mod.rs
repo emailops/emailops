@@ -3,6 +3,7 @@ mod compose;
 mod drafts;
 mod events;
 mod folders;
+mod history_refresh;
 mod html_sanitizer;
 mod mailbox_state;
 mod optimistic;
@@ -10,7 +11,9 @@ mod provider;
 mod reconcile;
 mod redownload;
 mod send;
+mod state_refresh;
 mod sync;
+mod uid_validity;
 
 use std::sync::Arc;
 
@@ -27,11 +30,13 @@ pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, rename_folder};
+pub(crate) use history_refresh::history_cursor_key;
 pub use html_sanitizer::sanitize_outgoing_html;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
-pub use redownload::{redownload_email, redownload_empty_emails};
+pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
+pub(crate) use state_refresh::last_refresh_key as state_refresh_last_key;
 pub use sync::{
     request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
     sync_account_with_contention, sync_account_with_provider, SyncContention,
@@ -159,6 +164,9 @@ pub fn search_emails_filtered(
     ascending: bool,
     // `true` keeps only mail the user has not read (filtered in SQL).
     unread_only: bool,
+    // `true` keeps only mail the user received, not their own sent mail
+    // (filtered in SQL, so the limit and a count see the same set).
+    received_only: bool,
     // "Emails exchanged with X": the person's name plus the addresses it
     // resolves to; see `Database::search_emails_ordered`.
     participants: Option<&[String]>,
@@ -178,6 +186,7 @@ pub fn search_emails_filtered(
         // Chat never wants spam or phishing in its results.
         true,
         unread_only,
+        received_only,
         participants,
     )
 }

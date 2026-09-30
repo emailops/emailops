@@ -56,6 +56,7 @@
     "io": "Dateifehler: {{detail}}",
     "budget_exceeded": "KI-Budget überschritten: {{detail}}",
     "cancelled": "Abgebrochen.",
+    "attachment_confirmation_required": "„{{filename}}“ muss vor dem Öffnen bestätigt werden.",
     "skill_no_frontmatter": "SKILL.md muss mit einem ---Block beginnen, der name und description enthält.",
     "skill_unclosed_frontmatter": "Der Frontmatter-Block wird nie mit --- geschlossen.",
     "skill_fence_not_on_own_line": "Das schließende --- des Frontmatters muss in einer eigenen Zeile stehen.",

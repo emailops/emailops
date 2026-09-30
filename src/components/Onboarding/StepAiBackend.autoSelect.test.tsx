@@ -122,6 +122,12 @@ vi.mock('@/lib/api', () => ({
       provider: 'llamacpp',
       model: '',
       embeddingModel: '',
+      remembered: {
+        llamacpp: { model: '', embeddingModel: '' },
+        ollama: { model: null, embeddingModel: null },
+        openrouter: { model: null, embeddingModel: null },
+      },
+      openRouterValidatedEmbeddingModel: null,
       monthlyBudgetUsd: 0,
       hasApiKey: false,
       thinkingEnabled: false,

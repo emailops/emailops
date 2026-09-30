@@ -157,6 +157,11 @@ const REMOTE_FETCHING_TAGS = new Set(['IMG', 'SOURCE', 'VIDEO', 'AUDIO', 'TRACK'
 /** URL-bearing attributes on those elements. */
 const REMOTE_URL_ATTRS = ['src', 'poster'] as const;
 
+/** An absolute or protocol-relative http(s) URL — something that leaves the device. */
+const REMOTE_URL = /^\s*(?:https?:)?\/\//i;
+/** A `url(...)` in CSS text pointing at such a URL. */
+const REMOTE_CSS_URL = /url\(\s*['"]?\s*(?:https?:)?\/\//i;
+
 /**
  * Like `sanitizeEmailHtml`, but also optionally blocks remote content.
  * When `allowRemoteContent` is false, remote `src`/`poster`/`srcset` attributes
@@ -168,9 +173,10 @@ const REMOTE_URL_ATTRS = ['src', 'poster'] as const;
  * and the original (pre-sanitized) HTML — no need to store any intermediate state.
  *
  * Remote-content gating also propagates into CSS `url(...)` tokens inside
- * inline `style` attributes so a tracker can't sneak in via `background-image`.
- * Note: CSS inside `<style>` blocks is not yet scanned for remote URLs — adding
- * a real CSS parser would be the right next step if that becomes a privacy gap.
+ * inline `style` attributes so a tracker can't sneak in via `background-image`,
+ * and strips the legacy `background` attribute. CSS inside `<style>` blocks is
+ * not rewritten: `EmailHtmlFrame` blocks those loads with a per-frame CSP, and
+ * a remote `url(...)` there only raises `hasBlockedImages` so the banner shows.
  */
 export function sanitizeEmailHtmlFull(
   html: string,
@@ -187,6 +193,14 @@ export function sanitizeEmailHtmlFull(
   if (!allowRemoteContent) {
     DOMPurify.addHook('afterSanitizeAttributes', (node) => {
       const el = node as Element;
+      // The legacy `background` attribute fetches on any element carrying it.
+      if (REMOTE_URL.test(el.getAttribute?.('background') ?? '')) {
+        el.removeAttribute('background');
+        hasBlockedImages = true;
+      }
+      if (el.tagName === 'STYLE' && REMOTE_CSS_URL.test(el.textContent ?? '')) {
+        hasBlockedImages = true;
+      }
       if (!REMOTE_FETCHING_TAGS.has(el.tagName)) return;
 
       // `poster` is the sneakiest of these: a <video poster="https://…"> fetches

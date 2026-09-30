@@ -74,12 +74,8 @@ pub async fn score_new_emails(db: &Arc<Database>, account_id: &str) -> Result<us
     if !is_enabled(db) {
         return Ok(0);
     }
-    let min_timestamp = db
-        .get_preference("ai_processing_min_timestamp")
-        .ok()
-        .flatten()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    // Same age window as the other AI pipelines (Settings → AI limits).
+    let min_timestamp = db.ai_processing_min_timestamp(account_id, now_secs())?.unwrap_or(0);
 
     let ids = db.get_unscored_junk_email_ids(account_id, SCORE_BATCH, min_timestamp)?;
     if ids.is_empty() {
@@ -196,30 +192,47 @@ async fn score_with(db: &Arc<Database>, account_id: &str, ctx: &AccountContext, 
                 .iter()
                 .any(|a| verdict.axis(*a).band.is_flagged());
         if flagged {
-            let value = match verdict.primary {
-                JunkKind::Phishing => "phishing",
-                JunkKind::Spam => "spam",
-                JunkKind::Graymail => "graymail",
-                JunkKind::Legit => unreachable!("guarded by `flagged`"),
-            };
-            let _ = db.upsert_email_tag(
+            let value = junk_tag_value(verdict.primary);
+            if let Err(e) = db.upsert_email_tag(
                 id,
                 "junk",
                 value,
                 Some(f64::from(verdict.axis(JunkAxis::Phishing).score)),
-            );
+            ) {
+                log_tag_error("write", id, &e);
+            }
             // Push the chip to any open list immediately. Without this the
             // inbox keeps whatever tags it cached when the row first rendered,
             // and a message scored during an in-progress sync shows no badge
             // until the user navigates away and back.
             crate::services::events::emit("email-junk-scored", serde_json::json!({ "emailId": id, "kind": value }));
-        } else {
-            let _ = db.delete_email_tag(id, "junk");
+        } else if let Err(e) = db.delete_email_tag(id, "junk") {
+            log_tag_error("clear", id, &e);
         }
         scored += 1;
     }
 
     Ok(scored)
+}
+
+/// Value of the `junk` chip for a verdict kind. `Legit` never gets a chip;
+/// callers only reach here for a flagged kind.
+fn junk_tag_value(kind: JunkKind) -> &'static str {
+    match kind {
+        JunkKind::Phishing => "phishing",
+        JunkKind::Graymail => "graymail",
+        JunkKind::Spam | JunkKind::Legit => "spam",
+    }
+}
+
+/// A chip write failing leaves the verdict itself stored, so the operation
+/// goes on — but the mismatch must be visible in the logs.
+fn log_tag_error(action: &str, email_id: &str, e: &crate::models::error::AppError) {
+    crate::services::logger::log(
+        "warn",
+        "system",
+        format!("junk: failed to {action} chip for {email_id}: {e}"),
+    );
 }
 
 /// Labelled rows sampled per class when training.
@@ -280,10 +293,22 @@ pub async fn train_models(db: &Arc<Database>, account_id: &str) -> Result<Vec<(&
 pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, is_junk: bool) -> Result<()> {
     let verdict = if is_junk { "junk" } else { "not_junk" };
     db.set_junk_override(email_id, account_id, Some(verdict), now_secs())?;
-    if !is_junk {
+    if is_junk {
+        // Show the chip straight away, keeping the scored kind when there is
+        // one; a message the scorer thought legit is shown as spam.
+        let kind = db
+            .get_junk_verdicts_batch(std::slice::from_ref(&email_id.to_string()))?
+            .remove(email_id)
+            .map(|v| v.primary_kind)
+            .filter(|k| *k != JunkKind::Legit)
+            .unwrap_or(JunkKind::Spam);
+        if let Err(e) = db.upsert_email_tag(email_id, "junk", junk_tag_value(kind), None) {
+            log_tag_error("write", email_id, &e);
+        }
+    } else if let Err(e) = db.delete_email_tag(email_id, "junk") {
         // Drop the chip straight away; the stored override keeps the message
         // clear on every future re-score.
-        let _ = db.delete_email_tag(email_id, "junk");
+        log_tag_error("clear", email_id, &e);
     }
     Ok(())
 }
@@ -349,5 +374,74 @@ mod suppression_tests {
         };
         suppress_phishing(&mut v);
         assert_eq!(v.primary, JunkKind::Graymail);
+    }
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+
+    fn seed_email(db: &Database) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails
+             (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+              recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+             VALUES ('e1','acct','t1','Offer','Promo','promo@example.net','example.net',
+                     '[]','[]','snip',100,0,'primary',0)",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn junk_chip(db: &Database) -> Option<String> {
+        db.get_email_tags("e1")
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_type == "junk")
+            .map(|t| t.tag_value)
+    }
+
+    /// Post-sync scoring honours the same AI-processing age window as the
+    /// other AI pipelines (it used to read a preference nothing writes).
+    #[tokio::test]
+    async fn scoring_new_emails_skips_mail_older_than_the_ai_window() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db); // timestamp 100 — decades old
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES ('e2','acct','t2','Hello','Friend','friend@example.net','example.net',
+                         '[]','[]','snip',?1,0,'primary',0)",
+                rusqlite::params![now_secs() - 60],
+            )
+            .unwrap();
+        db.set_preference("junk_enabled", "true").unwrap();
+        db.set_preference("ai_max_email_count", "0").unwrap();
+        db.set_preference("ai_max_email_age_days", "30").unwrap();
+
+        assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 1);
+    }
+
+    /// Marking a message as junk must show the junk chip right away, as
+    /// "not junk" removes it right away.
+    #[tokio::test]
+    async fn junk_feedback_writes_the_chip_and_not_junk_removes_it() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+
+        set_feedback(&db, "acct", "e1", true).await.unwrap();
+        assert_eq!(junk_chip(&db).as_deref(), Some("spam"));
+
+        set_feedback(&db, "acct", "e1", false).await.unwrap();
+        assert_eq!(junk_chip(&db), None);
     }
 }

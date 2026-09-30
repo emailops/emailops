@@ -1,16 +1,28 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AiWorkInProgressDialog } from '@/components/shared/AiWorkInProgressDialog';
+import { type AiChange, affectedWork, changesAnything } from '@/lib/aiProviderWork';
 import * as api from '@/lib/api';
-import { errorText } from '@/lib/errors';
+import { errorText, isDataPolicyError } from '@/lib/errors';
 import { useAiStore } from '@/stores/aiStore';
 import { useHelpDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
-import type { CatalogModel, ModelDownloadProgress } from '@/types';
+import type { AiConfig, AiModelInfo, AiProviderActivity, CatalogModel, ModelDownloadProgress } from '@/types';
 import { AiSharedPreferences } from './AiSettings/AiSharedPreferences';
 import { ChatPromptsSection } from './AiSettings/ChatPromptsSection';
 import { ConfirmDisableDialog } from './AiSettings/ConfirmDisableDialog';
+import { ConfirmReindexDialog } from './AiSettings/ConfirmReindexDialog';
 import { EmbeddedPanel } from './AiSettings/EmbeddedPanel';
+import {
+  chatModelForProvider,
+  contextBudgetFromPref,
+  contextBudgetToPref,
+  DEFAULT_CONTEXT_BUDGET,
+  embeddingModelChanged,
+  embeddingModelForProvider,
+  needsEmbeddingProbe,
+} from './AiSettings/helpers';
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
@@ -29,12 +41,18 @@ export function AiSettings() {
   // AI surfaces show up in the UI. Stored in `user_preferences.ai_enabled`.
   const { enabled: aiEnabled, setEnabled: setAiEnabled } = useAiStore();
   const [confirmDisable, setConfirmDisable] = useState(false);
+  // Save is waiting for the user to accept that the email index is rebuilt.
+  const [confirmReindex, setConfirmReindex] = useState(false);
+  // Save is waiting for the user to stop, or wait for, the background AI work
+  // the change cuts across. Asked before the re-index confirmation.
+  const [workInProgress, setWorkInProgress] = useState<{ change: AiChange; activity: AiProviderActivity } | null>(null);
   const [config, setConfig] = useState<AiConfigState | null>(null);
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   // Map modelId → in-progress download info
   const [downloads, setDownloads] = useState<Record<string, ModelDownloadProgress>>({});
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaEmbedModels, setOllamaEmbedModels] = useState<string[]>([]);
+  const [openRouterEmbedModels, setOpenRouterEmbedModels] = useState<AiModelInfo[]>([]);
   const [apiKey, setApiKey] = useState('');
   const [routingMode, setRoutingMode] = useState<RoutingMode>(DEFAULT_ROUTING_MODE);
   const [aiOutputLanguage, setAiOutputLanguage] = useState<string>('Spanish');
@@ -58,6 +76,11 @@ export function AiSettings() {
   // when the user never touched the field and no explicit pref existed, so
   // saving unrelated settings can't pin the machine's auto choice.
   const nCtxLoadedRef = useRef<{ explicit: boolean; value: number }>({ explicit: false, value: 8192 });
+  // Prompt budget (tokens) for remote OpenRouter models, stored in
+  // `chat.remote_n_ctx_budget`; unset shows the default. Saved only when the
+  // user changed it, so the default is never pinned by an unrelated save.
+  const [contextBudget, setContextBudget] = useState<number>(DEFAULT_CONTEXT_BUDGET);
+  const contextBudgetLoadedRef = useRef<number>(DEFAULT_CONTEXT_BUDGET);
   // Whether the embedded runtime can actually run on this machine. False both
   // for builds compiled without llama.cpp and for Intel Macs, whose GPU cannot
   // execute the Metal kernels — selecting it there failed every turn with an
@@ -75,6 +98,14 @@ export function AiSettings() {
   // Tracks the embedding model that was active when we last saved/loaded config.
   // Used to detect whether a provider switch requires a full re-index.
   const savedEmbedModelRef = useRef<string>('');
+  // The provider and chat model as of the last load, to tell what a Save changes.
+  const savedBackendRef = useRef<{ provider: string; model: string } | null>(null);
+  // The models each provider was last saved with, as of the last load: a
+  // provider switch restores them (see chatModelForProvider /
+  // embeddingModelForProvider).
+  const rememberedRef = useRef<AiConfig['remembered'] | null>(null);
+  // The OpenRouter embedding model that passed the check and needs no other.
+  const validatedEmbedModelRef = useRef<string | null>(null);
 
   // ── Load initial data ──────────────────────────────────────────────────────
 
@@ -127,12 +158,34 @@ export function AiSettings() {
     };
   }, []);
 
-  const loadCatalog = async () => {
+  // OpenRouter's embedding models, once the OpenRouter tab is open and a key
+  // is saved to ask with. A failed listing leaves the saved model selectable.
+  const openRouterListable = config?.provider === 'openrouter' && config.hasApiKey;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload only when the tab or the saved key changes
+  useEffect(() => {
+    if (!openRouterListable) return;
+    let stale = false;
+    api
+      .listAiEmbeddingModels('openrouter')
+      .then((models) => {
+        if (!stale) setOpenRouterEmbedModels(models);
+      })
+      .catch((err) => {
+        if (!stale) addLog('error', 'ai', t('settings:openRouter.embeddingListFailed', { error: errorText(err) }));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [openRouterListable]);
+
+  const loadCatalog = async (): Promise<CatalogModel[]> => {
     try {
       const models = await api.listCatalogModels();
       setCatalog(models);
+      return models;
     } catch {
       // Non-fatal — catalog might be unavailable on older builds
+      return [];
     }
   };
 
@@ -151,18 +204,33 @@ export function AiSettings() {
         zeroDataRetention: cfg.zeroDataRetention,
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
+      savedBackendRef.current = { provider: cfg.provider, model: cfg.model };
+      rememberedRef.current = cfg.remembered;
+      validatedEmbedModelRef.current = cfg.openRouterValidatedEmbeddingModel;
 
-      await loadCatalog();
+      const loadedCatalog = await loadCatalog();
 
       // Ollama models (best-effort)
+      let ollamaEmbeds = ['nomic-embed-text'];
       try {
         const all = await api.listOllamaModels();
         setOllamaModels(all.filter((m) => !/(embed|nomic|bge|e5)/i.test(m)));
         const embeds = all.filter((m) => /(embed|nomic|bge|e5)/i.test(m));
-        setOllamaEmbedModels(embeds.length > 0 ? embeds : ['nomic-embed-text']);
+        if (embeds.length > 0) ollamaEmbeds = embeds;
       } catch {
         setOllamaModels([]);
-        setOllamaEmbedModels(['nomic-embed-text']);
+      }
+      setOllamaEmbedModels(ollamaEmbeds);
+
+      // The saved embedding model can be one the saved provider cannot use
+      // (the preference is shared by every provider): offer one it can, so
+      // Save replaces it — after asking, since the saved model differs.
+      if (cfg.remembered[cfg.provider].embeddingModel === null) {
+        const usable = embeddingModelForProvider(cfg.provider, null, {
+          catalog: loadedCatalog,
+          ollamaEmbedModels: ollamaEmbeds,
+        });
+        setConfig((current) => (current?.provider === cfg.provider ? { ...current, embeddingModel: usable } : current));
       }
 
       // Routing mode preference
@@ -253,6 +321,14 @@ export function AiSettings() {
         nCtxLoadedRef.current = { explicit: false, value: 8192 };
         setNCtx(8192);
       }
+
+      try {
+        const budget = contextBudgetFromPref(await api.getPref('chat.remote_n_ctx_budget'));
+        contextBudgetLoadedRef.current = budget;
+        setContextBudget(budget);
+      } catch (err) {
+        addLog('error', 'ai', t('settings:openRouter.contextBudgetLoadFailed', { error: errorText(err) }));
+      }
     } catch (err) {
       setError(t('settings:ai.loadFailed', { error: errorText(err) }));
     } finally {
@@ -264,7 +340,15 @@ export function AiSettings() {
 
   const handleProviderChange = (p: AiConfigState['provider']) => {
     if (!config) return;
-    setConfig({ ...config, provider: p });
+    setConfig({
+      ...config,
+      provider: p,
+      model: chatModelForProvider(p, rememberedRef.current?.[p].model ?? null, { catalog, ollamaModels }),
+      embeddingModel: embeddingModelForProvider(p, rememberedRef.current?.[p].embeddingModel ?? null, {
+        catalog,
+        ollamaEmbedModels,
+      }),
+    });
     setError(null);
     setSuccess(null);
   };
@@ -325,15 +409,80 @@ export function AiSettings() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!config) return;
-    setSaving(true);
     setError(null);
     setSuccess(null);
+    // OpenRouter has no model to fall back to: an empty id would be saved as
+    // it is and every request would fail.
+    if (config.provider === 'openrouter' && config.model.trim() === '') {
+      setError(t('settings:openRouter.chatModelRequired'));
+      return;
+    }
+    void saveUnlessWorkInProgress();
+  };
+
+  // Background AI work keeps the provider it started with until its batch
+  // ends: when the save changes the provider or a model that work uses, ask
+  // whether to stop it or wait before anything is saved.
+  const saveUnlessWorkInProgress = async () => {
+    if (!config) return;
+    const saved = savedBackendRef.current;
+    const change: AiChange = {
+      provider: config.provider !== saved?.provider,
+      model: config.model !== saved?.model,
+      embeddingModel: config.embeddingModel !== savedEmbedModelRef.current,
+    };
+    if (changesAnything(change)) {
+      setSaving(true);
+      try {
+        const activity = await api.getAiProviderActivity();
+        if (affectedWork(change, activity.items).length > 0) {
+          setWorkInProgress({ change, activity });
+          return;
+        }
+      } catch (err) {
+        // The check is a courtesy: failing to read the queue must not block a save.
+        addLog('error', 'ai', t('settings:aiWork.checkFailed', { error: errorText(err) }));
+      } finally {
+        setSaving(false);
+      }
+    }
+    confirmReindexOrSave();
+  };
+
+  const confirmReindexOrSave = () => {
+    if (!config) return;
+    // A changed embedding model deletes and rebuilds the whole index: ask first.
+    if (embeddingModelChanged(savedEmbedModelRef.current, config.embeddingModel)) {
+      setConfirmReindex(true);
+      return;
+    }
+    void save();
+  };
+
+  const save = async () => {
+    if (!config) return;
+    setSaving(true);
     try {
       const prevEmbedModel = savedEmbedModelRef.current;
       const wantsApiKey = config.provider === 'openrouter';
       const key = wantsApiKey && apiKey ? apiKey : null;
+
+      // An OpenRouter embedding model must fit the email index before it is
+      // saved: nothing is written when the check fails.
+      if (needsEmbeddingProbe(config, validatedEmbedModelRef.current)) {
+        try {
+          await api.validateOpenRouterEmbeddingModel(config.embeddingModel, key, config.zeroDataRetention);
+        } catch (err) {
+          setError(
+            config.zeroDataRetention && isDataPolicyError(err)
+              ? t('settings:openRouter.embeddingZdrBlocked', { model: config.embeddingModel })
+              : t('settings:openRouter.embeddingCheckFailed', { error: errorText(err) }),
+          );
+          return;
+        }
+      }
 
       await api.setAiConfig(
         config.provider,
@@ -397,8 +546,19 @@ export function AiSettings() {
         }
       }
 
+      if (config.provider === 'openrouter' && contextBudget !== contextBudgetLoadedRef.current) {
+        try {
+          const tokens = contextBudgetToPref(contextBudget);
+          await api.setPref('chat.remote_n_ctx_budget', tokens);
+          contextBudgetLoadedRef.current = Number(tokens);
+          setContextBudget(Number(tokens));
+        } catch (err) {
+          addLog('error', 'ai', t('settings:openRouter.contextBudgetSaveFailed', { error: errorText(err) }));
+        }
+      }
+
       // Trigger full re-index if the embedding model changed.
-      const embedChanged = prevEmbedModel !== '' && prevEmbedModel !== config.embeddingModel;
+      const embedChanged = embeddingModelChanged(prevEmbedModel, config.embeddingModel);
       if (embedChanged) {
         addLog('info', 'ai', t('settings:ai.reindexStarting'));
         try {
@@ -577,7 +737,16 @@ export function AiSettings() {
             )}
 
             {config.provider === 'openrouter' && (
-              <OpenRouterPanel config={config} setConfig={setConfig} apiKey={apiKey} setApiKey={setApiKey} />
+              <OpenRouterPanel
+                config={config}
+                setConfig={setConfig}
+                apiKey={apiKey}
+                setApiKey={setApiKey}
+                contextBudget={contextBudget}
+                onContextBudgetChange={setContextBudget}
+                embeddingModels={openRouterEmbedModels}
+                embeddingNeedsCheck={needsEmbeddingProbe(config, validatedEmbedModelRef.current)}
+              />
             )}
 
             {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
@@ -586,6 +755,7 @@ export function AiSettings() {
               onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
               keepAliveMinutes={keepAliveMinutes}
               onKeepAliveChange={setKeepAliveMinutes}
+              showKeepAlive={config.provider !== 'openrouter'}
               aiMaxEmailCount={aiMaxEmailCount}
               onMaxEmailCountChange={setAiMaxEmailCount}
               aiMaxEmailAgeDays={aiMaxEmailAgeDays}
@@ -606,6 +776,28 @@ export function AiSettings() {
           </>
         )}
       </SettingsPanel>
+      {workInProgress && (
+        <AiWorkInProgressDialog
+          change={workInProgress.change}
+          activity={workInProgress.activity}
+          onCancel={() => setWorkInProgress(null)}
+          onProceed={() => {
+            setWorkInProgress(null);
+            confirmReindexOrSave();
+          }}
+        />
+      )}
+      {confirmReindex && (
+        <ConfirmReindexDialog
+          provider={config.provider}
+          embeddingModel={config.embeddingModel}
+          onCancel={() => setConfirmReindex(false)}
+          onConfirm={() => {
+            setConfirmReindex(false);
+            void save();
+          }}
+        />
+      )}
       {confirmDisable && (
         <ConfirmDisableDialog
           onCancel={() => setConfirmDisable(false)}

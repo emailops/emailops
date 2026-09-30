@@ -19,6 +19,7 @@ use emailops_lib::models::error::AppError;
 use emailops_lib::models::lens::{CreateLensInput, LensColumn, LensColumnType, LensSchema, LensScope};
 use emailops_lib::models::{Account, Email, SaveDraftRequest};
 use emailops_lib::services::background_tasks::{BackgroundTask, FakeDispatcher, TaskDispatcher};
+use emailops_lib::services::emails::{compose_draft, pull_provider_drafts, ComposeInput};
 use emailops_lib::services::task_queue::TaskQueue;
 use emailops_lib::sync::provider::{
     AttachmentInfo, EmailAttachment, EmailCategory, EmailProvider, ExtraMailbox, FakeEmailProvider, MessageRef,
@@ -810,6 +811,300 @@ fn delete_draft_wrong_account_does_not_delete() {
         1,
         "draft must still exist after wrong-account delete attempt"
     );
+}
+
+// ── Drafts edited on two devices ───────────────────────────────────────────
+//
+// The rule under test: a local draft with edits the provider has not received
+// is never pruned or overwritten. It wins a conflict and is pushed; if its
+// provider copy is gone it is created again.
+
+fn compose_input(account_id: &str, draft_id: Option<&str>, subject: &str, body: &str) -> ComposeInput {
+    ComposeInput {
+        draft_id: draft_id.map(String::from),
+        account_id: account_id.to_string(),
+        email_id: None,
+        to: vec!["recipient@example.com".to_string()],
+        cc: Vec::new(),
+        subject: subject.to_string(),
+        body: body.to_string(),
+        body_html: None,
+        attachments: None,
+    }
+}
+
+fn draft_account(db: &Database) -> Account {
+    let account = make_account("acc-d", "d@example.com");
+    db.insert_account(&account).unwrap();
+    account
+}
+
+#[tokio::test]
+async fn saving_a_draft_deleted_upstream_recreates_it_instead_of_failing() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let stale_id = draft.provider_draft_id.clone().expect("pushed");
+
+    // Another device sends or deletes the draft.
+    provider.delete_draft(&stale_id).await.unwrap();
+
+    let saved = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2"),
+        Some(&provider),
+    )
+    .await
+    .expect("a save must not fail because the provider copy is gone");
+
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "re-created upstream");
+    assert_eq!(upstream[0].body, "v2");
+    assert_ne!(
+        saved.provider_draft_id.as_deref(),
+        Some(stale_id.as_str()),
+        "stale id dropped"
+    );
+    assert_eq!(
+        saved.provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn unpushed_edits_survive_an_upstream_delete_and_are_recreated_on_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let stale_id = draft.provider_draft_id.clone().expect("pushed");
+
+    // Edited offline here while another device deletes the provider copy.
+    compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2 offline"),
+        None,
+    )
+    .await
+    .unwrap();
+    provider.delete_draft(&stale_id).await.unwrap();
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    let local = db
+        .get_draft(&draft.id)
+        .unwrap()
+        .expect("the local draft must not be pruned");
+    assert_eq!(local.body, "v2 offline");
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "re-created upstream");
+    assert_eq!(upstream[0].body, "v2 offline");
+    assert_eq!(
+        local.provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+    assert_ne!(local.provider_draft_id.as_deref(), Some(stale_id.as_str()));
+    assert_eq!(db.list_drafts("acc-d").unwrap().len(), 1, "no duplicate local row");
+}
+
+#[tokio::test]
+async fn a_draft_saved_offline_is_pushed_on_the_next_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Offline", "written on a plane"),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(draft.provider_draft_id.is_none());
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "pushed by the sync");
+    assert_eq!(upstream[0].body, "written on a plane");
+    let drafts = db.list_drafts("acc-d").unwrap();
+    assert_eq!(drafts.len(), 1, "linked in place, not imported as a second draft");
+    assert_eq!(drafts[0].id, draft.id);
+    assert_eq!(
+        drafts[0].provider_draft_id.as_deref(),
+        Some(upstream[0].provider_draft_id.as_str())
+    );
+
+    // Once pushed it is clean: later syncs must not push it again.
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+    let token = provider.provider_drafts()[0].provider_message_id.clone();
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+    assert_eq!(
+        provider.provider_drafts()[0].provider_message_id,
+        token,
+        "no repeat push"
+    );
+    assert_eq!(db.list_drafts("acc-d").unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_save_the_provider_refused_is_pushed_on_the_next_sync() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+
+    provider.fail_draft_writes(Some("backend unavailable"));
+    let refused = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "v2"),
+        Some(&provider),
+    )
+    .await;
+    assert!(refused.is_err(), "the failed push is reported");
+    assert_eq!(
+        db.get_draft(&draft.id).unwrap().unwrap().body,
+        "v2",
+        "saved locally anyway"
+    );
+
+    provider.fail_draft_writes(None);
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(
+        db.get_draft(&draft.id).unwrap().unwrap().body,
+        "v2",
+        "not overwritten by the pull"
+    );
+    assert_eq!(provider.provider_drafts()[0].body, "v2", "pushed by the sync");
+}
+
+#[tokio::test]
+async fn when_both_sides_edited_a_draft_the_local_one_wins_and_is_pushed() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let provider_id = draft.provider_draft_id.clone().expect("pushed");
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    // Edited on another device...
+    provider.add_provider_draft(emailops_lib::models::ProviderDraft {
+        provider_draft_id: provider_id.clone(),
+        to_addresses: vec!["recipient@example.com".to_string()],
+        cc_addresses: Vec::new(),
+        subject: "Plan".to_string(),
+        body: "edited elsewhere".to_string(),
+        body_html: None,
+        updated_at: Some(1_700_000_500),
+        provider_message_id: Some("msg-elsewhere".to_string()),
+    });
+    // ...and offline here.
+    compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", Some(&draft.id), "Plan", "edited here"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(db.get_draft(&draft.id).unwrap().unwrap().body, "edited here");
+    let upstream = provider.provider_drafts();
+    assert_eq!(upstream.len(), 1, "same provider draft, updated in place");
+    assert_eq!(upstream[0].provider_draft_id, provider_id);
+    assert_eq!(upstream[0].body, "edited here");
+}
+
+#[tokio::test]
+async fn a_clean_draft_deleted_upstream_is_pruned() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    let provider_id = draft.provider_draft_id.clone().expect("pushed");
+
+    provider.delete_draft(&provider_id).await.unwrap();
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert!(
+        db.get_draft(&draft.id).unwrap().is_none(),
+        "nothing unpushed to protect"
+    );
+    assert!(
+        provider.provider_drafts().is_empty(),
+        "and it is not resurrected upstream"
+    );
+}
+
+#[tokio::test]
+async fn a_clean_draft_edited_upstream_is_pulled() {
+    let db = test_db();
+    let account = draft_account(&db);
+    let provider = FakeEmailProvider::new("d@example.com", "D");
+    let draft = compose_draft(
+        &db,
+        &account,
+        compose_input("acc-d", None, "Plan", "v1"),
+        Some(&provider),
+    )
+    .await
+    .unwrap();
+    provider.add_provider_draft(emailops_lib::models::ProviderDraft {
+        provider_draft_id: draft.provider_draft_id.clone().expect("pushed"),
+        to_addresses: vec!["recipient@example.com".to_string()],
+        cc_addresses: Vec::new(),
+        subject: "Plan".to_string(),
+        body: "edited elsewhere".to_string(),
+        body_html: None,
+        updated_at: Some(1_700_000_500),
+        provider_message_id: Some("msg-elsewhere".to_string()),
+    });
+
+    pull_provider_drafts(&db, &account, &provider).await.unwrap();
+
+    assert_eq!(db.get_draft(&draft.id).unwrap().unwrap().body, "edited elsewhere");
 }
 
 // ── P0: send contract via FakeEmailProvider ────────────────────────────────
@@ -3218,6 +3513,100 @@ async fn mark_as_read_is_idempotent() {
     assert!(db.get_email_by_id("e-r2").unwrap().unwrap().is_read);
 }
 
+// A read-state push that failed (offline, 5xx) used to be lost: the row was
+// read locally and unread in every other client, forever.
+#[tokio::test]
+async fn a_failed_read_push_is_delivered_by_the_next_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-rp", "rp@example.com")).unwrap();
+    let account = db.get_account("acc-rp").unwrap().unwrap();
+    db.insert_email(&make_email("e-rp", "acc-rp", 1000)).unwrap();
+
+    let offline = FakeEmailProvider::new("rp@example.com", "Rp");
+    offline.fail_mailbox_writes("network unreachable");
+    emailops_lib::services::emails::mark_as_read_with_provider(&db, "e-rp", Some(&offline))
+        .await
+        .unwrap();
+    assert_eq!(db.pending_read_pushes("acc-rp", 10).unwrap().len(), 1);
+
+    let online = FakeEmailProvider::new("rp@example.com", "Rp");
+    let calls = online.call_log();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(online),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert!(
+        calls.read().unwrap().iter().any(|c| c == "set_read_state"),
+        "the sync must retry the push"
+    );
+    assert!(db.pending_read_pushes("acc-rp", 10).unwrap().is_empty());
+}
+
+// IMAP ids embed a UID. After the server rebuilt the inbox, a new message
+// landed on a UID the app already had a row for — and was dropped as "already
+// synced", while the stored row pointed at the wrong message.
+#[tokio::test]
+async fn a_renumbered_imap_inbox_keeps_its_rows_and_still_receives_new_mail() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-uv", "uv@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-uv").unwrap().unwrap();
+
+    let mut stored = make_email_with("acc-uv::5", "acc-uv", 1_000, "a@example.com", "inbox");
+    stored.message_id = Some("<old@example.com>".to_string());
+    stored.subject = "stored before the rebuild".to_string();
+    stored.is_read = true;
+    db.insert_email(&stored).unwrap();
+    db.set_folder_uid_validity("acc-uv", "inbox", 100).unwrap();
+
+    // The rebuilt mailbox: the stored message now sits at UID 9, and UID 5
+    // belongs to a message that arrived afterwards.
+    let provider = FakeEmailProvider::new("uv@example.com", "Uv");
+    provider.set_folder_uid_validity("inbox", "acc-uv::", 200);
+    let mut moved = stored.clone();
+    moved.id = "acc-uv::9".to_string();
+    provider.add_message(moved, EmailCategory::Primary, vec![]);
+    let mut arrived = make_email_with("acc-uv::5", "acc-uv", 2_000, "b@example.com", "inbox");
+    arrived.message_id = Some("<new@example.com>".to_string());
+    arrived.subject = "arrived after the rebuild".to_string();
+    provider.add_message(arrived, EmailCategory::Primary, vec![]);
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let at_nine = db.get_email_by_id("acc-uv::9").unwrap().expect("re-keyed row");
+    assert_eq!(at_nine.subject, "stored before the rebuild");
+    assert!(at_nine.is_read, "local state travels with the row");
+    let at_five = db.get_email_by_id("acc-uv::5").unwrap().expect("new mail stored");
+    assert_eq!(
+        at_five.subject, "arrived after the rebuild",
+        "the new message must not be dropped as already synced"
+    );
+    assert_eq!(db.get_folder_uid_validity("acc-uv", "inbox").unwrap(), Some(200));
+}
+
 #[test]
 fn delete_email_hides_it_from_get_emails() {
     let db = test_db();
@@ -4734,10 +5123,16 @@ async fn resync_mailbox_full_recovers_gap_and_returns_delta() {
         vec![],
     );
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(
         inserted, 3,
@@ -4773,10 +5168,16 @@ async fn resync_mailbox_full_resets_done_flag_and_cursor() {
     // Provider has no messages, so resync just resets state and produces 0 inserts.
     let provider = FakeEmailProvider::new("reset@example.com", "Reset");
 
-    let inserted =
-        emailops_lib::services::emails::resync_mailbox_full(&db, &account, ExtraMailbox::Sent, &provider, None)
-            .await
-            .expect("resync_mailbox_full");
+    let inserted = emailops_lib::services::emails::resync_mailbox_full(
+        &db,
+        &account,
+        ExtraMailbox::Sent,
+        &provider,
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("resync_mailbox_full");
 
     assert_eq!(inserted, 0, "no provider messages → 0 inserted");
 
@@ -5015,7 +5416,7 @@ async fn a_sync_with_new_recurring_documents_proposes_a_rule() {
                 &format!("inv-{i}"),
                 "acc-sg",
                 now - days_ago * 86_400,
-                "billing@acme-synthetic.com",
+                "billing@acme.example",
                 "inbox",
             ),
             EmailCategory::Primary,
@@ -5055,7 +5456,7 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
         &db,
         "acc-hr",
         "Acme",
-        Some("billing@acme-synthetic.com"),
+        Some("billing@acme.example"),
         None,
         Some("*.pdf"),
         vec!["acme".into()],
@@ -5068,7 +5469,7 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
             "inv",
             "acc-hr",
             chrono::Utc::now().timestamp() - 86_400,
-            "billing@acme-synthetic.com",
+            "billing@acme.example",
             "inbox",
         ),
         EmailCategory::Primary,
@@ -5256,6 +5657,7 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
         emailops_lib::sync::provider::ExtraMailbox::Sent,
         &provider,
         Some(&ctx),
+        Default::default(),
     )
     .await
     .expect("resync");
@@ -5326,4 +5728,468 @@ fn skill_lifecycle_through_the_service() {
         .join(skills::DELETED_DIR)
         .join("weekly-email-summary")
         .is_dir());
+}
+
+// ── redownload keeps local state ────────────────────────────────────────────
+
+/// Re-downloading a message replaces its content, not what the app knows about
+/// it: the provider's parse carries a default mailbox ("inbox" for Outlook),
+/// no sent flag, no triage and an unread state, and upserting it verbatim moved
+/// a Sent message into the inbox and wiped the user's triage.
+#[tokio::test]
+async fn redownload_keeps_mailbox_sent_read_and_triage_state() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-rd", "me@example.com")).unwrap();
+
+    let mut stored = make_email("msg-rd", "acc-rd", 1_700_000_000);
+    stored.mailbox = "sent".to_string();
+    stored.is_sent = true;
+    stored.is_read = true;
+    stored.body = String::new();
+    db.insert_email(&stored).unwrap();
+    db.update_triage_status("msg-rd", "done").unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    let mut fresh = make_email("msg-rd", "", 1_700_000_000);
+    fresh.body = "Recovered body".to_string();
+    provider.add_message(fresh, EmailCategory::Primary, vec![]);
+
+    emailops_lib::services::emails::redownload_email_with_provider(&db, "msg-rd", &provider)
+        .await
+        .expect("redownload");
+
+    let after = db.get_email("msg-rd").unwrap().expect("row kept");
+    assert_eq!(after.mailbox, "sent");
+    assert!(after.is_sent, "sent flag must survive");
+    assert!(after.is_read, "read state must survive");
+    assert_eq!(after.triage_status.as_deref(), Some("done"));
+    assert_eq!(db.get_email_body("msg-rd").unwrap(), "Recovered body");
+}
+
+// ── pending sent rows: stale sweep ordering and the retry path ──────────────
+
+async fn run_fake_sync(db: &Arc<Database>, account: &Account, provider: FakeEmailProvider) {
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        db,
+        account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+}
+
+/// A pending row inserted more than a day before the next sync (the app sat
+/// offline) used to be swept to a permanent row at sync *start*, before the
+/// ingest that brings the provider's copy could reconcile it — leaving the
+/// reply twice in the thread for good.
+#[tokio::test]
+async fn a_day_old_pending_sent_row_is_still_reconciled_by_the_sync() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-stale", "me@example.com")).unwrap();
+    let account = db.get_account("acc-stale").unwrap().unwrap();
+    let sent_at = chrono::Utc::now().timestamp() - 2 * 86_400;
+
+    let mut pending = make_email_with("local-sent-old", "acc-stale", sent_at, "me@example.com", "sent");
+    pending.thread_id = "t-conv".to_string();
+    pending.message_id = Some("<old@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    let mut sent_copy = make_email_with("imap-sent-old", "acc-stale", sent_at + 5, "me@example.com", "sent");
+    sent_copy.thread_id = "t-conv".to_string();
+    sent_copy.message_id = Some("<old@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(
+        db.get_email("local-sent-old").unwrap().is_none(),
+        "the synthetic row must be reconciled away, not kept as a duplicate"
+    );
+    assert_eq!(db.get_thread("acc-stale", "t-conv").unwrap().len(), 1);
+}
+
+/// The provider's Sent copy can first fail to download and arrive through the
+/// failed-download retry instead; that path must reconcile too.
+#[tokio::test]
+async fn a_sent_copy_recovered_by_the_retry_path_reconciles_its_pending_row() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-retry", "me@example.com")).unwrap();
+    let account = db.get_account("acc-retry").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    let mut pending = make_email_with("local-sent-r", "acc-retry", now, "me@example.com", "sent");
+    pending.thread_id = "t-r".to_string();
+    pending.message_id = Some("<r@local>".to_string());
+    db.insert_sent_email_local(&pending, true).unwrap();
+
+    // Only reachable by id (no listing serves it): the retry path is the one
+    // bringing it in.
+    let mut sent_copy = make_email_with("srv-sent-r", "acc-retry", now + 5, "me@example.com", "unlisted");
+    sent_copy.thread_id = "t-r".to_string();
+    sent_copy.message_id = Some("<r@local>".to_string());
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(sent_copy, EmailCategory::Primary, vec![]);
+    // New inbox mail, so this case does not depend on the retry also running
+    // on a sync that found nothing new.
+    provider.add_message(
+        make_email("inbox-new", "acc-retry", now),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-retry", "srv-sent-r", "earlier failure")
+        .unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("srv-sent-r").unwrap().is_some(), "retried copy stored");
+    assert!(
+        db.get_email("local-sent-r").unwrap().is_none(),
+        "the retry path must reconcile the pending row it matches"
+    );
+}
+
+/// Failed downloads are retried even when the sync finds nothing new — an
+/// idle account used to keep its failures forever.
+#[tokio::test]
+async fn failed_downloads_are_retried_when_nothing_new_arrived() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-idle", "me@example.com")).unwrap();
+    let account = db.get_account("acc-idle").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(
+        make_email_with("lost-1", "acc-idle", 1_700_000_000, "x@example.com", "unlisted"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-idle", "lost-1", "earlier failure").unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    assert!(db.get_email("lost-1").unwrap().is_some(), "failed download retried");
+    assert!(db.get_failed_emails("acc-idle").unwrap().is_empty());
+}
+
+/// A burst bigger than the per-sync incremental cap: the listing is
+/// newest-first and capped, and the next sync's floor used to be the newest
+/// stored message — so the older part of the burst was never fetched.
+#[tokio::test]
+async fn an_inbox_burst_larger_than_the_incremental_cap_is_completed_by_later_syncs() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    let mut account = make_account("acc-burst", "me@example.com");
+    account.provider = "imap".to_string();
+    db.insert_account(&account).unwrap();
+    let account = db.get_account("acc-burst").unwrap().unwrap();
+    let base = 1_700_000_000;
+    db.insert_email(&make_email("already-here", "acc-burst", base)).unwrap();
+
+    let burst = || {
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(
+            make_email("already-here", "acc-burst", base),
+            EmailCategory::Primary,
+            vec![],
+        );
+        for i in 1..=800 {
+            provider.add_message(
+                make_email(&format!("burst-{i}"), "acc-burst", base + i),
+                EmailCategory::Primary,
+                vec![],
+            );
+        }
+        provider
+    };
+
+    run_fake_sync(&db, &account, burst()).await;
+    run_fake_sync(&db, &account, burst()).await;
+
+    let missing: Vec<String> = (1..=800)
+        .map(|i| format!("burst-{i}"))
+        .filter(|id| db.get_email(id).unwrap().is_none())
+        .collect();
+    assert!(missing.is_empty(), "{} burst messages never fetched", missing.len());
+}
+
+// ── Retrieval: trashed and junk mail stays out of what the chat can cite ────
+
+/// Ids a query retrieves for `acc-ret` through both candidate fetches the
+/// chat, search and agent search share: `(keyword, vector)`.
+fn retrieved_ids(db: &Database) -> (Vec<String>, Vec<String>) {
+    use emailops_lib::services::retrieval::{fetch_fts, fetch_vector, FtsRequest, VectorRequest};
+    let mut keyword: Vec<String> = fetch_fts(
+        db,
+        FtsRequest {
+            account_id: "acc-ret",
+            query: "forecast",
+            categories: None,
+            sender_email_eq: None,
+            limit: 10,
+        },
+    )
+    .expect("fts")
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
+    let mut vector: Vec<String> = fetch_vector(
+        db,
+        VectorRequest {
+            account_id: "acc-ret",
+            embedding: &[0.1_f32; 768],
+            categories: None,
+            limit: 10,
+        },
+    )
+    .expect("vector")
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect();
+    keyword.sort();
+    vector.sort();
+    (keyword, vector)
+}
+
+/// A message the user trashed, or marked as junk, must not come back as a
+/// retrieval candidate by keyword or by meaning; taking the junk mark back
+/// makes it retrievable again, a trashed one stays out.
+#[tokio::test]
+async fn retrieval_leaves_out_trashed_and_junk_marked_messages() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-ret", "ret@example.com")).unwrap();
+    for (id, timestamp) in [("r-junk", 1000), ("r-live", 3000), ("r-trashed", 2000)] {
+        let mut message = make_email(id, "acc-ret", timestamp);
+        message.subject = format!("Quarterly forecast {id}");
+        db.insert_email(&message).unwrap();
+        db.store_embedding_chunks(id, "acc-ret", &[vec![0.1_f32; 768]], "test-model", id)
+            .unwrap();
+    }
+    let all = vec!["r-junk".to_string(), "r-live".to_string(), "r-trashed".to_string()];
+    assert_eq!(
+        retrieved_ids(&db),
+        (all.clone(), all),
+        "all three are candidates at first"
+    );
+
+    db.delete_email("r-trashed").unwrap();
+    emailops_lib::services::junk::set_feedback(&db, "acc-ret", "r-junk", true)
+        .await
+        .unwrap();
+    let live = vec!["r-live".to_string()];
+    assert_eq!(retrieved_ids(&db), (live.clone(), live));
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-ret", "r-junk", false)
+        .await
+        .unwrap();
+    let restored = vec!["r-junk".to_string(), "r-live".to_string()];
+    assert_eq!(retrieved_ids(&db), (restored.clone(), restored));
+}
+
+// ── Junk feedback: the chip and the company views ───────────────────────────
+
+/// Marking a message as junk shows its chip at once and takes it out of the
+/// company view and the sidebar count; "not junk" undoes both.
+#[tokio::test]
+async fn junk_feedback_shows_the_chip_and_hides_the_message_from_company_views() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-jf", "jf@example.com")).unwrap();
+    for (id, timestamp) in [("j-kept", 2000), ("j-marked", 1000)] {
+        db.insert_email(&make_email(id, "acc-jf", timestamp)).unwrap();
+        db.upsert_email_tag(id, "company", "acme", None).unwrap();
+    }
+    let scope = || emailops_lib::db::AccountScope::Account("acc-jf");
+    let listed = |db: &Database| -> Vec<String> {
+        let window = emailops_lib::models::EmailWindow::default();
+        let mut ids: Vec<String> = db
+            .get_filtered_emails(scope(), None, None, Some("company"), Some("acme"), None, &window, 50, 0)
+            .expect("filtered")
+            .emails
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    let counted = |db: &Database| db.get_tag_stats(scope(), "company", 10).expect("stats");
+    let chip = |db: &Database| -> Option<String> {
+        db.get_email_tags("j-marked")
+            .expect("tags")
+            .into_iter()
+            .find(|t| t.tag_type == "junk")
+            .map(|t| t.tag_value)
+    };
+    assert_eq!(listed(&db), ["j-kept", "j-marked"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 2)]);
+    assert_eq!(chip(&db), None);
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-jf", "j-marked", true)
+        .await
+        .unwrap();
+    assert_eq!(
+        chip(&db).as_deref(),
+        Some("spam"),
+        "an unscored message is shown as spam"
+    );
+    assert_eq!(listed(&db), ["j-kept"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 1)]);
+
+    emailops_lib::services::junk::set_feedback(&db, "acc-jf", "j-marked", false)
+        .await
+        .unwrap();
+    assert_eq!(chip(&db), None);
+    assert_eq!(listed(&db), ["j-kept", "j-marked"]);
+    assert_eq!(counted(&db), [("acme".to_string(), 2)]);
+}
+
+// ── Attachments: a collected file of a dangerous type ───────────────────────
+
+/// A web page collected by an attachment rule is stored like any other file,
+/// but opening it is refused until the user confirmed, and nothing is
+/// launched before that.
+#[tokio::test]
+async fn a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed() {
+    use emailops_lib::services::attachment_safety::open_attachment_file;
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-dg", "dg@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-dg"), "1")
+        .unwrap();
+    let account = db.get_account("acc-dg").unwrap().unwrap();
+    let rule = emailops_lib::services::attachments::create_rule(
+        &db,
+        "acc-dg",
+        "Statements",
+        Some("billing@acme.example"),
+        None,
+        Some("*.html"),
+        vec!["statements".into()],
+    )
+    .unwrap();
+    let provider = FakeEmailProvider::new("dg@example.com", "Dg");
+    provider.add_message(
+        make_email_with(
+            "stmt",
+            "acc-dg",
+            chrono::Utc::now().timestamp() - 86_400,
+            "billing@acme.example",
+            "inbox",
+        ),
+        EmailCategory::Primary,
+        vec![AttachmentInfo {
+            attachment_id: "att-stmt".to_string(),
+            filename: "statement.html".to_string(),
+            mime_type: "text/html".to_string(),
+            size: 13,
+            inline_data: None,
+        }],
+    );
+    provider.set_attachment_bytes("stmt", "att-stmt", b"<html></html>".to_vec());
+    let data_dir = tempfile::tempdir().unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+    let collected = db.get_attachments_for_rule(&rule.id).unwrap();
+    assert_eq!(collected.len(), 1, "the rule collects the statement");
+    let stored = &collected[0];
+    let path = emailops_lib::services::attachments::safe_attachment_path(data_dir.path(), &stored.file_path).unwrap();
+
+    let launched = std::cell::RefCell::new(Vec::new());
+    let launch = |p: &std::path::Path| {
+        launched.borrow_mut().push(p.to_path_buf());
+        Ok(())
+    };
+    let refused = open_attachment_file(&path, &stored.filename, Some(&stored.mime_type), false, &launch);
+    assert!(
+        matches!(
+            &refused,
+            Err(AppError::AttachmentConfirmationRequired { filename, kind })
+                if filename == "statement.html" && *kind == "web_page"
+        ),
+        "got {refused:?}"
+    );
+    assert!(
+        launched.borrow().is_empty(),
+        "nothing is opened before the user confirms"
+    );
+
+    open_attachment_file(&path, &stored.filename, Some(&stored.mime_type), true, &launch).expect("confirmed open");
+    assert_eq!(*launched.borrow(), vec![path]);
+}
+
+// ── Calendar: the invite card of a stored message ───────────────────────────
+
+const INGESTED_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART:20260728T073000Z\r\nDTEND:20260728T083000Z\r\nORGANIZER;CN=Organizer:mailto:organizer@example.com\r\nUID:ingested-invite@example.com\r\nSUMMARY:Sprint planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+/// The invite card is built from the `.ics` part kept when the message was
+/// ingested — no second trip to the provider — and a message that only links
+/// to a meeting has no card.
+#[tokio::test]
+async fn calendar_invite_card_comes_from_the_ics_part_kept_at_ingest() {
+    use base64::Engine;
+    let db = test_db();
+    db.insert_account(&make_account("acc-cal", "cal@example.com")).unwrap();
+    db.set_preference(&format!("{ATTACHMENT_BACKFILL_DONE}acc-cal"), "1")
+        .unwrap();
+    let account = db.get_account("acc-cal").unwrap().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let provider = FakeEmailProvider::new("cal@example.com", "Cal");
+    provider.add_message(
+        make_email_with("with-ics", "acc-cal", now - 3_600, "organizer@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![AttachmentInfo {
+            attachment_id: "att-ics".to_string(),
+            filename: "invite.ics".to_string(),
+            mime_type: "text/calendar".to_string(),
+            size: INGESTED_INVITE.len() as i64,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(INGESTED_INVITE)),
+        }],
+    );
+    let mut link_only = make_email_with("link-only", "acc-cal", now - 7_200, "organizer@example.com", "inbox");
+    link_only.body = "Join at https://meet.example.com/abc-defg-hij".to_string();
+    provider.add_message(link_only, EmailCategory::Primary, vec![]);
+    let data_dir = tempfile::tempdir().unwrap();
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        data_dir.path(),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync");
+
+    // The account has no credentials: a fall-through to the provider fails.
+    let invite = emailops_lib::services::calendar::invite::get_calendar_invite(&db, data_dir.path(), "with-ics")
+        .await
+        .expect("read from what was stored")
+        .expect("an invite");
+    assert_eq!(invite.uid, "ingested-invite@example.com");
+    assert_eq!(invite.summary, "Sprint planning");
+    assert_eq!(invite.organizer, "organizer@example.com");
+    assert_eq!(invite.method, "REQUEST");
+
+    let none = emailops_lib::services::calendar::invite::get_calendar_invite(&db, data_dir.path(), "link-only")
+        .await
+        .expect("no invite is not an error");
+    assert_eq!(none, None);
 }

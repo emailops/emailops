@@ -62,7 +62,142 @@ fn rewrite_email_id_everywhere(tx: &rusqlite::Transaction<'_>, old_id: &str, new
     Ok(())
 }
 
+/// A stored row whose id lives in one IMAP mailbox's UID namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredUidRow {
+    pub id: String,
+    pub message_id: Option<String>,
+    pub timestamp: i64,
+}
+
+/// SQL predicate: `col` is `prefix` followed by nothing but digits — an id of
+/// exactly one IMAP mailbox. A bare prefix match is not enough: the inbox
+/// prefix `{account}::` is also the start of every `{account}::SENT::…` id.
+/// `?1` must be bound to the account id and `?2` to the prefix.
+fn uid_namespace_sql(col: &str) -> String {
+    format!(
+        "account_id = ?1 AND substr({col}, 1, length(?2)) = ?2 AND length({col}) > length(?2) \
+         AND substr({col}, length(?2) + 1) NOT GLOB '*[^0-9]*'"
+    )
+}
+
+/// Ids being re-keyed pass through this prefix so that two rows swapping ids
+/// (5 → 7 while 7 → 5) never collide on a primary or unique key half-way.
+const REKEY_TMP_PREFIX: &str = "uidv-rekey-tmp:";
+
+fn hard_delete_email_in_tx(tx: &rusqlite::Transaction<'_>, email_id: &str) -> Result<()> {
+    tx.execute(
+        "DELETE FROM vec_emails WHERE rowid IN (
+             SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
+        params![email_id],
+    )?;
+    tx.execute(
+        "UPDATE drafts SET email_id = NULL WHERE email_id = ?1",
+        params![email_id],
+    )?;
+    tx.execute("DELETE FROM sync_failed_emails WHERE email_id = ?1", params![email_id])?;
+    tx.execute("DELETE FROM interaction_events WHERE email_id = ?1", params![email_id])?;
+    tx.execute("DELETE FROM emails WHERE id = ?1", params![email_id])?;
+    Ok(())
+}
+
 impl Database {
+    /// Every row of `account_id` — soft-deleted ones included, they occupy the
+    /// id too — whose id is `id_prefix` plus a UID, oldest first.
+    pub fn emails_in_uid_namespace(&self, account_id: &str, id_prefix: &str) -> Result<Vec<StoredUidRow>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, message_id, timestamp FROM emails WHERE {} ORDER BY timestamp, id",
+            uid_namespace_sql("id")
+        ))?;
+        let rows = stmt
+            .query_map(params![account_id, id_prefix], |row| {
+                Ok(StoredUidRow {
+                    id: row.get(0)?,
+                    message_id: row.get(1)?,
+                    timestamp: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Move one IMAP mailbox's stored rows onto the UIDs its messages have
+    /// after a UIDVALIDITY change, in one transaction:
+    ///
+    /// - each `(old_id, new_id)` in `rekeys` is re-keyed, every dependent row
+    ///   (tags, bodies, embeddings, FTS, …) following it;
+    /// - each id in `remove` — a row no message of the mailbox answers to any
+    ///   more — is hard-deleted, so its stale UID cannot shadow new mail;
+    /// - failed-download records of that mailbox are dropped: they name UIDs
+    ///   that now belong to other messages, and retrying them would store the
+    ///   wrong mail under a stale id.
+    ///
+    /// Set-based rather than row-by-row: a mailbox can hold tens of thousands
+    /// of rows, and the FTS table has no index on the email id.
+    pub fn apply_uid_rekey(
+        &self,
+        account_id: &str,
+        id_prefix: &str,
+        rekeys: &[(String, String)],
+        remove: &[String],
+    ) -> Result<()> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.pragma_update(None, "defer_foreign_keys", true)?;
+
+        tx.execute(
+            &format!("DELETE FROM sync_failed_emails WHERE {}", uid_namespace_sql("email_id")),
+            params![account_id, id_prefix],
+        )?;
+        for id in remove {
+            hard_delete_email_in_tx(&tx, id)?;
+        }
+
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS uid_rekey (old_id TEXT PRIMARY KEY, new_id TEXT NOT NULL);
+             DELETE FROM temp.uid_rekey;",
+        )?;
+        {
+            let mut insert = tx.prepare("INSERT INTO temp.uid_rekey (old_id, new_id) VALUES (?1, ?2)")?;
+            for (old_id, new_id) in rekeys {
+                insert.execute(params![old_id, new_id])?;
+            }
+        }
+
+        let mut targets = vec![("emails".to_string(), "id".to_string())];
+        targets.extend(tables_referencing_emails(&tx)?);
+        targets.extend(
+            LOOSE_EMAIL_ID_TABLES
+                .iter()
+                .map(|(t, c)| ((*t).to_string(), (*c).to_string())),
+        );
+        // Table and column names come from sqlite_master, not user input.
+        for (table, col) in &targets {
+            tx.execute(
+                &format!(
+                    "UPDATE \"{table}\" SET \"{col}\" = ?1 || \"{col}\"
+                     WHERE \"{col}\" IN (SELECT old_id FROM temp.uid_rekey)"
+                ),
+                params![REKEY_TMP_PREFIX],
+            )?;
+        }
+        for (table, col) in &targets {
+            tx.execute(
+                &format!(
+                    "UPDATE \"{table}\" SET \"{col}\" = (
+                         SELECT new_id FROM temp.uid_rekey
+                         WHERE old_id = substr(\"{table}\".\"{col}\", length(?1) + 1))
+                     WHERE substr(\"{col}\", 1, length(?1)) = ?1"
+                ),
+                params![REKEY_TMP_PREFIX],
+            )?;
+        }
+        tx.execute("DELETE FROM temp.uid_rekey", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Re-key one email to a new id and mailbox, carrying every dependent row
     /// (tags, bodies, attachment meta, embeddings, FTS, …) along. Used after
     /// a provider-side move: the message gets a new provider id in its target
@@ -143,18 +278,7 @@ impl Database {
     pub fn hard_delete_email(&self, email_id: &str) -> Result<()> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM vec_emails WHERE rowid IN (
-                 SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
-            params![email_id],
-        )?;
-        tx.execute(
-            "UPDATE drafts SET email_id = NULL WHERE email_id = ?1",
-            params![email_id],
-        )?;
-        tx.execute("DELETE FROM sync_failed_emails WHERE email_id = ?1", params![email_id])?;
-        tx.execute("DELETE FROM interaction_events WHERE email_id = ?1", params![email_id])?;
-        tx.execute("DELETE FROM emails WHERE id = ?1", params![email_id])?;
+        hard_delete_email_in_tx(&tx, email_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -319,6 +443,164 @@ mod tests {
         assert_eq!(other_account.mailbox, "folder:Kunden");
         let inbox = db.get_email("acc-1::5").unwrap().expect("untouched");
         assert_eq!(inbox.mailbox, "inbox");
+    }
+
+    fn all_ids(db: &Database) -> Vec<String> {
+        let conn = db.reader();
+        let mut stmt = conn.prepare("SELECT id FROM emails ORDER BY id").unwrap();
+        let ids = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        ids
+    }
+
+    fn subject_of(db: &Database, id: &str) -> String {
+        db.reader()
+            .query_row("SELECT subject FROM emails WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn with_subject(mut email: Email, subject: &str) -> Email {
+        email.subject = subject.to_string();
+        email
+    }
+
+    #[test]
+    fn a_uid_namespace_holds_only_ids_that_are_the_prefix_plus_a_uid() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.seed_test_account("acc-10");
+        db.insert_emails_batch(&[
+            email("acc-1::5", "acc-1", "inbox"),
+            email("acc-1::12", "acc-1", "inbox"),
+            // The inbox prefix is also the start of every other mailbox's ids.
+            email("acc-1::SENT::5", "acc-1", "sent"),
+            email("acc-1::FOLDER::QQ::5", "acc-1", "folder:A"),
+            email("local-sent-abc", "acc-1", "sent"),
+            email("acc-10::5", "acc-10", "inbox"),
+        ])
+        .unwrap();
+        // A locally deleted row still occupies its id.
+        db.delete_email("acc-1::12").unwrap();
+
+        let inbox: Vec<String> = db
+            .emails_in_uid_namespace("acc-1", "acc-1::")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let sent: Vec<String> = db
+            .emails_in_uid_namespace("acc-1", "acc-1::SENT::")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+
+        assert_eq!(inbox, vec!["acc-1::12".to_string(), "acc-1::5".to_string()]);
+        assert_eq!(sent, vec!["acc-1::SENT::5".to_string()]);
+    }
+
+    #[test]
+    fn uid_rekey_moves_rows_and_dependents_even_when_ids_swap() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[
+            with_subject(email("acc-1::5", "acc-1", "inbox"), "five"),
+            with_subject(email("acc-1::7", "acc-1", "inbox"), "seven"),
+            with_subject(email("acc-1::9", "acc-1", "inbox"), "nine"),
+        ])
+        .unwrap();
+        insert_tag(&db, "acc-1::5");
+
+        // 5 and 7 trade places, 9 moves to a free UID: a row-by-row rename
+        // would hit the primary key half-way.
+        db.apply_uid_rekey(
+            "acc-1",
+            "acc-1::",
+            &[
+                ("acc-1::5".to_string(), "acc-1::7".to_string()),
+                ("acc-1::7".to_string(), "acc-1::5".to_string()),
+                ("acc-1::9".to_string(), "acc-1::2".to_string()),
+            ],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(all_ids(&db), vec!["acc-1::2", "acc-1::5", "acc-1::7"]);
+        assert_eq!(subject_of(&db, "acc-1::7"), "five");
+        assert_eq!(subject_of(&db, "acc-1::5"), "seven");
+        assert_eq!(subject_of(&db, "acc-1::2"), "nine");
+        assert_eq!(tag_count_for(&db, "acc-1::7"), 1, "the tag follows its email");
+        assert_eq!(tag_count_for(&db, "acc-1::5"), 0);
+        assert_eq!(db.get_email_body("acc-1::7").unwrap(), "body");
+        let fts: i64 = db
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM emails_fts WHERE email_id IN ('acc-1::2', 'acc-1::5', 'acc-1::7')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts, 3, "the search index follows the new ids");
+    }
+
+    #[test]
+    fn uid_rekey_removes_orphans_and_stale_failed_downloads_of_that_mailbox_only() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[
+            email("acc-1::5", "acc-1", "inbox"),
+            email("acc-1::6", "acc-1", "inbox"),
+            email("acc-1::SENT::5", "acc-1", "sent"),
+        ])
+        .unwrap();
+        insert_tag(&db, "acc-1::6");
+        db.add_failed_email("acc-1", "acc-1::8", "timeout").unwrap();
+        db.add_failed_email("acc-1", "acc-1::SENT::8", "timeout").unwrap();
+
+        db.apply_uid_rekey("acc-1", "acc-1::", &[], &["acc-1::6".to_string()])
+            .unwrap();
+
+        assert_eq!(all_ids(&db), vec!["acc-1::5", "acc-1::SENT::5"]);
+        assert_eq!(tag_count_for(&db, "acc-1::6"), 0);
+        let failed: Vec<String> = db
+            .get_failed_emails("acc-1")
+            .unwrap()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            failed,
+            vec!["acc-1::SENT::8".to_string()],
+            "a failed download of another mailbox keeps its retry"
+        );
+    }
+
+    #[test]
+    fn uid_rekey_can_run_twice_on_one_connection() {
+        // The scratch table is per connection and must start empty each time.
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[email("acc-1::5", "acc-1", "inbox")]).unwrap();
+
+        db.apply_uid_rekey(
+            "acc-1",
+            "acc-1::",
+            &[("acc-1::5".to_string(), "acc-1::6".to_string())],
+            &[],
+        )
+        .unwrap();
+        db.apply_uid_rekey(
+            "acc-1",
+            "acc-1::",
+            &[("acc-1::6".to_string(), "acc-1::7".to_string())],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(all_ids(&db), vec!["acc-1::7"]);
     }
 
     #[test]

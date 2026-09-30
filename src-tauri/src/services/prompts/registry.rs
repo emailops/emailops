@@ -88,6 +88,10 @@ const MEMORY_TASKS_VARS: &[VariableDef] = &[
         description: "Email subject line.",
     },
     VariableDef {
+        name: "sent_date",
+        description: "Date the email was sent (UTC) as YYYY-MM-DD; relative deadlines resolve against it.",
+    },
+    VariableDef {
         name: "snippet",
         description: "Truncated email body (up to ~1500 chars).",
     },

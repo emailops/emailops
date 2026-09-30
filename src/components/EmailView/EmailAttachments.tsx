@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { saveToDownloads } from '@/lib/download';
 import { errorText } from '@/lib/errors';
@@ -35,6 +36,7 @@ export function EmailAttachments({
   const addLog = useLogStore((s) => s.addLog);
   const [metas, setMetas] = useState<EmailAttachmentMeta[]>([]);
   const [downloading, setDownloading] = useState<Set<string>>(new Set());
+  const { openAttachment, confirmDialog } = useOpenAttachment();
 
   useEffect(() => {
     api
@@ -69,7 +71,7 @@ export function EmailAttachments({
     // Non-viewable: fall back to download / open with OS
     await withDownloadLock(meta, async () => {
       if (meta.filePath) {
-        await api.openEmailAttachmentMeta(accountId, meta.id);
+        await openAttachment((confirmed) => api.openEmailAttachmentMeta(accountId, meta.id, confirmed));
       } else {
         const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
         await saveToDownloads(meta.filename, b64);
@@ -86,6 +88,7 @@ export function EmailAttachments({
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-3">
+      {confirmDialog}
       <div className="text-xs font-medium text-gray-500 mb-2">Attachments ({metas.length})</div>
       <div className="flex flex-wrap gap-2">
         {metas.map((meta) => {

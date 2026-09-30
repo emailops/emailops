@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { MailboxView } from '@/lib/api';
+import type { EmailAttachment, MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { normalizeMimeType } from '@/lib/mimeType';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
@@ -126,6 +127,17 @@ export function removeEmailFromSlices(
   };
 }
 
+/**
+ * Stale-response guards for thread loads. Every selection (and every reset)
+ * takes a new id; a thread fetch writes only while its id is still the latest,
+ * so a slow response for a previous selection cannot replace the thread of the
+ * email on screen — which would also point Reply at the wrong message.
+ */
+let threadRequestSeq = 0;
+/** Latest load id per open thread tab (keyed by tab id). A tab closed and
+ *  reopened, or wiped by `reset`, must not receive the older load's result. */
+const tabLoadIds = new Map<string, number>();
+
 export interface EmailThreadTab {
   type: 'thread';
   id: string;
@@ -164,6 +176,9 @@ export interface ComposeTab {
   /** File-path attachments carried over from the draft being edited, so the tab
    *  can display them, preserve them across auto-saves, and send them. */
   attachments?: DraftAttachment[];
+  /** Files attached in the compose modal before it was opened in a tab
+   *  (base64, not yet on any draft row). */
+  fileAttachments?: EmailAttachment[];
 }
 
 export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
@@ -200,6 +215,9 @@ interface EmailStore {
   skipNextFetch: boolean;
   currentFetchId: number;
   loadMoreLock: boolean;
+  /** A load-more failed: paging stays off until the list is fetched again, so
+   *  the scroll-triggered load-more does not retry in a tight loop. */
+  loadMoreFailed: boolean;
   tabs: EmailTab[];
   activeTabId: string | null;
   /**
@@ -217,7 +235,12 @@ interface EmailStore {
     toAddresses?: string[],
     subject?: string,
     bodyHtml?: string,
-    opts?: { draftId?: string; ccAddresses?: string[]; attachments?: DraftAttachment[] },
+    opts?: {
+      draftId?: string;
+      ccAddresses?: string[];
+      attachments?: DraftAttachment[];
+      fileAttachments?: EmailAttachment[];
+    },
   ) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string | null) => void;
@@ -236,7 +259,9 @@ interface EmailStore {
     selectedCategories?: EmailCategory[],
     mailbox?: MailboxView,
   ) => Promise<void>;
-  selectEmail: (email: Email | null, focusId?: string) => Promise<void>;
+  /** `markRead: false` opens the email without marking it read (the split
+   *  layout's automatic first selection). */
+  selectEmail: (email: Email | null, focusId?: string, opts?: { markRead?: boolean }) => Promise<void>;
   /**
    * Silently refetch the thread currently on screen (selected pane and/or
    * matching thread tab). Used right after a reply is sent — the backend has
@@ -265,6 +290,16 @@ interface EmailStore {
   clearSearchQuery: () => void;
   clearError: () => void;
   reset: () => void;
+  /** Account key the list was last reset for (see `resetForAccount`). */
+  resetAccountKey: string | null;
+  /**
+   * Clear the list, selection and tabs because the app switched to
+   * `accountKey` — a no-op when it was already reset for that key. The App
+   * effect that calls this re-runs whenever the account list reloads (saving
+   * account settings, reordering, re-auth), and an unconditional reset there
+   * closed every open tab while the account stayed the same.
+   */
+  resetForAccount: (accountKey: string) => void;
 }
 
 export const useEmailStore = create<EmailStore>((set, get) => ({
@@ -284,9 +319,11 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   skipNextFetch: false,
   currentFetchId: 0,
   loadMoreLock: false,
+  loadMoreFailed: false,
   tabs: [],
   activeTabId: null,
   pendingChatDraft: null,
+  resetAccountKey: null,
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
@@ -311,12 +348,16 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       focusEmailId: focusId ?? null,
     };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: email.threadId }));
+    const loadId = ++threadRequestSeq;
+    tabLoadIds.set(email.threadId, loadId);
+    const isCurrentLoad = () => tabLoadIds.get(email.threadId) === loadId;
 
     try {
       const [threadEmails, selectedBody] = await Promise.all([
         api.getThread(email.accountId, email.threadId),
         api.getEmailBody(email.accountId, email.id),
       ]);
+      if (!isCurrentLoad()) return;
       threadEmails.sort((a, b) => a.timestamp - b.timestamp);
       const withBody = threadEmails.map((e) => (e.id === email.id ? { ...e, body: selectedBody } : e));
       set((state) => ({
@@ -325,6 +366,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         ),
       }));
     } catch {
+      if (!isCurrentLoad()) return;
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.type === 'thread' && t.id === email.threadId ? { ...t, threadEmails: [email], isLoading: false } : t,
@@ -340,11 +382,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       return;
     }
 
+    // Sender-declared: normalized before it picks the viewer (and its
+    // sandbox) or is interpolated into the data: URL.
+    const mimeType = normalizeMimeType(meta.mimeType);
     const newTab: AttachmentViewTab = {
       type: 'attachment',
       id: meta.id,
       filename: meta.filename,
-      mimeType: meta.mimeType,
+      mimeType,
       dataUrl: '',
       isLoading: true,
     };
@@ -352,7 +397,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
     try {
       const base64 = await api.fetchEmailAttachmentBytes(meta.accountId, meta.emailId, meta.providerAttachmentId);
-      const dataUrl = `data:${meta.mimeType};base64,${base64}`;
+      const dataUrl = `data:${mimeType};base64,${base64}`;
       set((state) => ({
         tabs: state.tabs.map((t) =>
           t.type === 'attachment' && t.id === meta.id ? { ...t, dataUrl, isLoading: false } : t,
@@ -379,6 +424,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       bodyHtml,
       draftId: opts?.draftId,
       attachments: opts?.attachments,
+      fileAttachments: opts?.fileAttachments,
     };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: id }));
   },
@@ -482,6 +528,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           isLoading: false,
           hasMore: computeHasMore(emails.length, totalCount),
           loadMoreLock: false,
+          loadMoreFailed: false,
         });
       }
     } catch (error) {
@@ -493,13 +540,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   loadMoreEmails: async (accountId, filter, _selectedCategories, mailbox) => {
-    const { isLoadingMore, hasMore, emails, totalCount, loadMoreLock, currentFetchId, searchQuery } = get();
+    const { isLoadingMore, hasMore, emails, totalCount, loadMoreLock, loadMoreFailed, currentFetchId, searchQuery } =
+      get();
 
     // Don't load more when in search mode — search returns all results at once
     if (searchQuery) return;
 
     // Use both isLoadingMore flag and lock to prevent concurrent operations
-    if (isLoadingMore || !hasMore || loadMoreLock) {
+    if (isLoadingMore || !hasMore || loadMoreLock || loadMoreFailed) {
       return;
     }
 
@@ -544,17 +592,18 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       }));
     } catch (error) {
       console.error('Failed to load more emails:', error);
-      set({ isLoadingMore: false, loadMoreLock: false, error: errorText(error) });
+      set({ isLoadingMore: false, loadMoreLock: false, loadMoreFailed: true, error: errorText(error) });
     }
   },
 
-  selectEmail: async (email, focusId) => {
+  selectEmail: async (email, focusId, opts) => {
+    const requestId = ++threadRequestSeq;
     if (!email) {
       set({ selectedEmail: null, threadEmails: [], focusEmailId: null });
       return;
     }
 
-    if (!email.isRead) void get().markAsRead(email.id);
+    if (!email.isRead && opts?.markRead !== false) void get().markAsRead(email.id);
 
     set({ selectedEmail: email, threadEmails: [], isLoadingThread: true, focusEmailId: focusId ?? null });
 
@@ -566,10 +615,12 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         api.getThread(email.accountId, email.threadId),
         api.getEmailBody(email.accountId, email.id),
       ]);
+      if (threadRequestSeq !== requestId) return;
       threadEmails.sort((a, b) => a.timestamp - b.timestamp);
       const withBody = threadEmails.map((e) => (e.id === email.id ? { ...e, body: selectedBody } : e));
       set({ threadEmails: withBody, isLoadingThread: false });
     } catch (error) {
+      if (threadRequestSeq !== requestId) return;
       // Fall back to showing just the selected email, but surface the error
       set({ threadEmails: [email], isLoadingThread: false, error: errorText(error) });
     }
@@ -605,6 +656,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   navigateToEmail: async (accountId, emailId) => {
+    // The navigation replaces the selection: a thread still loading for the
+    // previous one must not land.
+    threadRequestSeq++;
     const fetchId = get().currentFetchId + 1;
     set({
       currentFetchId: fetchId,
@@ -642,6 +696,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
       if (!email.isRead) void get().markAsRead(email.id);
 
+      const requestId = ++threadRequestSeq;
       set({
         emails,
         totalCount,
@@ -660,10 +715,12 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           api.getThread(email.accountId, email.threadId),
           api.getEmailBody(email.accountId, email.id),
         ]);
+        if (threadRequestSeq !== requestId) return;
         threadEmails.sort((a, b) => a.timestamp - b.timestamp);
         const withBody = threadEmails.map((e) => (e.id === email.id ? { ...e, body: focusedBody } : e));
         set({ threadEmails: withBody, isLoadingThread: false });
       } catch {
+        if (threadRequestSeq !== requestId) return;
         set({ threadEmails: [email], isLoadingThread: false });
       }
     } catch (error) {
@@ -744,8 +801,22 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  reset: () =>
+  resetForAccount: (accountKey) => {
+    if (get().resetAccountKey === accountKey) return;
+    get().reset();
+    set({ resetAccountKey: accountKey });
+  },
+
+  reset: () => {
+    // Invalidate the thread loads still in flight: none of them belongs to
+    // what comes after the reset (typically another account). `currentFetchId`
+    // is deliberately left alone — the list fetch for the new account is
+    // usually already in flight when the account effect resets the store, and
+    // any older list fetch is superseded by it.
+    threadRequestSeq++;
+    tabLoadIds.clear();
     set({
+      resetAccountKey: null,
       emails: [],
       selectedEmail: null,
       threadEmails: [],
@@ -761,9 +832,11 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       navigationInFlight: false,
       skipNextFetch: false,
       loadMoreLock: false,
+      loadMoreFailed: false,
       tabs: [],
       activeTabId: null,
       pendingChatDraft: null,
       sentRefreshTick: 0,
-    }),
+    });
+  },
 }));

@@ -17,10 +17,11 @@ pub fn provider_supports_drafts(provider: &str) -> bool {
 /// Whether a provider supports server-side mailbox-state writes — pushing
 /// read/unread and delete back to the account so the change is visible in the
 /// provider's own clients. Gmail implements them via `messages.modify` /
-/// `messages.trash`; IMAP (flags + Trash move) and Outlook (Graph `isRead` +
-/// move) are not wired yet, so their mailbox state stays local to EmailOps.
+/// `messages.trash`, IMAP via `UID STORE` on `\Seen` and a move to the Trash
+/// folder, Outlook via Graph `isRead` and a move to `deleteditems`. An unknown
+/// provider keeps its mailbox state local to EmailOps.
 pub fn provider_supports_mailbox_writes(provider: &str) -> bool {
-    matches!(provider, "gmail")
+    matches!(provider, "gmail" | "imap" | "outlook")
 }
 
 /// An attachment to include in an outgoing email.
@@ -297,6 +298,86 @@ pub struct MessageLocation {
     pub mailbox: String,
 }
 
+/// What the provider reports, right now, for a message the app already stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteMessageState {
+    /// Still addressable under the stored id.
+    Present { is_read: bool },
+    /// Nothing answers to the stored id any more: the message was deleted, or
+    /// moved — which re-keys it on IMAP and Graph. [`EmailProvider::locate_message`]
+    /// tells the two apart.
+    Missing,
+}
+
+/// One change to a message, as the provider's change log reports it (Gmail's
+/// History API). Labels are the provider's own ids (`UNREAD`, `INBOX`, `TRASH`…).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageChange {
+    LabelsAdded {
+        id: String,
+        labels: Vec<String>,
+    },
+    LabelsRemoved {
+        id: String,
+        labels: Vec<String>,
+    },
+    /// Deleted for good — not moved to Trash, which is a label change.
+    Deleted {
+        id: String,
+    },
+}
+
+/// One page of the provider's change log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryPage {
+    /// Changes in the order they happened.
+    pub changes: Vec<MessageChange>,
+    /// The cursor a later listing starts from once this page is applied: the
+    /// page's last record, or the mailbox's current position on the last page.
+    pub resume_cursor: String,
+    /// Set while more pages follow for the same start cursor.
+    pub next_page_token: Option<String>,
+}
+
+/// What [`EmailProvider::list_history`] answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryListing {
+    Page(HistoryPage),
+    /// The provider no longer keeps the log back to the start cursor: what
+    /// changed since then cannot be replayed.
+    CursorExpired,
+}
+
+/// The labels the provider holds, right now, for a message the app stores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteLabels {
+    Present(Vec<String>),
+    /// Nothing answers to the id any more: deleted for good.
+    Missing,
+}
+
+/// The UIDVALIDITY an IMAP server reports for one mailbox the sync stores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderUidValidity {
+    /// The `emails.mailbox` value of the mailbox's messages.
+    pub mailbox: String,
+    /// What every stored id of this mailbox starts with; the rest is the UID.
+    pub id_prefix: String,
+    pub uid_validity: u32,
+}
+
+/// One message of a mailbox as the provider has it now, with what identifies
+/// it independently of its provider id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageIdentity {
+    /// The id the sync would store this message under today.
+    pub id: String,
+    /// RFC 5322 Message-ID header.
+    pub message_id: Option<String>,
+    /// The timestamp the sync would store for it (IMAP INTERNALDATE).
+    pub timestamp: Option<i64>,
+}
+
 /// Everything a reply needs to know about the message it answers.
 ///
 /// Grouped rather than passed loose because the fields are easy to confuse and
@@ -537,7 +618,15 @@ pub trait EmailProvider: Send + Sync {
 
     /// Move one message to the provider's Trash. Recoverable by the user from
     /// the provider's own UI — this is not a permanent delete.
-    async fn trash_message(&self, _message_id: &str) -> Result<()> {
+    ///
+    /// `message_id_header` is the message's RFC 5322 Message-ID when known.
+    /// IMAP addresses a message by a UID that a server-side mailbox rebuild
+    /// can hand to a different message, so it checks the header before moving
+    /// anything; Gmail and Graph ids are never reused and ignore it.
+    ///
+    /// `AppError::NotFound` means the provider no longer has the message under
+    /// this id, so there is nothing left to trash.
+    async fn trash_message(&self, _message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
         Err(AppError::InvalidInput(
             "mailbox state writes are not supported by this provider".to_string(),
         ))
@@ -560,6 +649,62 @@ pub trait EmailProvider: Send + Sync {
     ) -> Result<Option<MessageLocation>> {
         Err(AppError::InvalidInput(
             "locating a message is not supported by this provider".to_string(),
+        ))
+    }
+
+    /// The provider's current state for messages the app already stores, so a
+    /// sync can pick up what the user did in another client (read/unread,
+    /// delete, move) — the fetch passes skip every id they already know.
+    ///
+    /// The map holds an entry only for ids the provider actually checked. An id
+    /// it could not check (its folder would not open, its sub-request was
+    /// throttled) is left out, and the caller must leave that row alone: only
+    /// an explicit [`RemoteMessageState::Missing`] means the message is gone.
+    ///
+    /// `Ok(None)` means the provider has no such refresh.
+    async fn fetch_message_states(
+        &self,
+        _message_ids: &[String],
+    ) -> Result<Option<HashMap<String, RemoteMessageState>>> {
+        Ok(None)
+    }
+
+    /// The current position of the provider's change log, to start following
+    /// it from. `Ok(None)` means the provider has no change log (everything
+    /// but Gmail), and the stored-mail refresh polls message states instead.
+    async fn history_cursor(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// One page of what changed after `cursor`. `page_token` continues a
+    /// listing started with the same `cursor`.
+    async fn list_history(&self, _cursor: &str, _page_token: Option<&str>) -> Result<HistoryListing> {
+        Err(AppError::InvalidInput("this provider has no change log".to_string()))
+    }
+
+    /// The current labels of stored messages, for the bounded reconciliation
+    /// that replaces the change log when its cursor expired. Like
+    /// [`Self::fetch_message_states`], the map holds only the ids the provider
+    /// actually checked.
+    async fn fetch_message_labels(&self, _message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        Ok(HashMap::new())
+    }
+
+    /// The current UIDVALIDITY of every mailbox the sync stores mail from.
+    /// IMAP only: its message ids embed a UID, which a server-side mailbox
+    /// rebuild re-assigns. Gmail and Graph ids are never reused, so the default
+    /// reports nothing. A mailbox the server could not answer for is left out.
+    async fn folder_uid_validities(&self) -> Result<Vec<FolderUidValidity>> {
+        Ok(Vec::new())
+    }
+
+    /// Every message currently in `mailbox` (an `emails.mailbox` value), so
+    /// rows stored before a UIDVALIDITY change can be matched to the ids their
+    /// messages have now. Only called for a mailbox
+    /// [`Self::folder_uid_validities`] reported.
+    async fn list_mailbox_identities(&self, _mailbox: &str) -> Result<Vec<MessageIdentity>> {
+        Err(AppError::InvalidInput(
+            "listing mailbox identities is not supported by this provider".to_string(),
         ))
     }
 
@@ -670,22 +815,88 @@ pub struct FakeEmailProvider {
     /// Provider calls in the order they were made, so a test can assert on the
     /// shape of a sync — e.g. that downloading starts before listing ends.
     calls: std::sync::Arc<std::sync::RwLock<Vec<String>>>,
-    /// When `Some`, every mailbox-state write fails with this message instead
-    /// of being recorded — simulates an offline or refusing provider.
-    mailbox_write_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, every mailbox-state write fails instead of being recorded
+    /// — simulates an offline or refusing provider, or a message it lost.
+    mailbox_write_failure: std::sync::RwLock<Option<FakeWriteFailure>>,
+    /// When `Some`, `create_draft` / `update_draft` fail with this message —
+    /// simulates a provider that is reachable but refusing draft writes.
+    draft_write_failure: std::sync::RwLock<Option<String>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
     /// When set, what `list_message_ids_with_attachments` answers instead of
     /// the stored messages that have attachments (`None` = no search).
     attachment_listing: std::sync::RwLock<Option<Option<Vec<String>>>>,
+    /// Whether `fetch_message_states` answers from the stored messages. Off by
+    /// default so a sync test that seeds local rows the fake never heard of
+    /// does not see them reported as deleted upstream.
+    reports_message_states: std::sync::atomic::AtomicBool,
+    /// Ids `fetch_message_states` leaves out of its answer — a folder that
+    /// would not open, a throttled sub-request.
+    unverifiable_messages: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// What `folder_uid_validities` reports — empty unless a test models an
+    /// IMAP server.
+    uid_validities: std::sync::RwLock<Vec<FolderUidValidity>>,
+    /// When `Some`, `list_mailbox_identities` fails with this message.
+    identity_listing_failure: std::sync::RwLock<Option<String>>,
+    /// The change log `history_cursor` / `list_history` answer from — `None`
+    /// unless a test models Gmail with [`Self::enable_history`].
+    history: std::sync::RwLock<Option<FakeHistory>>,
+    /// When `Some`, `fetch_message_labels` fails with this message.
+    label_fetch_failure: std::sync::RwLock<Option<String>>,
+}
+
+/// The change log of a [`FakeEmailProvider`] modelling Gmail.
+#[derive(Debug, Clone)]
+struct FakeHistory {
+    /// `(record id, change)`, ids increasing.
+    records: Vec<(u64, MessageChange)>,
+    /// The mailbox's current position.
+    current: u64,
+    /// Cursors below this are no longer kept.
+    oldest_kept: u64,
+    /// Records per page.
+    page_size: usize,
+    /// When `Some`, `list_history` fails with this message.
+    failure: Option<String>,
+}
+
+/// The Gmail labels a fake message stands for.
+fn fake_labels(email: &Email) -> Vec<String> {
+    let mut labels = vec![match email.mailbox.as_str() {
+        "trash" => "TRASH",
+        "spam" => "SPAM",
+        "sent" => "SENT",
+        _ => "INBOX",
+    }
+    .to_string()];
+    if !email.is_read {
+        labels.push("UNREAD".to_string());
+    }
+    labels
+}
+
+/// How [`FakeEmailProvider`] fails a mailbox-state write.
+#[derive(Debug, Clone)]
+enum FakeWriteFailure {
+    /// Transient: offline, 5xx, a refusing server.
+    Unavailable(String),
+    /// The provider no longer has the message under that id.
+    MessageGone,
 }
 
 /// A mailbox-state call recorded by [`FakeEmailProvider`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeMailboxOp {
-    SetReadState { message_id: String, read: bool },
-    Trash { message_id: String },
+    SetReadState {
+        message_id: String,
+        read: bool,
+    },
+    Trash {
+        message_id: String,
+        /// The Message-ID header the caller vouched for the message with.
+        message_id_header: Option<String>,
+    },
 }
 
 /// A folder-management call recorded by [`FakeEmailProvider`].
@@ -743,8 +954,133 @@ impl FakeEmailProvider {
             mailbox_ops: std::sync::RwLock::new(Vec::new()),
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
+            draft_write_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
+            reports_message_states: std::sync::atomic::AtomicBool::new(false),
+            unverifiable_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
+            uid_validities: std::sync::RwLock::new(Vec::new()),
+            identity_listing_failure: std::sync::RwLock::new(None),
+            history: std::sync::RwLock::new(None),
+            label_fetch_failure: std::sync::RwLock::new(None),
+        }
+    }
+
+    /// Report `uid_validity` for `mailbox` from now on, replacing any earlier
+    /// value — calling it again with another number is a server-side rebuild.
+    pub fn set_folder_uid_validity(&self, mailbox: &str, id_prefix: &str, uid_validity: u32) {
+        let mut validities = self.uid_validities.write().unwrap_or_else(PoisonError::into_inner);
+        validities.retain(|v| v.mailbox != mailbox);
+        validities.push(FolderUidValidity {
+            mailbox: mailbox.to_string(),
+            id_prefix: id_prefix.to_string(),
+            uid_validity,
+        });
+    }
+
+    /// Make `list_mailbox_identities` fail with `message`.
+    pub fn fail_identity_listing(&self, message: impl Into<String>) {
+        *self
+            .identity_listing_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(message.into());
+    }
+
+    /// Give the fake a change log positioned at `current`, as Gmail has.
+    pub fn enable_history(&self, current: u64) {
+        *self.history.write().unwrap_or_else(PoisonError::into_inner) = Some(FakeHistory {
+            records: Vec::new(),
+            current,
+            oldest_kept: 0,
+            page_size: 100,
+            failure: None,
+        });
+    }
+
+    fn with_history(&self, change: impl FnOnce(&mut FakeHistory)) {
+        if let Some(history) = self.history.write().unwrap_or_else(PoisonError::into_inner).as_mut() {
+            change(history);
+        }
+    }
+
+    /// Append a change to the log the way another client's action would.
+    pub fn record_history(&self, change: MessageChange) {
+        self.with_history(|h| {
+            h.current += 1;
+            h.records.push((h.current, change));
+        });
+    }
+
+    /// Stop keeping the log for every cursor handed out so far.
+    pub fn expire_history(&self) {
+        self.with_history(|h| {
+            h.current += 1;
+            h.oldest_kept = h.current;
+        });
+    }
+
+    pub fn set_history_page_size(&self, page_size: usize) {
+        self.with_history(|h| h.page_size = page_size);
+    }
+
+    /// Make `list_history` fail (`Some`) or answer again (`None`).
+    pub fn fail_history_listing(&self, failure: Option<&str>) {
+        self.with_history(|h| h.failure = failure.map(str::to_string));
+    }
+
+    /// Make `fetch_message_labels` fail.
+    pub fn fail_label_fetch(&self, message: impl Into<String>) {
+        *self.label_fetch_failure.write().unwrap_or_else(PoisonError::into_inner) = Some(message.into());
+    }
+
+    /// Make `fetch_message_states` answer from the fake mailbox: a stored
+    /// message is `Present` with its read flag, anything else is `Missing`.
+    pub fn report_message_states(&self) {
+        self.reports_message_states
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Leave `message_id` out of what `fetch_message_states` answers.
+    pub fn make_state_unverifiable(&self, message_id: impl Into<String>) {
+        self.unverifiable_messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.into());
+    }
+
+    /// Change a message the way another client would: flip its read flag.
+    pub fn set_remote_read(&self, message_id: &str, read: bool) {
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.is_read = read;
+        }
+    }
+
+    /// Delete a message the way another client would: it is simply gone.
+    pub fn remove_message(&self, message_id: &str) {
+        self.messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|m| m.email.id != message_id);
+    }
+
+    /// Move a message the way another client would on IMAP or Graph: it lands
+    /// in `mailbox` under a new id, and the old id stops resolving.
+    pub fn relocate_message(&self, message_id: &str, new_id: &str, mailbox: &str) {
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.id = new_id.to_string();
+            stored.email.mailbox = mailbox.to_string();
         }
     }
 
@@ -786,12 +1122,47 @@ impl FakeEmailProvider {
             .insert(message_id.into());
     }
 
+    /// Make every subsequent draft create/update fail with `message`, or let
+    /// them through again with `None`.
+    pub fn fail_draft_writes(&self, message: Option<&str>) {
+        *self.draft_write_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
+    fn draft_write_result(&self) -> Result<()> {
+        match self
+            .draft_write_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            Some(message) => Err(AppError::SyncError(message.to_string())),
+            None => Ok(()),
+        }
+    }
+
     /// Make every subsequent mailbox-state write fail with `message`.
     pub fn fail_mailbox_writes(&self, message: impl Into<String>) {
         *self
             .mailbox_write_failure
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(message.into());
+            .unwrap_or_else(PoisonError::into_inner) = Some(FakeWriteFailure::Unavailable(message.into()));
+    }
+
+    /// Make every subsequent mailbox-state write answer "no such message",
+    /// as a provider does once the message was deleted or re-keyed upstream.
+    pub fn fail_mailbox_writes_as_not_found(&self) {
+        *self
+            .mailbox_write_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(FakeWriteFailure::MessageGone);
+    }
+
+    /// Let mailbox-state writes succeed again.
+    pub fn restore_mailbox_writes(&self) {
+        *self
+            .mailbox_write_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// `Err` when a failure has been configured, `Ok` otherwise.
@@ -802,7 +1173,8 @@ impl FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
         {
-            Some(message) => Err(AppError::SyncError(message)),
+            Some(FakeWriteFailure::Unavailable(message)) => Err(AppError::SyncError(message)),
+            Some(FakeWriteFailure::MessageGone) => Err(AppError::NotFound("Fake message is gone".to_string())),
             None => Ok(()),
         }
     }
@@ -1204,6 +1576,7 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn set_read_state(&self, message_id: &str, read: bool) -> Result<()> {
+        self.record_call("set_read_state");
         self.mailbox_write_gate()?;
         if let Some(stored) = self
             .messages
@@ -1224,7 +1597,7 @@ impl EmailProvider for FakeEmailProvider {
         Ok(())
     }
 
-    async fn trash_message(&self, message_id: &str) -> Result<()> {
+    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
         self.mailbox_write_gate()?;
         self.messages
             .write()
@@ -1235,6 +1608,7 @@ impl EmailProvider for FakeEmailProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .push(FakeMailboxOp::Trash {
                 message_id: message_id.to_string(),
+                message_id_header: message_id_header.map(str::to_string),
             });
         Ok(())
     }
@@ -1258,6 +1632,136 @@ impl EmailProvider for FakeEmailProvider {
         }))
     }
 
+    async fn folder_uid_validities(&self) -> Result<Vec<FolderUidValidity>> {
+        Ok(self
+            .uid_validities
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
+    }
+
+    async fn list_mailbox_identities(&self, mailbox: &str) -> Result<Vec<MessageIdentity>> {
+        self.record_call("list_mailbox_identities");
+        if let Some(message) = self
+            .identity_listing_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::SyncError(message));
+        }
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(guard
+            .iter()
+            .filter(|m| m.email.mailbox == mailbox)
+            .map(|m| MessageIdentity {
+                id: m.email.id.clone(),
+                message_id: m.email.message_id.clone(),
+                timestamp: Some(m.email.timestamp),
+            })
+            .collect())
+    }
+
+    async fn history_cursor(&self) -> Result<Option<String>> {
+        let guard = self.history.read().unwrap_or_else(PoisonError::into_inner);
+        let Some(history) = guard.as_ref() else {
+            return Ok(None);
+        };
+        self.record_call("history_cursor");
+        Ok(Some(history.current.to_string()))
+    }
+
+    async fn list_history(&self, cursor: &str, page_token: Option<&str>) -> Result<HistoryListing> {
+        let guard = self.history.read().unwrap_or_else(PoisonError::into_inner);
+        let Some(history) = guard.as_ref() else {
+            return Err(AppError::InvalidInput("this provider has no change log".to_string()));
+        };
+        self.record_call("list_history");
+        if let Some(message) = &history.failure {
+            return Err(AppError::SyncError(message.clone()));
+        }
+        let parse = |value: &str| {
+            value
+                .parse::<u64>()
+                .map_err(|_| AppError::InvalidInput(format!("not a history position: {value}")))
+        };
+        let start = parse(cursor)?;
+        if start < history.oldest_kept {
+            return Ok(HistoryListing::CursorExpired);
+        }
+        let offset = page_token.map(parse).transpose()?.unwrap_or(0) as usize;
+        let after: Vec<&(u64, MessageChange)> = history.records.iter().filter(|(id, _)| *id > start).collect();
+        let page: Vec<&(u64, MessageChange)> = after.iter().skip(offset).take(history.page_size).copied().collect();
+        let end = offset + page.len();
+        let more = end < after.len();
+        Ok(HistoryListing::Page(HistoryPage {
+            changes: page.iter().map(|(_, change)| change.clone()).collect(),
+            resume_cursor: match page.last() {
+                Some((id, _)) if more => id.to_string(),
+                _ => history.current.to_string(),
+            },
+            next_page_token: more.then(|| end.to_string()),
+        }))
+    }
+
+    async fn fetch_message_labels(&self, message_ids: &[String]) -> Result<HashMap<String, RemoteLabels>> {
+        self.record_call("fetch_message_labels");
+        if let Some(message) = self
+            .label_fetch_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::SyncError(message));
+        }
+        let unverifiable = self
+            .unverifiable_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(message_ids
+            .iter()
+            .filter(|id| !unverifiable.contains(*id))
+            .map(|id| {
+                let labels = match guard.iter().find(|m| &m.email.id == id) {
+                    Some(m) => RemoteLabels::Present(fake_labels(&m.email)),
+                    None => RemoteLabels::Missing,
+                };
+                (id.clone(), labels)
+            })
+            .collect())
+    }
+
+    async fn fetch_message_states(
+        &self,
+        message_ids: &[String],
+    ) -> Result<Option<HashMap<String, RemoteMessageState>>> {
+        if !self.reports_message_states.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(None);
+        }
+        self.record_call("fetch_message_states");
+        let unverifiable = self
+            .unverifiable_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(Some(
+            message_ids
+                .iter()
+                .filter(|id| !unverifiable.contains(*id))
+                .map(|id| {
+                    let state = match guard.iter().find(|m| &m.email.id == id) {
+                        Some(m) => RemoteMessageState::Present {
+                            is_read: m.email.is_read,
+                        },
+                        None => RemoteMessageState::Missing,
+                    };
+                    (id.clone(), state)
+                })
+                .collect(),
+        ))
+    }
+
     async fn create_draft(
         &self,
         _from_email: &str,
@@ -1267,6 +1771,7 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         _attachments: &[EmailAttachment],
     ) -> Result<String> {
+        self.draft_write_result()?;
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let id = format!("fake-draft-{seq}");
         let draft = ProviderDraft {
@@ -1296,6 +1801,17 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         _attachments: &[EmailAttachment],
     ) -> Result<String> {
+        self.draft_write_result()?;
+        // A draft sent or deleted from another device is gone: real providers
+        // answer 404, which their clients surface as `NotFound`.
+        if !self
+            .drafts
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(provider_draft_id)
+        {
+            return Err(AppError::NotFound(format!("Fake draft not found: {provider_draft_id}")));
+        }
         // Saving a draft mints a fresh change token, mirroring Gmail replacing
         // the underlying message id on every `drafts.update`.
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -1708,7 +2224,7 @@ mod tests {
         // silently pretend the push happened — callers gate on
         // `provider_supports_mailbox_writes` and keep the change local instead.
         let p = BareProvider;
-        for result in [p.set_read_state("m", true).await, p.trash_message("m").await] {
+        for result in [p.set_read_state("m", true).await, p.trash_message("m", None).await] {
             match result {
                 Err(crate::models::error::AppError::InvalidInput(msg)) => {
                     assert!(msg.contains("not supported"), "unexpected message: {msg}");
@@ -1719,13 +2235,14 @@ mod tests {
     }
 
     #[test]
-    fn only_gmail_supports_server_side_mailbox_writes() {
-        assert!(provider_supports_mailbox_writes("gmail"));
+    fn every_shipped_provider_supports_server_side_mailbox_writes() {
+        for provider in ["gmail", "imap", "outlook"] {
+            assert!(provider_supports_mailbox_writes(provider), "{provider}");
+        }
         assert!(
-            !provider_supports_mailbox_writes("imap"),
-            "IMAP flag/move write-back is not implemented yet — must stay local-only"
+            !provider_supports_mailbox_writes("exchange-ews"),
+            "a provider nobody wired must stay local-only"
         );
-        assert!(!provider_supports_mailbox_writes("outlook"));
     }
 
     #[tokio::test]
@@ -1733,7 +2250,7 @@ mod tests {
         let p = FakeEmailProvider::new("me@example.com", "Me");
         p.set_read_state("m-1", true).await.unwrap();
         p.set_read_state("m-2", false).await.unwrap();
-        p.trash_message("m-1").await.unwrap();
+        p.trash_message("m-1", Some("<m-1@example.com>")).await.unwrap();
 
         assert_eq!(
             p.mailbox_ops(),
@@ -1747,7 +2264,8 @@ mod tests {
                     read: false
                 },
                 FakeMailboxOp::Trash {
-                    message_id: "m-1".to_string()
+                    message_id: "m-1".to_string(),
+                    message_id_header: Some("<m-1@example.com>".to_string()),
                 },
             ]
         );
@@ -1758,9 +2276,110 @@ mod tests {
         let p = FakeEmailProvider::new("me@example.com", "Me");
         p.fail_mailbox_writes("mailbox is over quota");
 
-        let err = p.trash_message("m-1").await.unwrap_err();
+        let err = p.trash_message("m-1", None).await.unwrap_err();
         assert!(err.to_string().contains("over quota"), "unexpected error: {err}");
         assert!(p.mailbox_ops().is_empty(), "a failed write must not be recorded");
+    }
+
+    #[tokio::test]
+    async fn providers_without_uids_report_no_uid_validity() {
+        assert!(BareProvider.folder_uid_validities().await.unwrap().is_empty());
+        assert!(BareProvider.list_mailbox_identities("inbox").await.is_err());
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert!(p.folder_uid_validities().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn fake_provider_models_a_uid_validity_change_and_lists_a_mailbox() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.set_folder_uid_validity("inbox", "acc::", 1);
+        p.set_folder_uid_validity("inbox", "acc::", 2);
+        let mut in_sent = sample_email("acc::SENT::4", 900);
+        in_sent.mailbox = "sent".to_string();
+        p.add_message(in_sent, EmailCategory::Primary, vec![]);
+        p.add_message(sample_email("acc::7", 1_000), EmailCategory::Primary, vec![]);
+
+        assert_eq!(
+            p.folder_uid_validities().await.unwrap(),
+            vec![FolderUidValidity {
+                mailbox: "inbox".to_string(),
+                id_prefix: "acc::".to_string(),
+                uid_validity: 2,
+            }]
+        );
+        assert_eq!(
+            p.list_mailbox_identities("inbox").await.unwrap(),
+            vec![MessageIdentity {
+                id: "acc::7".to_string(),
+                message_id: None,
+                timestamp: Some(1_000),
+            }]
+        );
+
+        p.fail_identity_listing("connection reset");
+        assert!(p.list_mailbox_identities("inbox").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn providers_without_a_state_refresh_answer_none() {
+        assert_eq!(
+            BareProvider.fetch_message_states(&["m".to_string()]).await.unwrap(),
+            None
+        );
+        // The fake is opt-in, so sync tests that seed local-only rows are safe.
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        assert_eq!(p.fetch_message_states(&["m".to_string()]).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn fake_provider_reports_flags_vanished_and_unverifiable_messages() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.report_message_states();
+        for id in ["read", "unread", "moved", "deleted", "unknown"] {
+            let mut email = sample_email(id, 1_000);
+            email.message_id = Some(format!("<{id}@example.com>"));
+            p.add_message(email, EmailCategory::Primary, vec![]);
+        }
+        p.set_remote_read("read", true);
+        p.relocate_message("moved", "moved-2", "trash");
+        p.remove_message("deleted");
+        p.make_state_unverifiable("unknown");
+
+        let ids: Vec<String> = ["read", "unread", "moved", "deleted", "unknown"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let states = p.fetch_message_states(&ids).await.unwrap().unwrap();
+
+        assert_eq!(states.get("read"), Some(&RemoteMessageState::Present { is_read: true }));
+        assert_eq!(
+            states.get("unread"),
+            Some(&RemoteMessageState::Present { is_read: false })
+        );
+        assert_eq!(states.get("moved"), Some(&RemoteMessageState::Missing));
+        assert_eq!(states.get("deleted"), Some(&RemoteMessageState::Missing));
+        assert_eq!(states.get("unknown"), None, "unverifiable ids are left out");
+        assert_eq!(
+            p.locate_message("moved", Some("<moved@example.com>")).await.unwrap(),
+            Some(MessageLocation {
+                id: "moved-2".to_string(),
+                mailbox: "trash".to_string()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn fake_provider_can_report_a_message_it_no_longer_has() {
+        let p = FakeEmailProvider::new("me@example.com", "Me");
+        p.fail_mailbox_writes_as_not_found();
+        assert!(matches!(
+            p.set_read_state("m-1", true).await,
+            Err(AppError::NotFound(_))
+        ));
+
+        p.restore_mailbox_writes();
+        p.set_read_state("m-1", true).await.unwrap();
+        assert_eq!(p.mailbox_ops().len(), 1);
     }
 
     #[test]

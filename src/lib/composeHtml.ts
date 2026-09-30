@@ -74,7 +74,8 @@ export function prepareOutgoingHtml(html: string, cidPrefix?: string): PreparedO
 /**
  * Best-effort plaintext fallback for receivers that won't render HTML.
  * Block-level tags become line breaks; `<br>` becomes a single newline;
- * images become `[image]` placeholders; everything else is text content.
+ * images become `[image]` placeholders; a table row becomes one line with
+ * its cells separated by ` | `; everything else is text content.
  *
  * This is intentionally simple — receivers that can render HTML (which is
  * ~all of them in 2026) use the HTML part. The text/plain part is just
@@ -118,7 +119,32 @@ export function htmlToPlainText(html: string): string {
       }
       return;
     }
-    const blockTags = new Set(['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'hr']);
+    if (tag === 'tr') {
+      // One line per row: a cell's own paragraphs would otherwise put every
+      // cell on its own line and lose which cells belong together.
+      if (current.length > 0) flush();
+      current = Array.from(el.children)
+        .map((cell) => htmlToPlainText(cell.innerHTML).replace(/\s*\n\s*/g, ' '))
+        .join(' | ');
+      flush();
+      return;
+    }
+    const blockTags = new Set([
+      'p',
+      'div',
+      'li',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'h6',
+      'blockquote',
+      'pre',
+      'hr',
+      'center',
+      'caption',
+    ]);
     const isBlock = blockTags.has(tag);
     if (isBlock && current.length > 0) flush();
     for (const child of Array.from(el.childNodes)) walk(child);

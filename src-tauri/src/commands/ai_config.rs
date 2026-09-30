@@ -6,6 +6,7 @@ use crate::models::error::AppError;
 use crate::models::AiUsageSummary;
 use crate::services;
 use crate::services::ai::AiService;
+use crate::services::ai_activity::{self, AiWorkItem, AiWorkKind};
 use crate::services::embeddings::EmbeddingsConfig;
 use crate::AppState;
 
@@ -17,17 +18,66 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
 pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
     let has_api_key = services::ai::AiService::has_openrouter_api_key(&state.db)?;
+    let validated_embedding_model = AiService::validated_openrouter_embedding_model(&state.db)?;
+    let remembered: serde_json::Map<String, serde_json::Value> = AiService::remembered_models(&state.db, &config)?
+        .into_iter()
+        .map(|(provider, models)| {
+            (
+                provider.to_string(),
+                serde_json::json!({ "model": models.model, "embeddingModel": models.embedding_model }),
+            )
+        })
+        .collect();
 
     Ok(serde_json::json!({
         "provider": config.provider,
         "model": config.model,
         "embeddingModel": config.embedding_model,
+        "openRouterValidatedEmbeddingModel": validated_embedding_model,
+        "remembered": remembered,
         "monthlyBudgetUsd": config.monthly_budget_usd,
         "periodStart": config.period_start,
         "hasApiKey": has_api_key,
         "thinkingEnabled": config.thinking_enabled,
         "zeroDataRetention": config.zero_data_retention,
     }))
+}
+
+/// The AI background work that uses the configured provider right now, and
+/// that provider — what the UI shows before the provider or a model changes.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderActivity {
+    pub provider: String,
+    pub items: Vec<AiWorkItem>,
+}
+
+#[tauri::command]
+pub async fn get_ai_provider_activity(state: State<'_, AppState>) -> Result<AiProviderActivity, AppError> {
+    Ok(AiProviderActivity {
+        provider: AiService::get_config(&state.db)?.provider,
+        items: ai_activity::provider_work(&state.ai_background.snapshot()),
+    })
+}
+
+/// Ask the running and queued AI background work of these kinds to stop.
+/// Returns how many tasks were asked; each ends at its next email.
+#[tauri::command]
+pub async fn cancel_ai_provider_work(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    kinds: Vec<AiWorkKind>,
+) -> Result<usize, AppError> {
+    let asked = ai_activity::cancel_provider_work(&state.ai_background, &kinds);
+    if asked > 0 {
+        emit_log(
+            &app,
+            "info",
+            "ai",
+            &format!("Stopping {asked} AI background task(s) at the user's request"),
+        );
+    }
+    Ok(asked)
 }
 
 #[tauri::command]
@@ -125,11 +175,16 @@ pub async fn list_ai_models(state: State<'_, AppState>) -> Result<Vec<serde_json
         .collect())
 }
 
+/// Embedding models of `provider` — the saved provider when omitted. Settings
+/// passes the tab being edited, which may not be saved yet.
 #[tauri::command]
-pub async fn list_ai_embedding_models(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, AppError> {
+pub async fn list_ai_embedding_models(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Result<Vec<serde_json::Value>, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
 
-    if config.provider == "openrouter" {
+    if provider.as_deref().unwrap_or(&config.provider) == "openrouter" {
         let key = AiService::load_openrouter_api_key(&state.db)?;
         let client =
             crate::ai::openrouter::OpenRouterClient::new(key, config.model.clone(), config.embedding_model.clone());
@@ -176,6 +231,60 @@ pub async fn list_ai_embedding_models(state: State<'_, AppState>) -> Result<Vec<
         })
         .collect();
     Ok(models)
+}
+
+/// Check that an OpenRouter embedding model produces vectors the email index
+/// can hold, and remember it when it does. Settings calls this before saving
+/// a newly chosen model; until a model has passed, no embedding request is
+/// sent to OpenRouter. `api_key` and `zero_data_retention` carry values typed
+/// in Settings but not saved yet.
+#[tauri::command]
+pub async fn validate_openrouter_embedding_model(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: String,
+    api_key: Option<String>,
+    zero_data_retention: Option<bool>,
+) -> Result<(), AppError> {
+    let model = model.trim().to_string();
+    if model.is_empty() {
+        return Err(AppError::InvalidInput("No embedding model was given".to_string()));
+    }
+    emit_log(
+        &app,
+        "info",
+        "embeddings",
+        &format!("Checking embedding model {model}…"),
+    );
+
+    let config = AiService::get_config(&state.db)?;
+    let key = match api_key {
+        Some(key) if !key.is_empty() => key,
+        _ => AiService::load_openrouter_api_key(&state.db)?,
+    };
+    let client = crate::ai::openrouter::OpenRouterClient::new(key, config.model, model.clone())
+        .with_zero_data_retention(zero_data_retention.unwrap_or(config.zero_data_retention));
+
+    match AiService::validate_openrouter_embedding_model(&state.db, &client).await {
+        Ok(_) => {
+            emit_log(
+                &app,
+                "success",
+                "embeddings",
+                &format!("Embedding model {model} fits the email index"),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            emit_log(
+                &app,
+                "error",
+                "embeddings",
+                &format!("Embedding model {model} cannot be used: {e}"),
+            );
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]

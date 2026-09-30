@@ -78,8 +78,10 @@ pub(crate) fn condense_shape(group_len: usize) -> JsonShape {
 
 /// The merged notes in a condense reply. Each covers every conversation of the
 /// notes it names, and is a match only when all of those are — a merge that
-/// mixed an answer with background reads as background. `Err` when the reply
-/// is not the expected JSON.
+/// mixed an answer with background reads as background. An input note the
+/// reply never names is kept as it was, after the merged ones: a model that
+/// forgets a label must not drop that conversation from the report. `Err` when
+/// the reply is not the expected JSON.
 pub(crate) fn parse_condensed(reply: &str, group: &[Note]) -> Result<Vec<Note>, String> {
     let value: serde_json::Value = serde_json::from_str(reply.trim())
         .or_else(|e| {
@@ -95,15 +97,20 @@ pub(crate) fn parse_condensed(reply: &str, group: &[Note]) -> Result<Vec<Note>, 
         .and_then(|n| n.as_array())
         .ok_or_else(|| "the condense reply has no \"notes\" list".to_string())?;
     let mut out = Vec::new();
+    let mut named = vec![false; group.len()];
     for entry in entries {
-        let sources: Vec<&Note> = entry
+        let indices: Vec<usize> = entry
             .get("from")
             .and_then(|f| f.as_array())
             .into_iter()
             .flatten()
             .filter_map(|l| l.as_str()?.strip_prefix('N')?.parse::<usize>().ok()?.checked_sub(1))
-            .filter_map(|i| group.get(i))
+            .filter(|i| *i < group.len())
             .collect();
+        for &i in &indices {
+            named[i] = true;
+        }
+        let sources: Vec<&Note> = indices.iter().filter_map(|&i| group.get(i)).collect();
         if sources.is_empty() {
             continue; // a note that merges nothing cites nothing
         }
@@ -122,6 +129,22 @@ pub(crate) fn parse_condensed(reply: &str, group: &[Note]) -> Result<Vec<Note>, 
             .trim()
             .to_string();
         out.push(Note { docs, tag, text });
+    }
+    let left_out: Vec<Note> = group
+        .iter()
+        .zip(&named)
+        .filter(|(_, named)| !**named)
+        .map(|(n, _)| n.clone())
+        .collect();
+    if !left_out.is_empty() {
+        super::super::emit_log(
+            "debug",
+            &format!(
+                "research: the condense reply left {} note(s) out — kept as they were",
+                left_out.len()
+            ),
+        );
+        out.extend(left_out);
     }
     Ok(out)
 }
@@ -460,6 +483,26 @@ mod tests {
             merged[1],
             note(&[7, 9], FindingTag::Context, "Mixed"),
             "background once mixed; unknown labels dropped"
+        );
+    }
+
+    #[test]
+    fn a_note_the_condense_reply_left_out_is_kept_as_it_was() {
+        // The reply merged N1 and N3 but never named N2: dropping it lost that
+        // conversation and its citation from the report.
+        let group = vec![
+            note(&[3], FindingTag::Match, "quote to Acme"),
+            note(&[7], FindingTag::Match, "quote to Beta"),
+            note(&[9], FindingTag::Match, "quote to Gamma"),
+        ];
+        let reply = r#"{"notes":[{"text":"Quotes to Acme and Gamma","from":["N1","N3"]}]}"#;
+        let merged = parse_condensed(reply, &group).unwrap();
+        assert_eq!(
+            merged,
+            vec![
+                note(&[3, 9], FindingTag::Match, "Quotes to Acme and Gamma"),
+                note(&[7], FindingTag::Match, "quote to Beta"),
+            ]
         );
     }
 

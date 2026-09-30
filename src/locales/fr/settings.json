@@ -168,7 +168,51 @@
     "noTrainingNotice": "Les fournisseurs qui conservent vos e-mails ou s'en servent pour l'entraînement ne sont jamais utilisés.",
     "zeroDataRetention": "Rétention zéro uniquement",
     "zeroDataRetentionHelp": "N'envoie qu'aux fournisseurs qui ne conservent rien après la réponse. Moins de modèles sont disponibles.",
-    "chatModelPlaceholder": "ex. google/gemma-3-27b-it"
+    "contextBudget": "Budget de contexte (tokens)",
+    "contextBudgetHelp": "Part de la fenêtre de contexte d'un modèle distant qu'un appel du mode recherche peut remplir. La fenêtre du modèle reste la limite. Un budget plus grand signifie moins d'appels, plus volumineux : plus de courrier envoyé par requête et un coût par appel plus élevé.",
+    "contextBudgetLoadFailed": "Échec du chargement du budget de contexte : {{error}}",
+    "contextBudgetSaveFailed": "Échec de l'enregistrement du budget de contexte : {{error}}",
+    "chatModelPlaceholder": "ex. google/gemma-3-27b-it",
+    "chatModelRequired": "Saisissez l'ID d'un modèle de chat OpenRouter avant d'enregistrer : rien n'a été enregistré.",
+    "embeddingNone": "Aucun — recherche par mots-clés uniquement",
+    "embeddingRecommendedMultilingual": "recommandé, multilingue",
+    "embeddingRecommendedEnglish": "recommandé, anglais uniquement",
+    "embeddingNotice": "Avec un modèle d'Embeddings sélectionné, le texte de chaque e-mail indexé, ainsi que de chaque recherche et question du chat, est envoyé à OpenRouter et compte dans le budget mensuel. Sans modèle, la recherche sémantique est désactivée et la recherche se fait uniquement par mots-clés.",
+    "embeddingNeedsKey": "Enregistrez votre clé API pour charger la liste des modèles d'Embeddings.",
+    "embeddingNeedsCheck": "L'enregistrement vérifie que ce modèle produit les vecteurs de 768 dimensions dont l'index des e-mails a besoin.",
+    "embeddingCheckFailed": "Rien n'a été enregistré : le modèle d'Embeddings ne peut pas être utilisé : {{error}}",
+    "embeddingZdrBlocked": "Rien n'a été enregistré : aucun fournisseur du modèle d'Embeddings {{model}} ne respecte le réglage de rétention zéro. Désactivez « Rétention zéro uniquement » dans Paramètres → IA → OpenRouter, ou n'utilisez aucun modèle d'Embeddings (recherche par mots-clés uniquement).",
+    "embeddingListFailed": "Échec du chargement des modèles d'Embeddings d'OpenRouter : {{error}}"
+  },
+  "confirmReindex": {
+    "title": "Régénérer tous les Embeddings ?",
+    "body": "Le modèle d'Embeddings a changé. L'enregistrement supprime tous les Embeddings existants et les régénère avec le nouveau modèle. La recherche sémantique est réduite jusqu'à la fin de l'opération.",
+    "bodyNone": "Aucun modèle d'Embeddings n'est sélectionné. L'enregistrement supprime tous les Embeddings existants et désactive la recherche sémantique : la recherche se fait uniquement par mots-clés jusqu'à ce que vous choisissiez un modèle.",
+    "openRouter": "Le texte de chaque e-mail indexé sera envoyé à OpenRouter et facturé sur votre compte OpenRouter.",
+    "confirm": "Enregistrer et régénérer",
+    "confirmNone": "Enregistrer et supprimer"
+  },
+  "aiWork": {
+    "title": "Travail d’IA en cours",
+    "body": "Ce changement touche un travail d’IA en arrière-plan en cours ou en file d’attente avec les réglages actuels :",
+    "kinds": {
+      "embeddingsRebuild": "Régénération de tous les Embeddings",
+      "embeddingsGeneration": "Génération des Embeddings",
+      "classification": "Classification des e-mails",
+      "memoryExtraction": "Extraction de la mémoire",
+      "taskExtraction": "Extraction des tâches",
+      "lensExtraction": "Extraction des filtres dynamiques"
+    },
+    "queued": "{{n}} en file d’attente",
+    "moreQueued": "+{{n}} en file d’attente",
+    "openRouter": "Ce travail envoie le texte de vos e-mails à OpenRouter. L’arrêter met fin à ces requêtes maintenant ; attendre les laisse se poursuivre, et être facturées, jusqu’à la fin du travail.",
+    "help": "Arrêter et appliquer termine le travail à l’e-mail en cours, puis applique le changement ; ce qui est déjà fait est conservé. Attendre et appliquer applique le changement quand le travail se termine de lui-même.",
+    "stopping": "Arrêt en cours… Le changement est appliqué dès que le travail est terminé.",
+    "waiting": "En attente de la fin du travail. Le changement est appliqué dès qu’il se termine.",
+    "stop": "Arrêter et appliquer",
+    "wait": "Attendre et appliquer",
+    "failed": "Impossible d’arrêter ou de suivre le travail d’IA en cours : {{error}}",
+    "checkFailed": "Impossible de vérifier si un travail d’IA est en cours : {{error}}"
   },
   "promptEditor": {
     "resetTitle": "Réinitialiser le prompt par défaut ?",
@@ -437,6 +481,8 @@
     "allowRemoteToggleDesc": "Lorsque c'est désactivé, les images externes et trackers sont bloqués. Un bandeau vous permet de les charger par courriel.",
     "privacyPolicyLink": "Politique de confidentialité",
     "loading": "Chargement...",
+    "loadFailed": "Impossible de charger les paramètres de confidentialité : {{error}}",
+    "saveFailed": "Impossible d'enregistrer le paramètre : {{error}}",
     "passwordDialog": {
       "setTitle": "Définir le mot de passe principal",
       "changeTitle": "Changer le mot de passe principal",

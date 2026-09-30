@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AllQueuesState, QueueStateSnapshot, TaskInfo } from '@/types';
-import { classifyTask, summarizeActivities } from './backgroundActivity';
+import { classifyTask, embeddingRunEnded, summarizeActivities } from './backgroundActivity';
 
 function queue(name: string, running: string[], pending: string[] = []): QueueStateSnapshot {
   const task = (n: string, i: number): TaskInfo => ({ id: i, name: n, startedAt: 0 });
@@ -79,5 +79,12 @@ describe('summarizeActivities', () => {
     const q = queues([], []);
     q.aiBackground.pending = [{ id: 1, name: 'lens:backfill:lens-1', startedAt: 0 }];
     expect(summarizeActivities(q, {})).toEqual([]);
+  });
+});
+
+describe('embeddingRunEnded', () => {
+  it('is true for every terminal status, including a run the user stopped', () => {
+    for (const status of ['complete', 'error', 'cancelled']) expect(embeddingRunEnded(status)).toBe(true);
+    for (const status of ['starting', 'clearing', 'generating']) expect(embeddingRunEnded(status)).toBe(false);
   });
 });

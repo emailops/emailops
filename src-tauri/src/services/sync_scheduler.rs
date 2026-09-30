@@ -761,7 +761,9 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
 
 /// Manages an IMAP IDLE connection for one account.
 /// The blocking IDLE loop runs on a thread-pool thread and signals via a channel.
-/// Reconnects with exponential backoff when the connection drops.
+/// Reconnects with exponential backoff when the connection drops; the backoff
+/// starts over after every session that reached IDLE (see
+/// [`plan_idle_reconnect`]).
 pub(crate) async fn imap_idle_watcher(
     creds: crate::models::error::Result<crate::sync::imap::ImapCredentials>,
     sync_fn: SyncFn,
@@ -804,26 +806,46 @@ pub(crate) async fn imap_idle_watcher(
         });
 
         // Drain notifications until the blocking thread exits (channel closes)
-        imap_idle_drain(rx, &sync_fn).await;
+        let established = imap_idle_drain(rx, &sync_fn).await;
 
         // Connection dropped — reconnect after backoff (unless stopping)
         if stop_flag.load(Ordering::Relaxed) {
             return;
         }
-        tokio::time::sleep(backoff).await;
-        backoff = next_backoff(backoff, MAX_BACKOFF_SECS);
+        let (wait, next) = plan_idle_reconnect(established, backoff);
+        backoff = next;
+        let reason = if established {
+            "IDLE connection dropped"
+        } else {
+            "IDLE could not connect"
+        };
+        crate::services::logger::log(
+            "warn",
+            "sync",
+            format!("{reason} for {email}; reconnecting in {}s", wait.as_secs()),
+        );
+        tokio::time::sleep(wait).await;
     }
 }
 
 /// Drains the IDLE notification channel, calling `sync_fn` on new-mail signals.
-/// Returns when the channel closes (blocking IDLE thread exited).
-pub(crate) async fn imap_idle_drain(mut rx: tokio::sync::mpsc::Receiver<bool>, sync_fn: &SyncFn) {
+/// Returns when the channel closes (blocking IDLE thread exited), reporting
+/// whether the session was ever established.
+///
+/// The first signal of a session — new mail or a keepalive — proves connect,
+/// SELECT and IDLE all succeeded, so it also triggers one catch-up sync: mail
+/// that arrived while the connection was down raises no IDLE notification and
+/// would otherwise wait for the next change in the mailbox.
+pub(crate) async fn imap_idle_drain(mut rx: tokio::sync::mpsc::Receiver<bool>, sync_fn: &SyncFn) -> bool {
+    let mut established = false;
     while let Some(new_mail) = rx.recv().await {
-        if new_mail {
+        // false = server-side keepalive timeout; re-enter IDLE without syncing
+        if new_mail || !established {
             sync_fn().await;
         }
-        // false = server-side keepalive timeout; re-enter IDLE without syncing
+        established = true;
     }
+    established
 }
 
 // ── Memory consolidation ticker ───────────────────────────────────────────────
@@ -933,6 +955,19 @@ const MAX_BACKOFF_SECS: u64 = 300;
 /// Double the reconnect backoff, capped at `max_secs` seconds.
 pub(crate) fn next_backoff(current: Duration, max_secs: u64) -> Duration {
     Duration::from_secs(current.as_secs().saturating_mul(2).min(max_secs))
+}
+
+/// How long to wait before the next IDLE connect, and the backoff after that.
+///
+/// A session that got as far as IDLE was healthy, so its drop starts the
+/// backoff over; only consecutive failed connects keep doubling it.
+pub(crate) fn plan_idle_reconnect(established: bool, current: Duration) -> (Duration, Duration) {
+    let wait = if established {
+        Duration::from_secs(INITIAL_BACKOFF_SECS)
+    } else {
+        current
+    };
+    (wait, next_backoff(wait, MAX_BACKOFF_SECS))
 }
 
 /// Return only enabled accounts.
@@ -1166,18 +1201,58 @@ mod tests {
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
-    /// `false` signals (keepalive timeouts) must NOT trigger sync.
+    /// The first signal of a session proves the connection reached IDLE, so it
+    /// triggers one catch-up sync (mail that arrived while disconnected raises
+    /// no IDLE notification). Later keepalives (`false`) must NOT sync.
     #[tokio::test]
-    async fn imap_idle_drain_ignores_keepalive_signals() {
+    async fn imap_idle_drain_catches_up_once_then_ignores_keepalives() {
         let count = Arc::new(AtomicU32::new(0));
         let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
         tx.send(false).await.unwrap();
         tx.send(false).await.unwrap();
+        tx.send(false).await.unwrap();
         drop(tx);
 
-        imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
+        let established = imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
 
-        assert_eq!(count.load(Ordering::SeqCst), 0, "keepalive must not trigger sync");
+        assert!(established);
+        assert_eq!(count.load(Ordering::SeqCst), 1, "one catch-up, keepalives do not sync");
+    }
+
+    /// A session whose thread exits before any signal never connected.
+    #[tokio::test]
+    async fn imap_idle_drain_reports_a_session_that_never_connected() {
+        let count = Arc::new(AtomicU32::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
+        drop(tx);
+
+        let established = imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
+
+        assert!(!established);
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    // ── plan_idle_reconnect ───────────────────────────────────────────────────
+
+    /// The backoff used to only ever grow: after one bad hour, every later
+    /// drop of a healthy session waited the 300 s maximum before reconnecting.
+    #[test]
+    fn a_session_that_connected_resets_the_reconnect_backoff() {
+        assert_eq!(
+            plan_idle_reconnect(true, Duration::from_secs(300)),
+            (
+                Duration::from_secs(INITIAL_BACKOFF_SECS),
+                Duration::from_secs(2 * INITIAL_BACKOFF_SECS)
+            )
+        );
+    }
+
+    #[test]
+    fn a_failed_connect_keeps_backing_off() {
+        assert_eq!(
+            plan_idle_reconnect(false, Duration::from_secs(40)),
+            (Duration::from_secs(40), Duration::from_secs(80))
+        );
     }
 
     /// Each `true` signal fires one sync; `false` signals between them are ignored.

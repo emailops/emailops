@@ -7,11 +7,14 @@ pub mod gpu_plan;
 pub mod json_shape;
 pub mod ollama;
 pub mod openrouter;
+mod openrouter_stream;
+pub mod prompt_guard;
 pub mod provider;
 pub mod stream_gate;
 pub mod think_priming;
 pub mod thinking_filter;
 pub mod tracing;
+pub mod utf8_stream;
 
 #[cfg(feature = "llamacpp")]
 pub mod llama_cpp;

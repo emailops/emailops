@@ -13,12 +13,13 @@ use uuid::Uuid;
 
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use crate::models::{Email, MemoryFact};
 use crate::services::ai::AiService;
 use crate::services::memory::config::MemoryConfig;
 
 pub use crate::services::tasks::extractor::ExtractedTask;
+use crate::services::tasks::extractor::{lenient_items, reply_object};
 
 const MAX_BODY_CHARS: usize = 1500;
 
@@ -89,13 +90,13 @@ pub async fn extract_batch(
 
     let mut ok = 0;
     for email_id in &ids {
-        if let Some(c) = cancel {
-            if c.load(Ordering::SeqCst) {
-                emit_log(app, "info", "memory", "Memory extraction cancelled mid-batch");
-                break;
-            }
+        // Stopped by its own Cancel button, or from the queue because the AI
+        // provider or model is about to change.
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) || crate::services::task_queue::cancel_requested() {
+            emit_log(app, "info", "memory", "Memory extraction cancelled mid-batch");
+            break;
         }
-        match process_email(db, app, &ai, &owner_email, email_id, cfg).await {
+        match process_email(db, &ai, &owner_email, email_id, cfg).await {
             Ok(true) => ok += 1,
             Ok(false) => {}
             Err(e) => emit_log(
@@ -117,7 +118,6 @@ pub async fn extract_batch(
 
 async fn process_email(
     db: &Arc<Database>,
-    app: &AppHandle,
     ai: &AiService,
     owner_email: &str,
     email_id: &str,
@@ -140,20 +140,15 @@ async fn process_email(
         return Ok(false);
     }
 
-    match run_llm_extraction(db, ai, &email).await {
-        Ok(extracted) => write_extraction(
-            db,
-            &email,
-            &extracted,
-            derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
-        )?,
-        Err(e) => emit_log(
-            app,
-            "debug",
-            "memory",
-            &format!("LLM memory extraction skipped for {email_id}: {e}"),
-        ),
-    }
+    // A failed call or unparseable reply propagates without marking the
+    // email, so the next batch retries it (the caller logs it at warn).
+    let extracted = run_llm_extraction(db, ai, &email).await?;
+    write_extraction(
+        db,
+        &email,
+        &extracted,
+        derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
+    )?;
     db.mark_memory_facts_extracted(email_id, Utc::now().timestamp())?;
     Ok(true)
 }
@@ -199,7 +194,15 @@ async fn run_llm_extraction(db: &Arc<Database>, ai: &AiService, email: &Email) -
             }),
         )
         .await?;
-    Ok(parse_json_subset(&res))
+    parse_payload(&res).ok_or_else(|| AppError::AiError("memory extraction reply held no JSON object".into()))
+}
+
+fn parse_payload(raw: &str) -> Option<ExtractedPayload> {
+    let obj = reply_object(raw)?;
+    Some(ExtractedPayload {
+        tasks: lenient_items(&obj, "tasks", "memory"),
+        facts: lenient_items(&obj, "facts", "memory"),
+    })
 }
 
 fn build_prompt(db: &Arc<Database>, email: &Email) -> Result<String> {
@@ -282,14 +285,40 @@ fn write_extraction(
     Ok(())
 }
 
+/// Invites are recognised structurally — a calendar part attached to the
+/// email, iCalendar content in the body, a calendar-notifier sender or an
+/// invite subject prefix — never by a meeting link, which ordinary mail
+/// carries in signatures.
 fn looks_like_calendar_invite(db: &Arc<Database>, email: &Email) -> bool {
     if subject_looks_like_invite(&email.subject) || sender_is_calendar_notifier(&email.sender_email) {
         return true;
     }
-    if let Ok(body) = db.get_email_body(&email.id) {
-        return body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body));
+    match db.get_email_attachment_metas(&email.id) {
+        Ok(metas)
+            if metas
+                .iter()
+                .any(crate::services::calendar::invite::is_invite_attachment) =>
+        {
+            return true
+        }
+        Ok(_) => {}
+        Err(e) => crate::services::logger::log(
+            "warn",
+            "memory",
+            format!("invite check: attachment lookup failed for {}: {e}", email.id),
+        ),
     }
-    false
+    match db.get_email_body(&email.id) {
+        Ok(body) => body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body)),
+        Err(e) => {
+            crate::services::logger::log(
+                "warn",
+                "memory",
+                format!("invite check: body lookup failed for {}: {e}", email.id),
+            );
+            false
+        }
+    }
 }
 
 pub fn looks_like_calendar_invite_parts(subject: &str, sender_email: &str, body_head: &str) -> bool {
@@ -333,29 +362,13 @@ fn sender_is_calendar_notifier(sender_email: &str) -> bool {
         || s.starts_with("noreply-calendar@")
 }
 
+/// iCalendar content or MIME markers inlined in the body text.
 fn body_looks_like_invite(body: &str) -> bool {
-    if body.contains("BEGIN:VCALENDAR")
+    body.contains("BEGIN:VCALENDAR")
         || body.contains("text/calendar")
         || body.contains("METHOD:REQUEST")
         || body.contains("METHOD:CANCEL")
         || body.contains("METHOD:REPLY")
-    {
-        return true;
-    }
-    let lower = body.to_ascii_lowercase();
-    const NEEDLES: &[&str] = &[
-        "method=request",
-        "microsoft teams meeting",
-        "teams.microsoft.com/l/meetup-join",
-        "teams.live.com/meet",
-        "outlook.office.com/owa/calendar",
-        "outlook.office365.com/owa/calendar",
-        "meet.google.com/",
-        "zoom.us/j/",
-        "zoomgov.com/j/",
-        "join microsoft teams meeting",
-    ];
-    NEEDLES.iter().any(|n| lower.contains(n))
 }
 
 pub(super) fn derive_company_tag(recipients: &[String], cc: &[String], owner_email: &str) -> Option<String> {
@@ -461,27 +474,6 @@ fn is_silly_fact(text: &str) -> bool {
     BAD_EXACT.iter().any(|s| lower == *s)
 }
 
-fn parse_json_subset<T: Default + for<'de> Deserialize<'de>>(raw: &str) -> T {
-    serde_json::from_str::<T>(&extract_json(raw)).unwrap_or_default()
-}
-
-fn extract_json(text: &str) -> String {
-    let cleaned = if text.contains("```") {
-        text.lines()
-            .filter(|l| !l.trim().starts_with("```"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        text.to_string()
-    };
-    if let (Some(start), Some(end)) = (cleaned.find('{'), cleaned.rfind('}')) {
-        if end >= start {
-            return cleaned[start..=end].to_string();
-        }
-    }
-    cleaned.trim().to_string()
-}
-
 use crate::util::text::truncate_utf8;
 
 fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
@@ -507,13 +499,110 @@ mod thread_tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod invite_tests {
     use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    fn seeded() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        db
+    }
+
+    /// A meeting link in a signature is not an invitation: the email must
+    /// still be read for facts/tasks.
+    #[test]
+    fn a_meeting_link_in_the_body_is_not_an_invite() {
+        let db = seeded();
+        db.connection()
+            .execute(
+                "UPDATE email_bodies SET body = 'Please send the budget by Friday.\n--\nMy room: https://zoom.us/j/123456 | https://meet.google.com/abc-defg-hij' WHERE email_id = 'e1'",
+                [],
+            )
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(!looks_like_calendar_invite(&db, &email));
+    }
 
     #[test]
-    fn extract_json_strips_markdown() {
-        assert_eq!(extract_json("```json\n{\"facts\":[]}\n```").trim(), "{\"facts\":[]}");
+    fn a_calendar_attachment_marks_an_invite() {
+        let db = seeded();
+        db.insert_email_attachment_meta("e1", "acct", "att-1", "invite.ics", "text/calendar", 512)
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(looks_like_calendar_invite(&db, &email));
     }
+}
+
+#[cfg(test)]
+mod process_tests {
+    //! An email is only marked fact-extracted after a successful model call
+    //! and parse — otherwise it is never retried.
+    use super::*;
+    use crate::ai::provider::FakeAiProvider;
+    use crate::services::thread_reader::fixtures;
+
+    fn setup() -> (Arc<Database>, Arc<FakeAiProvider>, AiService, MemoryConfig) {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        let fake = Arc::new(FakeAiProvider::new());
+        let ai = AiService::with_provider(db.clone(), fake.clone());
+        let cfg = MemoryConfig {
+            extract_from_self_only: false,
+            ..MemoryConfig::default()
+        };
+        (db, fake, ai, cfg)
+    }
+
+    fn is_pending(db: &Database, id: &str) -> bool {
+        db.get_memory_unextracted_email_ids("acct", 50, &[], None)
+            .unwrap()
+            .iter()
+            .any(|e| e == id)
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        fake.fail_completions(Some("model offline"));
+        let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+        assert!(res.is_err());
+        assert!(is_pending(&db, "e1"));
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_reply_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        for reply in ["", "Sorry, I cannot help with that."] {
+            fake.push_completion(reply);
+            let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+            assert!(res.is_err(), "reply {reply:?}");
+            assert!(is_pending(&db, "e1"), "reply {reply:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn one_malformed_fact_does_not_drop_the_others() {
+        let (db, fake, ai, cfg) = setup();
+        fake.push_completion(
+            r#"{"facts":[
+                {"subjectKind":"contact","subjectKey":"ana@example.com","fact":"Ana leads the portal project"},
+                {"subjectKind":"contact","fact":42},
+                {"subjectKind":"contact","subjectKey":"ana@example.com","fact":"Ana prefers written updates"}
+            ]}"#,
+        );
+        assert!(process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap());
+        assert!(!is_pending(&db, "e1"));
+        let facts = db
+            .get_memory_facts_by_subject("acct", "contact", "ana@example.com")
+            .unwrap();
+        assert_eq!(facts.len(), 2, "{facts:?}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn subject_invite_detection() {

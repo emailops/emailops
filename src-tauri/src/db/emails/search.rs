@@ -180,17 +180,6 @@ impl Database {
         })
     }
 
-    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
-    /// branches. MUST drive from `matched_threads` with an indexed scalar
-    /// subquery per row.
-    ///
-    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
-    /// 90k-email DB (unified intent filter): SQLite scanned each matched
-    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
-    /// re-walking the account's whole mailbox partition per thread. The
-    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
-    /// the planner prefers the mailbox index for the inner MAX() too (54s);
-    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
     /// The junk detector's spam/phishing exclusion as a bare WHERE term
     /// (`exclude_junk_sql` returns it with a leading `AND` for callers that
     /// append it to a finished clause).
@@ -201,26 +190,43 @@ impl Database {
             .to_string()
     }
 
+    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
+    /// branches. MUST drive from `matched_threads` with an indexed scalar
+    /// subquery per row.
+    ///
+    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
+    /// 90k-email DB (unified intent filter): SQLite scanned each matched
+    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
+    /// re-walking the account's whole mailbox partition per thread. The
+    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
+    /// the planner prefers the mailbox index for the inner lookup too (54s);
+    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
+    ///
+    /// The subquery picks the representative's id with the inbox's
+    /// `timestamp DESC, id DESC` order, so two emails of one thread stamped in
+    /// the same second still yield exactly one row (a `timestamp = MAX(...)`
+    /// join returned both).
     const THREAD_LATEST_CTE: &'static str = "thread_latest AS (
                  SELECT mt.aid AS aid, mt.tid AS tid,
-                        (SELECT MAX(e3.timestamp)
+                        (SELECT e3.id
                          FROM emails e3 INDEXED BY idx_emails_thread_latest
                          WHERE e3.account_id = mt.aid AND e3.thread_id = mt.tid
-                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')) AS max_ts
+                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')
+                         ORDER BY e3.timestamp DESC, e3.id DESC
+                         LIMIT 1) AS rep_id
                  FROM matched_threads mt
              )";
 
     /// Representative-row SELECT paired with [`Self::THREAD_LATEST_CTE`].
     /// CROSS JOIN pins the join order (SQLite never reorders CROSS JOIN) so
-    /// the probe drives from the small `thread_latest` set into
-    /// `idx_emails_thread_latest`, never the reverse.
+    /// the probe drives from the small `thread_latest` set into the emails
+    /// primary key, never the reverse.
     fn representative_select() -> String {
         format!(
             "SELECT {cols}
              FROM thread_latest l
-             CROSS JOIN emails e INDEXED BY idx_emails_thread_latest
-             WHERE e.account_id = l.aid AND e.thread_id = l.tid AND e.timestamp = l.max_ts
-               AND e.is_deleted = 0 AND e.mailbox IN ('inbox', 'sent')",
+             CROSS JOIN emails e
+             WHERE e.id = l.rep_id",
             cols = EMAIL_COLUMNS
         )
     }
@@ -385,8 +391,10 @@ impl Database {
             param_idx += 1;
         }
         if let Some(ext) = attachment_ext {
+            // `emails.id` must be qualified: a bare `id` binds to the
+            // innermost table (`am.id`) and the filter would never match.
             match_conditions.push(format!(
-                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = id AND LOWER(am.filename) LIKE ?{})",
+                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = emails.id AND LOWER(am.filename) LIKE ?{})",
                 param_idx
             ));
             params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
@@ -497,6 +505,7 @@ impl Database {
         ascending: bool,
         exclude_spam: bool,
         unread_only: bool,
+        received_only: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut conditions: Vec<String> = vec![
@@ -510,6 +519,9 @@ impl Database {
         }
         if unread_only {
             conditions.push("e.is_read = 0".to_string());
+        }
+        if received_only {
+            conditions.push("e.is_sent = 0".to_string());
         }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
         let mut param_idx = 2usize;
@@ -597,6 +609,7 @@ impl Database {
             false,
             false,
             false,
+            false,
             None,
         )
     }
@@ -626,6 +639,10 @@ impl Database {
         // `true` keeps only mail the user has not read. Applied in SQL, so an
         // `ascending` + `limit` query returns the oldest UNREAD email.
         unread_only: bool,
+        // `true` keeps only mail the user received (not their own sent mail).
+        // Applied in SQL like `unread_only`, so a limit and a count see the
+        // same set.
+        received_only: bool,
         // "Emails exchanged with X": an email matches when any of these terms
         // is in its sender (name or address), recipients or cc. Pass the
         // person's name and the addresses it resolves to (see
@@ -646,6 +663,7 @@ impl Database {
             ascending,
             exclude_spam,
             unread_only,
+            received_only,
             participants,
         )
     }
@@ -690,6 +708,7 @@ impl Database {
         ascending: bool,
         exclude_spam: bool,
         unread_only: bool,
+        received_only: bool,
         participants: Option<&[String]>,
     ) -> Result<Vec<Email>> {
         let participants: Vec<String> = participants
@@ -720,6 +739,7 @@ impl Database {
                 ascending,
                 exclude_spam,
                 unread_only,
+                received_only,
             );
         }
 
@@ -739,12 +759,6 @@ impl Database {
         // Optional pre-CTE for the from filter — populated when both email-prefix
         // and FTS-sender branches are needed so each can use its own index.
         let mut from_match_cte: Option<String> = None;
-        // Number of params consumed up to (and including) the `from` block.
-        // Step 1 of the fast path only references those params, so we must not
-        // pass subject/date/tag params to it — SQLite rejects extra positional
-        // params as "Wrong number of parameters". Updated right after the from
-        // block is appended to params_vec.
-        let mut from_params_end: usize = 0;
 
         // account_id is ?1 — used in both the CTE and outer query.
         params_vec.push(Box::new(account_id.to_string()));
@@ -761,6 +775,9 @@ impl Database {
         if unread_only {
             cte_conditions.push("match_e.is_read = 0".to_string());
         }
+        if received_only {
+            cte_conditions.push("match_e.is_sent = 0".to_string());
+        }
         param_idx += 1;
 
         // Category filter
@@ -776,14 +793,17 @@ impl Database {
         // Keyword search via FTS5 (already indexed — no change needed here)
         if !query.is_empty() {
             let fts_query = sanitize_fts_query(query);
-            if !fts_query.is_empty() {
-                cte_conditions.push(format!(
-                    "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                    param_idx
-                ));
-                params_vec.push(Box::new(fts_query));
-                param_idx += 1;
+            // A keyword of only symbols ("?!") can match nothing; dropping
+            // the condition instead would match every thread.
+            if fts_query.is_empty() {
+                return Ok(Vec::new());
             }
+            cte_conditions.push(format!(
+                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+                param_idx
+            ));
+            params_vec.push(Box::new(fts_query));
+            param_idx += 1;
         }
 
         // From filter — two-pronged:
@@ -952,7 +972,6 @@ impl Database {
                 }
                 // The JOIN into from_match is handled in query assembly below.
             }
-            from_params_end = params_vec.len();
         }
 
         // To filter — recipients are stored as a JSON array; LIKE is unavoidable
@@ -1044,154 +1063,38 @@ impl Database {
         // ── Assemble and execute ─────────────────────────────────────────────────
         let cte_where = cte_conditions.join(" AND ");
 
-        // ── Fast path: when from_match_cte is present, use a three-step approach ─
-        //
-        // Step 1: Materialise from_match email IDs (sender index + FTS).
-        // Step 2: PK-lookup those IDs in `emails` to get thread_ids + apply
-        //         category / is_deleted / date filters.
-        // Step 3: For each matching thread, find the latest email using GROUP BY
-        //         (benchmarked at 4 ms vs 3,200 ms for NOT EXISTS on 47k rows).
-        //
-        // Every step is either an index range-scan or a PK lookup, so we never
-        // touch more rows than the result set.
-        if let Some(ref from_cte) = from_match_cte {
-            // ── Step 1: get matching email IDs from sender index + FTS ────────
-            // Only pass params referenced by the from_match CTE (account_id +
-            // from-filter bindings). Any subject / date / tag params live later
-            // in params_vec; forwarding them would trip SQLite's strict
-            // positional-parameter count check.
-            let ids_sql = format!("WITH {} SELECT email_id FROM from_match", from_cte);
-            let mut ids_stmt = conn.prepare(&ids_sql)?;
-            let params_refs: Vec<&dyn rusqlite::ToSql> =
-                params_vec[..from_params_end].iter().map(|p| p.as_ref()).collect();
-            let email_ids: Vec<String> = ids_stmt
-                .query_map(params_refs.as_slice(), |row| row.get(0))?
-                .filter_map(|r| r.ok())
-                .collect();
-            if email_ids.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            // ── Step 2: intersect the from-matches with the remaining filters ─
-            // The from filter is already satisfied by `email_ids` from Step 1.
-            // Every OTHER filter (residual keyword FTS, to, subject, category,
-            // date, tag) lives in `cte_conditions` against the `match_e` alias.
-            // The old code only re-applied category/date here, silently dropping
-            // the keyword/to/subject/tag filters — so `from:x <keyword>` returned
-            // all of x's mail. Re-apply the full `cte_where` (renamed to the `e`
-            // alias) and intersect with the Step 1 ids so both sides apply.
-            //
-            // Params: bind the entire `params_vec`. The from-block params are not
-            // referenced by this query, but leaving them in place keeps every
-            // `?N` in `cte_where` pointing at the right value. The Step 1 ids are
-            // appended after `params_vec`, so they occupy the highest indices and
-            // SQLite's positional-parameter count stays consistent.
-            let e_where = cte_where.replace("match_e", "e");
-            let id_start = params_vec.len() + 1;
-            let id_phs: Vec<String> = (0..email_ids.len()).map(|i| format!("?{}", id_start + i)).collect();
-            // Step 2 returns the fully-filtered email IDs (after every non-from
-            // filter) instead of DISTINCT thread_ids. Step 3 then picks the
-            // latest MATCHING email per thread — a thread containing alice's
-            // email + the user's later reply must return alice's row, not the
-            // reply's. Using thread_id alone in Step 3 ignored whether the latest
-            // email matched the filter, producing the wrong row.
-            let matched_sql = format!(
-                "SELECT e.id FROM emails e WHERE {} AND e.id IN ({})",
-                e_where,
-                id_phs.join(",")
-            );
-            let mut matched_stmt = conn.prepare(&matched_sql)?;
-            let id_boxes: Vec<Box<dyn rusqlite::ToSql>> = email_ids
-                .iter()
-                .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::ToSql>)
-                .collect();
-            let mut pk_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-            pk_refs.extend(id_boxes.iter().map(|p| p.as_ref()));
-            let matched_ids: Vec<String> = matched_stmt
-                .query_map(pk_refs.as_slice(), |row| row.get(0))?
-                .filter_map(|r| r.ok())
-                .collect();
-            if matched_ids.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            // ── Step 3: latest MATCHING email per thread via GROUP BY ─────────
-            // GROUP BY + MAX(timestamp) is ~250x faster than NOT EXISTS for
-            // finding the latest email per thread (4ms vs 3,200ms benchmarked).
-            // Placeholders for matched_ids are reused in two places (the
-            // grouping subquery AND the outer JOIN's `e.id IN (...)` guard).
-            // SQLite binds reused positional params to a single value — we
-            // only push each id once.
-            let id_start = 2usize; // ?1 = account_id
-            let id_phs: Vec<String> = (0..matched_ids.len()).map(|i| format!("?{}", id_start + i)).collect();
-            let limit_idx = id_start + matched_ids.len();
-            let final_sql = format!(
-                "SELECT {cols}
-                 FROM emails e
-                 INNER JOIN (
-                     SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
-                     FROM emails
-                     WHERE account_id = ?1 AND is_deleted = 0 AND id IN ({phs})
-                     GROUP BY thread_id
-                 ) l ON e.thread_id = l.tid AND e.timestamp = l.max_ts
-                 WHERE e.account_id = ?1 AND e.is_deleted = 0 AND e.id IN ({phs})
-                 ORDER BY {order}
-                 LIMIT ?{limit_idx}",
-                phs = id_phs.join(", "),
-                cols = EMAIL_COLUMNS,
-                order = order_clause,
-                thread_pick = thread_pick,
-                limit_idx = limit_idx,
-            );
-
-            let mut final_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            final_params.push(Box::new(account_id.to_string()));
-            for eid in &matched_ids {
-                final_params.push(Box::new(eid.clone()));
-            }
-            final_params.push(Box::new(limit));
-
-            let mut final_stmt = conn.prepare(&final_sql)?;
-            let final_refs: Vec<&dyn rusqlite::ToSql> = final_params.iter().map(|p| p.as_ref()).collect();
-            let emails = final_stmt.query_map(final_refs.as_slice(), row_to_email)?;
-            let mut result = Vec::new();
-            for email in emails {
-                result.push(email?);
-            }
-            return Ok(result);
-        }
-
-        // ── General path (no from_match CTE) ────────────────────────────────────
         // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
         // for finding the latest email per thread (benchmarked on 47k emails).
         // `filter_match` emits id/thread_id/timestamp for matching emails,
-        // so `thread_latest` groups by thread over ONLY the matching rows —
-        // not all emails in those threads. The outer query then restricts
-        // `e.id IN filter_match` so a non-matching email with the same
-        // timestamp cannot slip through. See the regression test
+        // so the dedup groups by thread over ONLY the matching rows — not all
+        // emails in those threads, and the representative id always comes
+        // from `filter_match`. See the regression test
         // `search_emails_from_filter_returns_matching_email_not_reply`.
+        //
+        // With a `from_match` CTE, `filter_match` drives from it (CROSS JOIN
+        // pins the order): the sender index + FTS produce the candidate ids,
+        // and each is a PK lookup that must pass every other filter. The ids
+        // stay inside SQL — binding them one parameter each broke past
+        // SQLite's 32,766-variable limit on a prolific sender.
+        let (from_cte, filter_source) = match &from_match_cte {
+            Some(cte) => (
+                format!("{cte},"),
+                "from_match fm CROSS JOIN emails match_e ON match_e.id = fm.email_id",
+            ),
+            None => (String::new(), "emails match_e"),
+        };
         let sql = format!(
-            "WITH filter_match AS (
+            "WITH {from_cte}
+             filter_match AS (
                  SELECT match_e.id, match_e.thread_id, match_e.timestamp
-                 FROM emails match_e
+                 FROM {filter_source}
                  WHERE {cte_where}
              ),
-             thread_latest AS (
-                 SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
-                 FROM filter_match
-                 GROUP BY thread_id
-             )
-             SELECT {cols}
-             FROM emails e
-             INNER JOIN thread_latest tl ON e.thread_id = tl.tid AND e.timestamp = tl.max_ts
-             WHERE e.account_id = ?1 AND e.is_deleted = 0
-               AND e.id IN (SELECT id FROM filter_match)
+             {dedup}
              ORDER BY {order}
              LIMIT ?{limit_idx}",
-            cte_where = cte_where,
-            cols = EMAIL_COLUMNS,
+            dedup = thread_representative_sql(thread_pick),
             order = order_clause,
-            thread_pick = thread_pick,
             limit_idx = param_idx,
         );
 
@@ -1209,6 +1112,33 @@ impl Database {
 
         Ok(result)
     }
+}
+
+/// Thread dedup tail for `search_emails_inner`, run over a preceding
+/// `filter_match (id, thread_id, timestamp)` CTE: one representative per
+/// thread, picked with `thread_pick` (`MAX` newest-first, `MIN` oldest-first)
+/// on the timestamp and then on the id. The id tie-break keeps two matching
+/// emails stamped in the same second from both coming back (matching the
+/// inbox's `timestamp DESC, id DESC` order); the final lookup is by primary key.
+fn thread_representative_sql(thread_pick: &str) -> String {
+    format!(
+        "thread_latest AS (
+             SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
+             FROM filter_match
+             GROUP BY thread_id
+         ),
+         thread_rep AS (
+             SELECT {thread_pick}(fm.id) AS rep_id
+             FROM filter_match fm
+             JOIN thread_latest tl ON fm.thread_id = tl.tid AND fm.timestamp = tl.max_ts
+             GROUP BY fm.thread_id
+         )
+         SELECT {cols}
+         FROM thread_rep r
+         CROSS JOIN emails e
+         WHERE e.id = r.rep_id",
+        cols = EMAIL_COLUMNS
+    )
 }
 
 #[cfg(test)]
@@ -2298,6 +2228,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 None,
             )
             .unwrap();
@@ -2347,7 +2278,7 @@ mod tests {
 
     fn oldest_first(db: &Database, from: Option<&str>, subject: Option<&str>) -> Vec<String> {
         db.search_emails_ordered(
-            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, None,
+            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, false, None,
         )
         .unwrap()
         .into_iter()
@@ -3626,6 +3557,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
                 Some(participants),
             )
             .unwrap()
@@ -3714,5 +3646,168 @@ mod tests {
         let mut found = db.sender_addresses_matching("acc1", "genoveva", 10).unwrap();
         found.sort();
         assert_eq!(found, vec!["genoveva@home.example", "gm@we.example"]);
+    }
+
+    // Regression: the attachment-extension EXISTS used a bare `id`, which
+    // SQLite binds to the innermost table (email_attachment_meta.id), so the
+    // filter compared an attachment's email_id to its own id and never matched.
+    #[test]
+    fn filtered_emails_attachment_ext_matches_email_with_that_attachment() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@example.com");
+        insert_contact_email(&db, "e1", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e2", account, "t2", "Bob", "bob@example.com", "[]", "inbox", 200);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                 VALUES ('att1', 'e1', ?1, 'Report.PDF', 'application/pdf')",
+                rusqlite::params![account],
+            )
+            .unwrap();
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("bob@example.com"),
+                None,
+                None,
+                Some("pdf"),
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e1"], "only the email carrying a .pdf attachment matches");
+    }
+
+    // ── Thread dedup: same-second ties ──────────────────────────────────────────
+
+    // Regression: thread dedup joined back on `timestamp = MAX(timestamp)`, so
+    // two emails of one thread stamped in the same second both came back and
+    // the thread showed twice. The representative must be exactly one row,
+    // tie-broken like the inbox (`timestamp DESC, id DESC`).
+    #[test]
+    fn filtered_emails_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@example.com");
+        insert_contact_email(&db, "e-a", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+        insert_contact_email(&db, "e-b", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("bob@example.com"),
+                None,
+                None,
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
+    }
+
+    fn insert_same_second_thread(db: &Database, account: &str) {
+        for id in ["e-a", "e-b"] {
+            insert_search_email(
+                db,
+                id,
+                account,
+                "t1",
+                "Alice",
+                "alice@example.com",
+                "invoice",
+                "body",
+                100,
+            );
+        }
+    }
+
+    #[test]
+    fn search_keyword_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        insert_same_second_thread(&db, "acc1");
+        let results = db
+            .search_emails("acc1", "invoice", None, None, None, None, None, None, None, 50)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
+    }
+
+    #[test]
+    fn search_from_same_second_thread_tie_returns_one_row() {
+        let db = Database::new_for_testing().unwrap();
+        insert_same_second_thread(&db, "acc1");
+        let results = db
+            .search_emails("acc1", "", None, Some("alice"), None, None, None, None, None, 50)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e-b"]);
+    }
+
+    // Regression: the `from:` fast path bound every matched id as its own
+    // parameter, so a sender with more emails than SQLite's variable limit
+    // (32,766) made the search fail outright.
+    #[test]
+    fn search_from_with_more_matches_than_the_sql_variable_limit() {
+        let db = Database::new_for_testing().unwrap();
+        let mut conn = db.connection();
+        ensure_account(&conn, "acc1");
+        let tx = conn.transaction().unwrap();
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO emails
+                         (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                          recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1, 'acc1', ?1, 's', 'Alice', 'alice@example.com', 'example.com',
+                             '[]', '[]', '', ?2, 0, 'primary', 'inbox', 0)",
+                )
+                .unwrap();
+            for i in 0..33_000_i64 {
+                stmt.execute(rusqlite::params![format!("e{i:05}"), i]).unwrap();
+            }
+        }
+        tx.commit().unwrap();
+        drop(conn);
+
+        let results = db
+            .search_emails("acc1", "", None, Some("alice"), None, None, None, None, None, 5)
+            .unwrap();
+        let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["e32999", "e32998", "e32997", "e32996", "e32995"]);
+    }
+
+    // Regression: a keyword made only of symbols ("?!") sanitized to an empty
+    // FTS query, the keyword condition was dropped, and every thread matched.
+    #[test]
+    fn search_symbol_only_query_returns_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(
+            &db,
+            "e1",
+            "acc1",
+            "t1",
+            "Alice",
+            "alice@example.com",
+            "hello",
+            "body",
+            100,
+        );
+        let results = db
+            .search_emails("acc1", "?!", None, None, None, None, None, None, None, 50)
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "got {:?}",
+            results.iter().map(|e| &e.id).collect::<Vec<_>>()
+        );
     }
 }

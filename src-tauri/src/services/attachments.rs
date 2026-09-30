@@ -9,6 +9,7 @@ use tauri::Emitter;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, Attachment, AttachmentRule};
+use crate::services::attachment_safety::{self, quarantine_saved_file};
 use crate::services::emails::build_provider;
 use crate::sync::provider::{AttachmentInfo, EmailProvider};
 
@@ -153,6 +154,18 @@ pub fn save_bytes_to_downloads(dir: &Path, filename: &str, bytes: &[u8]) -> Resu
     let dest = unique_download_path(dir, &safe_name);
     std::fs::write(&dest, bytes)
         .map_err(|e| AppError::IoError(format!("Failed to save {} to Downloads: {e}", dest.display())))?;
+    quarantine_saved_file(&dest);
+    Ok(dest)
+}
+
+/// Copy a stored attachment into `dir` (the user's Downloads folder) under a
+/// collision-free variant of `download_name`, quarantined like every other
+/// attachment file (a copy of a file stored before attachments were marked
+/// carries no mark of its own). Returns the path written.
+pub fn copy_attachment_to_downloads(src: &Path, dir: &Path, download_name: &str) -> Result<PathBuf> {
+    let dest = unique_download_path(dir, download_name);
+    std::fs::copy(src, &dest).map_err(|e| AppError::IoError(format!("Failed to copy {download_name}: {e}")))?;
+    quarantine_saved_file(&dest);
     Ok(dest)
 }
 
@@ -200,8 +213,12 @@ pub enum RevealAction {
 /// Decide how to reveal `path` on `os`.
 ///
 /// `is_dir` is passed in rather than probed so the decision stays pure.
+///
+/// A directory is opened — except one whose name is a type the OS launches
+/// (an app bundle, a `.workflow`): "opening" that would run it, so it is
+/// selected in its folder like a file.
 pub fn plan_reveal(os: &str, path: &Path, is_dir: bool) -> RevealAction {
-    if is_dir {
+    if is_dir && attachment_safety::classify(&path.to_string_lossy(), None).is_none() {
         return RevealAction::OpenDirectory(path.to_path_buf());
     }
 
@@ -618,6 +635,7 @@ pub(crate) async fn store_collected_attachment(
     tokio::fs::write(&absolute_path, bytes)
         .await
         .map_err(|e| AppError::IoError(format!("Failed to write attachment file: {}", e)))?;
+    quarantine_saved_file(&absolute_path);
 
     let attachment = Attachment {
         id: uuid::Uuid::new_v4().to_string(),
@@ -720,6 +738,7 @@ pub async fn auto_download_attachments(
             );
             continue;
         }
+        quarantine_saved_file(&absolute_path);
 
         if let Err(e) = db.set_email_attachment_file_path(&email.id, &info.filename, &relative_path) {
             // The file is on disk but the row does not point at it: the UI
@@ -2947,6 +2966,104 @@ mod tests {
     #[test]
     fn bulk_download_name_keeps_a_rule_name_with_slashes_in_one_component() {
         assert_eq!(bulk_download_name(Some("a/../b"), "x.pdf"), "a_.._b_x.pdf");
+    }
+
+    // --- quarantine of every attachment file written to disk ---
+
+    #[cfg(target_os = "macos")]
+    use crate::services::attachment_safety::read_quarantine;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_saved_to_downloads_is_quarantined() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let path = save_bytes_to_downloads(tmp.path(), "run.command", b"#!/bin/sh\n").expect("save");
+        assert!(read_quarantine(&path).is_some());
+    }
+
+    #[test]
+    fn a_bulk_download_copies_the_file_under_a_free_name() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let src = tmp.path().join("stored.pdf");
+        std::fs::write(&src, b"%PDF").expect("seed");
+        let downloads = tmp.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).expect("mkdir");
+        std::fs::write(downloads.join("Rule_report.pdf"), b"old").expect("seed");
+
+        let dest = copy_attachment_to_downloads(&src, &downloads, "Rule_report.pdf").expect("copy");
+
+        assert_eq!(dest, downloads.join("Rule_report (1).pdf"));
+        assert_eq!(std::fs::read(&dest).expect("read"), b"%PDF");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_bulk_downloaded_copy_is_quarantined_even_when_the_stored_file_was_not() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let src = tmp.path().join("stored.html");
+        std::fs::write(&src, b"<p>x</p>").expect("seed");
+        assert!(read_quarantine(&src).is_none());
+
+        let dest = copy_attachment_to_downloads(&src, tmp.path(), "page.html").expect("copy");
+
+        assert!(read_quarantine(&dest).is_some());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_attachment_collected_by_a_rule_is_quarantined() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let (rule, fake) = acme_invoice_setup(&db, "acc-q");
+
+        apply_rule_with_provider(&db, &rule, "acc-q", Some(&fake), tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+
+        let stored = db.get_attachments_for_rule(&rule.id).expect("attachments");
+        assert!(!stored.is_empty());
+        for attachment in stored {
+            assert!(read_quarantine(&tmp.path().join(&attachment.file_path)).is_some());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_auto_downloaded_attachment_is_quarantined() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        make_account(&db, "acc-auto", "gmail", "me@example.com");
+        let email = make_email("acc-auto", "msg-auto", "sender@example.com", "Files");
+        db.insert_email(&email).expect("insert email");
+        let info = inline_attachment("setup.command", "application/x-sh", b"#!/bin/sh\n");
+        db.insert_email_attachment_meta(&email.id, "acc-auto", "", &info.filename, &info.mime_type, info.size)
+            .expect("meta");
+        let fake = FakeEmailProvider::new("me@example.com", "Me");
+
+        let saved = auto_download_attachments(&db, &fake, &email, &[info], tmp.path())
+            .await
+            .expect("auto download");
+
+        assert_eq!(saved, 1);
+        let metas = db.get_email_attachment_metas(&email.id).expect("metas");
+        let file_path = metas[0].file_path.clone().expect("stored path");
+        assert!(read_quarantine(&tmp.path().join(file_path)).is_some());
+    }
+
+    #[test]
+    fn a_directory_that_would_launch_is_selected_never_opened() {
+        let bundle = Path::new("/home/x/Downloads/Tool.app");
+        assert_eq!(
+            plan_reveal("macos", bundle, true),
+            RevealAction::Select {
+                program: "open".into(),
+                args: vec!["-R".into(), bundle.to_string_lossy().into_owned()],
+            }
+        );
+        assert_eq!(
+            plan_reveal("linux", bundle, true),
+            RevealAction::OpenDirectory(PathBuf::from("/home/x/Downloads"))
+        );
     }
 
     // --- save_bytes_to_downloads ---

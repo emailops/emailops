@@ -1,5 +1,5 @@
-// Shared AI preferences that apply across all backends:
-// routing mode, keep-alive, AI age cutoff, output language.
+// Shared AI preferences: routing mode, AI age cutoff, output language, and
+// the two that only some backends use (keep-alive, context window).
 
 import { useTranslation } from 'react-i18next';
 
@@ -13,6 +13,11 @@ interface AiSharedPreferencesProps {
   onRoutingModeChange: (mode: RoutingMode) => void;
   keepAliveMinutes: number;
   onKeepAliveChange: (minutes: number) => void;
+  /**
+   * Whether to offer the keep-alive field: only where a model is loaded on
+   * this machine (embedded runtime, Ollama). A remote provider ignores it.
+   */
+  showKeepAlive: boolean;
   aiMaxEmailCount: number;
   onMaxEmailCountChange: (count: number) => void;
   aiMaxEmailAgeDays: number;
@@ -50,6 +55,7 @@ export function AiSharedPreferences({
   onRoutingModeChange,
   keepAliveMinutes,
   onKeepAliveChange,
+  showKeepAlive,
   aiMaxEmailCount,
   onMaxEmailCountChange,
   aiMaxEmailAgeDays,
@@ -83,25 +89,28 @@ export function AiSharedPreferences({
         />
       </div>
 
-      {/* Keep-alive */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.keepAlive')}</label>
-        <p className="text-xs text-gray-500 mb-2">
-          {t('settings:ai.keepAliveHelpStart')} <code>-1</code> {/* i18n-ignore */}{' '}
-          {t('settings:ai.keepAliveHelpMiddle')} <code> 0</code> {/* i18n-ignore */} {t('settings:ai.keepAliveHelpEnd')}
-        </p>
-        <input
-          type="number"
-          min={-1}
-          step={1}
-          value={keepAliveMinutes}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (Number.isFinite(v)) onKeepAliveChange(v);
-          }}
-          className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        />
-      </div>
+      {/* Keep-alive — local backends only */}
+      {showKeepAlive && (
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.keepAlive')}</label>
+          <p className="text-xs text-gray-500 mb-2">
+            {t('settings:ai.keepAliveHelpStart')} <code>-1</code> {/* i18n-ignore */}{' '}
+            {t('settings:ai.keepAliveHelpMiddle')} <code> 0</code> {/* i18n-ignore */}{' '}
+            {t('settings:ai.keepAliveHelpEnd')}
+          </p>
+          <input
+            type="number"
+            min={-1}
+            step={1}
+            value={keepAliveMinutes}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (Number.isFinite(v)) onKeepAliveChange(v);
+            }}
+            className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+          />
+        </div>
+      )}
 
       {/* Context window — embedded llama.cpp only */}
       {showContextWindow && (

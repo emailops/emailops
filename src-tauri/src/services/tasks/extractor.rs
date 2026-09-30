@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use crate::models::{Email, PendingTask, ThreadState};
 use crate::services::ai::AiService;
 use crate::services::tasks::config::TaskConfig;
@@ -87,19 +87,19 @@ pub async fn extract_batch(
                 "tasks",
                 &format!("task extractor disabled (no AI provider): {e}"),
             );
-            return run_heuristic_only(db, app, &owner_email, &ids, cfg).await;
+            return run_heuristic_only(db, &owner_email, &ids, cfg).await;
         }
     };
 
     let mut ok = 0;
     for email_id in &ids {
-        if let Some(c) = cancel {
-            if c.load(Ordering::SeqCst) {
-                emit_log(app, "info", "tasks", "Task extraction cancelled mid-batch");
-                break;
-            }
+        // Stopped by its own Cancel button, or from the queue because the AI
+        // provider or model is about to change.
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) || crate::services::task_queue::cancel_requested() {
+            emit_log(app, "info", "tasks", "Task extraction cancelled mid-batch");
+            break;
         }
-        match process_email(db, app, &ai, &owner_email, email_id, cfg).await {
+        match process_email(db, &ai, &owner_email, email_id, cfg).await {
             Ok(true) => ok += 1,
             Ok(false) => {}
             Err(e) => emit_log(app, "warn", "tasks", &format!("task extractor skipped {email_id}: {e}")),
@@ -117,33 +117,31 @@ pub async fn extract_batch(
 
 async fn run_heuristic_only(
     db: &Arc<Database>,
-    app: &AppHandle,
     owner_email: &str,
     email_ids: &[String],
     cfg: &TaskConfig,
 ) -> Result<u32> {
-    let mut ok = 0;
+    let mut marked = 0;
     for id in email_ids {
         let Some(email) = db.get_email(id)? else {
             continue;
         };
         if let Err(e) = apply_heuristic_thread_update(db, &email, owner_email) {
-            emit_log(app, "warn", "tasks", &format!("heuristic update failed for {id}: {e}"));
+            crate::services::logger::log("warn", "tasks", format!("heuristic update failed for {id}: {e}"));
             continue;
         }
+        // Only an excluded sender is final without a model; every other email
+        // stays queued so its tasks are extracted once a provider is set up.
         if cfg.is_sender_excluded(&email.sender_email) {
             db.mark_tasks_extracted(id, Utc::now().timestamp())?;
-            continue;
+            marked += 1;
         }
-        db.mark_tasks_extracted(id, Utc::now().timestamp())?;
-        ok += 1;
     }
-    Ok(ok)
+    Ok(marked)
 }
 
 async fn process_email(
     db: &Arc<Database>,
-    app: &AppHandle,
     ai: &AiService,
     owner_email: &str,
     email_id: &str,
@@ -154,12 +152,7 @@ async fn process_email(
     };
 
     if let Err(e) = apply_heuristic_thread_update(db, &email, owner_email) {
-        emit_log(
-            app,
-            "warn",
-            "tasks",
-            &format!("heuristic update failed for {email_id}: {e}"),
-        );
+        crate::services::logger::log("warn", "tasks", format!("heuristic update failed for {email_id}: {e}"));
     }
 
     let is_self_authored = !owner_email.is_empty() && email.sender_email.eq_ignore_ascii_case(owner_email);
@@ -176,22 +169,15 @@ async fn process_email(
         return Ok(false);
     }
 
-    match run_llm_extraction(db, ai, &email, cfg).await {
-        Ok(extracted) => write_extraction(
-            db,
-            &email,
-            &extracted,
-            derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
-        )?,
-        Err(e) => {
-            emit_log(
-                app,
-                "debug",
-                "tasks",
-                &format!("LLM task extraction skipped for {email_id}: {e}"),
-            );
-        }
-    }
+    // A failed call or unparseable reply propagates without marking the
+    // email, so the next batch retries it (the caller logs it at warn).
+    let extracted = run_llm_extraction(db, ai, &email, cfg).await?;
+    write_extraction(
+        db,
+        &email,
+        &extracted,
+        derive_company_tag(&email.recipients, &email.cc, owner_email).as_deref(),
+    )?;
     db.mark_tasks_extracted(email_id, Utc::now().timestamp())?;
     Ok(true)
 }
@@ -251,11 +237,27 @@ async fn run_llm_extraction(
             }),
         )
         .await?;
-    let mut payload: ExtractedTasksPayload = parse_json_subset(&res);
+    let mut payload =
+        parse_payload(&res).ok_or_else(|| AppError::AiError("task extraction reply held no JSON object".into()))?;
     if cfg.max_tasks_per_email > 0 && (payload.tasks.len() as i32) > cfg.max_tasks_per_email {
         payload.tasks.truncate(cfg.max_tasks_per_email as usize);
     }
     Ok(payload)
+}
+
+fn parse_payload(raw: &str) -> Option<ExtractedTasksPayload> {
+    let obj = reply_object(raw)?;
+    let text = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| obj.get(*k).and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+    };
+    Some(ExtractedTasksPayload {
+        tasks: lenient_items(&obj, "tasks", "tasks"),
+        thread_summary: text(&["thread_summary", "threadSummary"]),
+        commitment: text(&["commitment"]),
+        deadline_iso: text(&["deadline_iso", "deadlineIso"]),
+    })
 }
 
 fn build_prompt(
@@ -316,6 +318,12 @@ fn build_prompt(
     vars.insert("sender", email.sender.clone());
     vars.insert("sender_email", email.sender_email.clone());
     vars.insert("subject", email.subject.clone());
+    vars.insert(
+        "sent_date",
+        chrono::DateTime::from_timestamp(email.timestamp, 0)
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+    );
     vars.insert("snippet", snippet.to_string());
     Ok(crate::services::prompts::render(&template, &vars))
 }
@@ -345,11 +353,23 @@ fn write_extraction(
         db.upsert_thread_state(&state)?;
     }
 
+    // Tasks this email already produced, in any status: re-extraction must
+    // neither duplicate an open one nor resurrect a done/dismissed one.
+    let mut known: Vec<String> = db
+        .list_task_titles_for_email(&email.id)?
+        .iter()
+        .map(|t| normalize_title(t))
+        .collect();
     for task in &extracted.tasks {
         let title = task.title.trim();
         if title.is_empty() {
             continue;
         }
+        let normalized = normalize_title(title);
+        if known.contains(&normalized) {
+            continue;
+        }
+        known.push(normalized);
         let priority = task
             .priority
             .as_deref()
@@ -380,11 +400,29 @@ fn write_extraction(
     Ok(())
 }
 
+/// Case- and whitespace-insensitive form of a task title, for dedupe.
+fn normalize_title(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 fn apply_heuristic_thread_update(db: &Arc<Database>, email: &Email, owner_email: &str) -> Result<()> {
     let now = Utc::now().timestamp();
-    let sender_is_owner = email.sender_email.eq_ignore_ascii_case(owner_email);
+    // The provider's Sent flag is authoritative (it covers send-as aliases);
+    // sender == account address is the fallback for rows synced before it.
+    let sender_is_owner = email.is_sent || email.sender_email.eq_ignore_ascii_case(owner_email);
     let current = db.get_thread_state(&email.account_id, &email.thread_id)?;
-    let awaiting = if sender_is_owner { "them" } else { "user" };
+    // Batches run newest first, so an older email can arrive after a newer
+    // one: it may extend participants and timestamps but must not decide who
+    // the thread is waiting on.
+    let latest_known = current
+        .as_ref()
+        .map(|s| s.last_inbound_at.unwrap_or(0).max(s.last_outbound_at.unwrap_or(0)))
+        .unwrap_or(0);
+    let awaiting = match current.as_ref() {
+        Some(state) if email.timestamp < latest_known => state.awaiting.clone(),
+        _ if sender_is_owner => "them".to_string(),
+        _ => "user".to_string(),
+    };
     let mut participants: Vec<String> = current.as_ref().map(|s| s.participants.clone()).unwrap_or_default();
     add_unique(&mut participants, &email.sender_email);
     for r in &email.recipients {
@@ -414,7 +452,7 @@ fn apply_heuristic_thread_update(db: &Arc<Database>, email: &Email, owner_email:
     db.upsert_thread_state(&ThreadState {
         account_id: email.account_id.clone(),
         thread_id: email.thread_id.clone(),
-        awaiting: awaiting.to_string(),
+        awaiting,
         last_inbound_at,
         last_outbound_at,
         last_touched_at: now,
@@ -433,14 +471,40 @@ fn add_unique(list: &mut Vec<String>, email: &str) {
     }
 }
 
+/// Invites are recognised structurally — a calendar part attached to the
+/// email, iCalendar content in the body, a calendar-notifier sender or an
+/// invite subject prefix — never by a meeting link, which ordinary mail
+/// carries in signatures.
 fn looks_like_calendar_invite(db: &Arc<Database>, email: &Email) -> bool {
     if subject_looks_like_invite(&email.subject) || sender_is_calendar_notifier(&email.sender_email) {
         return true;
     }
-    if let Ok(body) = db.get_email_body(&email.id) {
-        return body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body));
+    match db.get_email_attachment_metas(&email.id) {
+        Ok(metas)
+            if metas
+                .iter()
+                .any(crate::services::calendar::invite::is_invite_attachment) =>
+        {
+            return true
+        }
+        Ok(_) => {}
+        Err(e) => crate::services::logger::log(
+            "warn",
+            "tasks",
+            format!("invite check: attachment lookup failed for {}: {e}", email.id),
+        ),
     }
-    false
+    match db.get_email_body(&email.id) {
+        Ok(body) => body_looks_like_invite(body.get(..body.len().min(8192)).unwrap_or(&body)),
+        Err(e) => {
+            crate::services::logger::log(
+                "warn",
+                "tasks",
+                format!("invite check: body lookup failed for {}: {e}", email.id),
+            );
+            false
+        }
+    }
 }
 
 fn subject_looks_like_invite(subject: &str) -> bool {
@@ -480,29 +544,13 @@ fn sender_is_calendar_notifier(sender_email: &str) -> bool {
         || s.starts_with("noreply-calendar@")
 }
 
+/// iCalendar content or MIME markers inlined in the body text.
 fn body_looks_like_invite(body: &str) -> bool {
-    if body.contains("BEGIN:VCALENDAR")
+    body.contains("BEGIN:VCALENDAR")
         || body.contains("text/calendar")
         || body.contains("METHOD:REQUEST")
         || body.contains("METHOD:CANCEL")
         || body.contains("METHOD:REPLY")
-    {
-        return true;
-    }
-    let lower = body.to_ascii_lowercase();
-    const NEEDLES: &[&str] = &[
-        "method=request",
-        "microsoft teams meeting",
-        "teams.microsoft.com/l/meetup-join",
-        "teams.live.com/meet",
-        "outlook.office.com/owa/calendar",
-        "outlook.office365.com/owa/calendar",
-        "meet.google.com/",
-        "zoom.us/j/",
-        "zoomgov.com/j/",
-        "join microsoft teams meeting",
-    ];
-    NEEDLES.iter().any(|n| lower.contains(n))
 }
 
 pub(super) fn derive_company_tag(recipients: &[String], cc: &[String], owner_email: &str) -> Option<String> {
@@ -561,8 +609,35 @@ fn pick_non_empty(s: &Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("null"))
 }
 
-fn parse_json_subset<T: Default + for<'de> Deserialize<'de>>(raw: &str) -> T {
-    serde_json::from_str::<T>(&extract_json(raw)).unwrap_or_default()
+/// The JSON object in a model reply, or `None` when the reply holds none
+/// (empty, prose, truncated) — a failed extraction, not an empty one.
+pub(crate) fn reply_object(raw: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    match serde_json::from_str::<serde_json::Value>(&extract_json(raw)) {
+        Ok(serde_json::Value::Object(obj)) => Some(obj),
+        _ => None,
+    }
+}
+
+/// Deserialize each element of the `key` array on its own, so one malformed
+/// item is skipped (and logged) instead of discarding every item.
+pub(crate) fn lenient_items<T: serde::de::DeserializeOwned>(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    source: &str,
+) -> Vec<T> {
+    let Some(items) = obj.get(key).and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| match T::deserialize(item) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::services::logger::log("warn", source, format!("skipped malformed extracted {key} item: {e}"));
+                None
+            }
+        })
+        .collect()
 }
 
 fn extract_json(text: &str) -> String {
@@ -614,6 +689,212 @@ mod thread_tests {
         assert!(prompt.contains(fixtures::REPLY_NEW), "{prompt}");
         assert!(!prompt.contains(fixtures::REQUEST), "{prompt}");
     }
+
+    /// Relative deadlines ("tomorrow") are resolved against the email's send
+    /// date, so the prompt must carry it — not only today's date.
+    #[test]
+    fn the_prompt_carries_the_emails_sent_date() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        db.connection()
+            .execute("UPDATE emails SET timestamp = 1700000000 WHERE id = 'e2'", [])
+            .unwrap();
+        let email = db.get_email_by_id("e2").unwrap().expect("e2");
+        let prompt = build_prompt(&db, &email, &TaskConfig::default(), &[]).unwrap();
+        assert!(prompt.contains("Date: 2023-11-14"), "{prompt}");
+    }
+}
+
+#[cfg(test)]
+mod invite_tests {
+    use super::*;
+    use crate::services::thread_reader::fixtures;
+
+    fn seeded() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        db
+    }
+
+    /// A meeting link in a signature is not an invitation: the email must
+    /// still be read for facts/tasks.
+    #[test]
+    fn a_meeting_link_in_the_body_is_not_an_invite() {
+        let db = seeded();
+        db.connection()
+            .execute(
+                "UPDATE email_bodies SET body = 'Please send the budget by Friday.\n--\nMy room: https://zoom.us/j/123456 | https://meet.google.com/abc-defg-hij' WHERE email_id = 'e1'",
+                [],
+            )
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(!looks_like_calendar_invite(&db, &email));
+    }
+
+    #[test]
+    fn a_calendar_attachment_marks_an_invite() {
+        let db = seeded();
+        db.insert_email_attachment_meta("e1", "acct", "att-1", "invite.ics", "text/calendar", 512)
+            .unwrap();
+        let email = db.get_email_by_id("e1").unwrap().unwrap();
+        assert!(looks_like_calendar_invite(&db, &email));
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    //! An email is only marked task-extracted after a successful model call
+    //! and parse — otherwise it is never retried.
+    use super::*;
+    use crate::ai::provider::FakeAiProvider;
+    use crate::services::thread_reader::fixtures;
+
+    fn setup() -> (Arc<Database>, Arc<FakeAiProvider>, AiService, TaskConfig) {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        fixtures::seed_quoting_thread(&db);
+        let fake = Arc::new(FakeAiProvider::new());
+        let ai = AiService::with_provider(db.clone(), fake.clone());
+        let cfg = TaskConfig {
+            extract_from_self_only: false,
+            ..TaskConfig::default()
+        };
+        (db, fake, ai, cfg)
+    }
+
+    fn is_pending(db: &Database, id: &str) -> bool {
+        db.get_task_unextracted_email_ids("acct", 50, &[], None)
+            .unwrap()
+            .iter()
+            .any(|e| e == id)
+    }
+
+    fn open_titles(db: &Database) -> Vec<String> {
+        let mut titles: Vec<String> = db
+            .list_pending_tasks("acct", Some("open"), None, 50)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        fake.fail_completions(Some("model offline"));
+        let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+        assert!(res.is_err());
+        assert!(is_pending(&db, "e1"));
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_reply_leaves_the_email_queued_for_retry() {
+        let (db, fake, ai, cfg) = setup();
+        for reply in ["", "I could not find any tasks."] {
+            fake.push_completion(reply);
+            let res = process_email(&db, &ai, "me@example.com", "e1", &cfg).await;
+            assert!(res.is_err(), "reply {reply:?}");
+            assert!(is_pending(&db, "e1"), "reply {reply:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn one_malformed_task_does_not_drop_the_others() {
+        let (db, fake, ai, cfg) = setup();
+        let cfg = TaskConfig {
+            max_tasks_per_email: 0,
+            ..cfg
+        };
+        fake.push_completion(
+            r#"{"tasks":[{"title":"Send the budget"},{"detail":"no title"},{"title":"Book the room"}]}"#,
+        );
+        assert!(process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap());
+        assert!(!is_pending(&db, "e1"));
+        assert_eq!(open_titles(&db), vec!["Book the room", "Send the budget"]);
+    }
+
+    /// Re-extraction (after "reset task extraction") must not duplicate a
+    /// task the email already produced, nor resurrect one the user closed.
+    #[tokio::test]
+    async fn reextracting_an_email_skips_tasks_it_already_produced_in_any_status() {
+        let (db, fake, ai, cfg) = setup();
+        let cfg = TaskConfig {
+            max_tasks_per_email: 0,
+            ..cfg
+        };
+        fake.push_completion(r#"{"tasks":[{"title":"Send the budget"},{"title":"Book the room"}]}"#);
+        process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap();
+        let tasks = db.list_pending_tasks("acct", Some("open"), None, 50).unwrap();
+        let done = tasks.iter().find(|t| t.title == "Send the budget").unwrap();
+        db.update_pending_task_status(&done.id, "done", Some(1), 1).unwrap();
+
+        db.reset_task_extraction("acct").unwrap();
+        fake.push_completion(
+            r#"{"tasks":[{"title":"send the  budget"},{"title":"Book the room"},{"title":"Share the agenda"}]}"#,
+        );
+        process_email(&db, &ai, "me@example.com", "e1", &cfg).await.unwrap();
+
+        assert_eq!(open_titles(&db), vec!["Book the room", "Share the agenda"]);
+        assert_eq!(db.list_pending_tasks("acct", Some("done"), None, 50).unwrap().len(), 1);
+    }
+
+    /// A reply the user sent through an alias (provider Sent flag set, sender
+    /// is not the account address) in the `seed_quoting_thread` thread.
+    fn seed_alias_reply(db: &Database, ts: i64) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, is_sent, created_at)
+                 VALUES ('s1','acct','t1','Re: Portal budget','Me','alias@example.org','example.org',
+                         '[\"ana@example.com\"]','[]','snip',?1,1,'primary','sent',1,0)",
+                rusqlite::params![ts],
+            )
+            .unwrap();
+    }
+
+    fn awaiting(db: &Database) -> String {
+        db.get_thread_state("acct", "t1")
+            .unwrap()
+            .expect("thread state")
+            .awaiting
+    }
+
+    #[test]
+    fn a_reply_sent_through_an_alias_waits_on_them() {
+        let (db, _fake, _ai, _cfg) = setup();
+        seed_alias_reply(&db, 300);
+        let sent = db.get_email_by_id("s1").unwrap().unwrap();
+        apply_heuristic_thread_update(&db, &sent, "me@example.com").unwrap();
+        assert_eq!(awaiting(&db), "them");
+    }
+
+    /// Batches run newest first; an older inbound email processed after the
+    /// user's newer reply must not flip the thread back to "awaiting user".
+    #[test]
+    fn an_older_email_processed_later_does_not_overwrite_awaiting() {
+        let (db, _fake, _ai, _cfg) = setup();
+        seed_alias_reply(&db, 300);
+        let sent = db.get_email_by_id("s1").unwrap().unwrap();
+        let older_inbound = db.get_email_by_id("e1").unwrap().unwrap();
+        apply_heuristic_thread_update(&db, &sent, "me@example.com").unwrap();
+        apply_heuristic_thread_update(&db, &older_inbound, "me@example.com").unwrap();
+        assert_eq!(awaiting(&db), "them");
+        let state = db.get_thread_state("acct", "t1").unwrap().unwrap();
+        assert_eq!(state.last_inbound_at, Some(100));
+        assert_eq!(state.last_outbound_at, Some(300));
+    }
+
+    #[tokio::test]
+    async fn without_an_ai_provider_emails_stay_queued_for_extraction() {
+        let (db, _fake, _ai, cfg) = setup();
+        let ids = vec!["e1".to_string(), "e2".to_string()];
+        let marked = run_heuristic_only(&db, "me@example.com", &ids, &cfg).await.unwrap();
+        assert_eq!(marked, 0);
+        assert!(is_pending(&db, "e1"));
+        assert!(is_pending(&db, "e2"));
+    }
 }
 
 #[cfg(test)]
@@ -628,6 +909,11 @@ mod tests {
             "me@mine.com",
         );
         assert_eq!(tag.as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn extract_json_strips_markdown() {
+        assert_eq!(extract_json("```json\n{\"facts\":[]}\n```").trim(), "{\"facts\":[]}");
     }
 
     #[test]

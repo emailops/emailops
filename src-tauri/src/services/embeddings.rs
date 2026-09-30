@@ -9,8 +9,9 @@ use tauri::Emitter;
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::services::ai::AiService;
+use crate::services::task_queue;
 
-const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
+pub(crate) const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
 
 /// User-tunable config for which emails get embedded (used for AI Search /
 /// chat retrieval). Persisted in `user_preferences` like the other AI configs.
@@ -84,6 +85,20 @@ pub struct EmbeddingProgress {
     pub message: String,
 }
 
+/// Tell the progress indicators that the run ended because the user stopped
+/// it. Goes through the events seam, so it needs no `AppHandle`.
+fn emit_cancelled(current: u32, total: u32, message: &str) {
+    crate::services::events::emit(
+        "embedding-progress",
+        EmbeddingProgress {
+            status: "cancelled".to_string(),
+            current,
+            total,
+            message: message.to_string(),
+        },
+    );
+}
+
 /// Generate a content hash for an email to detect changes.
 /// Includes model name so model changes trigger re-embedding.
 fn compute_content_hash(embedding_model: &str, subject: &str, body: &str) -> String {
@@ -93,6 +108,39 @@ fn compute_content_hash(embedding_model: &str, subject: &str, body: &str) -> Str
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+/// The log level and message for an embedding run skipped because `provider`
+/// cannot embed right now. `configured` is whether it has an embedding model
+/// set up at all ([`AIProvider::embedding_configured`]).
+///
+/// [`AIProvider::embedding_configured`]: crate::ai::provider::AIProvider::embedding_configured
+fn embedding_skip_reason(provider: &str, configured: bool) -> (&'static str, String) {
+    match (provider, configured) {
+        ("openrouter", false) => (
+            "info",
+            "Skipped: semantic search is off for OpenRouter — choose an embedding model in Settings → AI and save to turn it on"
+                .to_string(),
+        ),
+        ("openrouter", true) => (
+            "warn",
+            "Skipped: OpenRouter is not reachable — check the connection and the API key in Settings → AI".to_string(),
+        ),
+        ("ollama", _) => (
+            "warn",
+            "Skipped: Ollama is not reachable — check that Ollama is running, or change provider in Settings"
+                .to_string(),
+        ),
+        ("llamacpp", _) => (
+            "warn",
+            "Skipped: the in-app embedding model is not available — download or select one in Settings → AI"
+                .to_string(),
+        ),
+        (other, _) => (
+            "warn",
+            format!("Skipped: AI provider '{other}' is not reachable — change provider in Settings"),
+        ),
+    }
 }
 
 fn get_embedding_model(db: &Arc<Database>) -> Result<String> {
@@ -321,21 +369,42 @@ async fn generate_embeddings_inner(
         );
         return Ok(0);
     }
+    // Stopped before it started (cancelled while queued, or the outer loop
+    // of a stopped run asking for its next batch): nothing to send or report.
+    if task_queue::cancel_requested() {
+        return Ok(0);
+    }
+    let ai_service = AiService::new(db.clone())?;
+    generate_with_service(
+        db,
+        &ai_service,
+        account_id,
+        app,
+        batch_size,
+        account_label,
+        emit_lifecycle,
+    )
+    .await
+}
+
+/// One batch against an already-built provider: the provider is loaded once
+/// per batch, so a batch keeps the provider it started with.
+async fn generate_with_service(
+    db: &Arc<Database>,
+    ai_service: &AiService,
+    account_id: Option<&str>,
+    app: Option<AppHandle>,
+    batch_size: i32,
+    account_label: Option<&str>,
+    emit_lifecycle: bool,
+) -> Result<u32> {
     let label_suffix = account_label.map(|l| format!(" ({})", l)).unwrap_or_default();
     let config = AiService::get_config(db)?;
     let embedding_model = get_embedding_model(db)?;
-    let ai_service = AiService::new(db.clone())?;
 
-    if !ai_service.is_available().await {
-        emit_log(
-            &app,
-            "warn",
-            "embeddings",
-            &format!(
-                "Skipped: AI provider '{}' is not reachable — check that Ollama is running, or change provider in Settings",
-                config.provider
-            ),
-        );
+    if !ai_service.is_embedding_available().await {
+        let (level, message) = embedding_skip_reason(&config.provider, ai_service.provider().embedding_configured());
+        emit_log(&app, level, "embeddings", &message);
         return Ok(0);
     }
 
@@ -423,7 +492,14 @@ async fn generate_embeddings_inner(
 
     let emails = db.get_emails_by_ids(&email_ids)?;
 
+    let mut stopped = false;
     for (idx, email) in emails.iter().enumerate() {
+        // Checked between emails, not between batches: once the user stops
+        // the work, no further email goes to the provider.
+        if task_queue::cancel_requested() {
+            stopped = true;
+            break;
+        }
         // Per-account category filter: if the email's account opted out of
         // the email's category, skip it entirely. The union-based SQL
         // pre-filter is permissive across accounts; this is the precise check.
@@ -477,6 +553,7 @@ async fn generate_embeddings_inner(
             &content_hash,
         )?;
         generated += 1;
+        task_queue::report_progress((idx + 1) as u32, total);
 
         if let Some(ref app) = app {
             let _ = app.emit(
@@ -495,6 +572,19 @@ async fn generate_embeddings_inner(
                 },
             );
         }
+    }
+
+    if stopped {
+        // A rebuild reports the stop itself, once, for all its batches.
+        if emit_lifecycle {
+            let message = format!(
+                "Embedding generation stopped by the user{}: {} of {} emails done, the rest stay pending",
+                label_suffix, generated, total
+            );
+            emit_log(&app, "info", "embeddings", &message);
+            emit_cancelled(generated, total, &message);
+        }
+        return Ok(generated);
     }
 
     if emit_lifecycle {
@@ -537,6 +627,17 @@ pub async fn regenerate_embeddings(
     }
     let label_suffix = account_label.map(|l| format!(" for {}", l)).unwrap_or_default();
 
+    // Stopped while still queued: leave the existing index alone.
+    if task_queue::cancel_requested() {
+        let message = format!(
+            "Search index rebuild{} stopped by the user before it started",
+            label_suffix
+        );
+        emit_log(&app, "info", "embeddings", &message);
+        emit_cancelled(0, 0, &message);
+        return Ok(0);
+    }
+
     let deleted = db.delete_all_embeddings(account_id)?;
     crate::services::logger::log(
         "debug",
@@ -575,10 +676,22 @@ pub async fn regenerate_embeddings(
     let mut total_generated = 0u32;
     for _ in 0..MAX_BATCHES {
         let n = generate_embeddings_inner(db, account_id, app.clone(), batch_size, account_label, false).await?;
-        if n == 0 {
+        total_generated += n;
+        if n == 0 || task_queue::cancel_requested() {
             break;
         }
-        total_generated += n;
+    }
+
+    if task_queue::cancel_requested() {
+        // The old index is already gone; what is missing is embedded by the
+        // next sync of each account, or by the next rebuild.
+        let message = format!(
+            "Search index rebuild{} stopped by the user: {} embeddings generated, the remaining emails stay pending",
+            label_suffix, total_generated
+        );
+        emit_log(&app, "info", "embeddings", &message);
+        emit_cancelled(total_generated, total_generated, &message);
+        return Ok(total_generated);
     }
 
     if let Some(ref app) = app {
@@ -644,6 +757,25 @@ mod tests {
     }
 
     #[test]
+    fn a_skipped_run_names_what_is_actually_wrong_for_each_provider() {
+        let cases = [
+            ("openrouter", false, "info", "choose an embedding model"),
+            ("openrouter", true, "warn", "OpenRouter is not reachable"),
+            ("ollama", true, "warn", "check that Ollama is running"),
+            ("llamacpp", true, "warn", "in-app embedding model"),
+            ("other", true, "warn", "'other' is not reachable"),
+        ];
+        for (provider, configured, level, fragment) in cases {
+            let (got_level, message) = embedding_skip_reason(provider, configured);
+            assert_eq!(got_level, level, "{provider}");
+            assert!(message.contains(fragment), "{provider}: {message}");
+            if provider != "ollama" {
+                assert!(!message.contains("Ollama"), "{provider}: {message}");
+            }
+        }
+    }
+
+    #[test]
     fn embedding_texts_include_header() {
         let texts = create_embedding_texts("Re: Invoice", "billing@example.com", "Short body");
         assert_eq!(texts.len(), 1);
@@ -679,6 +811,140 @@ mod tests {
         let huge = "word ".repeat(5000); // 25000 chars
         let chunks = chunk_text(&huge);
         assert!(chunks.len() <= MAX_CHUNKS_PER_EMAIL);
+    }
+
+    fn seed_emails(db: &Database, count: usize) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT INTO accounts (id, provider, email, name, created_at)
+             VALUES ('acc1', 'gmail', 'owner@example.com', 'Test', 0)",
+            [],
+        )
+        .unwrap();
+        for i in 0..count {
+            conn.execute(
+                "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES (?1, 'acc1', ?1, 'Quarterly report', 'Test Sender', 'sender@example.com',
+                         'example.com', '[]', '[]', ?2, ?3, 0, 'primary', 'inbox', 0)",
+                rusqlite::params![format!("e-{i}"), format!("Short body {i}"), 100 + i as i64],
+            )
+            .unwrap();
+        }
+    }
+
+    fn embedded_emails(db: &Database) -> i64 {
+        db.reader()
+            .query_row("SELECT COUNT(DISTINCT email_id) FROM embedding_chunks", [], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn last_embedding_status(events: &crate::services::events::VecEventSink) -> Option<String> {
+        let payloads = events.payloads_for("embedding-progress");
+        payloads.last().and_then(|p| p["status"].as_str().map(str::to_string))
+    }
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("test runtime")
+    }
+
+    // Sync tests on a throwaway runtime: they hold the global seam lock for
+    // their whole body, which must not span an await
+    // (`clippy::await_holding_lock`).
+
+    /// The bug this pins: a run kept sending emails to the provider until its
+    /// batch of up to 500 ended, whatever the user did meanwhile.
+    #[test]
+    fn a_cancelled_run_stops_at_the_next_email_and_a_later_run_embeds_the_rest() {
+        use crate::ai::provider::FakeAiProvider;
+        use crate::services::task_queue::TaskQueue;
+
+        let _seam = crate::services::events::seam_test_lock();
+        let events = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 5);
+        let fake = Arc::new(FakeAiProvider::new().with_embedding_dim(768));
+        let queue = TaskQueue::new(1, "test_embeddings_cancel");
+        // The user stops the work while the second email is being embedded.
+        let queue_for_hook = queue.clone();
+        fake.on_embed(move |calls| {
+            if calls == 2 {
+                queue_for_hook.cancel_matching(|_| true);
+            }
+        });
+
+        let generated = test_runtime().block_on(async {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let service = AiService::with_provider(db.clone(), fake.clone());
+            let db = db.clone();
+            queue
+                .submit_named("embeddings:generate:acc1", async move {
+                    let result = generate_with_service(&db, &service, Some("acc1"), None, 10, None, true).await;
+                    let _ = tx.send(result);
+                })
+                .await;
+            rx.await.expect("task finished").expect("run")
+        });
+
+        assert_eq!(generated, 2, "the email in flight is kept, no further one is sent");
+        assert_eq!(fake.embed_calls().len(), 2);
+        assert_eq!(embedded_emails(&db), 2);
+        assert_eq!(last_embedding_status(&events).as_deref(), Some("cancelled"));
+
+        // A later run (the next sync, or the rebuild a save queues) embeds
+        // exactly what is missing.
+        let service = AiService::with_provider(db.clone(), fake.clone());
+        let later = test_runtime()
+            .block_on(generate_with_service(&db, &service, Some("acc1"), None, 10, None, true))
+            .expect("later run");
+        assert_eq!(later, 3);
+        assert_eq!(fake.embed_calls().len(), 5);
+        assert_eq!(embedded_emails(&db), 5);
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+    }
+
+    /// A rebuild deletes the whole index first: one that was stopped while
+    /// still queued must not delete anything.
+    #[test]
+    fn a_rebuild_cancelled_while_queued_keeps_the_index() {
+        use crate::services::task_queue::TaskQueue;
+
+        let _seam = crate::services::events::seam_test_lock();
+        let events = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 1);
+        db.store_embedding_chunks("e-0", "acc1", &[vec![0.1_f32; 768]], "test-model", "hash")
+            .unwrap();
+        let queue = TaskQueue::new(1, "test_rebuild_cancel");
+
+        let rebuilt = test_runtime().block_on(async {
+            let (gate_tx, gate_rx) = tokio::sync::oneshot::channel::<()>();
+            queue
+                .submit_named("blocker", async move {
+                    let _ = gate_rx.await;
+                })
+                .await;
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let db = db.clone();
+            queue
+                .submit_named("embeddings:rebuild:all", async move {
+                    let _ = tx.send(regenerate_embeddings(&db, None, None, 500, None).await);
+                })
+                .await;
+            queue.cancel_matching(|name| name.starts_with("embeddings:"));
+            let _ = gate_tx.send(());
+            rx.await.expect("task finished").expect("rebuild")
+        });
+
+        assert_eq!(rebuilt, 0);
+        assert_eq!(embedded_emails(&db), 1, "the index must survive");
+        assert_eq!(last_embedding_status(&events).as_deref(), Some("cancelled"));
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
     }
 
     #[test]

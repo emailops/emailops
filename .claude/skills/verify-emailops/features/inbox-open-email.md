@@ -26,6 +26,7 @@ Preconditions: baseline; account `demo-acct-work` selected (default). `R=$(readl
 - Open → `$V wd shot "$R/inbox-open-before.png"`, `$V wd click '//div[@role="button"][contains(., "Nadia Brunner")]'`, `$V wd shot "$R/inbox-open-after.png"` → `$V wd find 'h1*=How do I add a new email account'` prints the subject and `$V wd exists 'button=Back'` prints `present`.
 - Close → `$V wd click 'button=Back'`, `$V wd shot "$R/inbox-close-after.png"` → `$V wd exists 'h1*=How do I add a new email account'` prints `absent` and `$V wd exists 'h2*=Inbox'` prints `present`.
 - Categories → `$V wd click 'button=Promotions'` → the row set in `$V wd find 'div[role="button"]'` differs from the Primary one; `$V wd click 'button=Primary'` restores it.
+- Remote images → search `Harborlight`, open *Harborlight Weekly: shipping notes* → the page says *Remote images were blocked to protect your privacy.* with **Show images** and **Always trust this sender**; `$V wd js 'document.querySelector("iframe[title=\\"Email content\\"]").getAttribute("srcdoc").match(/<img[^>]*>/)[0]'` prints the `<img>` without its `src`, and the frame's CSP allows only `img-src data: blob: cid:`. Do not click **Show images** (it asks the sender's server). Confirmed live on 30/09/2026.
 
 Live run 11/09/2026: open and close proven on the *Nadia Brunner* and *Marisol Vega · Production bug* rows; evidence in `src-tauri/reports/verify/20260911-141357/`.
 
@@ -35,3 +36,13 @@ Live run 11/09/2026: open and close proven on the *Nadia Brunner* and *Marisol V
 - The reading pane's exit is **Back** (`button=Back`, title "Back to inbox"), not a Close button; "Close chat panel" belongs to the chat panel.
 - Opening a thread did **not** flip `is_read` on an older unread message of that thread in the live run; do not use `emails.is_read` as this feature's side-effect proof without first checking what the app marks.
 - The list is virtualised; a row far down needs a scroll (`$V wd js 'document.querySelector("[data-virtual-list], main").scrollBy(0, 800)'` or cua-driver `scroll`) before it is clickable.
+
+| Case | Test kind |
+|---|---|
+| list queries, thread order, soft delete, mailbox state, redownload | unit (`db::emails::*`, `services::emails::*`) |
+| HTML sanitising, remote content blocking (images, background images, media) | unit + vitest (`util::html`, `emailFormatting`, `EmailHtmlFrame.*`, `EmailPreviewById.*`) |
+| stale responses, auto-select, navigation | vitest (`emailStore.*`, `Inbox.*`) |
+| lists, threads, read state, deletes against the in-memory DB | integration (`*email*`, `*thread*`, `*mailbox*`, `mark_as_read_*`) |
+| email command arguments | contract (`src/lib/apiContract/inbox.api.test.ts`) |
+| list, open, back, row menu, remote images blocked, Sent / Spam / Deleted / Attachments views | e2e (`Inbox/*`, `Vistas/*`) |
+| eval | n/a: reading mail has no model reply of its own; questions about an open thread are chat evals (`thread_*`) |

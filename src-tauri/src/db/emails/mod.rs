@@ -17,6 +17,7 @@ pub mod folder_ops;
 pub mod headers;
 pub mod junk;
 pub mod junk_model;
+pub mod mailbox_state;
 pub mod search;
 
 #[cfg(test)]

@@ -1992,3 +1992,572 @@ synthetic "Apply the skill" question steered routing, retrieval and titles (a ba
   just pasted the name they want.
 - *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
   against 9–14 s turns) — no measured problem, so no cache.
+
+## 2026-09-30 — A draft with unpushed local edits always wins: pushed on sync, re-created if gone upstream
+
+**Decision:** Every composer save marks the draft dirty (`drafts.dirty`, the number of
+saves since the last successful push). The draft sync never prunes or overwrites a
+dirty draft: it pushes it, and if the provider copy was sent or deleted from another
+device it creates the draft again upstream and replaces the stale provider id. When
+both sides changed, the local draft wins and the upstream edit is overwritten. Only
+clean drafts are pruned or replaced by a pull. The per-draft decision is the pure
+planner `sync::draft_plan::plan_draft_sync`.
+**Context:** Editing one draft on two devices lost text three ways: a save against a
+provider draft that no longer existed failed forever and kept the stale id; the next
+sync then deleted the local draft, unpushed edits included; and a draft saved offline
+was never pushed and was overwritten by any upstream change. Unsent text the user
+typed here exists nowhere else, so losing it is worse than any other outcome.
+**Rejected:** *Last-writer-wins by timestamp* — provider and local clocks are not
+comparable, and the pull already rewrites `updated_at` with the provider's time.
+*Keeping both as two drafts on a conflict* — no data loss at all, but it leaves the
+user to work out which copy is current after every offline edit; the upstream edit
+that loses is still recoverable on the other device until the push lands.
+*Honouring the upstream delete for a dirty draft* — a draft sent from another device
+comes back as a draft here, which is visible and one click to discard, whereas a
+discarded edit is gone. *Marking every local write dirty* — the chat draft tool's
+drafts would start appearing in the provider's Drafts folder unasked; they stay
+local until the user saves them in the composer.
+
+## 2026-09-30 — V026 (email FK child indexes) and V028 (draft dirty marker) are release-coupled
+
+**Decision:** V026 indexes the five child columns that reference `emails(id)`; V028
+adds `drafts.dirty`. Both ship in the next release; existing drafts start clean (a
+draft saved offline before V028 stays local until its next save).
+**Context:** A dev build applies pending migrations to whatever database it opens.
+Released binaries do not contain V026/V028 and refuse a database that has them, so
+running this build against the production data dir blocks the installed release until
+a release that ships both is out. V027 and V029 belong to parallel work, so a
+database this build opens before that work is merged ends at V028 without V027, and
+a later build that contains V027 refuses it (refinery aborts on a migration file
+older than the highest applied version). Keep such builds on throwaway data dirs.
+**Rejected:** *Backfilling `dirty = 1` on existing local-only drafts* — it cannot tell
+an offline save from an AI-generated draft never meant for the provider, and would
+push all of them on the first sync after upgrade.
+
+## 2026-09-30 — Read state and delete write back to IMAP and Outlook too
+
+**Decision:** `provider_supports_mailbox_writes` now covers Gmail, IMAP and Outlook. Marking
+read pushes `UID STORE ±FLAGS.SILENT (\Seen)` (IMAP) or `PATCH /me/messages/{id}` `isRead`
+(Graph); delete moves the message to the account's Trash — the IMAP Trash folder through
+the existing `UID MOVE` / `COPY` path, Graph `move` to `deleteditems` — and never expunges
+or hard-deletes. The ordering of the 2026-08-15 entry is unchanged: read state local-first,
+delete provider-first. Two refinements apply to every provider: a provider answering "no
+such message" (`AppError::NotFound`) counts as deleted, so the local delete goes through;
+and `trash_message` takes the message's Message-ID, which IMAP checks against the UID before
+moving anything.
+**Context:** A review at `c1f152f` found these changes stayed local on IMAP and Outlook and
+diverged silently from the account. Outlook already requests `Mail.ReadWrite`, so no scope
+changes and no account has to re-authenticate. An IMAP id is a UID, which a server-side
+mailbox rebuild can hand to another message; without the Message-ID check a delete made
+between the rebuild and the next sync would trash the wrong message.
+**Rejected:**
+- *Local-only delete when the IMAP server has no recognisable Trash folder*: that is the
+  silent divergence this removes; the delete is refused with an error instead.
+- *`\Deleted` + `EXPUNGE` in place*: permanent, and the app's delete is the reversible one.
+- *Treating an IMAP Message-ID mismatch as "already gone"*: it would hide a message that
+  still exists upstream; the delete is refused and the next sync repairs the id.
+
+## 2026-09-30 — A failed read-state push is retried by the sync, for up to a week
+
+**Decision:** Marking a message read sets `emails.read_push_pending_since` (V029) in the
+same statement as `is_read`, and clears it once the provider has the change. Every sync
+starts by pushing what is still pending (`retry_pending_read_pushes`): at most 100 rows,
+stopping after 3 failures, and giving up on a change older than 7 days. "No such message"
+settles a pending push. This applies to Gmail as well — it shares the service path.
+**Context:** The push was best-effort and its failure only logged, and a re-opened message
+returns early because it is already read locally — so one offline moment left a message
+unread in every other client for good. The marker is written before the push, not after a
+failure, so a crash or a concurrent sync never sees a locally read row the provider does
+not know about.
+**Rejected:**
+- *A preference holding the pending ids* (no migration): the marker has to travel with the
+  row when it is re-keyed, vanish with it, and be read and written atomically with
+  `is_read` by two concurrent tasks; a JSON list in `user_preferences` does none of that.
+- *Retrying forever*: a read-only mailbox or a revoked permission would cost a failing
+  request per row on every sync.
+- *A retry queue for delete*: delete is provider-first, so a failed delete is an error the
+  user sees and nothing is left half-done.
+
+## 2026-09-30 — Sync refreshes the state of recent stored IMAP/Outlook mail; pending local changes win
+
+**Decision:** Once per 2 minutes per account, the sync asks the provider for the current
+state of the account's stored mail from the last 30 days, newest first, at most 200 rows
+(`EmailProvider::fetch_message_states`): IMAP one `UID FETCH (UID FLAGS)` per folder, Graph
+one `$batch` of `$select=id,isRead` per 20 ids. Read state follows the server. A message
+the provider no longer has under its id is located by Message-ID (`locate_message`) and
+re-keyed in place into its new mailbox, or soft-deleted when the provider does not have it
+any more — at most 25 such lookups per pass. **Conflict rule: a row with a pending local
+push is never touched; for every other row the server wins.** Spam is left to
+`reconcile_spam_moves`, Sent mail keeps its read flag, and a row the provider could not
+check (its folder would not open, its sub-request was throttled) is left alone.
+**Context:** The fetch passes drop every id the database already holds, so a message read,
+deleted or filed in another client never changed here; only Spam was reconciled. Gmail is
+out of scope for this pass (the developer asked for IMAP and Outlook) and answers `None`.
+**Rejected:**
+- *Graph delta queries*: exact and cheap in steady state, but they need a delta token per
+  folder, its expiry handling and a first full enumeration; asking about the ids already
+  stored needs no state and no "was the listing complete?" reasoning.
+- *Listing each folder and diffing*: a truncated listing reads as mass deletion — the rule
+  the spam reconciliation already has to work around.
+- *Refreshing the whole mailbox*: unbounded on the 47k-message accounts this runs against.
+- *Last-writer-wins by timestamp*: neither IMAP flags nor `isRead` carry a change time.
+
+## 2026-09-30 — IMAP UIDVALIDITY is recorded per mailbox; a change re-keys stored mail by Message-ID
+
+**Decision:** Every IMAP sync first reads each stored mailbox's `UIDVALIDITY` (`EXAMINE`)
+and compares it with the value recorded in `folder_uid_validity` (V027). The first sight
+of a mailbox records a baseline. On a change, before anything is listed, the mailbox is
+listed as `(UID, Message-ID, INTERNALDATE)` and the stored rows are matched to it — by
+Message-ID, copies of one Message-ID in order, and by arrival time for the few messages
+without one when that is unambiguous — then re-keyed in one transaction, so read state,
+tags, bodies and embeddings survive. Rows nothing matches are hard-deleted together with
+the mailbox's failed-download records, and the mailbox's sync windows are reopened so
+whatever is still on the server is downloaded again. A failure aborts the sync and leaves
+the recorded value, so the next sync retries.
+**Context:** IMAP ids are `{account}::{uid}`, and nothing read or stored UIDVALIDITY. After
+a server migration, restore or index repair, new mail whose UID matched a stored id was
+dropped as "already synced", and stored ids addressed other messages for re-fetch, move and
+locate. A rebuild that happened before V027 was applied cannot be detected: the first sync
+only records a baseline.
+**Rejected:**
+- *Drop the mailbox's rows and re-download*: loses classification, embeddings, memory and
+  read state for every message, and the per-sync caps make a large inbox take days.
+- *Keep unmatched rows under a detached id*: they could never be deleted or moved upstream
+  and would duplicate any message the re-sweep brings back.
+- *Include UIDVALIDITY in the message id*: the principled fix, but it re-keys every stored
+  IMAP row of every install in a migration and changes an id format frozen for backward
+  compatibility.
+- *Non-fatal on failure*: a sync that goes on with stale ids in place is exactly the bug.
+**Known limit:** the inbox reopens through its incremental window, which one IMAP sync lists
+only as far back as the newest ~1 000 messages. An unmatched inbox message older than that
+and without a usable Message-ID is not re-downloaded automatically.
+
+## 2026-09-30 — V027 and V029 are release-coupled
+
+**Decision:** `V027__folder_uid_validity.sql` (new table) and `V029__read_push_pending.sql`
+(new `emails` column + partial index) ship together with the code above. Like every
+migration, a development build applies them to whatever database it opens, and the released
+binaries up to the current version then refuse that database until a release containing
+both is installed. V026 and V028 belong to parallel work and are intentionally absent here.
+**Context:** Same coupling as V008–V024 before them; recorded because two version numbers
+are skipped on this branch and the merge order matters — `migration_versions_are_unique`
+guards against a collision, not against a missing neighbour.
+**Rejected:** *Storing both in `user_preferences` to avoid a migration* — see the two entries
+above for why each needs real schema.
+
+## 2026-09-30 — OpenRouter supports chat (streaming and tool calls), not only one-shot completions
+
+**Decision:** The OpenRouter provider implements `chat_stream`, `chat_stream_with_tools`
+and `chat_with_tools` over `/chat/completions` with `stream: true`, and reports
+`tools`/`streaming` as supported, so the chat works on it like on the local backends.
+- **Same data policy:** chat requests carry the `provider` preferences of every other
+  request (`data_collection: "deny"`, `zdr` when the user asked for it).
+- **Budget:** the chat loop's model calls go through `AiService::chat_stream` /
+  `chat_stream_with_tools`, and a Lens extraction's tool call through
+  `AiService::chat_with_tools`: refused before the call once the period's spend has
+  reached the budget, recorded after it with the `usage.cost` the stream reports. A Lens
+  refused for budget does not fall back to its text prompt.
+- **Failures are shown, not retried:** a 429, a 5xx, a mid-stream `error` event or a
+  stream silent for 60 s ends the turn with an error. Part of the reply may already be on
+  screen, and a silent retry would bill the prompt twice.
+- **Reasoning stays out of the answer:** `reasoning` deltas are never shown or stored, and
+  no `reasoning` parameter is sent (the model's default applies).
+- **Cancel:** the token callback returning `false` drops the connection, which is how
+  OpenRouter stops generating.
+**Context:** `chat_stream*` returned "not supported for OpenRouter backend", so every chat
+turn failed once OpenRouter was selected — and OpenRouter is what an Intel Mac is pointed
+to, since the embedded runtime cannot run there. The developer decided chat must work on
+it rather than hide the chat for that provider.
+**Rejected:**
+- *Gating the chat off for OpenRouter*: leaves Intel Macs without a working chat unless
+  they install Ollama, which has no GPU acceleration there.
+- *A non-streaming fallback (`chat_with_tools` plus one final chunk)*: no live answer, no
+  mid-reply Cancel, and a long answer waits out the whole generation timeout.
+- *Sending `reasoning: {effort: "none"}` when thinking is off in Settings*: models whose
+  reasoning is mandatory reject it, which would turn a preference into a failed turn.
+- *Retrying a failed stream automatically*: see above.
+
+## 2026-09-30 — Outgoing HTML keeps tables and safe inline styles
+
+**Decision:** `sanitize_outgoing_html` allows table markup with its layout attributes and
+an inline `style` reduced to a fixed property list (colour, font, alignment, spacing,
+borders, size). `<style>` blocks, the `background` attribute and any declaration
+containing `url(`, `expression(`, an escape or an at-rule are still removed.
+**Context:** Drafts are now sanitized on save and on send, and the compose-editor
+allowlist flattened a draft written in the provider's own client (tables, colours) when
+it was sent from EmailOps. The developer chose to keep that formatting.
+**Rejected:**
+- *Passing provider drafts through unsanitized*: the backend is the security boundary;
+  a draft pulled from the provider is as untrusted as one built over IPC.
+- *Allowing `<style>` blocks or `background`*: both fetch remote resources when the
+  recipient opens the message, and most mail clients drop `<style>` anyway.
+**Limit:** this covers a draft sent without editing its body. The compose editor (Tiptap
+StarterKit) has no table or style nodes, so editing such a draft in the app still
+flattens it before the sanitizer sees it.
+
+## 2026-09-30 — Remote models are sized to their own window, capped by a context budget
+
+**Decision:** For OpenRouter, research batches are sized to `min(model window, budget)`.
+The window is the selected model's `context_length` from the model catalogue (the smaller
+of the model's and its top provider's), read on demand; the budget is
+`chat.remote_n_ctx_budget`, 32 768 tokens by default. An unreadable catalogue falls back
+to 8 192.
+**Context:** OpenRouter reported no window, so research sized every batch to the 8 192
+default inherited from local runtimes: many small paid calls, each resending the
+instructions. The local cap exists because of RAM, which does not apply to a remote
+model; what does apply is cost and how much mail leaves the machine per call.
+**Rejected:**
+- *Using the model's full window (128k–1M)*: one research call could ship, and bill, a
+  large share of the mailbox.
+- *Reusing `chat.n_ctx` for remote providers*: that setting is clamped to what the local
+  KV cache fits and means something else.
+- *Fetching the catalogue on every chat turn*: it is a large response; only research
+  sizes prompts to the window today, so it asks when it runs.
+
+## 2026-09-30 — The compose editor carries tables and verbatim inline styles
+
+**Decision:** The Tiptap editor keeps table markup (with its layout attributes) and a raw
+`style` attribute on text spans and block nodes, so a formatted draft survives being
+edited in the app. This replaces the limit noted in "Outgoing HTML keeps tables and safe
+inline styles". The backend sanitizer remains the only filter.
+**Context:** With only the backend allowlist widened, editing the body of a draft written
+in the provider's web client still flattened it, because the editor schema had no table
+or style nodes.
+**Rejected:**
+- *Per-property style extensions (Color, FontFamily, FontSize…)*: each carries one
+  property; a verbatim `style` keeps everything the backend allows with less code.
+- *Toolbar controls for creating tables or picking colours*: the goal is to preserve
+  existing formatting, not to author it.
+**Limit:** `thead`/`tfoot` fold into one `tbody`, `caption` becomes a row, `colgroup`
+widths, `center`/`sub`/`sup`/`small` and a `div` wrapping other blocks are lost, and
+style strings are rewritten in normalised form (`#ff0000` → `rgb(255, 0, 0)`).
+
+## 2026-09-30 — OpenRouter embeddings are an explicit, validated choice
+
+**Decision:** With OpenRouter as the provider, embeddings run on OpenRouter too, but only
+for an embedding model the user picked in the OpenRouter panel and that passed a probe.
+- **Selector + notice:** the panel lists `GET /embeddings/models`, starts at "none", and
+  says that with a model selected the text of every indexed email and of every search and
+  chat question is sent to OpenRouter and counts against the budget; with none, semantic
+  search is off and search is keyword-only.
+- **Probe on save:** the email index is `float[768]`. Before a new model is saved the
+  backend embeds one fixed neutral string asking for `dimensions: 768`; 768 floats back
+  means the model is usable with `dimensions` on every request. If that is refused (4xx)
+  or another length comes back, it asks once more without `dimensions`; 768 floats means
+  usable without it. Anything else refuses the model with the length it returned, and
+  nothing is saved. An outage is reported as an error, not as a verdict.
+- **No request without a validated model:** the validated model id and its mode are stored
+  (`openrouter_embedding_validated_model`, `openrouter_embedding_dimensions`), and the
+  client embeds only while `ai_embedding_model` equals that id. Indexing, chat retrieval,
+  research, memory and help lookups skip the vector path instead of sending a request.
+- **One preference, many providers:** `ai_embedding_model` stays shared. Switching the
+  provider tab in Settings replaces it with a model the new provider can run (none for
+  OpenRouter), and the existing "embedding model changed" re-index clears the old vectors.
+**Context:** OpenRouter was used for every embedding as soon as it was the provider, with
+the local GGUF id left in the shared preference as the model: each email was posted to
+OpenRouter, rejected, and retried on every sync, while the panel said embeddings ran
+locally and offered no model field. The developer decided to keep embeddings on OpenRouter
+and make that explicit.
+**Rejected:**
+- *Always embedding locally while chat is remote*: OpenRouter is what an Intel Mac is
+  pointed to precisely because the embedded runtime cannot run there, so there would be no
+  embedder at all; elsewhere it would need a second provider loaded behind a "remote" one.
+- *Disabling embeddings under OpenRouter*: leaves those users with keyword search only and
+  chat without retrieval by meaning, with no way to opt in.
+- *Reading the vector size from the model catalogue*: `/embeddings/models` publishes no
+  output dimension and an empty `supported_parameters`, so compatibility can only be found
+  by asking the model.
+**Limit:** the onboarding wizard still saves its OpenRouter embedding model without running
+the probe, so semantic search stays off after onboarding until that model is saved once in
+Settings. The probe itself is a paid call (one short string); its cost is recorded but it
+is not refused for budget.
+
+## 2026-09-30 — Onboarding validates the OpenRouter embedding model; model ids never cross providers
+
+**Decision:** Follow-up to "OpenRouter embeddings are an explicit, validated choice"; its
+Limit about onboarding no longer holds.
+- **Onboarding validates:** the wizard's OpenRouter embedding field is optional and starts
+  empty (no built-in default model). Empty means keyword-only search and no probe. A typed
+  model is probed on Continue with the API key just typed; a failure is shown pinned at the
+  top of the step and nothing is saved. The wizard shows the same privacy/cost notice as
+  Settings.
+- **Chat model follows the provider too:** `ai_model` stays one shared preference, and a
+  provider switch in Settings replaces it like the embedding model — the saved model when
+  returning to the saved provider, the first available model for Ollama and in-app, empty
+  for OpenRouter. Save refuses an empty OpenRouter chat model, and the OpenRouter client
+  refuses a chat model that is not `vendor/model` before sending anything.
+- **Quick switcher:** the log panel's backend selector does not offer OpenRouter unless it
+  is already the saved backend, because it has no field to type a model in.
+- **Re-index is confirmed:** a Save that changes the embedding model (including through a
+  provider switch) asks first, naming what is deleted, that search is reduced meanwhile,
+  and — for OpenRouter — that every indexed email's text is sent there and billed.
+- **Zero data retention:** no routing change. When the probe is refused for data policy
+  with the ZDR toggle on, the message names that setting and the two ways out (turn it
+  off, or use no embedding model).
+**Context:** After onboarding with OpenRouter, semantic search stayed off until a Save in
+Settings; switching to OpenRouter showed and saved the in-app GGUF id as its chat model;
+and an embedding-model change wiped the index without warning.
+**Rejected:**
+- *Listing OpenRouter embedding models in the wizard*: the listing needs a saved key, and
+  the key is only saved on Continue; a free-text field checked by the probe is smaller.
+- *Remembering a last-used model per provider*: needs new stored state for a case the
+  Settings panel already covers.
+- *Warning about re-indexing in the wizard*: the wizard never triggers a re-index.
+
+## 2026-09-30 — Settings recommends six measured OpenRouter embedding models
+
+**Decision:** The OpenRouter embedding selector lists six recommended models first
+(`openRouterEmbeddingModels.ts`), each labelled multilingual or English-only; the rest of
+the catalogue follows and every model is still checked on save.
+**Context:** The catalogue publishes neither the vector dimension nor the data policy of a
+model's endpoints, so a user could only find a usable model by trial. On 30/09/2026
+`scripts/probe_openrouter_embeddings.sh` probed all 33 catalogue models with
+`data_collection: "deny"`: 15 returned 768 dimensions (through `dimensions` or natively),
+and the six chosen also answered with zero data retention on.
+**Rejected:**
+- *Restricting the selector to the recommended models*: the probe already protects the
+  vector tables, and the catalogue changes.
+- *Recommending from the catalogue descriptions*: they omit the dimension for most models
+  and say nothing of data policy; only a live probe shows both.
+
+## 2026-09-30 — OpenRouter's default chat model is `google/gemini-3.5-flash-lite`
+
+**Decision:** When no OpenRouter chat model was chosen yet, Settings and onboarding offer
+`google/gemini-3.5-flash-lite` (one constant, `DEFAULT_OPENROUTER_CHAT_MODEL`). The field
+stays free text.
+**Context:** Switching to OpenRouter left the chat field empty (after the fix that stopped
+it showing the in-app model), and onboarding defaulted to `openai/gpt-4o-mini`, a 2024
+model with no zero-data-retention endpoint, so chat failed with that setting on. The
+developer picked the default from the public catalogue: tool calls supported, a
+zero-data-retention endpoint, 1M context.
+**Rejected:** `openai/gpt-6-luna` (cheaper, offered first) and
+`anthropic/claude-haiku-4.5` — the developer's choice; `openai/gpt-4o-mini` — no
+zero-data-retention endpoint.
+**Limit:** not measured on the app's chat eval; chosen on catalogue data only.
+
+## 2026-09-30 — AI models are remembered per provider; a save never keeps an unusable embedding model
+
+**Decision:** Supersedes the "Remembering a last-used model per provider" rejection in the
+entry above on onboarding and provider switches.
+- **Remembered per provider:** `ai_model` / `ai_embedding_model` stay the models in use,
+  and every save also records them under `ai_model:<provider>` /
+  `ai_embedding_model:<provider>` (preferences only, no migration). Leaving a provider
+  records the models it was using at that moment. `get_ai_config` returns the remembered
+  models for every provider, and Settings and onboarding offer them on a provider switch
+  before falling back to the defaults. Existing installs are seeded from what they already
+  store: the saved provider's models, and `openrouter_embedding_validated_model` as
+  OpenRouter's embedding model. A remembered OpenRouter model that is still the validated
+  one is not probed again.
+- **Save never keeps an embedding model the provider cannot use:** `save_config` decides
+  with a pure planner (`plan_embedding_model`). OpenRouter takes a `vendor/model` id or
+  none; the in-app runtime takes a catalogue embedding model; Ollama refuses a catalogue
+  GGUF id and the model remembered for OpenRouter. Anything else is replaced by the model
+  remembered for that provider, else by the provider default, and the correction is logged.
+- **Quick switcher does not cross an Embeddings boundary:** the log panel's backend
+  selector only performs a switch when the target provider is remembered with the very
+  embedding model in use. Every other switch is disabled there with a hint to do it in AI
+  Settings, the only place that asks before the email index is replaced.
+**Context:** After saving OpenRouter with an embedding model, switching to the in-app
+provider and coming back showed no embedding model; and the quick switcher, which named no
+embedding model, left the in-app provider saved with OpenRouter's, so local Embeddings
+could not run. Onboarding with Ollama likewise saved the in-app GGUF id for Ollama.
+**Rejected:**
+- *Refusing every `vendor/model` id under Ollama*: Ollama has namespaced models of its
+  own, so a slash alone does not make an id OpenRouter's.
+- *Letting the quick switcher switch and re-index*: it has no room for the warning, and a
+  re-index sends every indexed email to OpenRouter when that is the target.
+- *A migration to per-provider columns*: preferences hold it, and the seeding covers
+  existing installs.
+**Limit:** the in-app runtime and Ollama name the same nomic model differently, so the
+quick switcher no longer switches between them either unless the ids happen to match; in
+practice every backend change now goes through AI Settings.
+
+## 2026-09-30 — Changing the AI provider or a model asks about background AI work first
+
+**Decision:** Before a change to the AI provider, the chat model or the embedding model is
+saved — in Settings → AI and in the log panel's quick selector — the app reads the AI
+background queue. If work the change cuts across is running or queued, one dialog lists it
+and offers **Stop and apply**, **Wait and apply** or **Cancel**; with nothing affected there
+is no dialog. The re-index confirmation stays a separate, later step.
+- **What counts:** tasks on the AI background queue that call the provider, by the kind
+  their name maps to (`services::ai_activity::work_kind`): Embeddings rebuild and
+  generation, classification, memory extraction, task extraction, Lens extraction. A chat
+  model change cuts across the kinds that write with it, an embedding model change across
+  the ones that embed, a provider change across all. Junk scoring (no model) and unknown
+  tasks are never listed or stopped. Chat turns, drafts, translations and searches run on
+  the interactive queue or inline, finish with the provider they started with and have their
+  own controls: they do not block the change.
+- **Stopping is cooperative:** `TaskQueue::cancel_matching` raises a per-task flag that the
+  loops read between emails (`task_queue::cancel_requested`). The task leaves through its
+  normal exit, so its terminal events and clean-up run; Embeddings emit
+  `embedding-progress` with status `cancelled`. A queued task is not dropped either: it
+  starts already cancelled and exits at its first check — a rebuild before deleting the
+  index.
+- **Waiting is polled:** while stopping or waiting the dialog re-reads the queue every
+  second and applies the change when nothing affected is left, so work a sync queues
+  meanwhile is waited for (or stopped) too.
+**Context:** An embedding run loaded its provider once per batch of up to 500 emails. After
+switching away from OpenRouter, the batch in hand kept sending email text there, billed;
+the rest of the task continued with the new provider and the rebuild the save queued redid
+everything. Nothing told the user.
+**Rejected:**
+- *Aborting the task's future at the queue*: simpler, but a dropped future skips what the
+  task does on its way out — the Lens run registry, the memory and task backfill "running"
+  flags, `lens_runs` rows left `running`, progress indicators waiting for a terminal event.
+  The same holds for dropping queued futures unpolled.
+- *Reloading the provider for every email*: fixes which provider is used, not that the
+  user is never asked, and the rebuild queued by the save would still redo the work.
+- *One dialog for the work in progress and the re-index*: they are two decisions; the
+  second only exists when the embedding model changes.
+- *A drain event from the queue*: a poll of the same snapshot is robust to tasks queued
+  between the event and the save, and needs no new event.
+**Limit:** a task stops at its next email, so the request in flight when the user stops
+completes (one email, at most six chunk requests for Embeddings). A single-row Lens
+re-extract has no loop and finishes its one call. A task queued in the instant between
+the last poll and the save starts with the old settings for one batch.
+
+## 2026-09-30 — The AI backend is changed only in Settings
+
+**Decision:** The status bar of the Logs panel no longer has a backend selector. It names
+the backend in use and keeps the chat-model selector of that backend; the backend is
+changed in Settings → AI only.
+**Context:** A backend change can replace the Embeddings, needs a provider-valid chat and
+embedding model and may cut across running AI work. Settings asks about all three; the
+quick selector had to be disabled for nearly every switch to stay safe, and it was the
+path that left an OpenRouter embedding model under the in-app provider.
+**Rejected:** *Keeping the selector with most options disabled* — a control that almost
+never works is worse than none.
+
+## 2026-09-30 — Attachments are quarantined one by one; dangerous types need confirmation
+
+**Decision:** Every attachment file the app writes (rule collection, auto-download, save to
+Downloads, bulk download) is marked as received from outside — `com.apple.quarantine` on
+macOS (`0081;<hex time>;EmailOps;<uuid>`), the `Zone.Identifier` stream on Windows, nothing on
+Linux — and "open in the default app" marks the file again before the hand-off, which also
+covers files stored before this. Types whose default action runs code or opens another
+location (one extension table in `services/attachment_safety.rs`, plus the declared MIME type)
+are opened only after a dialog that names the file, its kind and that it came by email; the
+backend enforces it with a `confirmed` argument and refuses with
+`attachment_confirmation_required` otherwise.
+- **When the mark cannot be written:** a save still succeeds and the failure is logged; an
+  open is refused with the error, for every type — the OS would launch the file unchecked.
+- **Reveal:** "Show in Finder" selects, never opens. A directory with a launchable name (an
+  app bundle) is selected in its folder instead of opened.
+**Context:** A security review found attachments stored under the sender's extension and
+handed to `open::that` with no quarantine attribute and no type check, so a `.terminal`,
+`.fileloc`, `.jar`, `.command` or local `.html` launched without the first-open prompt
+Mail.app would show.
+**Rejected:**
+- *`LSFileQuarantineEnabled` for the whole app*: it quarantines every file the app creates —
+  the database, models, exports, skills — not only what a sender controls.
+- *Refusing dangerous types outright*: people do receive installers and scripts they asked
+  for; the OS check plus an explicit confirmation is the Mail.app behaviour.
+- *Classifying in the frontend*: a second copy of the list, and a direct IPC call would
+  bypass it.
+- *Treating documents with a risky reader (PDF, Office macros, archives) as dangerous*: they
+  do not act on open by themselves; the quarantine mark lets their own apps apply Protected
+  View and similar.
+
+## 2026-09-30 — Gmail stored-mail state follows the History API
+
+**Decision:** Gmail's stored mail is refreshed from `users.history.list` instead of being
+polled: a per-account cursor in preferences (`mailbox_history_cursor:<account>`), read
+under the same 2-minute throttle as the IMAP/Outlook refresh, at most 5 pages of 100 records
+per pass, asking only for `labelAdded`, `labelRemoved` and `messageDeleted`. No new OAuth
+scope: `gmail.modify` covers it.
+- **Cursor:** seeded from `users.getProfile` on the first run (nothing is replayed); moved
+  only past pages that were fully applied and written once per pass; cleared with the
+  account.
+- **What a change means locally:** the label deltas are folded onto the stored row and the
+  result goes through the mapping the sync already stores mail with
+  (`sync::gmail::mailbox_from_labels`). `UNREAD` is the read state; `TRASH` files the row
+  under `trash` and removing it puts it back; a permanent delete soft-deletes the row.
+  **Archiving is not a move**: the app has no archive mailbox and the sync already stores
+  mail without `INBOX` under `inbox`, so archiving and user labels change nothing here.
+  Spam is left to the Spam pass.
+- **Conflict rule:** unchanged — a row with a pending local push is never touched, checked
+  in the planner and again in each `UPDATE`. Because the log reports a change once, a page
+  that had to skip such a row is not counted as applied and is replayed after the push.
+- **Expired cursor (404):** the recent stored rows (the 30 days / 200 rows of the poll) are
+  checked against their current labels in `format=minimal` batches, and the cursor is
+  reseeded — from a position read before the check — only once every row was checked.
+**Context:** Gmail answered `None` to the state poll, so read/unread, trash and permanent
+deletes done in Gmail's web or mobile clients never reached stored mail; only Spam was
+reconciled. The developer chose the History API over polling.
+**Rejected:**
+- *Polling `format=minimal` for the recent ids every pass* (what IMAP/Outlook do): 200 gets
+  every two minutes against a quota-metered API, to learn that nothing changed.
+- *Soft-deleting a message trashed in Gmail*, like the app's own delete: it could never
+  come back when the user restores it in Gmail, and mail trashed there before it was ever
+  synced already shows under Trash.
+- *Looking each changed message up (`messages.get`) instead of folding the deltas*: exact,
+  but one request per change turns a bulk clean-up into hundreds of requests, and a lookup
+  cap would leave pages half applied.
+- *An archive mailbox*: a product change (a new view and its sync pass), not part of
+  following state.
+
+## 2026-09-30 — The compose editor also keeps table sections, captions, column widths and sub/sup/small/center
+
+**Decision:** Follow-up to "The compose editor carries tables and verbatim inline styles",
+which listed these as a limit. A formatted draft now keeps them through load → edit →
+save, with no new dependency:
+- **`thead` / `tfoot`:** each row remembers the section it was written in (a row attribute,
+  not rendered on the `<tr>`) and the table's serializer regroups the rows into `thead`,
+  `tbody`, `tfoot`, in that order. A table without body rows gets no empty `tbody`.
+- **`caption`:** an attribute of the table holding its text and its `style` / `align`,
+  written back as `<caption>` and shown read-only above the rows in the editor.
+- **`colgroup` / `col`:** an attribute of the table holding each column's `span`, `width`
+  and `style`, written back as one `<colgroup>` — and left out once it no longer adds up to
+  the table's columns.
+- **`sub`, `sup`, `small`:** three marks written with `Mark.create`.
+- **`center`:** a block node written back as `<center>`; text directly inside it becomes a
+  paragraph inside it.
+**Context:** ProseMirror's table model (`prosemirror-tables`, under Tiptap 3's table
+extension) requires a table's children to be rows, so sections, captions and column groups
+cannot be nodes of their own without replacing the table plugin.
+**Rejected:**
+- *`@tiptap/extension-subscript` / `-superscript`*: not installed; two five-line marks do
+  the same without a dependency.
+- *Turning `<center>` into a paragraph with `align="center"`*: it cannot hold a table, which
+  is what newsletters centre with it.
+- *Keeping the caption as HTML*: the editor would have to show markup it did not parse
+  through the schema.
+**Limit:** markup inside a caption is reduced to its text and the caption cannot be edited
+in the app; attributes on `thead` / `tbody` / `tfoot` themselves are dropped (those on rows
+and cells are kept); several `colgroup`s are merged into one. A `div` wrapping other blocks
+is still unwrapped, and style strings are still rewritten in normalised form.
+
+## 2026-09-30 — Outlook attachments past one request go through a draft and upload sessions
+
+**Decision:** Outlook keeps sending everything in one Graph request while every attachment
+is under 3 MB and they stay under 3 MB together. Past that — for new mail, replies
+(`createReply`), and draft create/update — the message is created as a draft without
+attachments, each attachment is added on its own (one `POST …/attachments` under 3 MB, an
+upload session from 3 MB to Graph's 150 MB maximum, in 2,949,120-byte ranges), and the
+draft is sent with `POST …/send`. A file over 150 MB is refused with `InvalidInput`,
+naming it, before any request. No new scope: `Mail.ReadWrite` + `Mail.Send` cover it.
+- **Ranges** are idempotent and are re-sent up to five times (retryable status, transport
+  error, or an answer that does not move the upload forward); the upload continues from the
+  `nextExpectedRanges` Graph reports. The final send keeps the no-retry-after-send policy.
+- **Clean-up:** when an attachment cannot be added, the upload session is cancelled and the
+  draft this client created is deleted. When the final send fails, the draft is **kept**:
+  the send may have gone through, and if it did not the draft still holds the uploaded
+  attachments; the error says so.
+- **Draft updates** replace the provider draft's attachments (list, delete, add), because
+  an upload session can only add.
+- **Memory:** attachments reach the provider as base64 text; ranges are decoded from that
+  text one at a time instead of decoding the whole file next to it.
+**Context:** Every attachment was inlined as base64 in one JSON request, with no size check,
+so an attachment over about 3 MB failed with Graph's request-too-large error. Graph documents
+"under 3 MB" for an inline attachment, 3–150 MB for an upload session (which it refuses for a
+smaller file), ranges under 4 MB, and a request limit of about 4 MB.
+**Rejected:**
+- *Always using the draft route*: three requests instead of one for the common small
+  attachment, and a changed payload for a path that works.
+- *Sending the file's MIME through `sendMail`*: still one request under the same limit.
+- *Deleting the draft after a failed send*: a 5xx does not say whether the message left.
+- *Skipping attachments that look unchanged on a draft update* (same name): a replaced file
+  of the same name would stay stale in the provider's copy, and Graph does not report the
+  content size to compare with.
+**Limit:** a draft with large attachments is uploaded again on every push of that draft; the
+base64 text itself is still built in memory by the compose layer.

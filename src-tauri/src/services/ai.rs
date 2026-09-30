@@ -5,8 +5,10 @@ use std::sync::Arc;
 const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 
 use crate::ai::ollama::OllamaClient;
-use crate::ai::openrouter::OpenRouterClient;
-use crate::ai::provider::{AIProvider, CompletionOptions, CompletionResult, ModelInfo};
+use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
+use crate::ai::provider::{
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
+};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{AiConfig, AiLogEvent, AiUsageSummary};
@@ -39,6 +41,93 @@ const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
 const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
 const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
+/// The OpenRouter embedding model that passed the dimension probe, and how it
+/// is asked for vectors (`requested` / `native`). `ai_embedding_model` is
+/// shared by every provider, so OpenRouter embeds only while it equals this.
+const OPENROUTER_EMBED_VALIDATED_PREF: &str = "openrouter_embedding_validated_model";
+const OPENROUTER_EMBED_DIMENSIONS_PREF: &str = "openrouter_embedding_dimensions";
+
+/// Every provider a config can be saved for.
+const PROVIDERS: [&str; 3] = ["llamacpp", "ollama", "openrouter"];
+/// The in-app embedding model a fresh install is configured with.
+const DEFAULT_LLAMACPP_EMBEDDING_MODEL: &str = "nomic-embed-text-v1.5-q4_k_m";
+
+/// Preference holding the chat model last saved for `provider`.
+fn remembered_model_pref(provider: &str) -> String {
+    format!("ai_model:{provider}")
+}
+
+/// Preference holding the embedding model last saved for `provider`.
+fn remembered_embedding_pref(provider: &str) -> String {
+    format!("ai_embedding_model:{provider}")
+}
+
+/// The models a provider was last saved with; `None` when nothing is known.
+/// An empty embedding model is OpenRouter's "none" (keyword-only search).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderModels {
+    pub model: Option<String>,
+    pub embedding_model: Option<String>,
+}
+
+/// Whether `provider` can compute Embeddings with `model`. OpenRouter takes a
+/// `vendor/model` id or none; the in-app runtime a catalogue embedding model.
+/// Ollama has no list to check against and namespaced ids of its own, so it
+/// refuses only what is known to be another provider's: a catalogue GGUF id
+/// or `openrouter_model`, the embedding model remembered for OpenRouter.
+fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<&str>) -> bool {
+    use crate::ai::model_catalog;
+    match provider {
+        "openrouter" => model.is_empty() || crate::ai::openrouter::is_openrouter_model_id(model),
+        "llamacpp" => model_catalog::embedding_models().any(|m| m.id == model),
+        _ => !model.is_empty() && model_catalog::find(model).is_none() && openrouter_model != Some(model),
+    }
+}
+
+fn default_embedding_model(provider: &str) -> &'static str {
+    match provider {
+        "openrouter" => "",
+        "llamacpp" => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
+        _ => crate::services::embeddings::DEFAULT_EMBEDDING_MODEL,
+    }
+}
+
+/// The embedding model a save stores, and what it replaced when it had to.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EmbeddingModelPlan {
+    pub model: String,
+    /// The model that was asked for (or stored) but `provider` cannot use.
+    pub corrected_from: Option<String>,
+}
+
+/// Decide the embedding model to store when `provider` is saved. `requested`
+/// is what the caller asked for (`None` keeps `current`, the stored one). The
+/// preference is shared by every provider, so either can be another
+/// provider's id: that is replaced by the model `remembered` for this
+/// provider, else by the provider's default.
+pub fn plan_embedding_model(
+    provider: &str,
+    requested: Option<&str>,
+    current: Option<&str>,
+    remembered: Option<&str>,
+    openrouter_model: Option<&str>,
+) -> EmbeddingModelPlan {
+    let usable = |model: &&str| embedding_model_usable(provider, model, openrouter_model);
+    let candidate = requested.or(current);
+    if let Some(model) = candidate.filter(usable) {
+        return EmbeddingModelPlan {
+            model: model.to_string(),
+            corrected_from: None,
+        };
+    }
+    EmbeddingModelPlan {
+        model: remembered
+            .filter(usable)
+            .unwrap_or_else(|| default_embedding_model(provider))
+            .to_string(),
+        corrected_from: candidate.map(str::to_string),
+    }
+}
 
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
@@ -319,12 +408,9 @@ impl AiService {
                 OllamaClient::new_with_models(Some(model), None).with_keep_alive(ollama_keep_alive),
             )),
             "openrouter" => {
-                let key = Self::load_openrouter_api_key(db)?;
-                let zdr = Self::get_config(db)?.zero_data_retention;
-                Ok(Arc::new(
-                    OpenRouterClient::new(key, model.to_string(), "nomic-embed-text".to_string())
-                        .with_zero_data_retention(zdr),
-                ))
+                let mut config = Self::get_config(db)?;
+                config.model = model.to_string();
+                Ok(Arc::new(Self::openrouter_client(db, config)?))
             }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
@@ -361,6 +447,105 @@ impl AiService {
 
     pub fn load_provider(db: &Database) -> Result<Arc<dyn AIProvider>> {
         Self::load_provider_with_model(db, None)
+    }
+
+    /// The OpenRouter client for `config`: the stored key, the data policy,
+    /// and embeddings enabled only for a model that passed the probe.
+    fn openrouter_client(db: &Database, config: AiConfig) -> Result<OpenRouterClient> {
+        let key = Self::load_openrouter_api_key(db)?;
+        let dimensions = Self::openrouter_embedding_dimensions(db, &config.embedding_model)?;
+        Ok(OpenRouterClient::new(key, config.model, config.embedding_model)
+            .with_zero_data_retention(config.zero_data_retention)
+            .with_embedding_dimensions(dimensions))
+    }
+
+    /// How `embedding_model` was validated for OpenRouter, or `None` when it
+    /// is not the model that passed the probe.
+    pub fn openrouter_embedding_dimensions(
+        db: &Database,
+        embedding_model: &str,
+    ) -> Result<Option<EmbeddingDimensions>> {
+        let validated = db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF)?;
+        let mode = db.get_preference(OPENROUTER_EMBED_DIMENSIONS_PREF)?;
+        Ok(validated_embedding(
+            embedding_model,
+            validated.as_deref(),
+            mode.as_deref(),
+        ))
+    }
+
+    /// The OpenRouter embedding model that passed the probe and may be used
+    /// without another one, if any.
+    pub fn validated_openrouter_embedding_model(db: &Database) -> Result<Option<String>> {
+        let Some(model) = db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF)? else {
+            return Ok(None);
+        };
+        Ok(Self::openrouter_embedding_dimensions(db, &model)?.map(|_| model))
+    }
+
+    /// The embedding model recorded for `provider`. Installs from before
+    /// models were remembered have one for OpenRouter all the same: the model
+    /// that passed the probe.
+    fn stored_embedding_model(db: &Database, provider: &str) -> Result<Option<String>> {
+        match db.get_preference(&remembered_embedding_pref(provider))? {
+            None if provider == "openrouter" => db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF),
+            stored => Ok(stored),
+        }
+    }
+
+    /// The models to offer for each provider when the user switches to it.
+    /// The saved provider's are the ones in use (they can change outside
+    /// `save_config`); an embedding model it cannot use does not count.
+    pub fn remembered_models(db: &Database, config: &AiConfig) -> Result<Vec<(&'static str, ProviderModels)>> {
+        let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
+        let usable =
+            |provider: &str, model: &String| embedding_model_usable(provider, model, openrouter_model.as_deref());
+        PROVIDERS
+            .into_iter()
+            .map(|provider| {
+                let stored = Self::stored_embedding_model(db, provider)?.filter(|m| usable(provider, m));
+                let models = if provider == config.provider {
+                    ProviderModels {
+                        model: Some(config.model.clone()),
+                        embedding_model: Some(config.embedding_model.clone())
+                            .filter(|m| usable(provider, m))
+                            .or(stored),
+                    }
+                } else {
+                    ProviderModels {
+                        model: db.get_preference(&remembered_model_pref(provider))?,
+                        embedding_model: stored,
+                    }
+                };
+                Ok((provider, models))
+            })
+            .collect()
+    }
+
+    /// Probe `client`'s embedding model against the email index and, when it
+    /// fits, remember it (and how to ask it for vectors) so embedding requests
+    /// are allowed for it. The probe is a paid call: what it cost is recorded.
+    /// It is not refused for budget — it is one short fixed string, and the
+    /// user asked for it from Settings.
+    pub async fn validate_openrouter_embedding_model(
+        db: &Database,
+        client: &OpenRouterClient,
+    ) -> Result<EmbeddingDimensions> {
+        let probe = client.probe_embedding().await?;
+        if probe.cost_usd > 0.0 {
+            Self::record_provider_call(
+                db,
+                client,
+                client.embedding_model_name(),
+                "embed",
+                probe.tokens,
+                0,
+                probe.cost_usd,
+            )?;
+        }
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, client.embedding_model_name())?;
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, probe.dimensions.as_pref())?;
+        Ok(probe.dimensions)
     }
 
     /// Like [`load_provider`](Self::load_provider), but selects `model_override`
@@ -400,13 +585,7 @@ impl AiService {
                 OllamaClient::new_with_models(Some(&config.model), Some(&config.embedding_model))
                     .with_keep_alive(ollama_keep_alive),
             )),
-            "openrouter" => {
-                let key = Self::load_openrouter_api_key(db)?;
-                Ok(Arc::new(
-                    OpenRouterClient::new(key, config.model, config.embedding_model)
-                        .with_zero_data_retention(config.zero_data_retention),
-                ))
-            }
+            "openrouter" => Ok(Arc::new(Self::openrouter_client(db, config)?)),
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -497,7 +676,7 @@ impl AiService {
             .unwrap_or_else(|| "qwen3.5-4b-q4_k_m".to_string());
         let embedding_model = db
             .get_preference("ai_embedding_model")?
-            .unwrap_or_else(|| "nomic-embed-text-v1.5-q4_k_m".to_string());
+            .unwrap_or_else(|| DEFAULT_LLAMACPP_EMBEDDING_MODEL.to_string());
         let api_key_id = db.get_preference("openrouter_api_key_id")?;
         let budget_str = db
             .get_preference("ai_monthly_budget")?
@@ -550,11 +729,46 @@ impl AiService {
         thinking_enabled: Option<bool>,
         zero_data_retention: Option<bool>,
     ) -> Result<()> {
+        let current_embedding = db.get_preference("ai_embedding_model")?;
+        // Leaving a provider: remember the models it was using, which may
+        // have changed outside this function (quick model selector, download
+        // auto-select) since they were last saved.
+        if let Some(previous) = db.get_preference("ai_provider")?.filter(|p| p != provider) {
+            if let Some(previous_model) = db.get_preference("ai_model")? {
+                db.set_preference(&remembered_model_pref(&previous), &previous_model)?;
+            }
+            let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
+            if let Some(previous_embedding) = current_embedding
+                .as_ref()
+                .filter(|m| embedding_model_usable(&previous, m, openrouter_model.as_deref()))
+            {
+                db.set_preference(&remembered_embedding_pref(&previous), previous_embedding)?;
+            }
+        }
+
+        let plan = plan_embedding_model(
+            provider,
+            embedding_model,
+            current_embedding.as_deref(),
+            Self::stored_embedding_model(db, provider)?.as_deref(),
+            Self::stored_embedding_model(db, "openrouter")?.as_deref(),
+        );
+        if let Some(unusable) = &plan.corrected_from {
+            crate::services::logger::log(
+                "warn",
+                "ai",
+                format!(
+                    "Embedding model {unusable:?} cannot be used with {provider}; saved {:?} instead",
+                    plan.model
+                ),
+            );
+        }
+
         db.set_preference("ai_provider", provider)?;
         db.set_preference("ai_model", model)?;
-        if let Some(embed_model) = embedding_model {
-            db.set_preference("ai_embedding_model", embed_model)?;
-        }
+        db.set_preference("ai_embedding_model", &plan.model)?;
+        db.set_preference(&remembered_model_pref(provider), model)?;
+        db.set_preference(&remembered_embedding_pref(provider), &plan.model)?;
         db.set_preference("ai_monthly_budget", &monthly_budget_usd.to_string())?;
         if let Some(thinking) = thinking_enabled {
             db.set_preference("ai_thinking_enabled", if thinking { "true" } else { "false" })?;
@@ -583,19 +797,28 @@ impl AiService {
         Ok(())
     }
 
-    fn check_budget(&self, additional_cost: f64) -> Result<()> {
-        let config = Self::get_config(&self.db)?;
+    /// Refuse a new call once the period's spend has reached the budget.
+    ///
+    /// Checked before the call, on what was actually spent: a provider only
+    /// reports a call's cost after it has been charged, so the call that
+    /// crosses the budget is recorded and its output kept, and the next one is
+    /// refused here.
+    fn ensure_budget_remaining(&self) -> Result<()> {
+        Self::ensure_budget(&self.db)
+    }
+
+    /// [`Self::ensure_budget_remaining`] without a service.
+    fn ensure_budget(db: &Database) -> Result<()> {
+        let config = Self::get_config(db)?;
         if config.monthly_budget_usd <= 0.0 {
             return Ok(());
         }
 
-        let spent = Self::get_usage_since(&self.db, config.period_start)?;
-        let total = spent.total_cost_usd + additional_cost;
-
-        if total > config.monthly_budget_usd {
+        let spent = Self::get_usage_since(db, config.period_start)?;
+        if spent.total_cost_usd >= config.monthly_budget_usd {
             Err(AppError::BudgetExceeded(format!(
-                "AI budget exceeded: ${:.4} spent + ${:.4} would exceed ${:.2} budget",
-                spent.total_cost_usd, additional_cost, config.monthly_budget_usd
+                "AI budget exceeded: ${:.4} spent of ${:.2} budget",
+                spent.total_cost_usd, config.monthly_budget_usd
             )))
         } else {
             Ok(())
@@ -663,38 +886,166 @@ impl AiService {
     }
 
     fn record_usage(&self, result: &CompletionResult, operation: &str) -> Result<()> {
+        self.record_call(
+            &result.model,
+            operation,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.cost_usd,
+        )
+    }
+
+    fn record_call(
+        &self,
+        model: &str,
+        operation: &str,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        cost_usd: f64,
+    ) -> Result<()> {
+        Self::record_provider_call(
+            &self.db,
+            self.provider.as_ref(),
+            model,
+            operation,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+        )
+    }
+
+    /// [`Self::record_call`] without a service.
+    fn record_provider_call(
+        db: &Database,
+        provider: &dyn AIProvider,
+        model: &str,
+        operation: &str,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        cost_usd: f64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        let conn = self.db.connection();
+        let conn = db.connection();
         conn.execute(
             "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                self.provider.provider_type().to_string(),
-                result.model,
+                provider.provider_type().to_string(),
+                model,
                 operation,
-                result.prompt_tokens,
-                result.completion_tokens,
-                result.cost_usd,
+                prompt_tokens,
+                completion_tokens,
+                cost_usd,
                 now,
             ],
         )?;
 
-        self.emit_ai_log(&AiLogEvent {
-            provider: self.provider.provider_type().to_string(),
-            model: result.model.clone(),
-            operation: operation.to_string(),
-            prompt_tokens: result.prompt_tokens,
-            completion_tokens: result.completion_tokens,
-            cost_usd: result.cost_usd,
-            status: "ok".to_string(),
-            timestamp: now,
-        });
+        crate::services::events::emit(
+            "ai_log",
+            &AiLogEvent {
+                provider: provider.provider_type().to_string(),
+                model: model.to_string(),
+                operation: operation.to_string(),
+                prompt_tokens,
+                completion_tokens,
+                cost_usd,
+                status: "ok".to_string(),
+                timestamp: now,
+            },
+        );
 
         Ok(())
     }
 
-    fn emit_ai_log(&self, event: &AiLogEvent) {
-        crate::services::events::emit("ai_log", event);
+    /// Record a chat call the provider charged for. A backend that reports no
+    /// cost (the local ones) adds no row.
+    fn record_stream_usage(
+        db: &Database,
+        provider: &dyn AIProvider,
+        operation: &str,
+        prompt_tokens: Option<u32>,
+        completion_tokens: Option<u32>,
+        cost_usd: Option<f64>,
+    ) -> Result<()> {
+        let Some(cost_usd) = cost_usd else {
+            return Ok(());
+        };
+        Self::record_provider_call(
+            db,
+            provider,
+            provider.model_name(),
+            operation,
+            prompt_tokens.unwrap_or(0),
+            completion_tokens.unwrap_or(0),
+            cost_usd,
+        )
+    }
+
+    /// [`AIProvider::chat_stream_with_tools`] under the budget, for callers
+    /// that hold a provider rather than an `AiService` (the chat turn):
+    /// refused before the call once the period's spend has reached the
+    /// budget, and recorded after it when the provider reports a cost.
+    pub async fn chat_stream_with_tools(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_stream_with_tools(messages, tools, on_token).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            "chat",
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result)
+    }
+
+    /// [`AIProvider::chat_with_tools`] under the budget, recorded as
+    /// `operation`; see [`Self::chat_stream_with_tools`].
+    pub async fn chat_with_tools(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+        operation: &str,
+    ) -> Result<AiMessage> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_with_tools_metered(messages, tools).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            operation,
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result.message)
+    }
+
+    /// [`AIProvider::chat_stream`] under the budget; see
+    /// [`Self::chat_stream_with_tools`].
+    pub async fn chat_stream(
+        db: &Database,
+        provider: &dyn AIProvider,
+        messages: Vec<AiMessage>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ChatStreamResult> {
+        Self::ensure_budget(db)?;
+        let result = provider.chat_stream(messages, on_token).await?;
+        Self::record_stream_usage(
+            db,
+            provider,
+            "chat",
+            result.prompt_eval_count,
+            result.eval_count,
+            result.cost_usd,
+        )?;
+        Ok(result)
     }
 
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {
@@ -720,6 +1071,7 @@ impl AiService {
                 opts.think = Some(false);
             }
         }
+        self.ensure_budget_remaining()?;
         let t = std::time::Instant::now();
         let result = if prefix.is_empty() {
             self.provider.complete(suffix, opts).await?
@@ -727,7 +1079,6 @@ impl AiService {
             self.provider.complete_with_prefix(prefix, suffix, opts).await?
         };
         let latency_ms = t.elapsed().as_millis() as u64;
-        self.check_budget(result.cost_usd)?;
         self.record_usage(&result, operation)?;
         let input = format!("{prefix}{suffix}");
         crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
@@ -745,13 +1096,29 @@ impl AiService {
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.ensure_budget_remaining()?;
         let result = self.provider.embed(text).await?;
-        self.check_budget(result.cost_usd)?;
+        // Only charged embeddings get a usage row: a local provider embeds
+        // every chunk of every email for free, and a row (plus a log event)
+        // per chunk would flood the usage table without informing the budget.
+        if result.cost_usd > 0.0 {
+            self.record_call(
+                self.provider.embedding_model_name(),
+                "embed",
+                result.tokens,
+                0,
+                result.cost_usd,
+            )?;
+        }
         Ok(result.embedding)
     }
 
     pub async fn is_available(&self) -> bool {
         self.provider.is_available().await
+    }
+
+    pub async fn is_embedding_available(&self) -> bool {
+        self.provider.is_embedding_available().await
     }
 
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>> {
@@ -1034,6 +1401,514 @@ mod provider_tests {
                 .model_name(),
             "qwen3.5-4b-q8_0"
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::ai::provider::FakeAiProvider;
+
+    fn service_with_budget(budget: &str, fake: FakeAiProvider) -> (AiService, Arc<FakeAiProvider>) {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.set_preference("ai_monthly_budget", budget).unwrap();
+        let fake = Arc::new(fake);
+        (AiService::with_provider(db, fake.clone()), fake)
+    }
+
+    fn paid_completion(text: &str, cost_usd: f64) -> CompletionResult {
+        CompletionResult {
+            text: text.to_string(),
+            cost_usd,
+            model: "fake-model".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// A call that crosses the budget was already paid for: its cost is
+    /// recorded and its output returned, not thrown away unrecorded.
+    #[tokio::test]
+    async fn a_completion_that_crosses_the_budget_is_recorded_and_returned() {
+        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("answer", 1.5));
+
+        let text = svc.complete("q", "test", None).await.expect("paid output is kept");
+
+        assert_eq!(text, "answer");
+        let usage = AiService::usage_summary(&svc.db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 1.5).abs() < 1e-9);
+    }
+
+    /// Once the period's spend has reached the budget, the next call is
+    /// refused before it reaches the provider.
+    #[tokio::test]
+    async fn a_completion_is_refused_before_the_call_once_the_budget_is_spent() {
+        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("first", 1.0));
+        svc.complete("q1", "test", None).await.unwrap();
+
+        let second = svc.complete("q2", "test", None).await;
+
+        assert!(matches!(second, Err(AppError::BudgetExceeded(_))), "got {second:?}");
+        assert_eq!(fake.completion_calls().len(), 1, "no paid call past the budget");
+    }
+
+    #[tokio::test]
+    async fn a_paid_embedding_is_recorded() {
+        let (svc, _fake) = service_with_budget("1.0", FakeAiProvider::new().with_embedding_cost(0.25));
+
+        svc.embed("text").await.unwrap();
+
+        let usage = AiService::usage_summary(&svc.db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn an_embedding_is_refused_before_the_call_once_the_budget_is_spent() {
+        let (svc, fake) = service_with_budget("0.5", FakeAiProvider::new().with_embedding_cost(0.5));
+        svc.embed("a").await.unwrap();
+
+        assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
+        assert_eq!(fake.embed_calls().len(), 1);
+    }
+
+    // ── OpenRouter embeddings ───────────────────────────────────────────────
+
+    /// A mock OpenRouter whose every embedding has `len` floats and costs
+    /// `cost` USD, and a client for `vendor/embed` pointed at it.
+    async fn openrouter_embedding(len: usize, cost: f64) -> (wiremock::MockServer, OpenRouterClient) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "embedding": vec![0.5_f32; len] }],
+                "usage": { "prompt_tokens": 12, "total_tokens": 12, "cost": cost }
+            })))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into())
+            .with_base_url(server.uri());
+        (server, client)
+    }
+
+    #[tokio::test]
+    async fn an_openrouter_embedding_records_what_the_provider_charged() {
+        let (_server, client) = openrouter_embedding(768, 0.0004).await;
+        let db = Arc::new(db_with_budget("1.0"));
+        let svc = AiService::with_provider(
+            db.clone(),
+            Arc::new(client.with_embedding_dimensions(Some(EmbeddingDimensions::Requested))),
+        );
+
+        assert_eq!(svc.embed("mail text").await.unwrap().len(), 768);
+
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert_eq!(usage.total_prompt_tokens, 12);
+        assert!((usage.total_cost_usd - 0.0004).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn an_openrouter_embedding_is_not_requested_once_the_budget_is_spent() {
+        let (server, client) = openrouter_embedding(768, 0.5).await;
+        let db = Arc::new(db_with_budget("0.5"));
+        let svc = AiService::with_provider(
+            db,
+            Arc::new(client.with_embedding_dimensions(Some(EmbeddingDimensions::Native))),
+        );
+        svc.embed("a").await.unwrap();
+
+        assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
+        assert_eq!(server.received_requests().await.unwrap_or_default().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_passes_the_probe_is_remembered_and_its_cost_recorded() {
+        let (_server, client) = openrouter_embedding(768, 0.0001).await;
+        let db = db_with_budget("1.0");
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            None
+        );
+
+        let mode = AiService::validate_openrouter_embedding_model(&db, &client)
+            .await
+            .unwrap();
+
+        assert_eq!(mode, EmbeddingDimensions::Requested);
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            Some(EmbeddingDimensions::Requested)
+        );
+        // Validation is per model: another id is not covered by it.
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/other").unwrap(),
+            None
+        );
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.0001).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn a_model_that_fails_the_probe_is_not_remembered() {
+        let (_server, client) = openrouter_embedding(1536, 0.0).await;
+        let db = db_with_budget("0");
+
+        let err = AiService::validate_openrouter_embedding_model(&db, &client)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, AppError::InvalidInput(msg) if msg.contains("1536")),
+            "{err:?}"
+        );
+        assert_eq!(
+            AiService::openrouter_embedding_dimensions(&db, "vendor/embed").unwrap(),
+            None
+        );
+    }
+
+    /// The embedding preference is shared by every provider: the local model
+    /// id it holds by default must not be sent to OpenRouter.
+    #[test]
+    fn the_loaded_openrouter_client_embeds_only_with_a_validated_model() {
+        let db = db_with_budget("0");
+        db.set_preference("ai_provider", "openrouter").unwrap();
+        db.set_preference(OPENROUTER_DEV_KEY_PREF, "key").unwrap();
+        db.set_preference("openrouter_api_key_id", OPENROUTER_KEY_ID).unwrap();
+
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "native").unwrap();
+        assert!(AiService::load_provider(&db).unwrap().embedding_configured());
+        assert!(AiService::build_provider(&db, "openrouter", "vendor/other-chat")
+            .unwrap()
+            .embedding_configured());
+
+        db.set_preference("ai_embedding_model", "vendor/changed").unwrap();
+        assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
+    }
+
+    /// No budget (0) never refuses, whatever was spent.
+    #[tokio::test]
+    async fn no_budget_never_refuses() {
+        let (svc, fake) = service_with_budget("0", FakeAiProvider::new());
+        fake.push_completion_result(paid_completion("a", 5.0));
+        svc.complete("q1", "test", None).await.unwrap();
+        assert!(svc.complete("q2", "test", None).await.is_ok());
+    }
+
+    // ── Streamed chat turns ─────────────────────────────────────────────────
+
+    /// A mock OpenRouter whose every chat reply costs `cost` USD, and a client
+    /// pointed at it.
+    async fn openrouter_charging(cost: f64) -> (wiremock::MockServer, OpenRouterClient) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let body = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"Paid.\"}},\"finish_reason\":\"stop\"}}]}}\n\n\
+             data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":300,\"completion_tokens\":4,\"cost\":{cost}}}}}\n\n\
+             data: [DONE]\n\n"
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into())
+            .with_base_url(server.uri());
+        (server, client)
+    }
+
+    fn question() -> Vec<AiMessage> {
+        vec![AiMessage {
+            role: "user".to_string(),
+            content: "Is the invoice paid?".to_string(),
+            tool_calls: None,
+        }]
+    }
+
+    fn db_with_budget(budget: &str) -> Database {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", budget).unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn a_streamed_tool_round_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let (_server, client) = openrouter_charging(0.002).await;
+
+        let result = AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        assert_eq!(result.message.content, "Paid.");
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.002).abs() < 1e-9);
+        assert_eq!(usage.total_prompt_tokens, 300);
+        assert_eq!(usage.total_completion_tokens, 4);
+        let (provider, model, operation): (String, String, String) = db
+            .reader()
+            .query_row("SELECT provider, model, operation FROM ai_usage", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(
+            (provider.as_str(), model.as_str(), operation.as_str()),
+            ("openrouter", "vendor/model", "chat")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_streamed_answer_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let (_server, client) = openrouter_charging(0.003).await;
+
+        AiService::chat_stream(&db, &client, question(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.003).abs() < 1e-9);
+    }
+
+    /// The streamed call that crosses the budget is kept and recorded; the
+    /// next one never reaches the provider.
+    #[tokio::test]
+    async fn a_streamed_turn_is_refused_before_the_call_once_the_budget_is_spent() {
+        let db = db_with_budget("0.5");
+        let (server, client) = openrouter_charging(0.5).await;
+        AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        let tools = AiService::chat_stream_with_tools(&db, &client, question(), Vec::new(), Box::new(|_| true)).await;
+        let plain = AiService::chat_stream(&db, &client, question(), Box::new(|_| true)).await;
+
+        assert!(matches!(tools, Err(AppError::BudgetExceeded(_))), "got {tools:?}");
+        assert!(matches!(plain, Err(AppError::BudgetExceeded(_))), "got {plain:?}");
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "no paid call past the budget"
+        );
+    }
+
+    /// A local backend reports no cost: its chat rounds add no usage rows.
+    #[tokio::test]
+    async fn a_stream_without_a_reported_cost_records_nothing() {
+        let db = db_with_budget("1.0");
+        let fake = FakeAiProvider::new();
+        fake.push_chat_response("local answer");
+
+        AiService::chat_stream(&db, &fake, question(), Box::new(|_| true))
+            .await
+            .unwrap();
+        AiService::chat_stream_with_tools(&db, &fake, question(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+
+        assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
+    }
+}
+
+#[cfg(test)]
+mod provider_models_tests {
+    use super::*;
+    use crate::db::Database;
+
+    const GGUF_EMBED: &str = DEFAULT_LLAMACPP_EMBEDDING_MODEL;
+
+    fn plan(provider: &str, requested: Option<&str>, current: Option<&str>, remembered: Option<&str>) -> String {
+        plan_embedding_model(provider, requested, current, remembered, Some("vendor/embed")).model
+    }
+
+    #[test]
+    fn a_model_the_provider_can_use_is_kept() {
+        assert_eq!(
+            plan("openrouter", Some("vendor/embed"), Some(GGUF_EMBED), None),
+            "vendor/embed"
+        );
+        assert_eq!(
+            plan("openrouter", Some(""), Some("vendor/embed"), Some("vendor/embed")),
+            ""
+        );
+        assert_eq!(
+            plan("llamacpp", Some(GGUF_EMBED), Some("vendor/embed"), None),
+            GGUF_EMBED
+        );
+        assert_eq!(plan("ollama", Some("bge-m3"), None, None), "bge-m3");
+        // Ollama has namespaced models of its own: a slash alone is not OpenRouter's.
+        assert_eq!(plan("ollama", Some("someone/bge-m3"), None, None), "someone/bge-m3");
+        // No model requested keeps the stored one.
+        assert_eq!(plan("ollama", None, Some("bge-m3"), Some("other")), "bge-m3");
+    }
+
+    #[test]
+    fn a_model_of_another_provider_is_replaced_by_the_remembered_one() {
+        assert_eq!(
+            plan("llamacpp", None, Some("vendor/embed"), Some(GGUF_EMBED)),
+            GGUF_EMBED
+        );
+        assert_eq!(plan("ollama", None, Some("vendor/embed"), Some("bge-m3")), "bge-m3");
+        assert_eq!(plan("ollama", Some(GGUF_EMBED), None, Some("bge-m3")), "bge-m3");
+        assert_eq!(
+            plan("openrouter", None, Some(GGUF_EMBED), Some("vendor/embed")),
+            "vendor/embed"
+        );
+        assert_eq!(plan("openrouter", Some("bge-m3"), None, Some("")), "");
+    }
+
+    #[test]
+    fn without_a_usable_remembered_model_the_provider_default_is_used() {
+        assert_eq!(plan("llamacpp", None, Some("vendor/embed"), None), GGUF_EMBED);
+        assert_eq!(plan("llamacpp", Some("bge-m3"), None, Some("vendor/embed")), GGUF_EMBED);
+        assert_eq!(plan("llamacpp", Some(""), None, None), GGUF_EMBED);
+        assert_eq!(plan("ollama", None, Some("vendor/embed"), None), "nomic-embed-text");
+        assert_eq!(plan("ollama", Some(""), None, Some(GGUF_EMBED)), "nomic-embed-text");
+        assert_eq!(plan("openrouter", None, Some(GGUF_EMBED), None), "");
+        assert_eq!(plan("openrouter", None, None, Some("bge-m3")), "");
+    }
+
+    #[test]
+    fn the_plan_says_what_it_corrected() {
+        let kept = plan_embedding_model("ollama", Some("bge-m3"), None, None, None);
+        assert_eq!(kept.corrected_from, None);
+        let fixed = plan_embedding_model("llamacpp", None, Some("vendor/embed"), None, None);
+        assert_eq!(fixed.corrected_from.as_deref(), Some("vendor/embed"));
+        // Nothing stored and nothing requested: a default, not a correction.
+        let fresh = plan_embedding_model("openrouter", None, None, None, None);
+        assert_eq!(fresh.corrected_from, None);
+    }
+
+    fn save(db: &Database, provider: &str, model: &str, embedding: Option<&str>) {
+        AiService::save_config(db, provider, model, embedding, None, 0.0, None, None).unwrap();
+    }
+
+    fn remembered(db: &Database, provider: &str) -> ProviderModels {
+        let config = AiService::get_config(db).unwrap();
+        AiService::remembered_models(db, &config)
+            .unwrap()
+            .into_iter()
+            .find(|(p, _)| *p == provider)
+            .unwrap()
+            .1
+    }
+
+    fn models(model: Option<&str>, embedding_model: Option<&str>) -> ProviderModels {
+        ProviderModels {
+            model: model.map(str::to_string),
+            embedding_model: embedding_model.map(str::to_string),
+        }
+    }
+
+    /// The quick switcher saves a provider without naming an embedding model.
+    #[test]
+    fn saving_another_provider_never_keeps_an_embedding_model_it_cannot_use() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "openrouter", "vendor/model", Some("vendor/embed"));
+
+        save(&db, "llamacpp", "chat-gguf", None);
+
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, GGUF_EMBED);
+    }
+
+    #[test]
+    fn each_provider_gets_its_own_models_back() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "openrouter", "vendor/model", Some("vendor/embed"));
+        save(&db, "ollama", "ollama-chat", Some("bge-m3"));
+        save(&db, "llamacpp", "chat-gguf", Some(GGUF_EMBED));
+
+        assert_eq!(
+            remembered(&db, "openrouter"),
+            models(Some("vendor/model"), Some("vendor/embed"))
+        );
+        assert_eq!(remembered(&db, "ollama"), models(Some("ollama-chat"), Some("bge-m3")));
+        assert_eq!(remembered(&db, "llamacpp"), models(Some("chat-gguf"), Some(GGUF_EMBED)));
+
+        save(&db, "ollama", "ollama-chat", None);
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, "bge-m3");
+    }
+
+    #[test]
+    fn choosing_no_openrouter_embedding_model_is_remembered_as_none() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        save(&db, "openrouter", "vendor/model", Some(""));
+        save(&db, "llamacpp", "chat-gguf", Some(GGUF_EMBED));
+
+        assert_eq!(remembered(&db, "openrouter").embedding_model.as_deref(), Some(""));
+    }
+
+    /// A model changed outside Settings (quick model selector, download
+    /// auto-select) is still the one that comes back.
+    #[test]
+    fn the_models_in_use_are_remembered_when_the_provider_is_left() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "ollama", "ollama-chat", Some("bge-m3"));
+        db.set_preference("ai_model", "ollama-other").unwrap();
+
+        save(&db, "openrouter", "vendor/model", Some(""));
+
+        assert_eq!(remembered(&db, "ollama"), models(Some("ollama-other"), Some("bge-m3")));
+    }
+
+    /// An install from before models were remembered: the state the quick
+    /// switcher could leave behind, with nothing recorded per provider.
+    #[test]
+    fn an_existing_install_is_seeded_from_what_it_already_stores() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_provider", "llamacpp").unwrap();
+        db.set_preference("ai_model", "chat-gguf").unwrap();
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "requested")
+            .unwrap();
+
+        // The saved provider's chat model counts; its embedding model does
+        // not, because the in-app runtime cannot use it.
+        assert_eq!(remembered(&db, "llamacpp"), models(Some("chat-gguf"), None));
+        assert_eq!(remembered(&db, "openrouter"), models(None, Some("vendor/embed")));
+        assert_eq!(remembered(&db, "ollama"), models(None, None));
+        assert_eq!(
+            AiService::validated_openrouter_embedding_model(&db).unwrap().as_deref(),
+            Some("vendor/embed")
+        );
+
+        // Saving that config again repairs it.
+        save(&db, "llamacpp", "chat-gguf", Some("vendor/embed"));
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, GGUF_EMBED);
+        assert_eq!(
+            remembered(&db, "openrouter").embedding_model.as_deref(),
+            Some("vendor/embed")
+        );
+    }
+
+    #[test]
+    fn a_validated_model_without_its_dimension_mode_is_not_reported() {
+        let db = Database::new_for_testing().unwrap();
+        assert_eq!(AiService::validated_openrouter_embedding_model(&db).unwrap(), None);
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        assert_eq!(AiService::validated_openrouter_embedding_model(&db).unwrap(), None);
     }
 }
 

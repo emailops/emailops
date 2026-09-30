@@ -2,10 +2,14 @@
 // Usage: node sweep.mjs <run_dir>   (env TAURI_WEBDRIVER_PORT, default 4445)
 // Writes <run_dir>/sweep/*.png and <run_dir>/sweep/results.json
 import { remote } from 'webdriverio';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const runDir = process.argv[2];
+// The demo DB of the instance under test, for the side effects a step must prove (a saved draft).
+const db = path.join(fs.readFileSync(path.join(runDir, 'data_dir'), 'utf8').trim(), 'emailops.db');
+const sql = (query) => { const txt = execFileSync('sqlite3', ['-json', db, query], { encoding: 'utf8' }); return txt.trim() ? JSON.parse(txt) : []; };
 const out = path.join(runDir, 'sweep'); fs.mkdirSync(out, { recursive: true });
 const port = Number(process.env.TAURI_WEBDRIVER_PORT || 4445);
 const b = await remote({ hostname: '127.0.0.1', port, path: '/', capabilities: {}, logLevel: 'error' });
@@ -83,6 +87,58 @@ await step('Búsqueda', 'limpiar', 'la ✕ vacía el cuadro y restaura la lista'
   await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1500);
   const v = await js(() => document.querySelector('input[placeholder^="Search…"]').value);
   return ok(v === '' && await rows() > 5, `${await rows()} filas`, `valor "${v}", ${await rows()} filas`);
+});
+
+// ---------- Correo de verificación (scripts/generate_demo_db.py, insert_verification_fixtures) ----------
+const SEARCH = 'input[placeholder^="Search…"]';
+const clearSearch = async () => { await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1200); };
+await step('Búsqueda', 'correo en la papelera fuera de los resultados', 'buscar «Larkspur» lista solo la corrección: el presupuesto que se envió a la papelera no aparece', async () => {
+  await type(SEARCH, 'Larkspur'); await enter(); await sleep(1500);
+  const found = await js(() => [...document.querySelectorAll('div[role="button"]')].map((r) => r.innerText.replace(/\n/g, ' | ').slice(0, 90)));
+  return ok(found.length === 1 && /Corrected Larkspur Freight renewal quote/.test(found[0]), `1 fila: ${found[0]}`, `${found.length} filas: ${found.join(' // ') || 'ninguna (¿BD demo sin las fixtures de verificación?)'}`);
+});
+await step('Adjuntos', 'tipo peligroso pide confirmación', 'abrir un acceso directo (.webloc) guardado pide confirmación con su nombre y su tipo, y Cancel cierra sin abrir nada', async () => {
+  await click('//div[@role="button"][contains(., "Corrected Larkspur Freight renewal quote")]'); await sleep(1500);
+  const chip = 'button[title^="larkspur-client-portal.webloc"]';
+  if (!(await exists(chip))) return 'FAIL: el correo no muestra el adjunto larkspur-client-portal.webloc';
+  await click(chip); await sleep(1200);
+  const text = await js(() => { const c = document.querySelector('[data-testid="cancel-open-attachment"]'); return c ? (c.closest('.fixed') || c.parentElement.parentElement).innerText : null; });
+  if (text === null) return 'FAIL: no aparece el diálogo de confirmación';
+  const named = text.includes('larkspur-client-portal.webloc') && /shortcut/i.test(text) && await exists('[data-testid="confirm-open-attachment"]');
+  // Never "Open anyway": that hands the file to the OS.
+  await click('[data-testid="cancel-open-attachment"]'); await sleep(800);
+  const closed = !(await exists('[data-testid="cancel-open-attachment"]'));
+  const opened = /Opening attachment 'larkspur-client-portal/.test(await bodyText());
+  return ok(named && closed && !opened, 'diálogo con nombre y tipo; Cancel lo cierra', `nombre y tipo=${named}, cerrado=${closed}, abierto=${opened}; texto: ${text.replace(/\n/g, ' ').slice(0, 160)}`);
+});
+await step('Adjuntos', 'página web en vista previa aislada', 'un adjunto HTML se abre dentro de la app, en un iframe con sandbox vacío, sin diálogo ni aplicación externa', async () => {
+  const chip = 'button[title^="larkspur-renewal-terms.html"]';
+  if (!(await exists(chip))) return 'FAIL: el correo no muestra el adjunto larkspur-renewal-terms.html';
+  await click(chip); await sleep(1500);
+  const frame = await js(() => { const i = document.querySelector('iframe[title="larkspur-renewal-terms.html"]'); return i ? { sandbox: i.getAttribute('sandbox'), src: (i.getAttribute('src') || '').slice(0, 22) } : null; });
+  const dialog = await exists('[data-testid="cancel-open-attachment"]');
+  await js(() => document.querySelector('button[title="Close"]')?.click()); await sleep(800);
+  return ok(!!frame && frame.sandbox === '' && frame.src === 'data:text/html;base64,' && !dialog, JSON.stringify(frame), `iframe=${JSON.stringify(frame)}, diálogo=${dialog}`);
+});
+await step('Inbox', 'imágenes remotas bloqueadas', 'un correo con una imagen remota muestra el aviso y «Show images», y el cuerpo se pinta sin la URL de la imagen', async () => {
+  await type(SEARCH, 'Harborlight'); await enter(); await sleep(1500);
+  if (!(await exists('//div[@role="button"][contains(., "Harborlight Weekly")]'))) { await clearSearch(); return 'FAIL: no hay correo de Harborlight Weekly (¿BD demo sin las fixtures de verificación?)'; }
+  await click('//div[@role="button"][contains(., "Harborlight Weekly")]'); await sleep(1500);
+  const r = await js(() => {
+    const doc = document.querySelector('iframe[title="Email content"]')?.getAttribute('srcdoc') || '';
+    return { banner: /Remote images were blocked/.test(document.body.innerText), show: [...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Show images'),
+      img: (doc.match(/<img[^>]*>/) || [''])[0], imgSrc: (doc.match(/img-src[^";]*/) || [''])[0] };
+  });
+  // Never "Show images": that would ask the sender's server for the picture.
+  await click('button=Back'); await sleep(800); await clearSearch();
+  return ok(r.banner && r.show && r.img !== '' && !/\ssrc=/.test(r.img) && !/https?:/.test(r.imgSrc), JSON.stringify(r), JSON.stringify(r));
+});
+await step('Junk', 'chip en la bandeja', 'el aviso que el usuario marcó como no deseado lleva su chip «phishing» en la fila; el aviso legítimo del mismo proveedor no', async () => {
+  await type(SEARCH, 'Tessellate'); await enter(); await sleep(1500);
+  const found = await js(() => [...document.querySelectorAll('div[role="button"]')].map((r) => ({ subject: r.innerText.replace(/\n/g, ' | ').slice(0, 200), chip: r.querySelector('span[title^="junk:"]')?.title || null })));
+  await clearSearch();
+  const marked = found.find((r) => /payment failed, plan suspended/.test(r.subject)), genuine = found.find((r) => /plan renews in March/.test(r.subject));
+  return ok(!!marked && !!genuine && marked.chip === 'junk: phishing' && genuine.chip === null, `marcado: ${marked?.chip}; legítimo: sin chip`, JSON.stringify(found));
 });
 
 // ---------- Cuentas ----------
@@ -210,6 +266,29 @@ await step('Compose', 'descartar borrador', 'Continue editing + Discard elimina 
   await click('button=Inbox'); await sleep(600); await click('button=Drafts'); await sleep(1200);
   return ok(!/Verification run|hello from the verifier/.test(await bodyText()), 'borradores del run eliminados', 'el borrador sigue en Drafts');
 });
+await step('Compose', 'borrador con tabla', 'abrir un borrador con una tabla la conserva en el editor; editar una celda guarda el borrador con la tabla intacta', async () => {
+  const draftHtml = () => sql("SELECT body_html FROM drafts WHERE subject = 'Milestone dates (table)'")[0]?.body_html ?? null;
+  const opened = await js(() => { const row = [...document.querySelectorAll('[data-testid="draft-row"]')].find((r) => /Milestone dates \(table\)/.test(r.textContent)); const b = row && [...row.querySelectorAll('button')].find((x) => (x.title || x.textContent.trim()) === 'Continue editing'); if (!b) return false; b.click(); return true; });
+  if (!opened) return 'FAIL: no hay borrador «Milestone dates (table)» en Drafts (¿BD demo sin las fixtures de verificación?)';
+  await sleep(1500);
+  const table = () => js(() => { const t = document.querySelector('[contenteditable="true"] table'); return t ? { rows: t.querySelectorAll('tr').length, cells: [...t.querySelectorAll('th,td')].map((c) => c.textContent) } : null; });
+  const waitSaved = async (want) => { for (let i = 0; i < 20; i++) { const h = draftHtml() || ''; if (h.includes('(tbc)') === want) return h; await sleep(500); } return draftHtml() || ''; };
+  const closeTab = async () => { await js(() => [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'Close tab')?.click()); await sleep(800); };
+  const before = await table();
+  if (!before || before.rows !== 3 || before.cells.join('|') !== 'Milestone|Date|M6|14 March|M7|28 March') { await closeTab(); return `FAIL: el editor no muestra la tabla del borrador: ${JSON.stringify(before)}`; }
+  // Caret at the end of a cell, then typed text: the DOM mutations the editor listens to.
+  await js(() => { const ed = document.querySelector('[contenteditable="true"]'); const cell = [...ed.querySelectorAll('td')].find((c) => c.textContent === '14 March'); ed.focus(); const r = document.createRange(); r.selectNodeContents(cell.querySelector('p') || cell); r.collapse(false); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand('insertText', false, ' (tbc)'); });
+  const edited = await table();
+  const saved = await waitSaved(true);
+  // Put the draft back as it was, so the next run starts from the same text.
+  await js(() => { for (let i = 0; i < ' (tbc)'.length; i++) document.execCommand('delete'); });
+  const restored = await waitSaved(false);
+  await closeTab();
+  const kept = edited?.rows === 3 && edited.cells[3] === '14 March (tbc)';
+  const savedOk = saved.includes('14 March (tbc)') && (saved.match(/<tr>/g) || []).length === 3 && saved.includes('<th');
+  return ok(kept && savedOk && !restored.includes('(tbc)') && restored.includes('<table>'), 'tabla de 3 filas en el editor y en el borrador guardado tras editar una celda',
+    `editor=${JSON.stringify(edited)}, guardado con tabla=${savedOk}, restaurado=${!restored.includes('(tbc)')}`);
+});
 
 // ---------- Settings ----------
 await step('Ajustes', 'abrir', 'el diálogo de ajustes abre con sus pestañas', async () => {
@@ -228,6 +307,41 @@ for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 
     return ok(t.length > 100, t.slice(0, 100), 'contenido vacío');
   });
 }
+// ---------- IA: proveedores y modelos (dentro de Ajustes → AI Backend) ----------
+// Elegir una pestaña de proveedor solo cambia el formulario; nada se guarda sin «Save», que ningún paso pulsa.
+const settingsBox = () => js(() => { const d = document.querySelector('button[title="Close settings"]')?.closest('.fixed'); if (!d) return null;
+  return { text: d.innerText, fields: [...d.querySelectorAll('input,select')].map((i) => ({ tag: i.tagName, type: i.type, label: i.getAttribute('aria-label'), placeholder: i.placeholder, value: i.value, options: i.tagName === 'SELECT' ? [...i.options].map((o) => o.textContent) : null })) }; });
+const providerTab = (label) => js((l) => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim().startsWith(l) && x.querySelector('div')); if (!b) return false; b.click(); return true; }, label);
+await step('IA', 'pestaña OpenRouter', 'OpenRouter ofrece el modelo de chat ya relleno con el predeterminado, el selector de Embeddings con «None» y los recomendados primero, y el presupuesto de contexto; no ofrece «Keep model loaded»', async () => {
+  await js(() => [...document.querySelectorAll('button')].filter((x) => x.textContent.includes('AI Backend')).pop()?.click()); await sleep(1200);
+  // With a key the tab asks OpenRouter for its model list. `verify.sh launch` starts the instance without one; refuse to go on if it has one anyway.
+  const hasKey = await js(async () => (await window.__TAURI_INTERNALS__.invoke('get_ai_config')).hasApiKey);
+  if (hasKey) return 'FAIL: la instancia tiene una clave de OpenRouter; no se abre la pestaña para no llamar al proveedor remoto';
+  if (!(await providerTab('OpenRouter'))) return 'FAIL: no hay pestaña OpenRouter en AI Backend';
+  await sleep(1200);
+  const box = await settingsBox(); if (!box) return 'FAIL: el diálogo de Ajustes no está abierto';
+  const chat = box.fields.find((f) => f.type === 'text' && f.placeholder.startsWith('e.g.'));
+  const embed = box.fields.find((f) => f.label === 'Embedding Model');
+  const budget = box.fields.find((f) => f.label === 'Context budget (tokens)');
+  const recommended = (embed?.options || []).slice(1).filter((o) => /— recommended/.test(o)).length;
+  const firstOther = (embed?.options || []).slice(1).findIndex((o) => !/— recommended/.test(o));
+  const problems = [];
+  if (!chat || !/^[a-z0-9.-]+\/[a-z0-9.:-]+$/i.test(chat.value)) problems.push(`modelo de chat sin predeterminado (${chat?.value})`);
+  if (!embed || embed.options[0] !== 'None — keyword search only') problems.push(`primera opción de Embeddings: ${embed?.options?.[0]}`);
+  if (recommended < 2 || (firstOther !== -1 && firstOther < recommended)) problems.push(`recomendados=${recommended}, primera no recomendada en ${firstOther}`);
+  if (embed && embed.value !== '') problems.push(`Embeddings preseleccionado: ${embed.value}`);
+  if (!budget || !(Number(budget.value) > 0)) problems.push(`presupuesto de contexto: ${budget?.value}`);
+  if (/Keep model loaded/.test(box.text)) problems.push('«Keep model loaded» visible en OpenRouter');
+  return ok(!problems.length, `chat ${chat?.value}; Embeddings: None + ${recommended} recomendados; presupuesto ${budget?.value}; sin Keep model loaded`, problems.join('; '));
+});
+await step('IA', 'pestaña In-app', 'al volver a In-app aparece «Keep model loaded» y desaparece el presupuesto de contexto; el proveedor guardado no ha cambiado', async () => {
+  if (!(await providerTab('In-app'))) return 'FAIL: no hay pestaña In-app en AI Backend';
+  await sleep(1200);
+  const box = await settingsBox(); if (!box) return 'FAIL: el diálogo de Ajustes no está abierto';
+  const saved = sql("SELECT value FROM user_preferences WHERE key = 'ai_provider'")[0]?.value;
+  const keep = /Keep model loaded \(minutes\)/.test(box.text), budget = /Context budget/.test(box.text);
+  return ok(keep && !budget && saved === 'llamacpp', `Keep model loaded visible; proveedor guardado: ${saved}`, `keepAlive=${keep}, presupuesto=${budget}, proveedor guardado=${saved}`);
+});
 await step('Ajustes', 'Escape cierra el diálogo', 'como en el resto de modales, Escape cierra Ajustes', async () => {
   await b.keys('Escape'); await sleep(800);
   return ok(!(await exists('aria/Close settings')), 'cerrado con Escape', 'Escape no cierra el diálogo de Ajustes (el resto de modales sí)');
@@ -235,6 +349,16 @@ await step('Ajustes', 'Escape cierra el diálogo', 'como en el resto de modales,
 await step('Ajustes', 'cerrar', 'el botón Close settings cierra el diálogo', async () => {
   if (await exists('aria/Close settings')) await click('aria/Close settings');
   await sleep(1000); return ok(!(await exists('aria/Close settings')), 'cerrado', 'el diálogo sigue abierto');
+});
+
+await step('IA', 'barra de Logs', 'la barra de estado muestra el backend como texto y solo ofrece cambiar el modelo: el backend se cambia en Ajustes', async () => {
+  const bar = await js(() => { const label = document.querySelector('[data-testid="ai-backend"]'); if (!label) return null; const box = label.parentElement;
+    return { backend: label.textContent.trim(), tag: label.tagName, selects: [...box.querySelectorAll('select')].map((x) => ({ label: x.getAttribute('aria-label'), options: [...x.options].map((o) => o.value) })) }; });
+  if (!bar) return 'FAIL: la barra de Logs no muestra el backend (data-testid="ai-backend")';
+  const providerNames = /^(llamacpp|ollama|openrouter|Embedded|Ollama|OpenRouter)$/;
+  const backendSelect = bar.selects.some((x) => x.options.some((o) => providerNames.test(o)));
+  const modelOnly = bar.selects.length === 1 && bar.selects[0].label === 'AI Model';
+  return ok(bar.backend === 'Embedded' && bar.tag === 'SPAN' && !backendSelect && modelOnly, `backend «${bar.backend}» como texto; selector: ${bar.selects.map((x) => x.label).join(', ')}`, JSON.stringify(bar));
 });
 
 // ---------- Skills (experimental, apagado por defecto) ----------

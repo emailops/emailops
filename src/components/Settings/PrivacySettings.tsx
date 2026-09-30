@@ -196,20 +196,41 @@ export function PrivacySettings() {
   const [hasPassword, setHasPassword] = useState(false);
   const [allowRemoteContent, setAllowRemoteContent] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'set' | 'change' | 'remove' | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load on mount only
   useEffect(() => {
-    Promise.all([api.hasMainPassword(), api.getPref('privacy.allow_remote_content')]).then(([hasPw, remoteVal]) => {
-      setHasPassword(hasPw);
-      setAllowRemoteContent(remoteVal === 'true');
-      setIsLoading(false);
-    });
+    Promise.all([api.hasMainPassword(), api.getPref('privacy.allow_remote_content')])
+      .then(([hasPw, remoteVal]) => {
+        setHasPassword(hasPw);
+        setAllowRemoteContent(remoteVal === 'true');
+      })
+      .catch((e) => {
+        // Without the stored values the toggles would show guesses, so the
+        // panel shows the failure instead of controls.
+        setLoadError(errorText(e));
+        addLog('error', 'system', `Failed to load privacy settings: ${errorText(e)}`);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
-  const handleToggleRemoteContent = useCallback(async (value: boolean) => {
-    setAllowRemoteContent(value);
-    await api.setPref('privacy.allow_remote_content', value ? 'true' : 'false');
-  }, []);
+  const handleToggleRemoteContent = useCallback(
+    async (value: boolean) => {
+      setSaveError(null);
+      setAllowRemoteContent(value);
+      try {
+        await api.setPref('privacy.allow_remote_content', value ? 'true' : 'false');
+      } catch (e) {
+        // Not saved: show the setting that is actually in effect.
+        setAllowRemoteContent(!value);
+        setSaveError(errorText(e));
+        addLog('error', 'system', `Failed to save remote content setting: ${errorText(e)}`);
+      }
+    },
+    [addLog],
+  );
 
   const handlePasswordSuccess = useCallback(() => {
     setDialog(null);
@@ -231,79 +252,97 @@ export function PrivacySettings() {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="flex-1 px-6 py-5">
+        <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">
+          {t('settings:privacy.loadFailed', { error: loadError })}
+        </div>
+      </div>
+    );
+  }
+
   // Deliberately not <SettingsPanel>: this panel wants wider spacing between
-  // its sections (space-y-8) than the shared chrome's space-y-6.
+  // its sections (space-y-8) than the shared chrome's space-y-6. The save
+  // error sits above the scroll container so it is visible without scrolling.
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-5 space-y-8">
-      {/* Password ─────────────────────────────────────────────────────────── */}
-      <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.password')}</h3>
-        <p className="text-xs text-gray-500 mb-3">{t('settings:privacy.passwordHelp')}</p>
+    <div className="flex-1 flex flex-col min-h-0">
+      {saveError && (
+        <div className="mx-6 mt-5 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">
+          {t('settings:privacy.saveFailed', { error: saveError })}
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-8">
+        {/* Password ─────────────────────────────────────────────────────────── */}
+        <section>
+          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.password')}</h3>
+          <p className="text-xs text-gray-500 mb-3">{t('settings:privacy.passwordHelp')}</p>
 
-        <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
-          <div className="px-4 py-3">
-            <ToggleRow
-              label={t('settings:privacy.usePassword')}
-              description={hasPassword ? t('settings:privacy.lockedDesc') : t('settings:privacy.noPasswordDesc')}
-              checked={hasPassword}
-              onChange={(v) => setDialog(v ? 'set' : 'remove')}
-            />
-          </div>
-
-          {hasPassword && (
+          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
             <div className="px-4 py-3">
-              <button
-                type="button"
-                onClick={() => setDialog('change')}
-                className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
-              >
-                {t('settings:privacy.changePassword')}
-              </button>
+              <ToggleRow
+                label={t('settings:privacy.usePassword')}
+                description={hasPassword ? t('settings:privacy.lockedDesc') : t('settings:privacy.noPasswordDesc')}
+                checked={hasPassword}
+                onChange={(v) => setDialog(v ? 'set' : 'remove')}
+              />
             </div>
-          )}
-        </div>
-      </section>
 
-      {/* Privacy ─────────────────────────────────────────────────────────── */}
-      <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.title')}</h3>
-
-        <div className="mt-3">
-          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-            {t('settings:privacy.emailContent')}
-          </h4>
-          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-            <ToggleRow
-              label={t('settings:privacy.allowRemoteToggle')}
-              description={t('settings:privacy.allowRemoteToggleDesc')}
-              checked={allowRemoteContent}
-              onChange={handleToggleRemoteContent}
-            />
+            {hasPassword && (
+              <div className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setDialog('change')}
+                  className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+                >
+                  {t('settings:privacy.changePassword')}
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+        </section>
 
-        {/* Directly under the toggle these grants override, so the exception
+        {/* Privacy ─────────────────────────────────────────────────────────── */}
+        <section>
+          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.title')}</h3>
+
+          <div className="mt-3">
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              {t('settings:privacy.emailContent')}
+            </h4>
+            <div className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+              <ToggleRow
+                label={t('settings:privacy.allowRemoteToggle')}
+                description={t('settings:privacy.allowRemoteToggleDesc')}
+                checked={allowRemoteContent}
+                onChange={handleToggleRemoteContent}
+              />
+            </div>
+          </div>
+
+          {/* Directly under the toggle these grants override, so the exception
             and the rule are read together. */}
-        <div className="mt-3">
-          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-            {t('settings:privacy.trustedSenders.title')}
-          </h4>
-          <p className="text-xs text-gray-500 mb-2">{t('settings:privacy.trustedSenders.help')}</p>
-          <TrustedSendersSection />
-        </div>
+          <div className="mt-3">
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              {t('settings:privacy.trustedSenders.title')}
+            </h4>
+            <p className="text-xs text-gray-500 mb-2">{t('settings:privacy.trustedSenders.help')}</p>
+            <TrustedSendersSection />
+          </div>
 
-        <div className="mt-3">
-          <button
-            type="button"
-            onClick={handleOpenPrivacyPolicy}
-            className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
-          >
-            {t('settings:privacy.privacyPolicyLink')} ↗
-          </button>
-        </div>
-      </section>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={handleOpenPrivacyPolicy}
+              className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+            >
+              {t('settings:privacy.privacyPolicyLink')} ↗
+            </button>
+          </div>
+        </section>
 
-      {dialog && <PasswordDialog mode={dialog} onClose={() => setDialog(null)} onSuccess={handlePasswordSuccess} />}
+        {dialog && <PasswordDialog mode={dialog} onClose={() => setDialog(null)} onSuccess={handlePasswordSuccess} />}
+      </div>
     </div>
   );
 }

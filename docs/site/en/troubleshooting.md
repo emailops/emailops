@@ -84,6 +84,11 @@ model, rebuild the index from the same screen.
 Also check **Limit AI processing** in AI settings — mail older than that window is skipped
 deliberately.
 
+<!-- claim:trbl-search-returns-3 -->
+With OpenRouter as the backend, semantic search stays off until you pick an **Embedding Model**
+in **Settings → AI Backend & Models** and save, or enter one in the first-run wizard, which
+checks it before moving on — until then, keyword-only results are expected.
+
 ## Classification is not tagging anything {#classification-is-not-tagging-anything}
 
 - Confirm **auto-classify new emails** is on in **Settings → AI Classification**. <!-- claim:trbl-classification-tagging-1 -->

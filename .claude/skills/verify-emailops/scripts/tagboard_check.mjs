@@ -35,7 +35,8 @@ function oracleThreads({ accountId, tagType, window = {} }) {
   const scope = accountId ? `e.account_id = ${q(accountId)}` : `e.account_id IN (${enabledAccounts.map((a) => q(a.id)).join(',')})`;
   const junkKinds = window.hideGraymail ? "('spam','phishing','graymail')" : "('spam','phishing')";
   const parts = [scope, `t.tag_type = ${q(tagType)}`, 'e.is_deleted = 0', "e.mailbox IN ('inbox','sent')",
-    `NOT EXISTS (SELECT 1 FROM email_junk j WHERE j.email_id = e.id AND j.band = 'junk' AND j.primary_kind IN ${junkKinds} AND (j.user_override IS NULL OR j.user_override <> 'not_junk'))`,
+    // Same rule as `db::exclude_junk_sql`: the user's own "junk" mark hides a message whatever the scores say.
+    `NOT EXISTS (SELECT 1 FROM email_junk j WHERE j.email_id = e.id AND (j.user_override = 'junk' OR (j.band = 'junk' AND j.primary_kind IN ${junkKinds} AND (j.user_override IS NULL OR j.user_override <> 'not_junk'))))`,
     `NOT EXISTS (SELECT 1 FROM emails n JOIN email_tags nt ON nt.email_id = n.id AND nt.tag_type = ${q(tagType)} WHERE n.account_id = e.account_id AND n.thread_id = e.thread_id AND n.is_deleted = 0 AND n.mailbox IN ('inbox','sent') AND (n.timestamp > e.timestamp OR (n.timestamp = e.timestamp AND n.id > e.id)))`];
   if (window.search) parts.push(`LOWER(t.tag_value) LIKE ${q('%' + window.search.toLowerCase() + '%')}`);
   if (window.since != null) parts.push(`e.timestamp >= ${Math.floor(window.since)}`);
@@ -193,8 +194,8 @@ await step('ocultar junk', 'oráculo UI↔BD', 'con "Hide junk messages" el gray
   await cb.click(); await sleep(1500);
   const r = await compareBlocks('junk', { accountId: work, tagType: 'company', window: { hideGraymail: true } });
   await cb.click(); await sleep(800);
-  const junk = sql("SELECT COUNT(*) AS n FROM email_junk WHERE band = 'junk'")[0]?.n ?? 0;
-  return ok(r.ok, `${r.summary} (veredictos junk en la BD demo: ${junk}${junk ? '' : ', el caso no discrimina hasta que el detector marque algo'})`, r.summary);
+  const junk = sql("SELECT COUNT(*) AS n FROM email_junk WHERE band = 'junk' OR user_override = 'junk'")[0]?.n ?? 0;
+  return ok(r.ok, `${r.summary} (mensajes junk (por veredicto o marcados por el usuario) en la BD demo: ${junk}${junk ? '' : ', el caso no discrimina hasta que el detector marque algo'})`, r.summary);
 });
 
 await step('abrir hilo', 'DOM↔BD', 'pulsar una tarjeta abre el hilo cuyo asunto es el del último mensaje de ese hilo en la BD', async () => {

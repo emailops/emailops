@@ -168,6 +168,35 @@ pub async fn send_reply_with_provider(
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
 ) -> Result<()> {
+    deliver_reply(
+        db,
+        email_id,
+        body,
+        from_account_id,
+        to_emails,
+        cc_emails,
+        subject,
+        attachments,
+        provider,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// The one reply path shared by [`send_reply`] and [`send_reply_with_provider`]:
+/// deliver through `provider`, store the optimistic Sent copy and update the
+/// thread's tasks. Returns the provider's send metadata.
+async fn deliver_reply(
+    db: &Arc<Database>,
+    email_id: &str,
+    body: &EmailBody,
+    from_account_id: Option<&str>,
+    to_emails: Option<Vec<String>>,
+    cc_emails: Option<Vec<String>>,
+    subject: Option<&str>,
+    attachments: Vec<crate::sync::provider::EmailAttachment>,
+    provider: &dyn EmailProvider,
+) -> Result<SentMessageMeta> {
     let email = db
         .get_email(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
@@ -235,7 +264,7 @@ pub async fn send_reply_with_provider(
 
     crate::services::tasks::on_reply_sent(db, &email.account_id, &email.thread_id, Some(email_id), &to);
 
-    Ok(())
+    Ok(meta)
 }
 
 /// `subject` overrides the subject derived from the parent: `None` replies to
@@ -263,76 +292,48 @@ pub async fn send_reply(
         .get_email(email_id)?
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
 
-    let account_id = from_account_id.unwrap_or(&email.account_id);
+    let account_id = from_account_id.unwrap_or(&email.account_id).to_string();
     let account = db
-        .get_account(account_id)?
+        .get_account(&account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
-
-    let to = to_emails.unwrap_or_else(|| vec![email.sender_email.clone()]);
-    let cc = cc_emails.unwrap_or_default();
-    let body = body.clone().with_language(footer_language(db)?);
-
-    emit_account_log(
-        "info",
-        "sync",
-        &account.email,
-        &format!("Sending reply to {}...", to.join(", ")),
-    );
 
     let provider = build_provider_for_account(&account, Some(app))
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
-    // Normalize once, here, rather than per provider: Gmail did it inside its
-    // own send path and IMAP did not, so the same reply went out as "Re: x" or
-    // bare "x" depending on the account. `reply_subject` is idempotent, so an
-    // already-prefixed subject is untouched. Outlook's `/reply` sets the prefix
-    // server-side and ignores ours.
-    let subject = crate::sync::mime_builder::reply_subject(subject.unwrap_or(&email.subject));
-
-    let meta = provider
-        .send_reply(
-            &account.email,
-            crate::services::accounts::sender_display_name(&account),
-            &to,
-            &cc,
-            &crate::sync::provider::ReplyTarget {
-                provider_message_id: &email.id,
-                thread_id: &email.thread_id,
-                message_id: email.message_id.as_deref(),
-                references: email.references.as_deref(),
-            },
-            &subject,
-            &body,
-            &attachments,
-        )
-        .await
-        .map_err(|e| map_send_error(e, &account.email))?;
-
-    emit_account_log(
-        "success",
-        "sync",
-        &account.email,
-        &format!("Reply sent to {}", to.join(", ")),
-    );
-
-    insert_optimistic_sent(
+    let meta = deliver_reply(
         db,
-        &account,
-        &to,
-        &cc,
-        &subject,
-        &body,
-        Some(&email.thread_id),
-        &meta,
-        &attachments,
-    );
-    if let Some(provider_message_id) = meta.provider_message_id.clone() {
+        email_id,
+        body,
+        Some(&account_id),
+        to_emails,
+        cc_emails,
+        subject,
+        attachments,
+        provider.as_ref(),
+    )
+    .await?;
+    if let Some(provider_message_id) = meta.provider_message_id {
         spawn_authoritative_refresh(Arc::clone(db), provider, provider_message_id, account.email.clone());
     }
 
-    crate::services::tasks::on_reply_sent(db, &email.account_id, &email.thread_id, Some(email_id), &to);
+    Ok(account_id)
+}
 
-    Ok(account_id.to_string())
+/// Reject a new message that must never reach a provider.
+fn validate_new_email(to_emails: &[String], subject: &str) -> Result<()> {
+    // Guard: at least one recipient required.
+    if to_emails.is_empty() {
+        return Err(AppError::InvalidInput(
+            "At least one recipient (To) is required".to_string(),
+        ));
+    }
+    // Guard: reject headers with embedded newlines to prevent header injection.
+    if subject.contains('\n') || subject.contains('\r') {
+        return Err(AppError::InvalidInput(
+            "Subject must not contain newline characters".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Send a new email using an already-built `EmailProvider`. No `AppHandle`
@@ -347,18 +348,34 @@ pub async fn send_new_email_with_provider(
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
 ) -> Result<()> {
-    // Guard: at least one recipient required.
-    if to_emails.is_empty() {
-        return Err(AppError::InvalidInput(
-            "At least one recipient (To) is required".to_string(),
-        ));
-    }
-    // Guard: reject headers with embedded newlines to prevent header injection.
-    if subject.contains('\n') || subject.contains('\r') {
-        return Err(AppError::InvalidInput(
-            "Subject must not contain newline characters".to_string(),
-        ));
-    }
+    deliver_new_email(
+        db,
+        account_id,
+        to_emails,
+        cc_emails,
+        subject,
+        body,
+        attachments,
+        provider,
+    )
+    .await
+    .map(|_| ())
+}
+
+/// The one new-message path shared by [`send_new_email`] and
+/// [`send_new_email_with_provider`]: validate, deliver through `provider` and
+/// store the optimistic Sent copy. Returns the provider's send metadata.
+async fn deliver_new_email(
+    db: &Arc<Database>,
+    account_id: &str,
+    to_emails: Vec<String>,
+    cc_emails: Vec<String>,
+    subject: &str,
+    body: &EmailBody,
+    attachments: Vec<crate::sync::provider::EmailAttachment>,
+    provider: &dyn EmailProvider,
+) -> Result<SentMessageMeta> {
+    validate_new_email(&to_emails, subject)?;
 
     let account = db
         .get_account(account_id)?
@@ -409,7 +426,7 @@ pub async fn send_new_email_with_provider(
         &meta,
         &attachments,
     );
-    Ok(())
+    Ok(meta)
 }
 
 /// Send a new email, building the OAuth provider from the account's stored
@@ -428,60 +445,76 @@ pub async fn send_new_email(
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     app: AppHandle,
 ) -> Result<String> {
+    // Also checked inside `deliver_new_email`; repeated here so an invalid
+    // message fails before the provider build refreshes any OAuth token.
+    validate_new_email(&to_emails, subject)?;
+
     let account = db
         .get_account(account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
 
-    let attachment_count = attachments.len();
-    let log_msg = if attachment_count > 0 {
-        format!(
-            "Sending email to {} ({} attachment{})...",
-            to_emails.join(", "),
-            attachment_count,
-            if attachment_count == 1 { "" } else { "s" }
-        )
-    } else {
-        format!("Sending email to {}...", to_emails.join(", "))
-    };
-    emit_account_log("info", "sync", &account.email, &log_msg);
-
     let provider = build_provider_for_account(&account, Some(app))
         .await
         .map_err(|e| map_send_error(e, &account.email))?;
-    let body = body.clone().with_language(footer_language(db)?);
-    let meta = provider
-        .send_new_email(
-            &account.email,
-            crate::services::accounts::sender_display_name(&account),
-            &to_emails,
-            &cc_emails,
-            subject,
-            &body,
-            &attachments,
-        )
-        .await
-        .map_err(|e| map_send_error(e, &account.email))?;
-
-    emit_account_log(
-        "success",
-        "sync",
-        &account.email,
-        &format!("Email sent to {}", to_emails.join(", ")),
-    );
-
-    insert_optimistic_sent(
+    let meta = deliver_new_email(
         db,
-        &account,
-        &to_emails,
-        &cc_emails,
+        account_id,
+        to_emails,
+        cc_emails,
         subject,
-        &body,
-        None,
-        &meta,
-        &attachments,
-    );
-    if let Some(provider_message_id) = meta.provider_message_id.clone() {
+        body,
+        attachments,
+        provider.as_ref(),
+    )
+    .await?;
+    if let Some(provider_message_id) = meta.provider_message_id {
         spawn_authoritative_refresh(Arc::clone(db), provider, provider_message_id, account.email.clone());
     }
     Ok(account_id.to_string())
+}
+
+// The production entry points take an `AppHandle`, which only the headless
+// stub build can construct in a test.
+#[cfg(all(test, not(feature = "desktop")))]
+mod production_entry_point_tests {
+    use super::*;
+
+    /// The guards used to live only in `send_new_email_with_provider`, the
+    /// variant the tests drive — the command path skipped them. Both must run
+    /// before anything else, even before the account is looked up.
+    #[tokio::test]
+    async fn send_new_email_rejects_a_message_without_recipients() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let err = send_new_email(
+            &db,
+            "missing-account",
+            Vec::new(),
+            Vec::new(),
+            "Hello",
+            &EmailBody::plain("body"),
+            Vec::new(),
+            AppHandle,
+        )
+        .await
+        .expect_err("no recipients");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn send_new_email_rejects_a_subject_with_line_breaks() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let err = send_new_email(
+            &db,
+            "missing-account",
+            vec!["dest@example.com".to_string()],
+            Vec::new(),
+            "Hello\r\nBcc: someone@example.com",
+            &EmailBody::plain("body"),
+            Vec::new(),
+            AppHandle,
+        )
+        .await
+        .expect_err("header injection");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
 }

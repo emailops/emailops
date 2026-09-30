@@ -32,6 +32,15 @@ export function isAuthError(e: unknown, message: string): boolean {
 }
 
 /**
+ * Whether OpenRouter refused a model because no provider for it meets the
+ * data policy (`AppError::AiDataPolicy`). With zero data retention on, that
+ * setting is the usual reason and the caller can say so.
+ */
+export function isDataPolicyError(e: unknown): boolean {
+  return isAppErrorPayload(e) && e.code === 'ai_data_policy';
+}
+
+/**
  * Normalize any thrown value into a localized, user-facing message.
  *
  * - Backend `AppError` payloads are translated via `errors:codes.<code>`,

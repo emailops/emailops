@@ -78,6 +78,10 @@ pub struct ChatStreamResult {
     /// cold prefills on long chats (the leading bytes change every turn),
     /// distinct from "anchor / plan failure". Embedded llama.cpp only.
     pub dropped_front_tokens: Option<u32>,
+    /// What the provider charged for this call, when it says (OpenRouter).
+    /// `None` from the local backends, and from a reply cancelled before its
+    /// usage arrived.
+    pub cost_usd: Option<f64>,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -107,6 +111,8 @@ pub struct ToolStreamResult {
     pub stable_tokens: Option<u32>,
     /// See [`ChatStreamResult::dropped_front_tokens`].
     pub dropped_front_tokens: Option<u32>,
+    /// See [`ChatStreamResult::cost_usd`].
+    pub cost_usd: Option<f64>,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -202,6 +208,19 @@ pub trait AIProvider: Send + Sync {
     fn embedding_model_name(&self) -> &str;
 
     async fn is_available(&self) -> bool;
+    /// Whether `embed` can run. The same as [`is_available`](Self::is_available)
+    /// for a server backend; the embedded runtime embeds with its own model
+    /// file, separate from the chat model.
+    async fn is_embedding_available(&self) -> bool {
+        self.is_available().await
+    }
+    /// Whether an embedding model is set up at all — no I/O. False only for a
+    /// backend whose embedding model must be chosen and validated first
+    /// (OpenRouter) and has not been; callers then skip the vector path
+    /// instead of calling [`embed`](Self::embed) to collect its error.
+    fn embedding_configured(&self) -> bool {
+        true
+    }
     async fn list_models(&self) -> Result<Vec<ModelInfo>>;
     /// List models suitable for embedding generation.
     async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>>;
@@ -234,6 +253,13 @@ pub trait AIProvider: Send + Sync {
         None
     }
 
+    /// [`Self::context_window`] for backends that must ask for it: a remote
+    /// provider looks its model up in the catalogue here. Defaults to the
+    /// value the backend already knows.
+    async fn resolve_context_window(&self) -> Option<u32> {
+        self.context_window()
+    }
+
     /// Generate a single embedding vector.
     async fn embed(&self, text: &str) -> Result<EmbeddingResult>;
     /// Generate embeddings for a batch of texts (may parallelize internally).
@@ -242,6 +268,31 @@ pub trait AIProvider: Send + Sync {
     /// Non-streaming multi-turn chat with tool definitions. Returns the
     /// assistant message (which may contain tool_calls the caller should resolve).
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage>;
+
+    /// [`chat_with_tools`](Self::chat_with_tools) together with what the call
+    /// used and cost, for callers that account for spend. The default reports
+    /// no usage, which is right for the local backends; a paid backend
+    /// overrides it.
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        Ok(ToolStreamResult {
+            message: self.chat_with_tools(messages, tools).await?,
+            eval_count: None,
+            prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            cost_usd: None,
+        })
+    }
 
     /// Streaming chat. `on_token` is called for each text chunk (owned String);
     /// returning `false` cancels the stream. Returns the full accumulated content.
@@ -291,6 +342,7 @@ pub trait AIProvider: Send + Sync {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 
@@ -334,6 +386,10 @@ pub trait AIProvider: Send + Sync {
 
 use std::sync::{PoisonError, RwLock};
 
+/// What [`FakeAiProvider::on_embed`] runs: it receives the number of `embed`
+/// calls made so far.
+type EmbedHook = Box<dyn Fn(usize) + Send + Sync>;
+
 /// Deterministic in-memory `AIProvider` for tests. By default returns a fixed
 /// canned response for every completion call; tests can pre-load specific
 /// responses via [`push_completion`] / [`push_chat_response`].
@@ -347,6 +403,10 @@ pub struct FakeAiProvider {
     /// similarity in tests); set to 768 with [`with_embedding_dim`] when a
     /// test writes vectors into a `vec0` table, whose dimension is fixed.
     embedding_dim: usize,
+    /// What each `embed` call reports as charged (0 by default).
+    embedding_cost_usd: f64,
+    /// What `embedding_configured` answers (true by default).
+    embedding_configured: bool,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -365,6 +425,8 @@ pub struct FakeAiProvider {
     completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     embed_calls: RwLock<Vec<String>>,
+    /// Called at the end of each `embed` with the number of calls so far.
+    embed_hook: RwLock<Option<EmbedHook>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
 }
 
@@ -374,6 +436,8 @@ impl FakeAiProvider {
             model: "fake-model".to_string(),
             embedding_model: "fake-embed-model".to_string(),
             embedding_dim: 8,
+            embedding_cost_usd: 0.0,
+            embedding_configured: true,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -394,6 +458,7 @@ impl FakeAiProvider {
             completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             embed_calls: RwLock::new(Vec::new()),
+            embed_hook: RwLock::new(None),
             prewarm_calls: RwLock::new(Vec::new()),
         }
     }
@@ -436,6 +501,27 @@ impl FakeAiProvider {
                 aux_plan: None,
                 truncated: false,
             });
+    }
+
+    /// Queue a canned completion with every field chosen by the test (e.g. a
+    /// reported cost).
+    pub fn push_completion_result(&self, result: CompletionResult) {
+        self.completions
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push_back(result);
+    }
+
+    /// Run `hook` at the end of every `embed` call, with the number of calls
+    /// made so far — for tests that act while a run is in flight.
+    pub fn on_embed(&self, hook: impl Fn(usize) + Send + Sync + 'static) {
+        *self.embed_hook.write().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
+    }
+
+    /// Report `cost_usd` as charged on every `embed` call.
+    pub fn with_embedding_cost(mut self, cost_usd: f64) -> Self {
+        self.embedding_cost_usd = cost_usd;
+        self
     }
 
     /// Queue a canned completion that stopped at its output limit
@@ -510,6 +596,12 @@ impl FakeAiProvider {
             .clone()
     }
 
+    /// Behave like a backend with no embedding model set up.
+    pub fn without_embedding_model(mut self) -> Self {
+        self.embedding_configured = false;
+        self
+    }
+
     /// Return `dim`-dimensional vectors from `embed` / `embed_batch`.
     pub fn with_embedding_dim(mut self, dim: usize) -> Self {
         self.embedding_dim = dim.max(1);
@@ -574,6 +666,10 @@ impl AIProvider for FakeAiProvider {
 
     fn embedding_model_name(&self) -> &str {
         &self.embedding_model
+    }
+
+    fn embedding_configured(&self) -> bool {
+        self.embedding_configured
     }
 
     async fn is_available(&self) -> bool {
@@ -648,14 +744,18 @@ impl AIProvider for FakeAiProvider {
     }
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
-        self.embed_calls
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(text.to_string());
+        let calls = {
+            let mut calls = self.embed_calls.write().unwrap_or_else(PoisonError::into_inner);
+            calls.push(text.to_string());
+            calls.len()
+        };
+        if let Some(hook) = self.embed_hook.read().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            hook(calls);
+        }
         Ok(EmbeddingResult {
             embedding: self.deterministic_embedding(text),
             tokens: 0,
-            cost_usd: 0.0,
+            cost_usd: self.embedding_cost_usd,
         })
     }
 
@@ -706,6 +806,7 @@ impl AIProvider for FakeAiProvider {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 }

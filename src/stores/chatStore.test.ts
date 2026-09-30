@@ -853,3 +853,116 @@ describe('prefillInput', () => {
     expect(useChatStore.getState().inputPrefill?.nonce).not.toBe(first?.nonce);
   });
 });
+
+describe('leaving a conversation with a running turn for a new or deleted one', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      conversations: [],
+      activeConversationId: 'conv-1',
+      messages: [{ ...assistantMessage('msg-1'), content: 'partial' }],
+      streamingMessageId: 'msg-1',
+      streamingPhase: 'generating',
+      researchProgress: null,
+      backgroundTurns: {},
+      isSending: false,
+      error: null,
+    });
+    const conv = { id: 'conv-new', accountId: 'acc-1', title: 'New', createdAt: 0, updatedAt: 0 };
+    vi.mocked(api.createChatConversation).mockResolvedValue(conv as never);
+    vi.mocked(api.createChatConversationWithThread).mockResolvedValue(conv as never);
+    vi.mocked(api.getChatMessages).mockResolvedValue([]);
+    vi.mocked(api.deleteChatConversation).mockResolvedValue(undefined as never);
+  });
+
+  it.each([
+    ['createConversation', () => useChatStore.getState().createConversation('acc-1')],
+    ['createConversationFromThread', () => useChatStore.getState().createConversationFromThread('acc-1', 'thread-1')],
+  ])('%s frees the input and parks the running turn', async (_name, action) => {
+    await action();
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.streamingPhase).toBeNull();
+    expect(s.backgroundTurns['conv-1']).toMatchObject({ messageId: 'msg-1', content: 'partial', done: false });
+  });
+
+  it('deleting the open conversation frees the input', async () => {
+    await useChatStore.getState().deleteConversation('conv-1');
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.streamingPhase).toBeNull();
+    expect(s.backgroundTurns['conv-1']).toBeUndefined();
+  });
+});
+
+describe('a send that resolves after the conversation changed', () => {
+  it('releases the sending lock', async () => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      messages: [],
+      isSending: false,
+      error: null,
+      backgroundTurns: {},
+    });
+    vi.mocked(api.sendChatMessage).mockImplementation(async () => {
+      useChatStore.setState({ activeConversationId: 'conv-2' });
+      return {
+        userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'hi' },
+        assistantMessage: assistantMessage('msg-1'),
+      };
+    });
+
+    await useChatStore.getState().sendMessage('hi');
+
+    expect(useChatStore.getState().isSending).toBe(false);
+  });
+});
+
+describe('tokens that arrive before the send returns the message ids', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      activeConversationId: 'conv-1',
+      streamingMessageId: null,
+      streamingPhase: null,
+      messages: [],
+      isSending: false,
+      error: null,
+      backgroundTurns: {},
+      selectedCategories: ['primary'],
+    });
+  });
+
+  function sendEmitting(...events: ChatStreamEvent[]) {
+    vi.mocked(api.sendChatMessage).mockImplementation(async () => {
+      for (const e of events) useChatStore.getState().handleStreamToken(e);
+      return {
+        userMessage: { ...assistantMessage('user-1'), role: 'user', content: 'hi' },
+        assistantMessage: assistantMessage('msg-1'),
+      };
+    });
+  }
+
+  it('keeps the streamed text', async () => {
+    sendEmitting(streamEvent({ token: 'Hel' }), streamEvent({ token: 'lo' }));
+    await useChatStore.getState().sendMessage('hi');
+
+    const s = useChatStore.getState();
+    expect(s.messages.find((m) => m.id === 'msg-1')?.content).toBe('Hello');
+    expect(s.streamingMessageId).toBe('msg-1');
+  });
+
+  it('ends the turn when it already finished (e.g. a fast error)', async () => {
+    sendEmitting(streamEvent({ token: '', error: 'No model loaded', done: true }));
+    await useChatStore.getState().sendMessage('hi');
+
+    const s = useChatStore.getState();
+    expect(s.streamingMessageId).toBeNull();
+    expect(s.messages.find((m) => m.id === 'msg-1')?.content).toBe('No model loaded');
+    expect(s.error).toBe('No model loaded');
+  });
+});

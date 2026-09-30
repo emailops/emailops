@@ -1,11 +1,14 @@
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AiWorkInProgressDialog } from '@/components/shared/AiWorkInProgressDialog';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
+import { type AiChange, affectedWork } from '@/lib/aiProviderWork';
 import * as api from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
-import type { CatalogModel } from '@/types';
+import type { AiProviderActivity, CatalogModel } from '@/types';
 import { BackgroundActivityStatus } from './BackgroundActivityStatus';
 
 /** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
@@ -76,11 +79,18 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   openrouter: 'OpenRouter',
 };
 
-function ModelSelector() {
-  const { t } = useTranslation(['dashboard']);
+export function ModelSelector() {
+  const { t } = useTranslation(['dashboard', 'settings']);
   const [provider, setProvider] = useState<Provider>('ollama');
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState<string>('');
+  // A change waiting for the user to stop, or wait for, the background AI
+  // work it cuts across; `apply` makes the change once that work is gone.
+  const [workInProgress, setWorkInProgress] = useState<{
+    change: AiChange;
+    activity: AiProviderActivity;
+    apply: () => void;
+  } | null>(null);
   const addLog = useLogStore((s) => s.addLog);
 
   const loadModels = async (prov: Provider): Promise<string[]> => {
@@ -123,23 +133,31 @@ function ModelSelector() {
     };
   }, []);
 
-  const handleProviderChange = async (newProv: Provider) => {
-    setProvider(newProv);
-    const list = await loadModels(newProv);
-    setModels(list);
-    const newModel = list[0] ?? '';
-    setCurrentModel(newModel);
-    // Persist both provider and model
+  // Background AI work keeps the provider it started with until its batch
+  // ends: ask whether to stop it or wait before changing what it uses.
+  const applyUnlessWorkInProgress = async (change: AiChange, apply: () => void) => {
     try {
-      await api.setPref('ai_provider', newProv);
-      if (newModel) await api.setAiModel(newModel);
-      addLog('info', 'ai', `AI backend → ${PROVIDER_LABELS[newProv]}${newModel ? ` · ${newModel}` : ''}`);
+      const activity = await api.getAiProviderActivity();
+      if (affectedWork(change, activity.items).length > 0) {
+        setWorkInProgress({ change, activity, apply });
+        return;
+      }
     } catch (err) {
-      addLog('error', 'ai', `Failed to switch provider: ${err}`);
+      // The check is a courtesy: failing to read the queue must not block the change.
+      addLog('error', 'ai', t('settings:aiWork.checkFailed', { error: errorText(err) }));
     }
+    apply();
   };
 
   const handleModelChange = async (model: string) => {
+    if (model === currentModel) return;
+    await applyUnlessWorkInProgress(
+      { provider: false, model: true, embeddingModel: false },
+      () => void changeModel(model),
+    );
+  };
+
+  const changeModel = async (model: string) => {
     setCurrentModel(model);
     try {
       await api.setAiModel(model);
@@ -151,14 +169,11 @@ function ModelSelector() {
 
   return (
     <div className="flex items-center gap-1">
-      {/* Provider selector */}
-      <Select
-        value={provider}
-        onChange={(value) => void handleProviderChange(value)}
-        options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({ value: p, label: PROVIDER_LABELS[p] }))}
-        ariaLabel={t('dashboard:log.aiBackend')}
-        size="xs"
-      />
+      {/* The backend in use. It is changed in AI Settings only: a backend
+          change can replace the Embeddings and needs the checks done there. */}
+      <span data-testid="ai-backend" title={t('dashboard:log.aiBackend')} className="text-[11px] text-gray-400 px-1">
+        {PROVIDER_LABELS[provider]}
+      </span>
 
       {/* Model selector — hidden for openrouter (free-form model configured in AI Settings). */}
       {provider !== 'openrouter' && models.length > 0 && (
@@ -168,6 +183,18 @@ function ModelSelector() {
           options={models.map((m) => ({ value: m, label: m }))}
           ariaLabel={t('dashboard:log.aiModel')}
           size="xs"
+        />
+      )}
+
+      {workInProgress && (
+        <AiWorkInProgressDialog
+          change={workInProgress.change}
+          activity={workInProgress.activity}
+          onCancel={() => setWorkInProgress(null)}
+          onProceed={() => {
+            setWorkInProgress(null);
+            workInProgress.apply();
+          }}
         />
       )}
     </div>

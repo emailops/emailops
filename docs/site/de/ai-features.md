@@ -240,10 +240,18 @@ wird bei ausgeschalteten KI-Funktionen nicht angezeigt.
 ## Semantische Suche {#semantic-search}
 
 <!-- claim:ai-semantic-search-1 -->
-E-Mails werden lokal eingebettet, damit die Suche nach Bedeutung statt nur nach Stichwörtern
+E-Mails werden eingebettet, damit die Suche nach Bedeutung statt nur nach Stichwörtern
 trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das treibt auch den Retrieval-Schritt im Chat an. Wählen Sie unter
 **Einstellungen → KI-Suche**, welche Kategorien eingebettet werden, und bauen Sie den Index
 nach einem Wechsel des Embedding-Modells von Grund auf neu.
+
+<!-- claim:ai-semantic-search-2 -->
+Mit den beiden lokalen Backends erfolgt das Einbetten auf Ihrem Rechner. Mit OpenRouter
+geschieht es nur, wenn Sie in dessen Bereich ein **Embedding-Modell** wählen: Der Text jeder
+indizierten E-Mail sowie jeder Suche und Chat-Frage wird dann an OpenRouter gesendet und zählt
+zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern
+gesucht. Das Modell wird beim Speichern geprüft; eines, das nicht die 768-dimensionalen
+Vektoren liefert, die der Index braucht, wird abgelehnt.
 
 ## Übersetzung {#translation}
 

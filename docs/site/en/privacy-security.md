@@ -65,6 +65,12 @@ nor train on what they receive; a model that no such provider serves is refused 
 error, never sent anyway. **Zero data retention only**, in the same panel, narrows that to
 providers that keep nothing at all after answering.
 
+<!-- claim:priv-there-no-4 -->
+The same goes for search. OpenRouter embeds your mail only if you have picked an embedding
+model in that panel: the text of every indexed email, and of every search and chat question,
+then goes out under the same provider rules. With none picked, nothing is sent for indexing and
+search is keyword-only.
+
 ## What EmailOps changes in your mailbox
 
 <!-- claim:priv-what-emailops-1 -->
@@ -74,8 +80,8 @@ everywhere else:
 
 | Action | Effect on the account |
 |---|---|
-| Marking a message read or unread | The same message is marked read on the account (Gmail) |
-| Deleting a message | The message is moved to the account's **Trash** (Gmail), where it stays recoverable for 30 days |
+| Marking a message read or unread | The same message is marked read on the account |
+| Deleting a message | The message is moved to the account's **Trash** (Deleted Items on Outlook), where it stays recoverable until the provider empties it — 30 days on Gmail |
 | Moving a message to another folder, or **Confirm junk** | The message moves on the account too — Confirm junk files it in the provider's junk folder |
 | Creating, renaming or deleting a folder | The folder changes on the account too |
 | Saving a draft | The draft is saved to the account's Drafts |
@@ -132,6 +138,11 @@ Email is an attack surface. The client-side defences:
 - **Sanitised rendering** — message HTML is stripped of scripts, event handlers and embedded
   objects before it is displayed, on both sides of the app. Attachments are never opened on
   your behalf. <!-- claim:priv-protection-from-5 -->
+- **Attachment safeguards** — every attachment EmailOps saves to disk is marked as received
+  from outside (the quarantine flag on macOS, the Mark-of-the-Web on Windows), so the system's
+  own checks apply the first time it is opened. Opening an attachment that can run code — a
+  program, a script, an installer, a shortcut or a local web page — asks for your confirmation
+  first, naming the file. <!-- claim:priv-protection-from-6 -->
 
 ## Locking the app {#locking-the-app}
 

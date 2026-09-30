@@ -654,6 +654,14 @@ dist-cli-mac:
 cask:
 	bash scripts/generate_cask.sh $(TAG)
 
+# Probe every OpenRouter embedding model for 768-dimension output under the
+# app's privacy routing (no provider that trains on or stores prompts), to pick
+# the models Settings recommends. Paid calls; needs OPENROUTER_API_KEY.
+#   OPENROUTER_API_KEY=... make probe-openrouter-embeddings
+.PHONY: probe-openrouter-embeddings
+probe-openrouter-embeddings:
+	@bash scripts/probe_openrouter_embeddings.sh $(OUT)
+
 # Junk detector gate (spam / phishing / graymail). Synthetic corpus, no model,
 # no DB — runs in seconds. Exits non-zero when the false-positive budget is
 # blown. A missed spam message is a warning; a false positive on real mail is a

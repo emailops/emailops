@@ -67,6 +67,12 @@ reciben ni entrenen con ello; un modelo que ningún proveedor así sirva se rech
 nunca se envía igualmente. **Solo retención cero**, en el mismo panel, lo restringe a
 proveedores que no conservan nada tras responder.
 
+<!-- claim:priv-there-no-4 -->
+Lo mismo vale para la búsqueda. OpenRouter solo indexa tu correo si has elegido un modelo de
+embeddings en ese panel: el texto de cada correo indexado, y de cada búsqueda y pregunta del
+chat, sale entonces con las mismas reglas de proveedor. Sin ninguno, no se envía nada para
+indexar y solo se busca por palabras clave.
+
 ## Qué cambia EmailOps en tu buzón
 
 <!-- claim:priv-what-emailops-1 -->
@@ -76,8 +82,8 @@ que ves en todas partes:
 
 | Acción | Efecto en la cuenta |
 |---|---|
-| Marcar un mensaje como leído o no leído | El mismo mensaje se marca como leído en la cuenta (Gmail) |
-| Eliminar un mensaje | El mensaje se mueve a la **Papelera** de la cuenta (Gmail), donde se puede recuperar durante 30 días |
+| Marcar un mensaje como leído o no leído | El mismo mensaje se marca como leído en la cuenta |
+| Eliminar un mensaje | El mensaje se mueve a la **Papelera** de la cuenta (Elementos eliminados en Outlook), donde se puede recuperar hasta que el proveedor la vacíe: 30 días en Gmail |
 | Mover un mensaje a otra carpeta, o **Confirmar basura** | El mensaje también se mueve en la cuenta — Confirmar basura lo archiva en la carpeta de correo no deseado del proveedor |
 | Crear, renombrar o eliminar una carpeta | La carpeta también cambia en la cuenta |
 | Guardar un borrador | El borrador se guarda en los Borradores de la cuenta |
@@ -136,6 +142,11 @@ El correo es una superficie de ataque. Las defensas del lado del cliente:
 - **Renderizado saneado** — al HTML de los mensajes se le quitan scripts, manejadores de
   eventos y objetos incrustados antes de mostrarlo, en ambos lados de la app. Los adjuntos
   nunca se abren por su cuenta. <!-- claim:priv-protection-from-5 -->
+- **Protección de adjuntos** — cada adjunto que EmailOps guarda en disco queda marcado como
+  recibido del exterior (la marca de cuarentena en macOS, la Mark-of-the-Web en Windows), de
+  modo que las comprobaciones del propio sistema se aplican la primera vez que se abre. Abrir
+  un adjunto que puede ejecutar código — un programa, un script, un instalador, un acceso
+  directo o una página web local — pide antes tu confirmación, indicando el archivo. <!-- claim:priv-protection-from-6 -->
 
 ## Bloquear la app {#locking-the-app}
 

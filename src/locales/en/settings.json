@@ -168,7 +168,51 @@
     "noTrainingNotice": "Providers that store or train on your mail are never used.",
     "zeroDataRetention": "Zero data retention only",
     "zeroDataRetentionHelp": "Route only to providers that keep nothing after answering. Fewer models are available.",
-    "chatModelPlaceholder": "e.g. google/gemma-3-27b-it"
+    "contextBudget": "Context budget (tokens)",
+    "contextBudgetHelp": "How much of a remote model's context window a research run may fill per call. The model's own window still caps it. A larger budget means fewer, bigger calls: more mail sent per request and a higher cost per call.",
+    "contextBudgetLoadFailed": "Failed to load context budget: {{error}}",
+    "contextBudgetSaveFailed": "Failed to save context budget: {{error}}",
+    "chatModelPlaceholder": "e.g. google/gemma-3-27b-it",
+    "chatModelRequired": "Enter an OpenRouter chat model ID before saving — nothing was saved.",
+    "embeddingNone": "None — keyword search only",
+    "embeddingRecommendedMultilingual": "recommended, multilingual",
+    "embeddingRecommendedEnglish": "recommended, English only",
+    "embeddingNotice": "With an Embeddings model selected, the text of every email that gets indexed, and of every search and chat question, is sent to OpenRouter and counts against the monthly budget. With none selected, semantic search is off and search is keyword-only.",
+    "embeddingNeedsKey": "Save your API key to load the list of Embeddings models.",
+    "embeddingNeedsCheck": "Saving checks that this model produces the 768-dimension vectors the email index needs.",
+    "embeddingCheckFailed": "Nothing was saved — the Embeddings model cannot be used: {{error}}",
+    "embeddingZdrBlocked": "Nothing was saved — no provider for the Embeddings model {{model}} meets the zero-data-retention setting. Turn off “Zero data retention only” in Settings → AI → OpenRouter, or use no Embeddings model (keyword-only search).",
+    "embeddingListFailed": "Failed to load the OpenRouter Embeddings models: {{error}}"
+  },
+  "confirmReindex": {
+    "title": "Regenerate all Embeddings?",
+    "body": "The Embeddings model changed. Saving deletes all existing Embeddings and regenerates them with the new model. Semantic search is reduced until that finishes.",
+    "bodyNone": "No Embeddings model is selected. Saving deletes all existing Embeddings and turns semantic search off: search is keyword-only until you choose a model.",
+    "openRouter": "The text of every indexed email will be sent to OpenRouter and billed to your OpenRouter account.",
+    "confirm": "Save and regenerate",
+    "confirmNone": "Save and delete"
+  },
+  "aiWork": {
+    "title": "AI work in progress",
+    "body": "This change affects background AI work that is running or queued with the current settings:",
+    "kinds": {
+      "embeddingsRebuild": "Regenerating all Embeddings",
+      "embeddingsGeneration": "Generating Embeddings",
+      "classification": "Classifying emails",
+      "memoryExtraction": "Memory extraction",
+      "taskExtraction": "Task extraction",
+      "lensExtraction": "Lens extraction"
+    },
+    "queued": "{{n}} queued",
+    "moreQueued": "+{{n}} queued",
+    "openRouter": "This work is sending the text of your emails to OpenRouter. Stopping ends those requests now; waiting lets them continue, and be billed, until the work is done.",
+    "help": "Stop and apply ends the work at the email in hand and then applies the change; what is already done is kept. Wait and apply applies the change when the work finishes on its own.",
+    "stopping": "Stopping… The change is applied as soon as the work has ended.",
+    "waiting": "Waiting for the work to finish. The change is applied as soon as it does.",
+    "stop": "Stop and apply",
+    "wait": "Wait and apply",
+    "failed": "Could not stop or follow the AI work in progress: {{error}}",
+    "checkFailed": "Could not check for AI work in progress: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "Reset prompt to default?",
@@ -437,6 +481,8 @@
     "allowRemoteToggleDesc": "When off, external images and trackers are blocked. A banner lets you load them per-email.",
     "privacyPolicyLink": "Privacy policy",
     "loading": "Loading...",
+    "loadFailed": "Could not load privacy settings: {{error}}",
+    "saveFailed": "Could not save the setting: {{error}}",
     "passwordDialog": {
       "setTitle": "Set main password",
       "changeTitle": "Change main password",

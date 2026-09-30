@@ -64,26 +64,46 @@ use crate::models::{Email, LlmCallTrace, ReportMode, ResearchEstimate, ResearchT
 /// backend is assumed to have.
 const DEFAULT_N_CTX: u32 = 8192;
 
+/// What a remote model is sized to when its own window is larger: every
+/// prompt token is paid for and leaves the machine, so the model's window is
+/// the correctness limit and this is the budget. Same ceiling as the embedded
+/// runtime's largest tier.
+const DEFAULT_REMOTE_N_CTX_BUDGET: u32 = 32_768;
+
+/// Preference holding the remote budget in tokens; unset or `0` = default.
+pub(crate) const REMOTE_N_CTX_BUDGET_PREF: &str = "chat.remote_n_ctx_budget";
+
+/// The remote budget from its preference value. Pure.
+pub(crate) fn plan_remote_n_ctx_budget(pref: Option<&str>) -> u32 {
+    pref.and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_REMOTE_N_CTX_BUDGET)
+}
+
 /// The window to size research batches to. Pure.
 ///
-/// `reported` is the window the loaded model actually runs with
-/// ([`AIProvider::context_window`]): for the embedded runtime that is the
-/// `chat.n_ctx` setting after its clamps (KV cache that fits in RAM, the
-/// model's trained window), which can be well below the setting. Before the
-/// model has loaded there is none, and the setting — or the RAM tier the
-/// runtime starts from — stands in; the HTTP backends run at their 8k default.
+/// `reported` is the window the model actually runs with: for the embedded
+/// runtime that is the `chat.n_ctx` setting after its clamps (KV cache that
+/// fits in RAM, the model's trained window), which can be well below the
+/// setting; for OpenRouter it is the selected model's window from the
+/// catalogue. Before the embedded model has loaded there is none, and the
+/// setting — or the RAM tier the runtime starts from — stands in; Ollama runs
+/// at its 8k default. A remote model is sized to its window capped by
+/// `remote_budget`, and to the 8k default when the catalogue did not say.
 pub(crate) fn plan_n_ctx(
     reported: Option<u32>,
     provider: crate::ai::provider::ProviderType,
     n_ctx_override: u32,
     auto_tier: u32,
+    remote_budget: u32,
 ) -> u32 {
-    if let Some(n) = reported.filter(|n| *n > 0) {
-        return n;
-    }
+    use crate::ai::provider::ProviderType;
+    let reported = reported.filter(|n| *n > 0);
     match provider {
-        crate::ai::provider::ProviderType::LlamaCpp if n_ctx_override > 0 => n_ctx_override,
-        crate::ai::provider::ProviderType::LlamaCpp => auto_tier,
+        ProviderType::OpenRouter => reported.unwrap_or(DEFAULT_N_CTX).min(remote_budget),
+        _ if reported.is_some() => reported.unwrap_or(DEFAULT_N_CTX),
+        ProviderType::LlamaCpp if n_ctx_override > 0 => n_ctx_override,
+        ProviderType::LlamaCpp => auto_tier,
         _ => DEFAULT_N_CTX,
     }
 }
@@ -91,19 +111,31 @@ pub(crate) fn plan_n_ctx(
 /// Read the inputs of [`plan_n_ctx`]: the provider's live window, the
 /// preferences and the machine. Call it once the model is loaded (after the
 /// planner ran) so the live window is known.
-pub(crate) fn resolve_n_ctx(db: &Database, provider: &dyn AIProvider) -> u32 {
+pub(crate) async fn resolve_n_ctx(db: &Database, provider: &dyn AIProvider) -> u32 {
     let n_ctx_override = db
         .get_preference("chat.n_ctx")
         .ok()
         .flatten()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
+    let remote_budget = match db.get_preference(REMOTE_N_CTX_BUDGET_PREF) {
+        Ok(pref) => plan_remote_n_ctx_budget(pref.as_deref()),
+        Err(e) => {
+            crate::services::logger::log(
+                "warn",
+                "ai",
+                format!("could not read {REMOTE_N_CTX_BUDGET_PREF}, using the default: {e}"),
+            );
+            DEFAULT_REMOTE_N_CTX_BUDGET
+        }
+    };
     let auto_tier = crate::util::system::auto_n_ctx_tier(crate::util::system::total_ram_bytes());
     plan_n_ctx(
-        provider.context_window(),
+        provider.resolve_context_window().await,
         provider.provider_type(),
         n_ctx_override,
         auto_tier,
+        remote_budget,
     )
 }
 
@@ -389,6 +421,7 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[
         GATHER_LIMIT,
         false,
         plan.unread == Some(true),
+        false,
         (!participants.is_empty()).then_some(participants.as_slice()),
     );
     let matches = match matches {
@@ -420,25 +453,29 @@ fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[
 async fn gather_semantic(input: &PrepareInput<'_>, query: &str, keywords: Option<&str>) -> Vec<String> {
     let categories = (!input.categories.is_empty()).then_some(input.categories);
     let mut ids = Vec::new();
-    match input.provider.embed(query).await {
-        Ok(emb) => {
-            let req = crate::services::retrieval::VectorRequest {
-                account_id: input.account_id,
-                embedding: &emb.embedding,
-                categories,
-                limit: SEMANTIC_POOL,
-            };
-            match crate::services::retrieval::fetch_vector(input.db, req) {
-                Ok(mut hits) => {
-                    hits.sort_by(|a, b| b.1.total_cmp(&a.1));
-                    let sims: Vec<f32> = hits.iter().map(|h| h.1).collect();
-                    let keep = semantic_cutoff(&sims, SEMANTIC_BAND);
-                    ids.extend(hits.into_iter().take(keep).map(|h| h.0));
+    // With no embedding model set up there is no vector index to ask; the
+    // keyword hits below are the whole pool.
+    if input.provider.embedding_configured() {
+        match input.provider.embed(query).await {
+            Ok(emb) => {
+                let req = crate::services::retrieval::VectorRequest {
+                    account_id: input.account_id,
+                    embedding: &emb.embedding,
+                    categories,
+                    limit: SEMANTIC_POOL,
+                };
+                match crate::services::retrieval::fetch_vector(input.db, req) {
+                    Ok(mut hits) => {
+                        hits.sort_by(|a, b| b.1.total_cmp(&a.1));
+                        let sims: Vec<f32> = hits.iter().map(|h| h.1).collect();
+                        let keep = semantic_cutoff(&sims, SEMANTIC_BAND);
+                        ids.extend(hits.into_iter().take(keep).map(|h| h.0));
+                    }
+                    Err(e) => super::emit_log("error", &format!("research: vector search failed: {e}")),
                 }
-                Err(e) => super::emit_log("error", &format!("research: vector search failed: {e}")),
             }
+            Err(e) => super::emit_log("error", &format!("research: embedding the question failed: {e}")),
         }
-        Err(e) => super::emit_log("error", &format!("research: embedding the question failed: {e}")),
     }
     if let Some(keywords) = keywords.filter(|k| !k.trim().is_empty()) {
         let req = crate::services::retrieval::FtsRequest {
@@ -485,7 +522,7 @@ fn oldest_first(db: &Database, ids: Vec<String>) -> Vec<String> {
 pub(crate) async fn estimate(input: &PrepareInput<'_>) -> ResearchEstimate {
     let prepared = prepare(input).await;
     // After the planner ran, so the model is loaded and reports its window.
-    let budget = plan_research_budget(resolve_n_ctx(input.db, input.provider));
+    let budget = plan_research_budget(resolve_n_ctx(input.db, input.provider).await);
     let ms_per_email = input
         .db
         .get_preference(MS_PER_EMAIL_PREF)
@@ -823,6 +860,21 @@ fn load_docs(
         .collect()
 }
 
+/// A run the user cancelled after the reading: no further call, and the answer
+/// says how far the reading got.
+fn cancelled_run(
+    mut run: ResearchRun,
+    language_code: &str,
+    emails_read: usize,
+    total_emails: usize,
+    step: &str,
+) -> ResearchRun {
+    run.trace.stopped = true;
+    super::emit_log("info", &format!("research: cancelled by the user while {step}"));
+    run.answer = Some(cancelled_note(language_code, emails_read, total_emails));
+    run
+}
+
 /// Map → condense → reduce over a prepared set. Never fails the turn on its
 /// own: a batch that errors is logged and skipped, and only a failed report
 /// comes back as `answer: None` for the caller to surface.
@@ -947,6 +999,18 @@ pub(crate) async fn run_research(
         );
     }
     run.trace.map_ms = t_map.elapsed().as_millis() as i64;
+    // Cancel pressed while the last batch was read: the loop has no next
+    // iteration to notice it, so check once more before anything else runs.
+    if !run.trace.stopped && input.stop.load(Ordering::Relaxed) {
+        run.trace.stopped = true;
+        super::emit_log(
+            "info",
+            &format!(
+                "research: cancelled by the user after {} of {total_emails} emails",
+                emails_in(read)
+            ),
+        );
+    }
     run.analyzed = docs[..read].iter().flat_map(|d| d.ids().cloned()).collect();
     run.trace.findings = findings.len() as u32;
     // The matches come from the reading verdicts, before any condense round:
@@ -998,6 +1062,9 @@ pub(crate) async fn run_research(
                 total_emails,
                 &found,
             );
+            if input.stop.load(Ordering::Relaxed) {
+                return cancelled_run(run, input.language_code, emails_read, total_emails, "condensing");
+            }
             let group_notes: Vec<Note> = notes[group.clone()].iter().flatten().cloned().collect();
             let (prefix, suffix) = split_condense_prompt(
                 input.condense_template,
@@ -1042,6 +1109,9 @@ pub(crate) async fn run_research(
         total_emails,
         &found,
     );
+    if input.stop.load(Ordering::Relaxed) {
+        return cancelled_run(run, input.language_code, emails_read, total_emails, "writing");
+    }
     // The conversations the notes cover, numbered for the report to cite.
     let order = number_conversations(&notes);
     let notes_block = if order.is_empty() {
@@ -1117,21 +1187,93 @@ mod tests {
         use crate::ai::provider::ProviderType;
         // The embedded runtime clamps the setting to what the KV cache fits
         // and the model was trained on; that clamped window is the truth.
-        assert_eq!(plan_n_ctx(Some(15360), ProviderType::LlamaCpp, 32768, 32768), 15360);
-        assert_eq!(plan_n_ctx(Some(4096), ProviderType::Ollama, 0, 16384), 4096);
+        assert_eq!(
+            plan_n_ctx(
+                Some(15360),
+                ProviderType::LlamaCpp,
+                32768,
+                32768,
+                DEFAULT_REMOTE_N_CTX_BUDGET
+            ),
+            15360
+        );
+        assert_eq!(
+            plan_n_ctx(Some(4096), ProviderType::Ollama, 0, 16384, DEFAULT_REMOTE_N_CTX_BUDGET),
+            4096
+        );
     }
 
     #[test]
     fn before_the_model_loads_n_ctx_follows_the_setting_then_the_ram_tier() {
         use crate::ai::provider::ProviderType;
-        assert_eq!(plan_n_ctx(None, ProviderType::LlamaCpp, 12288, 32768), 12288);
-        assert_eq!(plan_n_ctx(None, ProviderType::LlamaCpp, 0, 16384), 16384);
-        assert_eq!(plan_n_ctx(None, ProviderType::Ollama, 32768, 32768), DEFAULT_N_CTX);
         assert_eq!(
-            plan_n_ctx(Some(0), ProviderType::LlamaCpp, 0, 16384),
+            plan_n_ctx(None, ProviderType::LlamaCpp, 12288, 32768, DEFAULT_REMOTE_N_CTX_BUDGET),
+            12288
+        );
+        assert_eq!(
+            plan_n_ctx(None, ProviderType::LlamaCpp, 0, 16384, DEFAULT_REMOTE_N_CTX_BUDGET),
+            16384
+        );
+        assert_eq!(
+            plan_n_ctx(None, ProviderType::Ollama, 32768, 32768, DEFAULT_REMOTE_N_CTX_BUDGET),
+            DEFAULT_N_CTX
+        );
+        assert_eq!(
+            plan_n_ctx(Some(0), ProviderType::LlamaCpp, 0, 16384, DEFAULT_REMOTE_N_CTX_BUDGET),
             16384,
             "0 = not known yet"
         );
+    }
+
+    #[test]
+    fn a_remote_model_is_sized_to_its_window_capped_by_the_budget() {
+        use crate::ai::provider::ProviderType;
+        assert_eq!(
+            plan_n_ctx(Some(200_000), ProviderType::OpenRouter, 0, 16384, 32768),
+            32768
+        );
+        assert_eq!(
+            plan_n_ctx(Some(16_000), ProviderType::OpenRouter, 0, 16384, 32768),
+            16_000
+        );
+        assert_eq!(
+            plan_n_ctx(Some(200_000), ProviderType::OpenRouter, 0, 16384, 100_000),
+            100_000
+        );
+    }
+
+    #[test]
+    fn a_remote_model_with_an_unknown_window_gets_the_safe_default() {
+        use crate::ai::provider::ProviderType;
+        assert_eq!(
+            plan_n_ctx(None, ProviderType::OpenRouter, 0, 16384, 32768),
+            DEFAULT_N_CTX
+        );
+        assert_eq!(plan_n_ctx(None, ProviderType::OpenRouter, 0, 16384, 4096), 4096);
+    }
+
+    #[test]
+    fn the_remote_budget_does_not_touch_local_providers() {
+        use crate::ai::provider::ProviderType;
+        assert_eq!(
+            plan_n_ctx(Some(65_536), ProviderType::LlamaCpp, 0, 16384, 32768),
+            65_536
+        );
+        assert_eq!(plan_n_ctx(Some(65_536), ProviderType::Ollama, 0, 16384, 32768), 65_536);
+        assert_eq!(plan_n_ctx(None, ProviderType::LlamaCpp, 0, 65_536, 32768), 65_536);
+    }
+
+    #[test]
+    fn the_remote_budget_setting_falls_back_to_the_default() {
+        for unset in [None, Some(""), Some("0"), Some("lots"), Some("-5")] {
+            assert_eq!(
+                plan_remote_n_ctx_budget(unset),
+                DEFAULT_REMOTE_N_CTX_BUDGET,
+                "{unset:?}"
+            );
+        }
+        assert_eq!(plan_remote_n_ctx_budget(Some("65536")), 65_536);
+        assert_eq!(plan_remote_n_ctx_budget(Some(" 16384 ")), 16_384);
     }
 
     // ── executor (fake provider + in-memory DB) ──
@@ -1231,6 +1373,19 @@ mod tests {
             from: Some("billing@supplier.example".into()),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn the_semantic_gather_is_keyword_only_without_an_embedding_model() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 3);
+        let provider = crate::ai::provider::FakeAiProvider::new().without_embedding_model();
+        let categories: Vec<String> = Vec::new();
+
+        let ids = gather_semantic(&prepare_input(&db, &provider, &categories), "supplier invoices", None).await;
+
+        assert!(ids.is_empty());
+        assert!(provider.embed_calls().is_empty());
     }
 
     #[tokio::test]
@@ -1522,6 +1677,61 @@ mod tests {
         assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
         let answer = run.answer.expect("a cancellation note");
         assert!(answer.contains("11") && answer.contains("30"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_the_last_batch_writes_no_report() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 4);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        assert_eq!(batches_of(&db, &prepared, 16384).len(), 1);
+        provider.push_completion(NO_FINDINGS);
+        provider.push_completion("A report nobody wants any more.");
+        let stop = AtomicBool::new(false);
+        // Cancel pressed while the one (and last) batch was being read.
+        let on_progress = |p: ResearchProgress| {
+            if p.stage == ResearchStage::Reading && p.batch == 1 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        };
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &on_progress).await;
+
+        assert!(run.trace.stopped);
+        assert_eq!(provider.prefix_completion_calls().len(), 1, "the map call only");
+        assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
+    }
+
+    #[tokio::test]
+    async fn a_cancel_while_condensing_stops_before_the_next_call() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 59);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(&db, &provider, &categories), Some(supplier_plan())).await;
+        let budget = plan_research_budget(4096);
+        let batches = batches_of(&db, &prepared, 4096);
+        for batch in &batches {
+            provider.push_completion(all_match(&batch[..1], &"x".repeat(budget.notes_chars / 2)));
+        }
+        for _ in 0..batches.len() {
+            provider.push_completion(r#"{"notes":[{"text":"merged","from":["N1"]}]}"#);
+        }
+        provider.push_completion("Informe [1].");
+        let stop = AtomicBool::new(false);
+        let on_progress = |p: ResearchProgress| {
+            if p.stage == ResearchStage::Condensing {
+                stop.store(true, Ordering::Relaxed);
+            }
+        };
+        let run = run_research(run_input(&db, &provider, &prepared, 4096, &stop), &on_progress).await;
+
+        assert!(run.trace.stopped);
+        assert_eq!(run.trace.condense_calls, 0, "{:?}", run.trace);
+        assert!(!run.llm_calls.iter().any(|c| c.kind == "research_reduce"));
+        let answer = run.answer.expect("a cancellation note");
+        assert!(!answer.contains("Informe"), "{answer}");
     }
 
     #[tokio::test]

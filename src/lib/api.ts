@@ -8,7 +8,9 @@ import type {
   AccountSettings,
   AiConfig,
   AiModelInfo,
+  AiProviderActivity,
   AiUsageSummary,
+  AiWorkKind,
   AllQueuesState,
   Attachment,
   AttachmentRule,
@@ -817,8 +819,17 @@ export async function applyRuleRetroactively(ruleId: string, accountId: string, 
   return invoke('apply_rule_retroactively', { ruleId, accountId, runId });
 }
 
-export async function openAttachmentExternally(accountId: string, attachmentId: string): Promise<void> {
-  return invoke('open_attachment_externally', { accountId, attachmentId });
+/**
+ * Open a collected attachment with the OS default app. A type that can run
+ * code is refused with `attachment_confirmation_required` until `confirmed`,
+ * which only `useOpenAttachment` sets, after its dialog.
+ */
+export async function openAttachmentExternally(
+  accountId: string,
+  attachmentId: string,
+  confirmed: boolean,
+): Promise<void> {
+  return invoke('open_attachment_externally', { accountId, attachmentId, confirmed });
 }
 
 export async function getEmailAttachmentMetas(accountId: string, emailId: string): Promise<EmailAttachmentMeta[]> {
@@ -834,9 +845,9 @@ export async function fetchEmailAttachmentBytes(
   return invoke('fetch_email_attachment_bytes', { accountId, emailId, providerAttachmentId });
 }
 
-/** Open a locally-cached email attachment with the OS default app. */
-export async function openEmailAttachmentMeta(accountId: string, metaId: string): Promise<void> {
-  return invoke('open_email_attachment_meta', { accountId, metaId });
+/** Open a locally-cached email attachment with the OS default app; `confirmed` as in `openAttachmentExternally`. */
+export async function openEmailAttachmentMeta(accountId: string, metaId: string, confirmed: boolean): Promise<void> {
+  return invoke('open_email_attachment_meta', { accountId, metaId, confirmed });
 }
 
 /** Save base64 attachment bytes into ~/Downloads; returns the saved file path. */
@@ -885,6 +896,17 @@ export async function getAppDiagnostics(): Promise<AppDiagnostics> {
   };
 }
 
+/** The AI background work that uses the configured provider right now. */
+export async function getAiProviderActivity(): Promise<AiProviderActivity> {
+  return invoke('get_ai_provider_activity');
+}
+
+/** Ask the running and queued work of these kinds to stop; each ends at its
+ *  next email. Returns how many tasks were asked. */
+export async function cancelAiProviderWork(kinds: AiWorkKind[]): Promise<number> {
+  return invoke('cancel_ai_provider_work', { kinds });
+}
+
 export async function setAiConfig(
   provider: string,
   model: string,
@@ -918,8 +940,22 @@ export async function listAiModels(): Promise<AiModelInfo[]> {
   return invoke('list_ai_models');
 }
 
-export async function listAiEmbeddingModels(): Promise<AiModelInfo[]> {
-  return invoke('list_ai_embedding_models');
+/** Embedding models of `provider` (the saved provider when omitted). */
+export async function listAiEmbeddingModels(provider?: string): Promise<AiModelInfo[]> {
+  return invoke('list_ai_embedding_models', { provider });
+}
+
+/**
+ * Check that an OpenRouter embedding model produces vectors the email index
+ * can hold; rejects with the reason when it does not. `apiKey` and
+ * `zeroDataRetention` carry values typed in Settings but not saved yet.
+ */
+export async function validateOpenRouterEmbeddingModel(
+  model: string,
+  apiKey?: string | null,
+  zeroDataRetention?: boolean,
+): Promise<void> {
+  return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
 export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {

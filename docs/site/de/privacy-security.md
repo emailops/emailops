@@ -69,6 +69,12 @@ bereitstellt, wird mit einem Fehler abgelehnt und nie trotzdem gesendet. **Nur o
 Datenspeicherung** im selben Bereich beschränkt das auf Anbieter, die nach der Antwort nichts
 aufbewahren.
 
+<!-- claim:priv-there-no-4 -->
+Dasselbe gilt für die Suche. OpenRouter bettet Ihre E-Mails nur ein, wenn Sie in diesem Bereich
+ein Embedding-Modell gewählt haben: Der Text jeder indizierten E-Mail sowie jeder Suche und
+Chat-Frage geht dann nach denselben Anbieterregeln hinaus. Ohne Modell wird zum Indizieren
+nichts gesendet und es wird nur nach Stichwörtern gesucht.
+
 ## Was EmailOps in Ihrem Postfach verändert
 
 <!-- claim:priv-what-emailops-1 -->
@@ -78,8 +84,8 @@ auch überall sonst zu sehen ist:
 
 | Aktion | Wirkung auf das Konto |
 |---|---|
-| Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert (Gmail) |
-| Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gmail) und bleibt dort 30 Tage wiederherstellbar |
+| Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert |
+| Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gelöschte Elemente bei Outlook) und bleibt dort wiederherstellbar, bis der Anbieter ihn leert – bei Gmail 30 Tage |
 | Eine Nachricht in einen anderen Ordner verschieben, oder **Als Spam bestätigen** | Die Nachricht wird auch im Konto verschoben — Als Spam bestätigen legt sie im Spam-Ordner des Anbieters ab |
 | Einen Ordner anlegen, umbenennen oder löschen | Der Ordner ändert sich auch im Konto |
 | Einen Entwurf speichern | Der Entwurf wird in den Entwürfen des Kontos gespeichert |
@@ -138,6 +144,11 @@ E-Mail ist eine Angriffsfläche. Die Schutzmechanismen auf Client-Seite:
 - **Bereinigtes Rendering** — das HTML der Nachrichten wird vor der Anzeige von Skripten,
   Event-Handlern und eingebetteten Objekten befreit, und zwar auf beiden Seiten der App.
   Anhänge werden nie eigenmächtig geöffnet. <!-- claim:priv-protection-from-5 -->
+- **Schutz bei Anhängen** — jeder Anhang, den EmailOps auf der Festplatte speichert, wird als
+  von außen empfangen markiert (die Quarantäne unter macOS, das Mark-of-the-Web unter
+  Windows), sodass beim ersten Öffnen die Prüfungen des Systems greifen. Das Öffnen eines
+  Anhangs, der Code ausführen kann — ein Programm, ein Skript, ein Installationsprogramm, eine
+  Verknüpfung oder eine lokale Webseite — verlangt vorher Ihre Bestätigung und nennt die Datei. <!-- claim:priv-protection-from-6 -->
 
 ## Die App sperren {#locking-the-app}
 

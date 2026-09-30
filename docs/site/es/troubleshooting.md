@@ -88,6 +88,12 @@ pantalla.
 Revisa también **Limitar el procesado de IA** en los ajustes de IA — el correo más antiguo que
 esa ventana se omite a propósito.
 
+<!-- claim:trbl-search-returns-3 -->
+Con OpenRouter como backend, la búsqueda semántica sigue desactivada hasta que elijas un
+**Modelo de embeddings** en **Ajustes → IA: backend y modelos** y guardes, o indiques uno en el
+asistente de primer arranque, que lo comprueba antes de avanzar — hasta entonces, lo
+esperado es que solo haya resultados por palabras clave.
+
 ## La clasificación no etiqueta nada {#classification-is-not-tagging-anything}
 
 - Confirma que **Clasificar nuevos correos automáticamente** está activado en

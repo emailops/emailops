@@ -168,7 +168,51 @@
     "noTrainingNotice": "Anbieter, die deine E-Mails speichern oder damit trainieren, werden nie verwendet.",
     "zeroDataRetention": "Nur ohne Datenspeicherung",
     "zeroDataRetentionHelp": "Nur an Anbieter senden, die nach der Antwort nichts speichern. Es stehen weniger Modelle zur Verfügung.",
-    "chatModelPlaceholder": "z. B. google/gemma-3-27b-it"
+    "contextBudget": "Kontextbudget (Tokens)",
+    "contextBudgetHelp": "Wie viel vom Kontextfenster eines entfernten Modells ein Aufruf im Recherchemodus füllen darf. Das Fenster des Modells bleibt die Obergrenze. Ein größeres Budget bedeutet weniger, größere Aufrufe: mehr gesendete E-Mails pro Anfrage und höhere Kosten pro Aufruf.",
+    "contextBudgetLoadFailed": "Kontextbudget konnte nicht geladen werden: {{error}}",
+    "contextBudgetSaveFailed": "Kontextbudget konnte nicht gespeichert werden: {{error}}",
+    "chatModelPlaceholder": "z. B. google/gemma-3-27b-it",
+    "chatModelRequired": "Gib vor dem Speichern die ID eines OpenRouter-Chatmodells ein – es wurde nichts gespeichert.",
+    "embeddingNone": "Keines — nur Stichwortsuche",
+    "embeddingRecommendedMultilingual": "empfohlen, mehrsprachig",
+    "embeddingRecommendedEnglish": "empfohlen, nur Englisch",
+    "embeddingNotice": "Ist ein Embeddings-Modell ausgewählt, wird der Text jeder indizierten E-Mail sowie jeder Suche und Chat-Frage an OpenRouter gesendet und zählt zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern gesucht.",
+    "embeddingNeedsKey": "Speichere deinen API-Schlüssel, um die Liste der Embeddings-Modelle zu laden.",
+    "embeddingNeedsCheck": "Beim Speichern wird geprüft, ob dieses Modell die 768-dimensionalen Vektoren liefert, die der E-Mail-Index braucht.",
+    "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
+    "embeddingZdrBlocked": "Es wurde nichts gespeichert – kein Anbieter des Embeddings-Modells {{model}} erfüllt die Einstellung ohne Datenspeicherung. Schalte „Nur ohne Datenspeicherung“ unter Einstellungen → KI → OpenRouter aus oder verwende kein Embeddings-Modell (nur Stichwortsuche).",
+    "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
+  },
+  "confirmReindex": {
+    "title": "Alle Embeddings neu erzeugen?",
+    "body": "Das Embeddings-Modell wurde geändert. Beim Speichern werden alle vorhandenen Embeddings gelöscht und mit dem neuen Modell neu erzeugt. Die semantische Suche ist eingeschränkt, bis das abgeschlossen ist.",
+    "bodyNone": "Es ist kein Embeddings-Modell ausgewählt. Beim Speichern werden alle vorhandenen Embeddings gelöscht und die semantische Suche wird ausgeschaltet: Es wird nur nach Stichwörtern gesucht, bis du ein Modell auswählst.",
+    "openRouter": "Der Text jeder indizierten E-Mail wird an OpenRouter gesendet und über dein OpenRouter-Konto abgerechnet.",
+    "confirm": "Speichern und neu erzeugen",
+    "confirmNone": "Speichern und löschen"
+  },
+  "aiWork": {
+    "title": "KI-Arbeit läuft",
+    "body": "Diese Änderung betrifft KI-Hintergrundarbeit, die mit den aktuellen Einstellungen läuft oder in der Warteschlange steht:",
+    "kinds": {
+      "embeddingsRebuild": "Alle Embeddings werden neu erzeugt",
+      "embeddingsGeneration": "Embeddings werden erzeugt",
+      "classification": "E-Mails werden klassifiziert",
+      "memoryExtraction": "Gedächtnis-Extraktion",
+      "taskExtraction": "Aufgaben-Extraktion",
+      "lensExtraction": "Linsen-Extraktion"
+    },
+    "queued": "{{n}} in der Warteschlange",
+    "moreQueued": "+{{n}} in der Warteschlange",
+    "openRouter": "Diese Arbeit sendet den Text deiner E-Mails an OpenRouter. Anhalten beendet diese Anfragen sofort; beim Warten laufen sie weiter und werden berechnet, bis die Arbeit fertig ist.",
+    "help": "Anhalten und anwenden beendet die Arbeit bei der E-Mail, die gerade bearbeitet wird, und wendet dann die Änderung an; bereits Erledigtes bleibt erhalten. Warten und anwenden wendet die Änderung an, sobald die Arbeit von selbst fertig ist.",
+    "stopping": "Wird angehalten… Die Änderung wird angewendet, sobald die Arbeit beendet ist.",
+    "waiting": "Warten, bis die Arbeit fertig ist. Die Änderung wird angewendet, sobald sie es ist.",
+    "stop": "Anhalten und anwenden",
+    "wait": "Warten und anwenden",
+    "failed": "Die laufende KI-Arbeit konnte nicht angehalten oder verfolgt werden: {{error}}",
+    "checkFailed": "Es konnte nicht geprüft werden, ob KI-Arbeit läuft: {{error}}"
   },
   "promptEditor": {
     "resetTitle": "Prompt auf Standard zurücksetzen?",
@@ -437,6 +481,8 @@
     "allowRemoteToggleDesc": "Wenn aus, werden externe Bilder und Tracker blockiert. Ein Banner lässt dich sie pro E-Mail laden.",
     "privacyPolicyLink": "Datenschutzerklärung",
     "loading": "Lädt...",
+    "loadFailed": "Datenschutzeinstellungen konnten nicht geladen werden: {{error}}",
+    "saveFailed": "Die Einstellung konnte nicht gespeichert werden: {{error}}",
     "passwordDialog": {
       "setTitle": "Hauptpasswort festlegen",
       "changeTitle": "Hauptpasswort ändern",

@@ -3,20 +3,36 @@ use tauri::{AppHandle, Emitter, State};
 
 #[tauri::command]
 pub async fn get_pref(state: State<'_, AppState>, key: String) -> Result<Option<String>, AppError> {
+    ensure_pref_key_exposed(&key)?;
     state.db.get_preference(&key)
+}
+
+/// Keys the backend owns outright and the generic pref IPC must never read or
+/// write: `security.*` holds the main-password hash and its throttle counters
+/// (writing them would remove the lock or reset the lockout without the
+/// password — `commands::security` is the only way in), and `app_data_dir` is
+/// written at startup and trusted for on-disk path resolution.
+pub(crate) fn ensure_pref_key_exposed(key: &str) -> Result<(), AppError> {
+    if key.starts_with("security.") || key == "app_data_dir" {
+        return Err(AppError::InvalidInput(format!(
+            "preference {key} is managed by the app and cannot be accessed here"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate a preference write before it hits the DB. Pure planner — no I/O,
 /// no `AppState`. Splitting this out of the Tauri command makes it directly
 /// unit-testable; the executor below just calls this and propagates the error.
 ///
-/// Today this only enforces the language-pref allowlist (`ui_language` must be
+/// Rejects backend-owned keys ([`ensure_pref_key_exposed`]) and enforces the language-pref allowlist (`ui_language` must be
 /// one of `en`/`es`/`fr`/`de`; `ai_output_language_v2` accepts the same set
 /// plus the empty string as the "Same as UI" sentinel resolved at read time).
 /// Add more rules here as new typed preferences land.
 pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
     use crate::services::i18n::{Language, PREF_AI_OUTPUT_LANGUAGE_V2, PREF_UI_LANGUAGE};
 
+    ensure_pref_key_exposed(key)?;
     if key == PREF_UI_LANGUAGE {
         if !value.is_empty() && Language::from_pref(value).is_none() {
             return Err(AppError::InvalidInput(format!(
@@ -40,6 +56,19 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         if parsed != 0 && !(N_CTX_PREF_MIN..=N_CTX_PREF_MAX).contains(&parsed) {
             return Err(AppError::InvalidInput(format!(
                 "chat.n_ctx must be 0 (auto) or between {N_CTX_PREF_MIN} and {N_CTX_PREF_MAX}, got: {parsed}"
+            )));
+        }
+    } else if key == crate::services::chat::research::REMOTE_N_CTX_BUDGET_PREF {
+        // Prompt budget for remote (OpenRouter) models. `0` = default; the
+        // model's own window still caps it at read time.
+        const BUDGET_MIN: u32 = 4096;
+        const BUDGET_MAX: u32 = 2_000_000;
+        let parsed = value
+            .parse::<u32>()
+            .map_err(|_| AppError::InvalidInput(format!("{key} must be a whole number of tokens, got: {value}")))?;
+        if parsed != 0 && !(BUDGET_MIN..=BUDGET_MAX).contains(&parsed) {
+            return Err(AppError::InvalidInput(format!(
+                "{key} must be 0 (default) or between {BUDGET_MIN} and {BUDGET_MAX}, got: {parsed}"
             )));
         }
     } else if key == "calendar_notify_minutes" {
@@ -153,6 +182,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_pref_accepts_a_remote_context_budget_or_the_default() {
+        for v in ["0", "4096", "32768", "200000"] {
+            assert!(
+                validate_pref("chat.remote_n_ctx_budget", v).is_ok(),
+                "should accept {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_a_nonsense_remote_context_budget() {
+        for v in ["lots", "-1", "512", "99999999"] {
+            let err = validate_pref("chat.remote_n_ctx_budget", v).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "should reject {v}");
+        }
+    }
+
+    #[test]
     fn validate_pref_rejects_unsupported_ai_language() {
         let err = validate_pref("ai_output_language_v2", "Italian").unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
@@ -223,6 +270,40 @@ mod tests {
         assert!(validate_pref("calendar.enabled:acc1", "false").is_ok());
         let err = validate_pref("calendar.enabled:acc1", "yes").unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn reserved_pref_keys_are_rejected_for_reads() {
+        for key in [
+            "security.main_password_hash",
+            "security.main_password_failed_attempts",
+            "security.main_password_last_failed_at",
+            "app_data_dir",
+        ] {
+            let err = ensure_pref_key_exposed(key).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "should reject read of {key}");
+        }
+    }
+
+    #[test]
+    fn reserved_pref_keys_are_rejected_for_writes() {
+        // Clearing the hash (empty value) or resetting the throttle counter
+        // through the generic IPC would bypass the lock screen.
+        for (key, value) in [
+            ("security.main_password_hash", ""),
+            ("security.main_password_failed_attempts", "0"),
+            ("security.main_password_last_failed_at", "0"),
+            ("app_data_dir", "/tmp/elsewhere"),
+        ] {
+            let err = validate_pref(key, value).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "should reject write of {key}");
+        }
+    }
+
+    #[test]
+    fn ordinary_pref_keys_are_exposed() {
+        assert!(ensure_pref_key_exposed("ai_provider").is_ok());
+        assert!(ensure_pref_key_exposed("privacy.allow_remote_content").is_ok());
     }
 
     #[test]

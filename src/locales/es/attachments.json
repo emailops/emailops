@@ -107,5 +107,20 @@
   "download": {
     "savedTo": "Se guardó \"{{filename}}\" en Descargas",
     "showInFinder": "Mostrar en Finder"
+  },
+  "openConfirm": {
+    "title": "¿Abrir este adjunto?",
+    "fromEmail": "«{{filename}}» ha llegado como adjunto de un correo.",
+    "kinds": {
+      "program": "Es un programa: al abrirlo se ejecuta en este equipo.",
+      "script": "Es un script: al abrirlo puede ejecutar comandos en este equipo.",
+      "installer": "Es un instalador o una imagen de disco: al abrirlo puede instalar software.",
+      "shortcut": "Es un acceso directo: al abrirlo puede lanzar otro archivo, otra aplicación o una dirección.",
+      "web_page": "Es una página web: se abre en el navegador, fuera de las protecciones que EmailOps aplica al contenido de los correos.",
+      "other": "Es un tipo de archivo que puede ejecutar código al abrirse."
+    },
+    "advice": "Ábrelo solo si confías en el remitente y esperabas este archivo.",
+    "open": "Abrir de todos modos",
+    "failed": "No se pudo abrir «{{filename}}»: {{error}}"
   }
 }

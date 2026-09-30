@@ -81,14 +81,16 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
 }
 
 export function getAttachmentIframeSandbox(mimeType: string): string | undefined {
-  // HTML attachments are untrusted markup: sandbox them so scripts, forms,
-  // popups, and same-origin access are all blocked (XSS prevention). An empty
-  // sandbox value applies every restriction yet still renders static HTML.
-  if (mimeType === 'text/html') return '';
-  // Binary previews (PDF, etc.) are drawn by the WebView's built-in viewer,
-  // which a restrictive sandbox blocks — leaving the tab blank. They carry no
-  // scripts and load from an opaque-origin data: URI, so no sandbox is needed.
-  return undefined;
+  // An allowlist, because the MIME type is whatever the sender declared. PDFs
+  // are drawn by the WebView's built-in viewer, which a restrictive sandbox
+  // blocks — leaving the tab blank — so they alone go unsandboxed (no scripts,
+  // opaque-origin data: URI).
+  if (mimeType === 'application/pdf') return undefined;
+  // Everything else is untrusted: HTML, SVG, XHTML or a type the WebView
+  // sniffs as markup could run script. An empty sandbox applies every
+  // restriction (scripts, forms, popups, same-origin) yet still renders
+  // static content.
+  return '';
 }
 
 function AttachmentIcon({ mimeType }: { mimeType: string }) {

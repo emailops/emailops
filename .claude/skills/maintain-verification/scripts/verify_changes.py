@@ -23,13 +23,15 @@ files += [l.split()[-1] for l in staged if l.strip()]
 def rust_module(path):
     return path.replace("src-tauri/src/", "").replace(".rs", "").replace("/mod", "").replace("/", "::")
 def feature_of(path):
+    # Longest matching prefix wins, as in verify_all.py.
     if path.startswith("src-tauri/src/"):
         mod = rust_module(path)
-        for f in manifest["features"]:
-            if any(mod == pref or mod.startswith(pref + "::") or pref.startswith(mod + "::") for pref in f.get("rust", [])): return f["name"]
+        hits = [(len(pref), f["name"]) for f in manifest["features"] for pref in f.get("rust", [])
+                if mod == pref or mod.startswith(pref + "::") or pref.startswith(mod + "::")]
+        if hits: return max(hits, key=lambda h: h[0])[1]
     if path.startswith("src/"):
-        for f in manifest["features"]:
-            if any(path.startswith(pref) for pref in f.get("vitest", [])): return f["name"]
+        hits = [(len(pref), f["name"]) for f in manifest["features"] for pref in f.get("vitest", []) if path.startswith(pref)]
+        if hits: return max(hits, key=lambda h: h[0])[1]
         if path.startswith("src/locales/"): return "Ajustes, idioma y actualizaciones"
     if path.startswith("src-tauri/migrations/"): return "Transversal (migración: revisar paridad de esquema y oráculos SQL)"
     if path.startswith("src-tauri/evals/"): return "Chat con el buzón (evals)"

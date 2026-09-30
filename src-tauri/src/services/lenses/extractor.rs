@@ -109,8 +109,17 @@ pub async fn extract_email(
     // local models under-fill tool arguments while answering the same prompt
     // well in plain chat. Keep a text fallback for sparse or unsupported tool
     // responses.
-    let tool_result = provider.chat_with_tools(&messages, std::slice::from_ref(&tool)).await;
+    let tool_result = crate::services::ai::AiService::chat_with_tools(
+        db,
+        provider.as_ref(),
+        &messages,
+        std::slice::from_ref(&tool),
+        "lens_extract",
+    )
+    .await;
     let tool_extracted = match tool_result {
+        // Out of budget: the text fallback below would be another paid call.
+        Err(e @ AppError::BudgetExceeded(_)) => return Err(e),
         Ok(response) => response
             .tool_calls
             .as_ref()
@@ -385,11 +394,23 @@ fn validate_against_schema(
                 serde_json::Value::String(s) => serde_json::Value::String(s),
                 other => serde_json::Value::String(other.to_string()),
             },
-            LensColumnType::Number => match val.as_f64() {
+            // A quoted plain number ("1200") is unambiguous; anything looser
+            // (separators, units, prose) still fails the row.
+            LensColumnType::Number => match val
+                .as_f64()
+                .or_else(|| val.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+                .filter(|n| n.is_finite())
+            {
                 Some(n) => json!(n),
                 None => return Err(format!("column '{}' is not a number", col.key)),
             },
-            LensColumnType::Boolean => match val.as_bool() {
+            LensColumnType::Boolean => match val.as_bool().or_else(|| {
+                val.as_str().and_then(|s| match s.trim().to_ascii_lowercase().as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                })
+            }) {
                 Some(b) => json!(b),
                 None => return Err(format!("column '{}' is not a boolean", col.key)),
             },
@@ -397,15 +418,18 @@ fn validate_against_schema(
                 Some(s) => serde_json::Value::String(s.to_string()),
                 None => return Err(format!("column '{}' is not a date string", col.key)),
             },
+            // Matched case-insensitively and stored in the schema's spelling,
+            // so "Paid" and "paid" land in the same bucket.
             LensColumnType::Enum => match val.as_str() {
-                Some(s) => {
-                    if let Some(values) = col.enum_values.as_ref() {
-                        if !values.iter().any(|v| v == s) {
+                Some(s) => match col.enum_values.as_ref() {
+                    Some(values) => match values.iter().find(|v| v.trim().eq_ignore_ascii_case(s.trim())) {
+                        Some(canonical) => serde_json::Value::String(canonical.clone()),
+                        None => {
                             return Err(format!("column '{}' value '{s}' is not one of {values:?}", col.key));
                         }
-                    }
-                    serde_json::Value::String(s.to_string())
-                }
+                    },
+                    None => serde_json::Value::String(s.to_string()),
+                },
                 None => return Err(format!("column '{}' is not a string", col.key)),
             },
             LensColumnType::Currency => match val {
@@ -792,6 +816,57 @@ mod tests {
         }
     }
 
+    fn schema_with_flag() -> LensSchema {
+        let mut s = schema();
+        s.columns.push(LensColumn {
+            key: "recurring".into(),
+            label: "Recurring".into(),
+            column_type: LensColumnType::Boolean,
+            description: "Whether the invoice recurs".into(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        });
+        s
+    }
+
+    /// Models often quote scalars ("1200", "true") and capitalise enum
+    /// values ("Paid"); those are unambiguous and must not fail the row.
+    #[test]
+    fn quoted_scalars_and_enum_case_are_coerced_to_the_schema() {
+        let extracted = serde_json::json!({
+            "vendor": "Acme",
+            "amount": " 1200.5 ",
+            "status": "Paid",
+            "recurring": "TRUE",
+        });
+        let out = validate_against_schema(&extracted, &schema_with_flag()).expect("valid");
+        assert_eq!(out["amount"], serde_json::json!(1200.5));
+        assert_eq!(out["status"], "paid");
+        assert_eq!(out["recurring"], serde_json::json!(true));
+
+        let out = validate_against_schema(
+            &serde_json::json!({"vendor": "Acme", "recurring": "false"}),
+            &schema_with_flag(),
+        )
+        .expect("valid");
+        assert_eq!(out["recurring"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn ambiguous_strings_still_fail_the_row() {
+        for extracted in [
+            serde_json::json!({"vendor": "Acme", "amount": "about 1200"}),
+            serde_json::json!({"vendor": "Acme", "recurring": "maybe"}),
+            serde_json::json!({"vendor": "Acme", "status": "pending"}),
+        ] {
+            assert!(
+                validate_against_schema(&extracted, &schema_with_flag()).is_err(),
+                "{extracted}"
+            );
+        }
+    }
+
     #[test]
     fn tool_definition_marks_required_columns() {
         let def = build_tool_definition(&schema());
@@ -1077,6 +1152,135 @@ mod tests {
         assert_eq!(result.data["invoice_number"], "BCL-0010144");
         assert_eq!(result.data["due_date"], "2026-05-19");
         assert_eq!(result.data["status"], "unpaid");
+    }
+
+    /// A test DB holding one synthetic email, the given monthly budget, and a
+    /// Lens over three optional text columns.
+    fn contact_fixture(budget: &str) -> (Database, Lens) {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", budget).expect("set budget");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct1', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .expect("insert account");
+        db.connection()
+            .execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                 VALUES
+                 ('email1', 'acct1', 'thread1', 'Contact details', 'Example Sender',
+                  'sender@example.com', 'example.com', '[]', '[]', 'contact', 1779187200,
+                  0, 'primary', 'inbox', 1779187200)",
+                [],
+            )
+            .expect("insert email");
+        db.connection()
+            .execute(
+                "INSERT INTO email_bodies (email_id, body)
+                 VALUES ('email1', 'Reach Example Labs at sender@example.com or 555-0100.')",
+                [],
+            )
+            .expect("insert body");
+        let lens = Lens {
+            id: "lens1".into(),
+            name: "Contacts".into(),
+            icon: None,
+            template_key: None,
+            account_id: None,
+            scope: LensScope::default(),
+            schema: all_optional_schema(),
+            prompt_text: "Extract contact fields.".into(),
+            prompt_version: 1,
+            model_provider: None,
+            model_name: None,
+            is_enabled: true,
+            sort_order: 1,
+            created_at: 0,
+            updated_at: 0,
+        };
+        (db, lens)
+    }
+
+    /// A mock OpenRouter that answers every chat request with a complete tool
+    /// call costing `cost` USD, and a client pointed at it.
+    async fn openrouter_extracting(cost: f64) -> (wiremock::MockServer, Arc<dyn AIProvider>) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let arguments = r#"{\"email\":\"sender@example.com\",\"phone\":\"555-0100\",\"company\":\"Example Labs\"}"#;
+        let body = [
+            format!(
+                r#"{{"choices":[{{"delta":{{"tool_calls":[{{"index":0,"id":"call_x","type":"function","function":{{"name":"extract","arguments":"{arguments}"}}}}]}},"finish_reason":"tool_calls"}}]}}"#
+            ),
+            format!(r#"{{"choices":[],"usage":{{"prompt_tokens":150,"completion_tokens":20,"cost":{cost}}}}}"#),
+            "[DONE]".to_string(),
+        ]
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let client = crate::ai::openrouter::OpenRouterClient::new(
+            "key".to_string(),
+            "vendor/model".to_string(),
+            "vendor/embed".to_string(),
+        )
+        .with_base_url(server.uri());
+        (server, Arc::new(client))
+    }
+
+    #[tokio::test]
+    async fn a_lens_tool_call_records_what_the_provider_charged() {
+        let (db, lens) = contact_fixture("1.0");
+        let (server, provider) = openrouter_extracting(0.004).await;
+
+        let result = extract_email(&db, provider, &lens, "email1", None)
+            .await
+            .expect("extract");
+
+        assert_eq!(result.status, ExtractionStatus::Ok);
+        assert_eq!(result.data["company"], "Example Labs");
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.004).abs() < 1e-9);
+        assert_eq!(usage.total_prompt_tokens, 150);
+        let operation: String = db
+            .reader()
+            .query_row("SELECT operation FROM ai_usage", [], |row| row.get(0))
+            .expect("usage row");
+        assert_eq!(operation, "lens_extract");
+    }
+
+    /// The refusal must end the extraction: falling back to the text prompt
+    /// would be another paid call past the budget.
+    #[tokio::test]
+    async fn a_lens_tool_call_is_refused_once_the_budget_is_spent() {
+        let (db, lens) = contact_fixture("0.004");
+        let (server, provider) = openrouter_extracting(0.004).await;
+        extract_email(&db, provider.clone(), &lens, "email1", None)
+            .await
+            .expect("the call that crosses the budget is kept");
+
+        let second = extract_email(&db, provider, &lens, "email1", None).await;
+
+        assert!(
+            matches!(second, Err(AppError::BudgetExceeded(_))),
+            "got {:?}",
+            second.map(|result| result.data)
+        );
+        assert_eq!(
+            server.received_requests().await.expect("requests").len(),
+            1,
+            "no paid call past the budget"
+        );
     }
 
     fn all_optional_schema() -> LensSchema {

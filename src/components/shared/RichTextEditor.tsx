@@ -11,6 +11,11 @@
  *     editor; converted to cid: + attachments by `prepareOutgoingHtml`
  *     just before send)
  *
+ * It also carries, without any toolbar for them, the tables and inline
+ * styles of a draft written in the provider's own web client, so editing
+ * and sending that draft from here does not flatten it. The schema lives in
+ * `@/lib/composeEditorExtensions`.
+ *
  * The editor outputs HTML via `getHTML()`. The parent owns the string in
  * state and passes it back as `value`. We deliberately do NOT echo every
  * keystroke back as `value` from parent → editor (that fights ProseMirror's
@@ -18,14 +23,11 @@
  * reset its content when `value` changes externally (e.g. AI draft arrived).
  */
 
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
-import Underline from '@tiptap/extension-underline';
 import { type Editor, EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentPlatform } from '@/lib/api';
+import { composeEditorExtensions } from '@/lib/composeEditorExtensions';
 import { formatShortcut } from '@/lib/platform';
 
 export interface RichTextEditorProps {
@@ -46,27 +48,7 @@ export function RichTextEditor({
   contentClassName,
 }: RichTextEditorProps) {
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        // We want StarterKit defaults but explicit about a few things.
-        heading: { levels: [1, 2, 3] },
-        // StarterKit 3 bundles both; we register our own configured copies below.
-        link: false,
-        underline: false,
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,
-        autolink: true,
-        HTMLAttributes: { rel: 'noopener noreferrer' },
-      }),
-      // Inline images. Tiptap stores them as data: URLs until we extract
-      // them at send time via `prepareOutgoingHtml`.
-      Image.configure({
-        allowBase64: true,
-        HTMLAttributes: { class: 'max-w-full h-auto rounded' },
-      }),
-    ],
+    extensions: composeEditorExtensions,
     content: value,
     editable: !disabled,
     onUpdate({ editor }) {
@@ -74,9 +56,10 @@ export function RichTextEditor({
     },
     editorProps: {
       attributes: {
-        class: ['prose prose-sm max-w-none focus:outline-none min-h-[120px] px-3 py-2', contentClassName ?? ''].join(
-          ' ',
-        ),
+        class: [
+          'prose prose-sm max-w-none overflow-x-auto focus:outline-none min-h-[120px] px-3 py-2',
+          contentClassName ?? '',
+        ].join(' '),
         ...(placeholder ? { 'data-placeholder': placeholder } : {}),
       },
       handlePaste(view, event) {

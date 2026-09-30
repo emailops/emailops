@@ -1,8 +1,28 @@
 use std::collections::HashMap;
 
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use rusqlite::params;
+
+/// Dimension of the `vec_emails` index (`float[768]`, migration V001). A
+/// vector of any other size cannot be stored in it.
+pub const EMAIL_EMBEDDING_DIM: usize = 768;
+
+/// Refuse a chunk list the `vec_emails` index cannot hold, before anything is
+/// written.
+fn check_email_embeddings(embeddings: &[Vec<f32>]) -> Result<()> {
+    if embeddings.is_empty() {
+        return Err(AppError::AiError("No embedding vectors to store".to_string()));
+    }
+    if let Some(bad) = embeddings.iter().find(|e| e.len() != EMAIL_EMBEDDING_DIM) {
+        return Err(AppError::AiError(format!(
+            "The embedding model returned {}-dimension vectors; the email index needs {EMAIL_EMBEDDING_DIM}. \
+             Choose a {EMAIL_EMBEDDING_DIM}-dimension embedding model in Settings → AI.",
+            bad.len()
+        )));
+    }
+    Ok(())
+}
 
 /// Convert f32 embedding to raw little-endian bytes for sqlite-vec
 /// sqlite-vec's ceiling on `k` for a KNN query.
@@ -27,31 +47,36 @@ impl Database {
         model: &str,
         content_hash: &str,
     ) -> Result<()> {
+        check_email_embeddings(embeddings)?;
         let conn = self.connection();
         let now = chrono::Utc::now().timestamp();
+        // One transaction: a chunk row without its vector would mark the
+        // email embedded (`embedding_exists`) with nothing to find, forever.
+        let tx = conn.unchecked_transaction()?;
 
         // Delete existing chunks for this email
-        conn.execute(
+        tx.execute(
             "DELETE FROM vec_emails WHERE rowid IN (SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
             params![email_id],
         )?;
-        conn.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        tx.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
 
         // Insert new chunks
         for (idx, embedding) in embeddings.iter().enumerate() {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO embedding_chunks (email_id, account_id, chunk_index, embedding_model, content_hash, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![email_id, account_id, idx as i32, model, content_hash, now],
             )?;
-            let rowid = conn.last_insert_rowid();
+            let rowid = tx.last_insert_rowid();
             let blob = embedding_to_blob(embedding);
-            conn.execute(
+            tx.execute(
                 "INSERT INTO vec_emails (rowid, embedding) VALUES (?1, ?2)",
                 params![rowid, blob],
             )?;
         }
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -144,8 +169,9 @@ impl Database {
 
         // Step 3: narrow by a second indexed query against emails. Each row
         // checks PK + indexed columns, no table scan. Always runs — even with
-        // no account/category filter, spam/trash rows must never be retrieved
-        // (a spam email classified `primary` sails through the category filter).
+        // no account/category filter, spam/trash rows, soft-deleted rows and
+        // mail the junk detector flagged must never be retrieved (a spam email
+        // classified `primary` sails through the category filter).
         let filtered: Vec<(i64, String)> = {
             let unique_emails: Vec<String> = rowid_to_email
                 .iter()
@@ -159,8 +185,10 @@ impl Database {
                 .join(", ");
 
             let mut sql = format!(
-                "SELECT id FROM emails WHERE id IN ({}) AND mailbox NOT IN ('spam', 'trash')",
-                eid_phs
+                "SELECT id FROM emails WHERE id IN ({}) AND mailbox NOT IN ('spam', 'trash')
+                   AND is_deleted = 0 {}",
+                eid_phs,
+                crate::db::exclude_junk_sql("emails", false)
             );
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = unique_emails
                 .iter()
@@ -185,10 +213,9 @@ impl Database {
                 let conn = self.reader();
                 let mut stmt = conn.prepare(&sql)?;
                 let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-                let rows: std::collections::HashSet<String> = stmt
+                let rows = stmt
                     .query_map(params_refs.as_slice(), |row| row.get::<_, String>(0))?
-                    .filter_map(|r| r.ok())
-                    .collect();
+                    .collect::<rusqlite::Result<std::collections::HashSet<String>>>()?;
                 rows
             };
             rowid_to_email
@@ -321,43 +348,43 @@ impl Database {
         Ok(count)
     }
 
-    /// Delete embeddings for an email
+    /// Delete embeddings for an email. The vec0 rows and their chunk rows go
+    /// in one transaction, so a failure never strands either half.
     pub fn delete_embedding(&self, email_id: &str) -> Result<()> {
-        let conn = self.connection();
-        let mut stmt = conn.prepare("SELECT rowid FROM embedding_chunks WHERE email_id = ?1")?;
-        let rowids: Vec<i64> = stmt
-            .query_map(params![email_id], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        for rowid in &rowids {
-            conn.execute("DELETE FROM vec_emails WHERE rowid = ?1", params![rowid])?;
-        }
-        conn.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM vec_emails WHERE rowid IN (SELECT rowid FROM embedding_chunks WHERE email_id = ?1)",
+            params![email_id],
+        )?;
+        tx.execute("DELETE FROM embedding_chunks WHERE email_id = ?1", params![email_id])?;
+        tx.commit()?;
         Ok(())
     }
 
-    /// Delete all embeddings, optionally filtered by account
+    /// Delete all embeddings, optionally filtered by account, in one
+    /// transaction.
     pub fn delete_all_embeddings(&self, account_id: Option<&str>) -> Result<u32> {
-        let conn = self.connection();
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
 
-        match account_id {
+        let deleted = match account_id {
             Some(acc) => {
-                conn.execute(
+                tx.execute(
                     "DELETE FROM vec_emails WHERE rowid IN (
                         SELECT rowid FROM embedding_chunks WHERE account_id = ?1
                     )",
                     params![acc],
                 )?;
-                let deleted = conn.execute("DELETE FROM embedding_chunks WHERE account_id = ?1", params![acc])?;
-                Ok(deleted as u32)
+                tx.execute("DELETE FROM embedding_chunks WHERE account_id = ?1", params![acc])?
             }
             None => {
-                conn.execute("DELETE FROM vec_emails", [])?;
-                let deleted = conn.execute("DELETE FROM embedding_chunks", [])?;
-                Ok(deleted as u32)
+                tx.execute("DELETE FROM vec_emails", [])?;
+                tx.execute("DELETE FROM embedding_chunks", [])?
             }
-        }
+        };
+        tx.commit()?;
+        Ok(deleted as u32)
     }
 
     /// Full-text search using FTS5
@@ -394,14 +421,17 @@ impl Database {
 
         let mut sql = String::from(
             // bm25 weights match column order: email_id (UNINDEXED, ignored), subject, sender, body
-            // Spam/trash never surface in retrieval — a spam email classified
-            // `primary` must not sail through the category filter.
+            // Spam/trash, soft-deleted rows and junk-detector spam never
+            // surface in retrieval — a spam email classified `primary` must
+            // not sail through the category filter.
             r#"SELECT f.email_id, bm25(emails_fts, 0.0, 3.0, 2.0, 1.0) as rank
                FROM emails_fts f
                JOIN emails e ON f.email_id = e.id
                WHERE emails_fts MATCH ?1
-                 AND e.mailbox NOT IN ('spam', 'trash')"#,
+                 AND e.mailbox NOT IN ('spam', 'trash')
+                 AND e.is_deleted = 0 "#,
         );
+        sql.push_str(&crate::db::exclude_junk_sql("e", false));
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(fts_query)];
         let mut param_idx = 2;
 
@@ -857,6 +887,110 @@ mod tests {
         assert!(!ids.contains(&"e-trash"), "trash email must be excluded, got {:?}", ids);
     }
 
+    fn soft_delete(db: &Database, id: &str) {
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = ?1", params![id])
+            .unwrap();
+    }
+
+    /// A junk-detector spam verdict with no user override.
+    fn flag_spam(db: &Database, id: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_junk
+                     (email_id, account_id, spam_score, phish_score, gray_score, band, primary_kind,
+                      reasons_json, method, model_version, scored_at)
+                 SELECT id, account_id, 0.99, 0, 0, 'junk', 'spam', '[]', 'deterministic', 1, 0
+                 FROM emails WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+    }
+
+    /// Three same-subject inbox emails with identical embeddings, so only the
+    /// row filters can tell them apart: e-keep, e-deleted (soft-deleted) and
+    /// e-junk (detector spam verdict).
+    fn seed_deleted_and_junk(db: &Database) -> Vec<f32> {
+        let emb = vec![0.1_f32; 768];
+        for (id, ts) in [("e-keep", 100), ("e-deleted", 200), ("e-junk", 300)] {
+            insert_fts_email(db, id, "acc1", "alice@example.com", "factura junio", "body", ts);
+            db.store_embedding_chunks(id, "acc1", std::slice::from_ref(&emb), "test-model", "hash")
+                .unwrap();
+        }
+        soft_delete(db, "e-deleted");
+        flag_spam(db, "e-junk");
+        emb
+    }
+
+    // Regression: chat RAG / semantic search retrieved soft-deleted rows and
+    // detector-flagged spam, which the keyword path already hides.
+    #[test]
+    fn vec_search_excludes_soft_deleted_and_junk_emails() {
+        let db = Database::new_for_testing().unwrap();
+        let emb = seed_deleted_and_junk(&db);
+        for account in [Some("acc1"), None] {
+            let hits = db.vec_search(&emb, account, None, 10).unwrap();
+            let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+            assert_eq!(ids, vec!["e-keep"], "account {account:?}");
+        }
+    }
+
+    #[test]
+    fn fts_search_excludes_soft_deleted_and_junk_emails() {
+        let db = Database::new_for_testing().unwrap();
+        seed_deleted_and_junk(&db);
+        for account in [Some("acc1"), None] {
+            let hits = db.fts_search("factura", account, None, 10).unwrap();
+            let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+            assert_eq!(ids, vec!["e-keep"], "account {account:?}");
+        }
+    }
+
+    fn email_vector_rows(db: &Database) -> i64 {
+        db.reader()
+            .query_row("SELECT COUNT(*) FROM vec_emails", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// Makes every DELETE on embedding_chunks fail, after the vec0 rows are
+    /// already gone, to prove the pair is removed all-or-nothing.
+    fn block_chunk_deletes(db: &Database) {
+        db.connection()
+            .execute_batch(
+                "CREATE TEMP TRIGGER block_chunk_delete BEFORE DELETE ON embedding_chunks
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+    }
+
+    fn seed_one_embedding(db: &Database) {
+        insert_fts_email(db, "e-1", "acc1", "alice@example.com", "subject", "body", 100);
+        db.store_embedding_chunks("e-1", "acc1", &[vec![0.1_f32; 768]], "test-model", "hash")
+            .unwrap();
+    }
+
+    #[test]
+    fn delete_embedding_is_all_or_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        seed_one_embedding(&db);
+        block_chunk_deletes(&db);
+
+        assert!(db.delete_embedding("e-1").is_err());
+        assert_eq!(email_vector_rows(&db), 1, "the vector must survive the failed delete");
+    }
+
+    #[test]
+    fn delete_all_embeddings_is_all_or_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        seed_one_embedding(&db);
+        block_chunk_deletes(&db);
+
+        for account in [Some("acc1"), None] {
+            assert!(db.delete_all_embeddings(account).is_err());
+            assert_eq!(email_vector_rows(&db), 1, "account {account:?}");
+        }
+    }
+
     // Regression: the embedding pipeline embedded spam/trash emails — wasted
     // compute for content that retrieval must never surface. Candidate
     // selection must skip them.
@@ -946,5 +1080,74 @@ mod tests {
             "stopword-only query must return no hits, got {:?}",
             hits
         );
+    }
+
+    fn chunk_rows(db: &Database, email_id: &str) -> i64 {
+        db.connection()
+            .query_row(
+                "SELECT COUNT(*) FROM embedding_chunks WHERE email_id = ?1",
+                params![email_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// A vector of the wrong size (an embedding model the index was not built
+    /// for) used to leave its chunk row behind when the vector insert failed,
+    /// which marked the email embedded forever with no vector to find.
+    #[test]
+    fn a_vector_of_the_wrong_dimension_is_rejected_and_stores_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-dim", "acc1", "alice@x.com", "subject", "body", 100);
+
+        let err = db
+            .store_embedding_chunks("e-dim", "acc1", &[vec![0.1_f32; 384]], "small-model", "hash")
+            .expect_err("a 384-dim vector cannot go into the 768-dim index");
+
+        assert!(err.to_string().contains("768"), "{err}");
+        assert_eq!(chunk_rows(&db, "e-dim"), 0);
+        assert!(!db.embedding_exists("e-dim", "hash").unwrap());
+    }
+
+    #[test]
+    fn empty_embeddings_are_rejected() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-empty", "acc1", "alice@x.com", "subject", "body", 100);
+        assert!(db.store_embedding_chunks("e-empty", "acc1", &[], "m", "hash").is_err());
+        assert!(db
+            .store_embedding_chunks("e-empty", "acc1", &[Vec::new()], "m", "hash")
+            .is_err());
+    }
+
+    /// Replacing an email's chunks is all or nothing: a failed store keeps
+    /// the vectors it was meant to replace.
+    #[test]
+    fn a_failed_store_keeps_the_previous_embedding() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email(&db, "e-keep", "acc1", "alice@x.com", "subject", "body", 100);
+        let good = vec![0.1_f32; 768];
+        db.store_embedding_chunks("e-keep", "acc1", std::slice::from_ref(&good), "m", "old")
+            .unwrap();
+
+        // Occupy the vector slot the next chunk row will take, so the store
+        // fails after its chunk row is written.
+        let next_rowid: i64 = db
+            .connection()
+            .query_row("SELECT MAX(rowid) + 1 FROM embedding_chunks", [], |r| r.get(0))
+            .unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO vec_emails (rowid, embedding) VALUES (?1, ?2)",
+                params![next_rowid, embedding_to_blob(&good)],
+            )
+            .unwrap();
+
+        let result = db.store_embedding_chunks("e-keep", "acc1", std::slice::from_ref(&good), "m", "new");
+
+        assert!(result.is_err(), "the vector insert collides");
+        assert!(!db.embedding_exists("e-keep", "new").unwrap(), "no orphan chunk row");
+        assert!(db.embedding_exists("e-keep", "old").unwrap());
+        assert_eq!(chunk_rows(&db, "e-keep"), 1);
+        assert_eq!(db.vec_search(&good, Some("acc1"), None, 10).unwrap().len(), 1);
     }
 }
