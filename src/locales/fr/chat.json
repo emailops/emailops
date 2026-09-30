@@ -62,7 +62,10 @@
     "wrongPrompt": "Qu'est-ce qui n'allait pas ?",
     "wrongPlaceholder": "Aidez le modèle à mieux faire — p. ex. ces e-mails datent de septembre, pas d’août",
     "wrongSubmit": "Réessayer",
-    "rejected": "Marquée comme incorrecte — nouvelle tentative ci-dessous."
+    "rejected": "Marquée comme incorrecte — nouvelle tentative ci-dessous.",
+    "budgetNotice": "Une partie des e-mails sur lesquels repose cette réponse a été raccourcie pour tenir dans la fenêtre de contexte du modèle ; des détails peuvent manquer.",
+    "budgetOverflow": "Cette conversation ne tient plus dans la fenêtre de contexte du modèle ; la réponse a pu perdre des instructions ou du contexte.",
+    "budgetSettings": "Paramètres IA"
   },
   "processing": {
     "routing": "Routage…",
@@ -166,7 +169,8 @@
         "llmRound": "Tour LLM {{n}}",
         "answer": "Réponse (LLM)",
         "llmCall": "Appel LLM",
-        "llmCallN": "Appel LLM {{n}}/{{total}}"
+        "llmCallN": "Appel LLM {{n}}/{{total}}",
+        "budget": "Budget de contexte"
       },
       "section": {
         "prompt": "prompt",
@@ -184,6 +188,18 @@
         "route": "route",
         "reason": "raison",
         "status": "état"
+      },
+      "budget": {
+        "window": "fenêtre de {{n}} tokens",
+        "overflow": "ne tenait toujours pas (~{{n}} tokens)",
+        "cut": {
+          "historySources": "e-mails de {{n}} questions précédentes omis",
+          "historyTurns": "{{n}} messages précédents omis",
+          "openThread": "fil ouvert réduit à {{n}} caractères",
+          "sourceExcerpts": "extraits réduits à {{n}} caractères par e-mail",
+          "sourcesDropped": "{{n}} e-mails récupérés omis",
+          "toolResults": "{{n}} résultats d'outils réduits de {{chars}} caractères"
+        }
       }
     }
   },

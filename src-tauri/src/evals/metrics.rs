@@ -746,6 +746,7 @@ mod tests {
             applied_skills: Vec::new(),
             steps: vec![],
             search_page: None,
+            budget: None,
         }
     }
 

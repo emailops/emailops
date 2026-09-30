@@ -62,7 +62,10 @@
     "wrongPrompt": "Was war daran falsch?",
     "wrongPlaceholder": "Hilf dem Modell, es besser zu machen — z. B. diese E-Mails sind von September, nicht von August",
     "wrongSubmit": "Erneut versuchen",
-    "rejected": "Als falsch markiert — unten erneut versucht."
+    "rejected": "Als falsch markiert — unten erneut versucht.",
+    "budgetNotice": "Ein Teil der E-Mails, auf denen diese Antwort beruht, wurde gekürzt, damit er in das Kontextfenster des Modells passt; Details können fehlen.",
+    "budgetOverflow": "Diese Unterhaltung passt nicht mehr in das Kontextfenster des Modells; der Antwort können Anweisungen oder Kontext fehlen.",
+    "budgetSettings": "KI-Einstellungen"
   },
   "processing": {
     "routing": "Route bestimmen…",
@@ -166,7 +169,8 @@
         "llmRound": "LLM-Runde {{n}}",
         "answer": "Antwort (LLM)",
         "llmCall": "LLM-Aufruf",
-        "llmCallN": "LLM-Aufruf {{n}}/{{total}}"
+        "llmCallN": "LLM-Aufruf {{n}}/{{total}}",
+        "budget": "Kontextbudget"
       },
       "section": {
         "prompt": "Prompt",
@@ -184,6 +188,18 @@
         "route": "Route",
         "reason": "Grund",
         "status": "Status"
+      },
+      "budget": {
+        "window": "Fenster mit {{n}} Tokens",
+        "overflow": "passte trotzdem nicht (~{{n}} Tokens)",
+        "cut": {
+          "historySources": "E-Mails von {{n}} früheren Fragen ausgelassen",
+          "historyTurns": "{{n}} frühere Nachrichten ausgelassen",
+          "openThread": "offener Thread auf {{n}} Zeichen gekürzt",
+          "sourceExcerpts": "Auszüge auf {{n}} Zeichen pro E-Mail gekürzt",
+          "sourcesDropped": "{{n}} gefundene E-Mails ausgelassen",
+          "toolResults": "{{n}} Tool-Ergebnisse um {{chars}} Zeichen gekürzt"
+        }
       }
     }
   },

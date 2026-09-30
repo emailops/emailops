@@ -310,6 +310,7 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
         system_prefix_tokens: None,
         stable_tokens: None,
         dropped_front_tokens: None,
+        prompt_chars: None,
         input: None,
         output: Some(output),
     };
@@ -740,6 +741,7 @@ fn call_trace(
         system_prefix_tokens: None,
         stable_tokens: None,
         dropped_front_tokens: None,
+        prompt_chars: None,
         // Prompts carry mail bodies: captured in dev builds only, like the
         // tool rounds' prompts.
         input: cfg!(debug_assertions).then(|| format!("{}{}", prompt.0, prompt.1)),

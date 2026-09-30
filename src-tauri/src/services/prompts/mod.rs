@@ -88,6 +88,17 @@ pub fn get_template(db: &Database, id: &str) -> Result<String> {
     Ok(def.default_template.to_string())
 }
 
+/// Whether `id` is anything but its built-in default: the user saved their
+/// own, or a run-scoped override is installed.
+pub fn is_overridden(db: &Database, id: &str) -> Result<bool> {
+    if let Ok(guard) = overrides().read() {
+        if guard.contains_key(id) {
+            return Ok(true);
+        }
+    }
+    Ok(db.get_preference(&pref_key(id))?.is_some())
+}
+
 /// Persist a user override for `id`. Empty templates are rejected so the user
 /// can never accidentally blank a prompt out — they should hit "Reset" instead.
 pub fn set_template(db: &Database, id: &str, template: &str) -> Result<()> {
@@ -232,6 +243,50 @@ mod tests {
             get_template(&db, "chat.system").expect("tpl"),
             defaults::CHAT_SYSTEM,
             "with no override the default must surface"
+        );
+    }
+
+    #[test]
+    fn is_overridden_sees_saved_and_run_scoped_overrides() {
+        let _g = override_guard();
+        let db = crate::db::Database::new_for_testing().expect("test db");
+        assert!(!is_overridden(&db, "chat.system").expect("default"));
+        set_template(&db, "chat.system", "FROM_DB").expect("set db override");
+        assert!(is_overridden(&db, "chat.system").expect("db"));
+        reset_template(&db, "chat.system").expect("reset");
+        install_overrides(HashMap::from([("chat.system".to_string(), "FROM_MEMORY".to_string())]));
+        assert!(is_overridden(&db, "chat.system").expect("memory"));
+        clear_overrides();
+        assert!(!is_overridden(&db, "chat.system").expect("cleared"));
+    }
+
+    /// The compact prompt is what an 8k window gets: it must keep every
+    /// contract the runtime and the UI depend on, and every variable.
+    #[test]
+    fn chat_system_compact_keeps_the_contracts_in_less_than_half_the_size() {
+        let tpl = defaults::CHAT_SYSTEM_COMPACT;
+        for needle in [
+            "{{language_instruction}}",
+            "{{weekday}}",
+            "{{today}}",
+            "{{next_days}}",
+            "{{user_identity}}",
+            "{{tools_section}}",
+            "<tool_call>{\"name\":\"<tool>\",\"arguments\":",
+            "email://EMAIL_ID",
+            "draft://DRAFT_ID",
+            "EMAILOPS HELP",
+            "RELEVANT REGION",
+            "next_page",
+            "(email://eml-k)",
+        ] {
+            assert!(tpl.contains(needle), "CHAT_SYSTEM_COMPACT lost {needle}");
+        }
+        assert!(
+            tpl.len() * 2 <= defaults::CHAT_SYSTEM.len(),
+            "{} chars against {} for the full prompt",
+            tpl.len(),
+            defaults::CHAT_SYSTEM.len()
         );
     }
 

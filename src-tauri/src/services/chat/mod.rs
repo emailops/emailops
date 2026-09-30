@@ -16,6 +16,8 @@
 // `chat/tools/*` submodules and external callers reference them at
 // `crate::services::chat::<name>`.
 
+// How a prompt is cut to fit the context window. Pure.
+pub(crate) mod budget;
 pub mod cancel;
 pub mod tools;
 

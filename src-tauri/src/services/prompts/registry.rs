@@ -382,6 +382,15 @@ pub const PROMPTS: &[PromptDef] = &[
         variables: CHAT_SYSTEM_VARS,
     },
     PromptDef {
+        id: "chat.system_compact",
+        label: "Chat — system prompt (small context window)",
+        description: "Shorter system prompt used when the model's context window is under 16k tokens, unless the main system prompt was customised.",
+        category: PromptCategory::Chat,
+        advanced: true,
+        default_template: defaults::CHAT_SYSTEM_COMPACT,
+        variables: CHAT_SYSTEM_VARS,
+    },
+    PromptDef {
         id: "chat.query_rewrite",
         label: "Chat — query rewrite (HyDE)",
         description: "Internal reformulation step that expands the user's question before retrieval.",

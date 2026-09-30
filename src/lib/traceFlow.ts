@@ -4,7 +4,7 @@
 // panel collapses under it, so the title line stays short.
 
 import { formatLatency } from '@/lib/reasoningTrace';
-import type { ChatTrace, LlmCallTrace, TraceStep } from '@/types';
+import type { BudgetTrace, ChatTrace, LlmCallTrace, TraceStep } from '@/types';
 
 /** Research-mode phase a step belongs to; `null` on an ordinary turn. */
 export type FlowPhase = 'gather' | 'map' | 'condense' | 'reduce';
@@ -15,6 +15,7 @@ export type FlowKind =
   | 'retrieval'
   | 'help'
   | 'skill'
+  | 'budget'
   | 'tool'
   | 'llmRound'
   | 'answer'
@@ -107,6 +108,16 @@ function llmDetails(call: LlmCallTrace, step: Extract<TraceStep, { type: 'llm' }
   return details;
 }
 
+/**
+ * Whether the user should be told the prompt was cut: something of THIS turn
+ * was shortened, or the prompt did not fit at all. Trimming older history is
+ * routine and stays in the trace. Mirrors `BudgetTrace::affects_answer`.
+ */
+export function budgetAffectsAnswer(budget: BudgetTrace | null | undefined): boolean {
+  if (!budget) return false;
+  return !budget.fits || budget.cuts.some((c) => c.kind !== 'historySources' && c.kind !== 'historyTurns');
+}
+
 /** Build the panel's flow from a trace. Pure. */
 export function buildFlow(trace: ChatTrace): FlowStep[] {
   const steps = trace.steps ?? [];
@@ -181,6 +192,10 @@ export function buildFlow(trace: ChatTrace): FlowStep[] {
         });
         return;
       }
+      case 'budget':
+        // The panel words the cuts itself, from `trace.budget`.
+        flow.push({ ...base(step, key), kind: 'budget', failed: trace.budget?.fits === false });
+        return;
       case 'tool': {
         const call = trace.toolCalls[step.index];
         if (!call) return;

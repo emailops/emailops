@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatTrace, LlmCallTrace, ToolCallTrace } from '@/types';
-import { buildFlow, formatCall } from './traceFlow';
+import type { BudgetCut, BudgetTrace, ChatTrace, LlmCallTrace, ToolCallTrace } from '@/types';
+import { budgetAffectsAnswer, buildFlow, formatCall } from './traceFlow';
 
 function llm(kind: string, round: number, extra: Partial<LlmCallTrace> = {}): LlmCallTrace {
   return { kind, round, latencyMs: 1000, ...extra };
@@ -183,5 +183,69 @@ describe('buildFlow — skills', () => {
     const flow = buildFlow(trace);
     expect(flow.map((s) => s.kind)).toEqual(['router', 'planner', 'skill']);
     expect(flow[2].summary).toBe('weekly-report (planner), formal-tone (/)');
+  });
+});
+
+describe('buildFlow — context budget', () => {
+  const trace = (budget: ChatTrace['budget']): ChatTrace => ({
+    route: { mode: 'rag_first', reason: '', matchedKeywords: [], classifier: 'planner' },
+    toolCalls: [],
+    model: 'qwen',
+    totalElapsedMs: 1000,
+    llmCalls: [llm('tool_round', 0)],
+    budget,
+    steps: [{ type: 'route' }, { type: 'budget' }, { type: 'llm', index: 0, kvCache: null, cacheAction: null }],
+  });
+
+  it('shows what was cut as its own step, before the first model call', () => {
+    const flow = buildFlow(
+      trace({
+        nCtx: 8192,
+        replyReserve: 1024,
+        estimatedPromptTokens: 6000,
+        cuts: [{ kind: 'historyTurns', messages: 2 }],
+        fits: true,
+      }),
+    );
+    expect(flow.map((s) => s.kind)).toEqual(['router', 'budget', 'llmRound']);
+    expect(flow[1].failed).toBe(false);
+  });
+
+  it('marks the step failed when the prompt still did not fit', () => {
+    const flow = buildFlow(
+      trace({ nCtx: 8192, replyReserve: 1024, estimatedPromptTokens: 9000, cuts: [], fits: false }),
+    );
+    expect(flow[1].failed).toBe(true);
+  });
+});
+
+describe('budgetAffectsAnswer', () => {
+  const budget = (cuts: BudgetCut[], fits = true): BudgetTrace => ({
+    nCtx: 8192,
+    replyReserve: 1024,
+    estimatedPromptTokens: 6000,
+    cuts,
+    fits,
+  });
+
+  it('is false without a budget record, and for history-only cuts', () => {
+    expect(budgetAffectsAnswer(null)).toBe(false);
+    expect(budgetAffectsAnswer(undefined)).toBe(false);
+    expect(
+      budgetAffectsAnswer(
+        budget([
+          { kind: 'historySources', messages: 1 },
+          { kind: 'historyTurns', messages: 2 },
+        ]),
+      ),
+    ).toBe(false);
+  });
+
+  it('is true when something of this turn was cut, or the prompt did not fit', () => {
+    expect(budgetAffectsAnswer(budget([{ kind: 'sourceExcerpts', charsPerEmail: 1200 }]))).toBe(true);
+    expect(budgetAffectsAnswer(budget([{ kind: 'sourcesDropped', emails: 2 }]))).toBe(true);
+    expect(budgetAffectsAnswer(budget([{ kind: 'openThread', chars: 4000 }]))).toBe(true);
+    expect(budgetAffectsAnswer(budget([{ kind: 'toolResults', results: 1, charsDropped: 9000 }]))).toBe(true);
+    expect(budgetAffectsAnswer(budget([], false))).toBe(true);
   });
 });

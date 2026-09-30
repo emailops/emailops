@@ -62,7 +62,10 @@
     "wrongPrompt": "What was wrong with it?",
     "wrongPlaceholder": "Help the model do better — e.g. those emails are from September, not August",
     "wrongSubmit": "Try again",
-    "rejected": "Marked as wrong — retried below."
+    "rejected": "Marked as wrong — retried below.",
+    "budgetNotice": "Some of the emails behind this answer were shortened to fit the model's context window, so details may be missing.",
+    "budgetOverflow": "This conversation no longer fits the model's context window, so the answer may have missed instructions or context.",
+    "budgetSettings": "AI settings"
   },
   "processing": {
     "routing": "Routing…",
@@ -166,7 +169,8 @@
         "llmRound": "LLM round {{n}}",
         "answer": "Answer (LLM)",
         "llmCall": "LLM call",
-        "llmCallN": "LLM call {{n}}/{{total}}"
+        "llmCallN": "LLM call {{n}}/{{total}}",
+        "budget": "Context budget"
       },
       "section": {
         "prompt": "prompt",
@@ -184,6 +188,18 @@
         "route": "route",
         "reason": "reason",
         "status": "status"
+      },
+      "budget": {
+        "window": "{{n}}-token window",
+        "overflow": "still did not fit (~{{n}} tokens)",
+        "cut": {
+          "historySources": "emails of {{n}} earlier questions left out",
+          "historyTurns": "{{n}} earlier messages left out",
+          "openThread": "open thread cut to {{n}} chars",
+          "sourceExcerpts": "excerpts cut to {{n}} chars per email",
+          "sourcesDropped": "{{n}} retrieved emails left out",
+          "toolResults": "{{n}} tool results cut by {{chars}} chars"
+        }
       }
     }
   },

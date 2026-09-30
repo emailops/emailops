@@ -11,9 +11,10 @@ use crate::models::{CacheAction, CacheActionKind, ChatTrace, KvCacheStats, LlmCa
 /// 1. the route decision;
 /// 2. the query planner's call(s), which decide the route and any search;
 /// 3. mailbox RAG, then the guides lookup, which run on the planner's verdict;
-/// 4. pre-seeded shortcut tools (round < 0), which run before the tool loop;
-/// 5. each loop LLM call followed by the tools it issued;
-/// 6. any tool no round claimed, last rather than hidden.
+/// 4. what the context budget cut from the prompt, when it cut anything;
+/// 5. pre-seeded shortcut tools (round < 0), which run before the tool loop;
+/// 6. each loop LLM call followed by the tools it issued;
+/// 7. any tool no round claimed, last rather than hidden.
 ///
 /// Tools issued by `tool_round` R are the ones with `round == R`, drained with
 /// a forward cursor so an early round cannot claim a later tool (and a
@@ -54,6 +55,10 @@ pub fn plan_steps(trace: &ChatTrace) -> Vec<TraceStep> {
     }
     if trace.help.as_ref().is_some_and(|h| h.candidates > 0) {
         steps.push(TraceStep::Help);
+    }
+    // The prompt is sized once everything that goes into it is gathered.
+    if trace.budget.is_some() {
+        steps.push(TraceStep::Budget);
     }
 
     let (preseeded, looped): (Vec<usize>, Vec<usize>) =
@@ -215,6 +220,19 @@ pub fn step_detail(trace: &ChatTrace, step: &TraceStep) -> String {
             }
         }
         TraceStep::Skill => "instructions added before retrieval".into(),
+        TraceStep::Budget => match &trace.budget {
+            Some(b) => {
+                let mut d = super::budget::describe_cuts(&b.cuts);
+                if !b.fits {
+                    if !d.is_empty() {
+                        d.push_str(" · ");
+                    }
+                    d.push_str(&format!("still did not fit (~{} tokens)", b.estimated_prompt_tokens));
+                }
+                d
+            }
+            None => String::new(),
+        },
         TraceStep::Research => match &trace.research {
             Some(r) => {
                 let mut d = format!(
@@ -310,6 +328,10 @@ pub fn step_label(trace: &ChatTrace, step: &TraceStep) -> String {
             None => "research".into(),
         },
         TraceStep::Retrieval => "RAG retrieval".into(),
+        TraceStep::Budget => match &trace.budget {
+            Some(b) => format!("context budget ({}-token window)", b.n_ctx),
+            None => "context budget".into(),
+        },
         TraceStep::Skill => format!(
             "skill: {}",
             trace
@@ -366,6 +388,7 @@ mod tests {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            prompt_chars: None,
             input: None,
             output: None,
         }
@@ -402,6 +425,7 @@ mod tests {
             applied_skills: Vec::new(),
             steps: vec![],
             search_page: None,
+            budget: None,
         }
     }
 
@@ -424,6 +448,7 @@ mod tests {
                 TraceStep::Retrieval => "rag".into(),
                 TraceStep::Help => "help".into(),
                 TraceStep::Skill => "skill".into(),
+                TraceStep::Budget => "budget".into(),
                 TraceStep::Llm { index, .. } => {
                     let c = &t.llm_calls[*index];
                     format!("llm:{}/{}", c.kind, c.round)
@@ -431,6 +456,57 @@ mod tests {
                 TraceStep::Tool { index } => format!("tool:{}", t.tool_calls[*index].name),
             })
             .collect()
+    }
+
+    // ── Context budget ───────────────────────────────────────────────────
+
+    fn cut_trace(fits: bool) -> ChatTrace {
+        let mut t = trace(
+            "planner",
+            vec![llm("tool_round", 0, 0)],
+            vec![tool("search_emails", -1)],
+        );
+        t.retrieval = Some(retrieval());
+        t.budget = Some(crate::models::BudgetTrace {
+            n_ctx: 8192,
+            reply_reserve: 1024,
+            estimated_prompt_tokens: 6000,
+            cuts: vec![
+                crate::models::BudgetCut::HistoryTurns { messages: 2 },
+                crate::models::BudgetCut::SourceExcerpts { chars_per_email: 1200 },
+            ],
+            fits,
+        });
+        t
+    }
+
+    #[test]
+    fn a_cut_prompt_shows_as_a_budget_step_once_the_prompt_is_gathered() {
+        assert_eq!(
+            tags(&cut_trace(true)),
+            vec!["route", "rag", "budget", "tool:search_emails", "llm:tool_round/0"]
+        );
+    }
+
+    #[test]
+    fn a_turn_that_was_not_cut_has_no_budget_step() {
+        let t = trace("planner", vec![llm("tool_round", 0, 0)], vec![]);
+        assert_eq!(tags(&t), vec!["route", "llm:tool_round/0"]);
+    }
+
+    #[test]
+    fn the_budget_step_names_the_window_and_every_cut() {
+        let t = cut_trace(true);
+        assert_eq!(step_label(&t, &TraceStep::Budget), "context budget (8192-token window)");
+        assert_eq!(
+            step_detail(&t, &TraceStep::Budget),
+            "2 earlier message(s) left out; excerpts cut to 1200 chars per email"
+        );
+        let t = cut_trace(false);
+        assert_eq!(
+            step_detail(&t, &TraceStep::Budget),
+            "2 earlier message(s) left out; excerpts cut to 1200 chars per email · still did not fit (~6000 tokens)"
+        );
     }
 
     // ── Order (ported from src/lib/reasoningTrace.ts `buildFlow`) ────────

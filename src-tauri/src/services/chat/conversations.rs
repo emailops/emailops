@@ -117,7 +117,24 @@ pub fn create_conversation_with_thread(
 ///   - the ambient-context path in `run_chat_turn` builds it fresh per turn,
 ///     for the thread the user currently has open in the main view.
 pub fn build_thread_context(db: &Database, account_id: &str, thread_id: &str) -> Result<(String, String)> {
-    use crate::services::thread_reader::{load_thread, read_thread, render_thread, ReadOptions, CHAT_THREAD_BUDGET};
+    build_thread_context_within(
+        db,
+        account_id,
+        thread_id,
+        crate::services::thread_reader::CHAT_THREAD_BUDGET,
+    )
+}
+
+/// [`build_thread_context`] with the thread read into `budget_chars` instead
+/// of the chat's usual thread budget — what the context budget asks for when
+/// the open thread would not fit the window.
+pub(crate) fn build_thread_context_within(
+    db: &Database,
+    account_id: &str,
+    thread_id: &str,
+    budget_chars: usize,
+) -> Result<(String, String)> {
+    use crate::services::thread_reader::{load_thread, read_thread, render_thread, ReadOptions};
     let messages = load_thread(db, account_id, thread_id)?;
     let Some(first) = messages.first() else {
         return Err(crate::models::error::AppError::NotFound(format!(
@@ -126,7 +143,7 @@ pub fn build_thread_context(db: &Database, account_id: &str, thread_id: &str) ->
     };
     // Read once, as a thread: each reply's new content only (its quoted
     // history is the earlier messages, already shown), one shared budget.
-    let read = read_thread(&messages, &ReadOptions::budget(CHAT_THREAD_BUDGET));
+    let read = read_thread(&messages, &ReadOptions::budget(budget_chars));
     Ok((render_thread(&read), first.subject.clone()))
 }
 

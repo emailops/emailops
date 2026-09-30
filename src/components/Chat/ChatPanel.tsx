@@ -31,6 +31,8 @@ interface ChatPanelProps {
   onNavigateToInbox?: () => void;
   /** Show the emails an answer references in the email list, via this search query. */
   onShowEmailsInList?: (query: string) => void;
+  /** Open Settings → AI (offered by the context-budget note under an answer). */
+  onOpenAiSettings?: () => void;
 }
 
 /**
@@ -46,6 +48,7 @@ export function ChatPanel({
   onExpand,
   onNavigateToInbox,
   onShowEmailsInList,
+  onOpenAiSettings,
 }: ChatPanelProps) {
   const { t } = useTranslation(['chat', 'common']);
   const {
@@ -242,6 +245,7 @@ export function ChatPanel({
             }
             rejectedMessageIds={rejectedMessageIds}
             isSending={isSending}
+            onOpenAiSettings={onOpenAiSettings}
           />
         )}
         {error && <div className="border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}

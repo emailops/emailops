@@ -2334,3 +2334,30 @@ zero-data-retention endpoint, 1M context.
 `anthropic/claude-haiku-4.5` — the developer's choice; `openai/gpt-4o-mini` — no
 zero-data-retention endpoint.
 **Limit:** not measured on the app's chat eval; chosen on catalogue data only.
+
+## 2026-09-30 — A chat prompt is cut to the window in a fixed order, never the system prompt
+
+**Decision:** Before every model call of a chat turn the prompt is sized against the
+model's window (`services/chat/budget.rs`). When it would not fit, it is cut in this
+order: the emails earlier questions were asked with, then earlier exchanges, then this
+turn's open thread and retrieved emails, then this turn's tool results. The system
+prompt, the question and its per-turn blocks are never cut. Every cut is in the trace;
+the user is told under the answer only when something of the current turn was cut or the
+prompt did not fit. Sizes are estimated from chars and corrected with the provider's
+token counts.
+**Context:** Nothing checked the prompt against the window. The embedded runtime drops
+tokens from the front, so an overflow cost the rules, the date and the tool catalogue
+first, silently; Ollama truncates on its own and OpenRouter was sent everything. One
+retrieval turn carries up to 11 emails of 4 000 chars, earlier turns replay theirs, and
+tool results had no cap. What gives way first is a product choice, made by the developer.
+**Rejected:**
+- *Dropping whole earlier turns only*: simplest, but the model forgets what the
+  conversation was about by the third or fourth retrieval turn at 32k although the
+  questions and answers themselves are small.
+- *Never replaying earlier emails*: uniform, but it changes every follow-up even where
+  the prompt fits, and the prompt stops extending the previous one.
+- *Exact token counts through the provider trait*: precise only on the embedded runtime,
+  one actor round-trip per call, and a wider trait. The measured ratio gets close enough
+  with the runtime's truncation kept as the safety net.
+- *Telling the user about every cut*: on a small window the note would sit under most
+  answers of a long conversation.
