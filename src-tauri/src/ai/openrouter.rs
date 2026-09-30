@@ -1,9 +1,13 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::ai::openrouter_stream::{
+    parse_sse_line, wire_messages, SseEvent, SseLines, StreamAccumulator, StreamOutcome, WireMessage,
+};
 use crate::ai::provider::{
     AIProvider, AiMessage, BackendCapabilities, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult,
     ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
@@ -16,11 +20,18 @@ const APP_URL: &str = "https://github.com/emailops";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a streamed reply may stay silent — before its first byte or
+/// between two chunks — before it is given up on. OpenRouter sends keep-alive
+/// comments while a model is busy, so a healthy stream is never this quiet.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Sampling temperature for chat turns: low, to keep answers grounded in the
+/// retrieved mail (the same value the Ollama chat path uses).
+const CHAT_TEMPERATURE: f64 = 0.2;
 
 #[derive(Debug, Serialize)]
 struct OpenRouterChatRequest {
     model: String,
-    messages: Vec<ChatMessage>,
+    messages: Vec<WireMessage>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
@@ -29,6 +40,10 @@ struct OpenRouterChatRequest {
     /// Structured output: the reply must follow a JSON Schema.
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<serde_json::Value>,
+    /// Tool definitions, in the `{"type": "function", "function": {…}}` form
+    /// the chat tool registry already produces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<serde_json::Value>>,
     provider: ProviderPreferences,
 }
 
@@ -69,6 +84,26 @@ fn request_error(status: u16, body: &str, model: &str, context: &str) -> AppErro
     AppError::AiError(format!("{context}: {body}"))
 }
 
+/// The error for a chat turn OpenRouter refused before streaming anything.
+/// Says what the status means, so a rate limit or an outage does not reach
+/// the user as a bare JSON body.
+fn stream_request_error(status: u16, body: &str, model: &str) -> AppError {
+    let what = match status {
+        402 => "OpenRouter refused the request: the account is out of credits",
+        429 => "OpenRouter rate limit reached — wait a moment and try again",
+        500..=599 => "OpenRouter or the model's provider is unavailable — try again, or choose another model",
+        _ => "OpenRouter chat error",
+    };
+    request_error(status, body, model, &format!("{what} (HTTP {status})"))
+}
+
+fn stream_stalled(idle: Duration) -> AppError {
+    AppError::AiError(format!(
+        "OpenRouter stopped responding ({}s without data)",
+        idle.as_secs_f32()
+    ))
+}
+
 /// OpenRouter's structured-output request for `shape`, strict so the model
 /// may not add or drop fields.
 fn response_format(shape: Option<&crate::ai::json_shape::JsonShape>) -> Option<serde_json::Value> {
@@ -78,12 +113,6 @@ fn response_format(shape: Option<&crate::ai::json_shape::JsonShape>) -> Option<s
             "json_schema": { "name": "reply", "strict": true, "schema": shape.to_json_schema() },
         })
     })
-}
-
-#[derive(Debug, Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,11 +140,11 @@ struct ChatMessageContent {
 }
 
 #[derive(Debug, Deserialize)]
-struct UsageInfo {
-    prompt_tokens: Option<u32>,
-    completion_tokens: Option<u32>,
+pub(super) struct UsageInfo {
+    pub(super) prompt_tokens: Option<u32>,
+    pub(super) completion_tokens: Option<u32>,
     /// Credits charged for the request, reported in the body on every response.
-    cost: Option<f64>,
+    pub(super) cost: Option<f64>,
 }
 
 /// What OpenRouter charged for a completion, from the body's `usage.cost`
@@ -179,6 +208,8 @@ pub struct OpenRouterClient {
     model: String,
     embedding_model: String,
     zero_data_retention: bool,
+    base_url: String,
+    stream_idle_timeout: Duration,
 }
 
 impl OpenRouterClient {
@@ -194,7 +225,16 @@ impl OpenRouterClient {
             model,
             embedding_model,
             zero_data_retention: false,
+            base_url: OPENROUTER_BASE_URL.to_string(),
+            stream_idle_timeout: STREAM_IDLE_TIMEOUT,
         }
+    }
+
+    /// Send requests to `base_url` (a mock server) instead of openrouter.ai.
+    #[cfg(test)]
+    pub(crate) fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
     }
 
     /// Route only to providers with a zero-data-retention policy.
@@ -206,14 +246,27 @@ impl OpenRouterClient {
     fn chat_request(&self, prompt: &str, options: &CompletionOptions) -> OpenRouterChatRequest {
         OpenRouterChatRequest {
             model: self.model.clone(),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
+            messages: vec![WireMessage::text("user", prompt)],
             stream: false,
             max_tokens: options.max_tokens,
             temperature: options.temperature,
             response_format: response_format(options.json_shape.as_ref()),
+            tools: None,
+            provider: ProviderPreferences::new(self.zero_data_retention),
+        }
+    }
+
+    /// The request for a streamed chat turn. Carries the same provider data
+    /// policy as every other request that holds mail content.
+    fn stream_request(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> OpenRouterChatRequest {
+        OpenRouterChatRequest {
+            model: self.model.clone(),
+            messages: wire_messages(messages),
+            stream: true,
+            max_tokens: None,
+            temperature: Some(CHAT_TEMPERATURE),
+            response_format: None,
+            tools: (!tools.is_empty()).then(|| tools.to_vec()),
             provider: ProviderPreferences::new(self.zero_data_retention),
         }
     }
@@ -227,8 +280,82 @@ impl OpenRouterClient {
         }
     }
 
+    /// Run one streamed chat completion. Prose reaches `on_token` as it
+    /// arrives; tool calls and usage come back in the outcome. `on_token`
+    /// returning `false` stops reading and drops the connection, which is how
+    /// OpenRouter is told to stop generating.
+    ///
+    /// Never retried: by the time a failure shows, part of the reply may
+    /// already be on screen.
+    async fn stream_chat(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+        mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<StreamOutcome> {
+        let idle = self.stream_idle_timeout;
+        let send = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("HTTP-Referer", APP_URL)
+            .header("X-OpenRouter-Title", APP_NAME)
+            .header("Content-Type", "application/json")
+            .json(&self.stream_request(messages, tools))
+            .send();
+        let response = tokio::time::timeout(idle, send)
+            .await
+            .map_err(|_| stream_stalled(idle))?
+            .map_err(|e| AppError::AiError(format!("Failed to connect to OpenRouter: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(stream_request_error(status, &error_text, &self.model));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut lines = SseLines::default();
+        let mut reply = StreamAccumulator::default();
+        loop {
+            let next = tokio::time::timeout(idle, stream.next())
+                .await
+                .map_err(|_| stream_stalled(idle))?;
+            let (batch, ended) = match next {
+                Some(chunk) => {
+                    let bytes = chunk.map_err(|e| AppError::AiError(format!("OpenRouter stream read error: {e}")))?;
+                    (lines.push(&bytes), false)
+                }
+                None => (lines.finish().into_iter().collect(), true),
+            };
+            for line in batch {
+                match parse_sse_line(&line)? {
+                    None => {}
+                    Some(SseEvent::Done) => return reply.finish(),
+                    Some(SseEvent::Chunk(chunk)) => {
+                        if let Some(prose) = reply.apply(chunk) {
+                            if !on_token(prose) {
+                                return Ok(reply.into_partial());
+                            }
+                        }
+                    }
+                }
+            }
+            if ended {
+                return if reply.finished() {
+                    reply.finish()
+                } else {
+                    Err(AppError::AiError(
+                        "OpenRouter ended the reply before it was complete — the model's provider may have dropped the connection"
+                            .to_string(),
+                    ))
+                };
+            }
+        }
+    }
+
     async fn list_models_from_api(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!("{}/models", OPENROUTER_BASE_URL);
+        let url = format!("{}/models", self.base_url);
         let response = self
             .client
             .get(&url)
@@ -266,7 +393,7 @@ impl OpenRouterClient {
     }
 
     pub async fn list_embedding_models_from_api(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!("{}/embeddings/models", OPENROUTER_BASE_URL);
+        let url = format!("{}/embeddings/models", self.base_url);
         let response = self
             .client
             .get(&url)
@@ -325,7 +452,7 @@ impl AIProvider for OpenRouterClient {
     }
 
     async fn is_available(&self) -> bool {
-        let url = format!("{}/models", OPENROUTER_BASE_URL);
+        let url = format!("{}/models", self.base_url);
         self.client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
@@ -343,7 +470,7 @@ impl AIProvider for OpenRouterClient {
     }
 
     async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
-        let url = format!("{}/chat/completions", OPENROUTER_BASE_URL);
+        let url = format!("{}/chat/completions", self.base_url);
 
         let request = self.chat_request(prompt, &options);
 
@@ -414,7 +541,7 @@ impl AIProvider for OpenRouterClient {
     }
 
     async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
-        let url = format!("{}/embeddings", OPENROUTER_BASE_URL);
+        let url = format!("{}/embeddings", self.base_url);
         let request = self.embedding_request(text);
 
         let response = self
@@ -476,41 +603,67 @@ impl AIProvider for OpenRouterClient {
         Ok(results)
     }
 
-    async fn chat_with_tools(&self, _messages: &[AiMessage], _tools: &[serde_json::Value]) -> Result<AiMessage> {
-        Err(AppError::AiError(
-            "Tool-calling is not supported for OpenRouter backend".to_string(),
-        ))
+    async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+        let outcome = self.stream_chat(messages, tools, Box::new(|_| true)).await?;
+        Ok(assistant_message(outcome))
     }
 
     async fn chat_stream(
         &self,
-        _messages: Vec<AiMessage>,
-        _on_token: Box<dyn FnMut(String) -> bool + Send>,
+        messages: Vec<AiMessage>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
-        Err(AppError::AiError(
-            "Streaming is not supported for OpenRouter backend".to_string(),
-        ))
+        let outcome = self.stream_chat(&messages, &[], on_token).await?;
+        Ok(ChatStreamResult {
+            eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
+            prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
+            cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            content: outcome.content,
+            ..Default::default()
+        })
     }
 
     async fn chat_stream_with_tools(
         &self,
-        _messages: Vec<AiMessage>,
-        _tools: Vec<serde_json::Value>,
-        _on_token: Box<dyn FnMut(String) -> bool + Send>,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
-        // OpenRouter is wired as an embeddings/judge backend only here; chat and
-        // tool-calling are intentionally unsupported (see `chat_with_tools`).
-        Err(AppError::AiError(
-            "Streaming tool-calls are not supported for OpenRouter backend".to_string(),
-        ))
+        let outcome = self.stream_chat(&messages, &tools, on_token).await?;
+        Ok(ToolStreamResult {
+            eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
+            prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
+            cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            message: assistant_message(outcome),
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+        })
     }
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
-            tools: false,
-            streaming: false,
+            tools: true,
+            streaming: true,
             embeddings: true,
         }
+    }
+}
+
+/// The assistant turn a finished stream amounts to. When it asks for tools
+/// its prose is dropped — as on the other backends, a tool-call turn
+/// dispatches calls rather than surfacing text.
+fn assistant_message(outcome: StreamOutcome) -> AiMessage {
+    let has_tool_calls = !outcome.tool_calls.is_empty();
+    AiMessage {
+        role: "assistant".to_string(),
+        content: if has_tool_calls { String::new() } else { outcome.content },
+        tool_calls: has_tool_calls.then_some(outcome.tool_calls),
     }
 }
 
@@ -649,5 +802,435 @@ mod stop_reason_tests {
         assert!(!first_choice_truncated(&r));
         let r: OpenRouterChatResponse = serde_json::from_str(r#"{"choices":[{"message":{"content":"x"}}]}"#).unwrap();
         assert!(!first_choice_truncated(&r));
+    }
+}
+
+#[cfg(test)]
+mod chat_stream_tests {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+
+    /// An SSE body: one `data:` event per entry, blank-line separated.
+    fn sse(events: &[&str]) -> String {
+        events.iter().map(|event| format!("data: {event}\n\n")).collect()
+    }
+
+    fn client(server: &MockServer) -> OpenRouterClient {
+        OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into()).with_base_url(server.uri())
+    }
+
+    async fn server_replying(body: String) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn user(content: &str) -> AiMessage {
+        AiMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+        }
+    }
+
+    fn search_tool() -> serde_json::Value {
+        json!({"type": "function", "function": {
+            "name": "search_emails",
+            "description": "Search the mailbox",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+        }})
+    }
+
+    type Tokens = Arc<Mutex<Vec<String>>>;
+
+    /// A callback that records every token and keeps going while `keep_going`
+    /// says so.
+    fn recording(
+        keep_going: impl Fn(usize) -> bool + Send + 'static,
+    ) -> (Tokens, Box<dyn FnMut(String) -> bool + Send>) {
+        let tokens: Tokens = Arc::default();
+        let sink = tokens.clone();
+        let callback = Box::new(move |token: String| {
+            let mut seen = sink.lock().unwrap_or_else(PoisonError::into_inner);
+            seen.push(token);
+            keep_going(seen.len())
+        });
+        (tokens, callback)
+    }
+
+    fn seen(tokens: &Tokens) -> Vec<String> {
+        tokens.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    async fn request_bodies(server: &MockServer) -> Vec<serde_json::Value> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_backend_reports_tools_and_streaming() {
+        let caps = OpenRouterClient::new("key".into(), "m".into(), "e".into()).capabilities();
+        assert!(caps.tools && caps.streaming && caps.embeddings);
+    }
+
+    #[tokio::test]
+    async fn a_streamed_answer_arrives_token_by_token_with_its_usage() {
+        let body = format!(
+            ": OPENROUTER PROCESSING\n\n{}",
+            sse(&[
+                r#"{"choices":[{"delta":{"role":"assistant","content":"The invoice "}}]}"#,
+                r#"{"choices":[{"delta":{"reasoning":"the user wants the total"}}]}"#,
+                r#"{"choices":[{"delta":{"content":"is paid."}}]}"#,
+                r#"{"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}"#,
+                r#"{"choices":[],"usage":{"prompt_tokens":812,"completion_tokens":5,"cost":0.00042}}"#,
+                "[DONE]",
+            ])
+        );
+        let server = server_replying(body).await;
+        let (tokens, on_token) = recording(|_| true);
+
+        let result = client(&server)
+            .chat_stream(vec![user("Is the invoice paid?")], on_token)
+            .await
+            .unwrap();
+
+        assert_eq!(seen(&tokens), vec!["The invoice ", "is paid."]);
+        assert_eq!(result.content, "The invoice is paid.");
+        assert_eq!(result.prompt_eval_count, Some(812));
+        assert_eq!(result.eval_count, Some(5));
+        assert_eq!(result.cost_usd, Some(0.00042));
+    }
+
+    /// The chat loop's path: a round that asks for a tool, the tool result
+    /// appended, and a second round that answers from it.
+    #[tokio::test]
+    async fn a_tool_round_trip_ends_in_an_answer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                sse(&[
+                    r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"search_emails","arguments":""}}]}}]}"#,
+                    r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\"invoice\"}"}}]}}]}"#,
+                    r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+                    r#"{"choices":[],"usage":{"prompt_tokens":300,"completion_tokens":12,"cost":0.001}}"#,
+                    "[DONE]",
+                ]),
+                "text/event-stream",
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                sse(&[
+                    r#"{"choices":[{"delta":{"content":"One invoice, paid."},"finish_reason":"stop"}]}"#,
+                    r#"{"choices":[],"usage":{"prompt_tokens":340,"completion_tokens":6,"cost":0.002}}"#,
+                    "[DONE]",
+                ]),
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+        let client = client(&server);
+        let mut messages = vec![user("Find the invoice")];
+
+        let (tokens, on_token) = recording(|_| true);
+        let first = client
+            .chat_stream_with_tools(messages.clone(), vec![search_tool()], on_token)
+            .await
+            .unwrap();
+        assert!(seen(&tokens).is_empty(), "a tool-call round streams no prose");
+        let calls = first.message.tool_calls.clone().expect("a tool call");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[0].function.arguments, json!({"query": "invoice"}));
+        assert_eq!(first.cost_usd, Some(0.001));
+
+        messages.push(first.message);
+        messages.push(AiMessage {
+            role: "tool".to_string(),
+            content: "1 email: Invoice 2041 (paid)".to_string(),
+            tool_calls: None,
+        });
+        let (tokens, on_token) = recording(|_| true);
+        let second = client
+            .chat_stream_with_tools(messages, vec![search_tool()], on_token)
+            .await
+            .unwrap();
+        assert_eq!(seen(&tokens), vec!["One invoice, paid."]);
+        assert_eq!(second.message.content, "One invoice, paid.");
+        assert!(second.message.tool_calls.is_none());
+        assert_eq!(second.prompt_eval_count, Some(340));
+        assert_eq!(second.cost_usd, Some(0.002));
+
+        let bodies = request_bodies(&server).await;
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0]["stream"], true);
+        assert_eq!(bodies[0]["tools"], json!([search_tool()]));
+        let history = &bodies[1]["messages"];
+        let call_id = history[1]["tool_calls"][0]["id"].as_str().expect("a call id");
+        assert_eq!(history[1]["tool_calls"][0]["function"]["name"], "search_emails");
+        assert_eq!(
+            history[1]["tool_calls"][0]["function"]["arguments"],
+            "{\"query\":\"invoice\"}"
+        );
+        assert_eq!(history[2]["role"], "tool");
+        assert_eq!(history[2]["tool_call_id"], call_id);
+    }
+
+    #[tokio::test]
+    async fn the_blocking_tool_call_returns_the_same_message() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"Let me look."}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"search_emails","arguments":"{}"}}]}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let message = client(&server)
+            .chat_with_tools(&[user("Find it")], &[search_tool()])
+            .await
+            .unwrap();
+        assert_eq!(message.role, "assistant");
+        assert_eq!(
+            message.content, "",
+            "a tool-call turn carries no prose into the history"
+        );
+        assert_eq!(message.tool_calls.expect("a call")[0].function.name, "search_emails");
+    }
+
+    #[tokio::test]
+    async fn an_error_mid_stream_fails_the_reply() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"Half an"}}]}"#,
+            r#"{"error":{"code":"server_error","message":"Provider disconnected unexpectedly"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}"#,
+        ]))
+        .await;
+        let (tokens, on_token) = recording(|_| true);
+        let result = client(&server).chat_stream(vec![user("Hi")], on_token).await;
+        assert!(
+            matches!(&result, Err(AppError::AiError(m)) if m.contains("Provider disconnected unexpectedly")),
+            "{result:?}"
+        );
+        assert_eq!(seen(&tokens), vec!["Half an"]);
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_ends_before_the_model_finished_is_an_error() {
+        let server = server_replying(sse(&[r#"{"choices":[{"delta":{"content":"Half an"}}]}"#])).await;
+        let result = client(&server).chat_stream(vec![user("Hi")], Box::new(|_| true)).await;
+        assert!(result.is_err(), "a cut-off reply must not pass as complete");
+    }
+
+    /// Some upstream providers close the stream after the finishing chunk
+    /// without the `[DONE]` sentinel.
+    #[tokio::test]
+    async fn a_finished_reply_without_the_done_sentinel_is_complete() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}"#,
+        ]))
+        .await;
+        let result = client(&server)
+            .chat_stream(vec![user("Hi")], Box::new(|_| true))
+            .await
+            .unwrap();
+        assert_eq!(result.content, "Hi");
+    }
+
+    #[tokio::test]
+    async fn returning_false_from_the_callback_stops_the_reply() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"One"}}]}"#,
+            r#"{"choices":[{"delta":{"content":" two"}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"search_emails","arguments":"{}"}}]}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let (tokens, on_token) = recording(|_| false);
+        let result = client(&server)
+            .chat_stream_with_tools(vec![user("Hi")], vec![search_tool()], on_token)
+            .await
+            .unwrap();
+        assert_eq!(seen(&tokens), vec!["One"], "nothing is read after the cancel");
+        assert_eq!(result.message.content, "One");
+        assert!(result.message.tool_calls.is_none(), "a cancelled reply runs no tool");
+    }
+
+    #[tokio::test]
+    async fn malformed_tool_arguments_fail_the_round() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"search_emails","arguments":"{\"query\":\"inv"}}]}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let result = client(&server)
+            .chat_stream_with_tools(vec![user("Hi")], vec![search_tool()], Box::new(|_| true))
+            .await;
+        assert!(
+            matches!(&result, Err(AppError::AiError(m)) if m.contains("search_emails")),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_chat_method_sends_the_data_policy() {
+        let done = sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]);
+        for (zdr, policy) in [
+            (false, json!({"data_collection": "deny"})),
+            (true, json!({"data_collection": "deny", "zdr": true})),
+        ] {
+            let server = server_replying(done.clone()).await;
+            let client = client(&server).with_zero_data_retention(zdr);
+            client.chat_stream(vec![user("Hi")], Box::new(|_| true)).await.unwrap();
+            client
+                .chat_stream_with_tools(vec![user("Hi")], vec![search_tool()], Box::new(|_| true))
+                .await
+                .unwrap();
+            client.chat_with_tools(&[user("Hi")], &[search_tool()]).await.unwrap();
+            let bodies = request_bodies(&server).await;
+            assert_eq!(bodies.len(), 3);
+            for body in bodies {
+                assert_eq!(body["provider"], policy, "zdr={zdr}");
+                assert_eq!(body["model"], "vendor/model");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_without_tools_sends_no_tools_field() {
+        let server = server_replying(sse(&["[DONE]"])).await;
+        client(&server)
+            .chat_stream(vec![user("Hi")], Box::new(|_| true))
+            .await
+            .unwrap();
+        assert!(request_bodies(&server).await[0].get("tools").is_none());
+    }
+
+    /// A rate limit or an upstream outage is reported once, in words; the
+    /// turn is not retried behind the user's back.
+    #[tokio::test]
+    async fn a_refused_request_is_a_clear_error_and_is_not_retried() {
+        for (status, body, expected) in [
+            (
+                429,
+                r#"{"error":{"message":"Rate limit exceeded","code":429}}"#,
+                "rate limit",
+            ),
+            (
+                402,
+                r#"{"error":{"message":"Insufficient credits","code":402}}"#,
+                "credits",
+            ),
+            (502, r#"{"error":{"message":"Bad gateway","code":502}}"#, "unavailable"),
+            (
+                503,
+                r#"{"error":{"message":"No provider available","code":503}}"#,
+                "unavailable",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .respond_with(ResponseTemplate::new(status).set_body_string(body))
+                .mount(&server)
+                .await;
+            let result = client(&server)
+                .chat_stream_with_tools(vec![user("Hi")], vec![search_tool()], Box::new(|_| true))
+                .await;
+            assert!(
+                matches!(&result, Err(AppError::AiError(m))
+                    if m.contains(expected) && m.contains(&status.to_string())),
+                "{status}: {result:?}"
+            );
+            assert_eq!(server.received_requests().await.unwrap().len(), 1, "{status} retried");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_model_blocked_by_the_data_policy_is_named() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(404).set_body_string(
+                r#"{"error":{"message":"No endpoints found matching your data policy (Zero data retention)","code":404}}"#,
+            ))
+            .mount(&server)
+            .await;
+        let result = client(&server).chat_stream(vec![user("Hi")], Box::new(|_| true)).await;
+        assert!(
+            matches!(&result, Err(AppError::AiDataPolicy { model }) if model == "vendor/model"),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silent_server_times_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sse(&["[DONE]"]), "text/event-stream")
+                    .set_delay(Duration::from_secs(5)),
+            )
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient {
+            stream_idle_timeout: Duration::from_millis(50),
+            ..client(&server)
+        };
+        let result = client.chat_stream(vec![user("Hi")], Box::new(|_| true)).await;
+        assert!(
+            matches!(&result, Err(AppError::AiError(m)) if m.contains("stopped responding")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_tool_call_history_keeps_its_structure_on_the_wire() {
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into());
+        let request = client.stream_request(
+            &[
+                user("Find it"),
+                AiMessage {
+                    role: "assistant".to_string(),
+                    content: String::new(),
+                    tool_calls: Some(vec![AiToolCall {
+                        function: AiToolCallFunction {
+                            name: "search_emails".to_string(),
+                            arguments: json!({"query": "x"}),
+                        },
+                    }]),
+                },
+            ],
+            &[],
+        );
+        let body = serde_json::to_value(request).unwrap();
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["messages"][1]["tool_calls"][0]["type"], "function");
+        assert!(body.get("reasoning").is_none(), "reasoning is left to the model");
     }
 }

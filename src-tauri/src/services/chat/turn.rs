@@ -2437,9 +2437,8 @@ async fn run_tool_loop(
             let cancel_flag = Arc::clone(&cancel);
             Box::new(move |_token: String| !cancel_flag.load(std::sync::atomic::Ordering::Relaxed))
         };
-        let call_result = provider
-            .chat_stream_with_tools(messages.clone(), tools.clone(), on_token)
-            .await;
+        let call_result =
+            AiService::chat_stream_with_tools(db, provider, messages.clone(), tools.clone(), on_token).await;
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
@@ -3265,6 +3264,7 @@ async fn run_thread_bound_turn(
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     } else {
         // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
@@ -3288,7 +3288,9 @@ async fn run_thread_bound_turn(
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
         let cancel_flag = Arc::clone(&cancel);
-        let stream_fut = provider.chat_stream(
+        let stream_fut = AiService::chat_stream(
+            &db,
+            provider.as_ref(),
             ai_messages,
             Box::new(move |token| {
                 let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
@@ -3457,6 +3459,7 @@ async fn run_thread_bound_turn(
 /// included — so it never reaches the bubble. The returned content is cleaned
 /// separately with `strip_tool_call_markup` before persistence.
 async fn run_gated_synthesis_stream(
+    db: &Database,
     provider: &dyn AIProvider,
     messages: Vec<AiMessage>,
     conversation_id: &str,
@@ -3471,7 +3474,9 @@ async fn run_gated_synthesis_stream(
     let conv_for_token = conversation_id.to_string();
     let msg_for_token = assistant_message_id.to_string();
     let cancel_flag = Arc::clone(cancel);
-    let stream_fut = provider.chat_stream(
+    let stream_fut = AiService::chat_stream(
+        db,
+        provider,
         messages,
         Box::new(move |token| {
             // On the (unreachable) lock-poison case, forward the raw token
@@ -3626,6 +3631,7 @@ async fn synthesize_with_recovery(
         let retry_base = prompt_messages.clone();
         let t_attempt = std::time::Instant::now();
         let attempt = run_gated_synthesis_stream(
+            db,
             provider,
             prompt_messages,
             conversation_id,
@@ -5028,6 +5034,7 @@ async fn run_chat_turn_inner(
                                 system_prefix_tokens: None,
                                 stable_tokens: None,
                                 dropped_front_tokens: None,
+                                cost_usd: None,
                             })
                         }
                     }
@@ -5064,6 +5071,7 @@ async fn run_chat_turn_inner(
                         system_prefix_tokens: None,
                         stable_tokens: None,
                         dropped_front_tokens: None,
+                        cost_usd: None,
                     })
                 }
             }
@@ -5622,6 +5630,7 @@ mod tests {
             system_prefix_tokens: Some(5151),
             stable_tokens: Some(805),
             dropped_front_tokens: Some(0),
+            cost_usd: None,
         };
         let trace = build_tool_round_trace(2, 4280, Some(&result));
         assert_eq!(trace.kind, "tool_round");
@@ -5658,6 +5667,7 @@ mod tests {
             system_prefix_tokens: Some(2344),
             stable_tokens: Some(1193),
             dropped_front_tokens: Some(0),
+            cost_usd: None,
         };
         let trace = build_final_stream_trace(2900, Some(&result));
         assert_eq!(trace.kind, "final_stream");
@@ -6206,6 +6216,135 @@ mod tests {
                 .any(|m| m.role == "tool" && m.content == "body of e1"),
             "repaired call actually executed"
         );
+    }
+
+    /// The tool loop against OpenRouter's wire format (a mock server): a
+    /// streamed tool call is dispatched, its result goes back tied to the
+    /// call, the second round's answer ends the loop, and both rounds' cost is
+    /// recorded.
+    #[tokio::test]
+    async fn the_tool_loop_runs_a_round_trip_on_openrouter() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        struct EchoBody;
+        #[async_trait::async_trait]
+        impl tools::Tool for EchoBody {
+            fn name(&self) -> &'static str {
+                "get_email_body"
+            }
+            fn description(&self) -> &'static str {
+                "scripted body read"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {"email_id": {"type":"string"}}, "required": ["email_id"] })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                let id = args.get("email_id").and_then(|v| v.as_str()).unwrap_or("<missing>");
+                Ok(tools::ToolOutput::text(format!("body of {id}")))
+            }
+        }
+
+        let sse = |events: &[&str]| -> String { events.iter().map(|e| format!("data: {e}\n\n")).collect() };
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                sse(&[
+                    r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_x","type":"function","function":{"name":"get_email_body","arguments":"{\"email_"}}]}}]}"#,
+                    r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"id\":\"e7\"}"}}]}}]}"#,
+                    r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+                    r#"{"choices":[],"usage":{"prompt_tokens":200,"completion_tokens":9,"cost":0.001}}"#,
+                    "[DONE]",
+                ]),
+                "text/event-stream",
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                sse(&[
+                    r#"{"choices":[{"delta":{"content":"The email confirms "}}]}"#,
+                    r#"{"choices":[{"delta":{"content":"the meeting."},"finish_reason":"stop"}]}"#,
+                    r#"{"choices":[],"usage":{"prompt_tokens":240,"completion_tokens":5,"cost":0.002}}"#,
+                    "[DONE]",
+                ]),
+                "text/event-stream",
+            ))
+            .mount(&server)
+            .await;
+        let provider = crate::ai::openrouter::OpenRouterClient::new(
+            "key".to_string(),
+            "vendor/model".to_string(),
+            "vendor/embed".to_string(),
+        )
+        .with_base_url(server.uri());
+
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(EchoBody) as Arc<dyn tools::Tool>
+        ]));
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "what does email e7 say?",
+            vec![
+                ("system".to_string(), "SYS".to_string()),
+                ("user".to_string(), "what does email e7 say?".to_string()),
+            ],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+
+        assert_eq!(outcome.error, None);
+        assert!(
+            outcome
+                .messages
+                .iter()
+                .any(|m| m.role == "tool" && m.content == "body of e7"),
+            "the streamed tool call ran with its assembled arguments"
+        );
+        assert_eq!(
+            outcome.messages.last().map(|m| m.content.as_str()),
+            Some("The email confirms the meeting.")
+        );
+        assert_eq!(llm_calls.len(), 2);
+        assert_eq!(llm_calls[1].prompt_tokens, Some(240));
+
+        let requests = server.received_requests().await.expect("recorded requests");
+        assert_eq!(requests.len(), 2);
+        let second: serde_json::Value = serde_json::from_slice(&requests[1].body).expect("json body");
+        let history = second["messages"].as_array().expect("messages");
+        let call = history
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .expect("assistant turn");
+        let result = history.iter().find(|m| m["role"] == "tool").expect("tool result");
+        assert_eq!(result["tool_call_id"], call["tool_calls"][0]["id"]);
+        assert_eq!(second["provider"], serde_json::json!({"data_collection": "deny"}));
+
+        let usage = AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 2);
+        assert!((usage.total_cost_usd - 0.003).abs() < 1e-9);
     }
 
     #[test]
@@ -8677,7 +8816,9 @@ Preséntalos en una tabla markdown …";
         let provider = StopAwareProvider::new();
         provider.inner.push_chat_response("Half an answer");
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let db = Database::new_for_testing().expect("test db");
         run_gated_synthesis_stream(
+            &db,
             &provider,
             vec![ai_msg("user", "q")],
             "conv-1",

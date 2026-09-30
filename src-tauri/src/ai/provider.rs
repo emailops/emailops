@@ -78,6 +78,10 @@ pub struct ChatStreamResult {
     /// cold prefills on long chats (the leading bytes change every turn),
     /// distinct from "anchor / plan failure". Embedded llama.cpp only.
     pub dropped_front_tokens: Option<u32>,
+    /// What the provider charged for this call, when it says (OpenRouter).
+    /// `None` from the local backends, and from a reply cancelled before its
+    /// usage arrived.
+    pub cost_usd: Option<f64>,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -107,6 +111,8 @@ pub struct ToolStreamResult {
     pub stable_tokens: Option<u32>,
     /// See [`ChatStreamResult::dropped_front_tokens`].
     pub dropped_front_tokens: Option<u32>,
+    /// See [`ChatStreamResult::cost_usd`].
+    pub cost_usd: Option<f64>,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -297,6 +303,7 @@ pub trait AIProvider: Send + Sync {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 
@@ -730,6 +737,7 @@ impl AIProvider for FakeAiProvider {
             system_prefix_tokens: None,
             stable_tokens: None,
             dropped_front_tokens: None,
+            cost_usd: None,
         })
     }
 }

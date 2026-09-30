@@ -1992,3 +1992,33 @@ synthetic "Apply the skill" question steered routing, retrieval and titles (a ba
   just pasted the name they want.
 - *Caching the catalog per turn*: measured ~1 ms per read with 20 skills (~8 ms per turn
   against 9–14 s turns) — no measured problem, so no cache.
+
+## 2026-09-30 — OpenRouter supports chat (streaming and tool calls), not only one-shot completions
+
+**Decision:** The OpenRouter provider implements `chat_stream`, `chat_stream_with_tools`
+and `chat_with_tools` over `/chat/completions` with `stream: true`, and reports
+`tools`/`streaming` as supported, so the chat works on it like on the local backends.
+- **Same data policy:** chat requests carry the `provider` preferences of every other
+  request (`data_collection: "deny"`, `zdr` when the user asked for it).
+- **Budget:** the chat loop's model calls go through `AiService::chat_stream` /
+  `chat_stream_with_tools`: refused before the call once the period's spend has reached
+  the budget, recorded after it with the `usage.cost` the stream reports.
+- **Failures are shown, not retried:** a 429, a 5xx, a mid-stream `error` event or a
+  stream silent for 60 s ends the turn with an error. Part of the reply may already be on
+  screen, and a silent retry would bill the prompt twice.
+- **Reasoning stays out of the answer:** `reasoning` deltas are never shown or stored, and
+  no `reasoning` parameter is sent (the model's default applies).
+- **Cancel:** the token callback returning `false` drops the connection, which is how
+  OpenRouter stops generating.
+**Context:** `chat_stream*` returned "not supported for OpenRouter backend", so every chat
+turn failed once OpenRouter was selected — and OpenRouter is what an Intel Mac is pointed
+to, since the embedded runtime cannot run there. The developer decided chat must work on
+it rather than hide the chat for that provider.
+**Rejected:**
+- *Gating the chat off for OpenRouter*: leaves Intel Macs without a working chat unless
+  they install Ollama, which has no GPU acceleration there.
+- *A non-streaming fallback (`chat_with_tools` plus one final chunk)*: no live answer, no
+  mid-reply Cancel, and a long answer waits out the whole generation timeout.
+- *Sending `reasoning: {effort: "none"}` when thinking is off in Settings*: models whose
+  reasoning is mandatory reject it, which would turn a preference into a failed turn.
+- *Retrying a failed stream automatically*: see above.
