@@ -33,18 +33,18 @@ export function contextBudgetToPref(tokens: number): string {
 }
 
 /**
- * The embedding model to show after switching to `next`. The preference is
- * shared by every provider, and an id only means something to the provider it
- * came from: returning to the saved provider restores the saved model, any
- * other provider gets a model it can run — or none, which for OpenRouter means
- * keyword-only search until the user picks one.
+ * The embedding model to show after switching to `next`: the one `remembered`
+ * for that provider (see `AiConfig.remembered`), else a model it can run — or
+ * none, which for OpenRouter means keyword-only search until the user picks
+ * one. An id only means something to the provider it came from, so another
+ * provider's model is never carried over.
  */
 export function embeddingModelForProvider(
   next: AiConfigState['provider'],
-  saved: { provider: string; embeddingModel: string },
+  remembered: string | null,
   available: { catalog: CatalogModel[]; ollamaEmbedModels: string[] },
 ): string {
-  if (next === saved.provider) return saved.embeddingModel;
+  if (remembered !== null) return remembered;
   if (next === 'ollama') return available.ollamaEmbedModels[0] ?? '';
   if (next === 'llamacpp') {
     const models = available.catalog.filter((m) => m.kind === 'embedding');
@@ -62,18 +62,17 @@ export function embeddingModelForProvider(
 export const DEFAULT_OPENROUTER_CHAT_MODEL = 'google/gemini-3.5-flash-lite';
 
 /**
- * The chat model to show after switching to `next`. Like the embedding model,
- * the preference is shared by every provider: returning to the saved provider
- * restores the saved model, Ollama and the in-app runtime get the first model
- * they can run, and OpenRouter — which has no list to pick from — gets its
- * default, never another provider's id.
+ * The chat model to show after switching to `next`: the one `remembered` for
+ * that provider, else the first model Ollama or the in-app runtime can run,
+ * and for OpenRouter — which has no list to pick from — its default, never
+ * another provider's id.
  */
 export function chatModelForProvider(
   next: AiConfigState['provider'],
-  saved: { provider: string; model: string },
+  remembered: string | null,
   available: { catalog: CatalogModel[]; ollamaModels: string[] },
 ): string {
-  if (next === saved.provider) return saved.model;
+  if (remembered) return remembered;
   if (next === 'ollama') return available.ollamaModels[0] ?? '';
   if (next === 'llamacpp') return available.catalog.find((m) => m.kind === 'chat' && m.isLocal)?.id ?? '';
   return DEFAULT_OPENROUTER_CHAT_MODEL;
@@ -90,9 +89,8 @@ export function embeddingModelChanged(saved: string, next: string): boolean {
 
 /**
  * Whether Save must first ask the backend to check the OpenRouter embedding
- * model: it is new, or it was saved without ever passing the check.
+ * model: any model other than `validatedModel`, the one that already passed.
  */
-export function needsEmbeddingProbe(config: AiConfigState, savedEmbeddingModel: string): boolean {
-  if (config.provider !== 'openrouter' || config.embeddingModel === '') return false;
-  return config.embeddingModel !== savedEmbeddingModel || !config.embeddingModelValidated;
+export function needsEmbeddingProbe(config: AiConfigState, validatedModel: string | null): boolean {
+  return config.provider === 'openrouter' && config.embeddingModel !== '' && config.embeddingModel !== validatedModel;
 }

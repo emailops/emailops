@@ -56,6 +56,14 @@ const config = {
   provider: 'ollama',
   model: 'llama-small',
   embeddingModel: 'embed-small',
+  openRouterValidatedEmbeddingModel: null,
+  // The in-app provider is remembered with the very embedding model in use:
+  // switching to it leaves the Embeddings alone.
+  remembered: {
+    llamacpp: { model: 'qwen-local', embeddingModel: 'embed-small' },
+    ollama: { model: 'llama-small', embeddingModel: 'embed-small' },
+    openrouter: { model: null, embeddingModel: null },
+  },
   monthlyBudgetUsd: 5,
   periodStart: 0,
   hasApiKey: false,
@@ -103,7 +111,7 @@ describe('LogPanel ModelSelector', () => {
     await mount();
     await act(async () => option('llamacpp')?.click());
 
-    expect(api.setAiConfig).toHaveBeenCalledWith('llamacpp', 'qwen-local', null, null, 5, true);
+    expect(api.setAiConfig).toHaveBeenCalledWith('llamacpp', 'qwen-local', 'embed-small', null, 5, true);
     expect(api.setPref).not.toHaveBeenCalledWith('ai_provider', expect.anything());
   });
 
@@ -133,5 +141,54 @@ describe('LogPanel ModelSelector', () => {
     await mount();
     expect(backend()).toBe('openrouter');
     expect(option('openrouter')?.disabled).toBe(false);
+  });
+
+  // A switch that changes who computes the Embeddings replaces the email
+  // index; only Settings asks before doing that.
+  it('does not switch to a backend whose embedding model differs from the one in use', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({
+      ...config,
+      remembered: { ...config.remembered, llamacpp: { model: 'qwen-local', embeddingModel: 'embed-gguf' } },
+    } as never);
+    await mount();
+
+    expect(option('llamacpp')?.disabled).toBe(true);
+    expect(option('llamacpp')?.textContent).toBe('dashboard:log.switchInSettings');
+    await act(async () => option('llamacpp')?.click());
+    expect(api.setAiConfig).not.toHaveBeenCalled();
+  });
+
+  it('does not switch to a backend that has no embedding model remembered', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({
+      ...config,
+      remembered: { ...config.remembered, llamacpp: { model: null, embeddingModel: null } },
+    } as never);
+    await mount();
+
+    expect(option('llamacpp')?.disabled).toBe(true);
+  });
+
+  it('does not leave OpenRouter for a local backend', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({
+      ...config,
+      provider: 'openrouter',
+      model: 'vendor/model',
+      embeddingModel: 'vendor/embed',
+    } as never);
+    await mount();
+
+    expect(option('llamacpp')?.disabled).toBe(true);
+    expect(option('ollama')?.disabled).toBe(true);
+  });
+
+  it('switches to the chat model remembered for the backend', async () => {
+    vi.mocked(api.listCatalogModels).mockResolvedValueOnce([
+      { id: 'other-local', kind: 'chat', isLocal: true },
+      { id: 'qwen-local', kind: 'chat', isLocal: true },
+    ] as never);
+    await mount();
+    await act(async () => option('llamacpp')?.click());
+
+    expect(vi.mocked(api.setAiConfig).mock.calls[0].slice(0, 3)).toEqual(['llamacpp', 'qwen-local', 'embed-small']);
   });
 });

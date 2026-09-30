@@ -59,27 +59,27 @@ describe('embeddingModelForProvider', () => {
   ];
   const lists = { catalog, ollamaEmbedModels: ['ollama-embed'] };
 
-  it('never carries the embedding model of one provider over to another', () => {
-    const saved = { provider: 'llamacpp', embeddingModel: 'embed-local-gguf' } as const;
-    expect(embeddingModelForProvider('openrouter', saved, lists)).toBe('');
-    expect(embeddingModelForProvider('ollama', saved, lists)).toBe('ollama-embed');
-
-    const remote = { provider: 'openrouter', embeddingModel: 'vendor/embed' } as const;
-    expect(embeddingModelForProvider('llamacpp', remote, lists)).toBe('embed-local-gguf');
-    expect(embeddingModelForProvider('ollama', remote, lists)).toBe('ollama-embed');
+  it('restores the model remembered for the provider', () => {
+    expect(embeddingModelForProvider('openrouter', 'vendor/embed', lists)).toBe('vendor/embed');
+    expect(embeddingModelForProvider('ollama', 'ollama-other', lists)).toBe('ollama-other');
+    expect(embeddingModelForProvider('llamacpp', 'embed-recommended-gguf', lists)).toBe('embed-recommended-gguf');
   });
 
-  it('restores the saved model when returning to the saved provider', () => {
-    const saved = { provider: 'openrouter', embeddingModel: 'vendor/embed' } as const;
-    expect(embeddingModelForProvider('openrouter', saved, lists)).toBe('vendor/embed');
+  it('keeps OpenRouter on no model when that is what was chosen', () => {
+    expect(embeddingModelForProvider('openrouter', '', lists)).toBe('');
+  });
+
+  it('offers a model the provider can run when none is remembered, and none for OpenRouter', () => {
+    expect(embeddingModelForProvider('openrouter', null, lists)).toBe('');
+    expect(embeddingModelForProvider('ollama', null, lists)).toBe('ollama-embed');
+    expect(embeddingModelForProvider('llamacpp', null, lists)).toBe('embed-local-gguf');
   });
 
   it('falls back to the recommended in-app model, then to none', () => {
-    const remote = { provider: 'openrouter', embeddingModel: 'vendor/embed' } as const;
     const notDownloaded = { catalog: catalog.slice(0, 2), ollamaEmbedModels: [] };
-    expect(embeddingModelForProvider('llamacpp', remote, notDownloaded)).toBe('embed-recommended-gguf');
-    expect(embeddingModelForProvider('llamacpp', remote, { catalog: [], ollamaEmbedModels: [] })).toBe('');
-    expect(embeddingModelForProvider('ollama', remote, notDownloaded)).toBe('');
+    expect(embeddingModelForProvider('llamacpp', null, notDownloaded)).toBe('embed-recommended-gguf');
+    expect(embeddingModelForProvider('llamacpp', null, { catalog: [], ollamaEmbedModels: [] })).toBe('');
+    expect(embeddingModelForProvider('ollama', null, notDownloaded)).toBe('');
   });
 });
 
@@ -91,26 +91,24 @@ describe('chatModelForProvider', () => {
   ];
   const lists = { catalog, ollamaModels: ['ollama-chat', 'ollama-chat-2'] };
 
-  it('never carries the chat model of one provider over to another', () => {
-    const saved = { provider: 'llamacpp', model: 'chat-local-gguf' } as const;
-    expect(chatModelForProvider('openrouter', saved, lists)).toBe(DEFAULT_OPENROUTER_CHAT_MODEL);
-    expect(chatModelForProvider('ollama', saved, lists)).toBe('ollama-chat');
-
-    const remote = { provider: 'openrouter', model: 'vendor/model' } as const;
-    expect(chatModelForProvider('llamacpp', remote, lists)).toBe('chat-local-gguf');
-    expect(chatModelForProvider('ollama', remote, lists)).toBe('ollama-chat');
+  it('restores the model remembered for the provider', () => {
+    expect(chatModelForProvider('openrouter', 'vendor/model', lists)).toBe('vendor/model');
+    expect(chatModelForProvider('ollama', 'ollama-chat-2', lists)).toBe('ollama-chat-2');
+    expect(chatModelForProvider('llamacpp', 'chat-recommended-gguf', lists)).toBe('chat-recommended-gguf');
   });
 
-  it('restores the saved model when returning to the saved provider', () => {
-    const saved = { provider: 'openrouter', model: 'vendor/model' } as const;
-    expect(chatModelForProvider('openrouter', saved, lists)).toBe('vendor/model');
+  it('offers the provider default when no model is remembered', () => {
+    for (const nothing of [null, '']) {
+      expect(chatModelForProvider('openrouter', nothing, lists)).toBe(DEFAULT_OPENROUTER_CHAT_MODEL);
+      expect(chatModelForProvider('ollama', nothing, lists)).toBe('ollama-chat');
+      expect(chatModelForProvider('llamacpp', nothing, lists)).toBe('chat-local-gguf');
+    }
   });
 
   it('picks nothing when the target provider has no model to run', () => {
-    const remote = { provider: 'openrouter', model: 'vendor/model' } as const;
     const nothingLocal = { catalog: catalog.slice(0, 1), ollamaModels: [] };
-    expect(chatModelForProvider('llamacpp', remote, nothingLocal)).toBe('');
-    expect(chatModelForProvider('ollama', remote, nothingLocal)).toBe('');
+    expect(chatModelForProvider('llamacpp', null, nothingLocal)).toBe('');
+    expect(chatModelForProvider('ollama', null, nothingLocal)).toBe('');
   });
 });
 
@@ -128,19 +126,18 @@ describe('needsEmbeddingProbe', () => {
     provider: 'openrouter',
     model: 'vendor/model',
     embeddingModel: 'vendor/embed',
-    embeddingModelValidated: true,
     monthlyBudgetUsd: 0,
     hasApiKey: true,
     thinkingEnabled: false,
     zeroDataRetention: false,
   };
 
-  it('asks for a probe only for an OpenRouter model that is new or was never checked', () => {
+  it('asks for a probe only for an OpenRouter model that has not passed one', () => {
     expect(needsEmbeddingProbe(base, 'vendor/embed')).toBe(false);
     expect(needsEmbeddingProbe(base, 'vendor/previous')).toBe(true);
-    expect(needsEmbeddingProbe({ ...base, embeddingModelValidated: false }, 'vendor/embed')).toBe(true);
-    expect(needsEmbeddingProbe({ ...base, embeddingModel: '' }, 'vendor/embed')).toBe(false);
-    expect(needsEmbeddingProbe({ ...base, provider: 'ollama' }, 'other')).toBe(false);
-    expect(needsEmbeddingProbe({ ...base, provider: 'llamacpp' }, 'other')).toBe(false);
+    expect(needsEmbeddingProbe(base, null)).toBe(true);
+    expect(needsEmbeddingProbe({ ...base, embeddingModel: '' }, null)).toBe(false);
+    expect(needsEmbeddingProbe({ ...base, provider: 'ollama' }, null)).toBe(false);
+    expect(needsEmbeddingProbe({ ...base, provider: 'llamacpp' }, null)).toBe(false);
   });
 });

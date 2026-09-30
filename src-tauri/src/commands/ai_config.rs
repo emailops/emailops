@@ -17,13 +17,23 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
 pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
     let has_api_key = services::ai::AiService::has_openrouter_api_key(&state.db)?;
-    let embedding_validated = AiService::embedding_model_validated(&state.db, &config)?;
+    let validated_embedding_model = AiService::validated_openrouter_embedding_model(&state.db)?;
+    let remembered: serde_json::Map<String, serde_json::Value> = AiService::remembered_models(&state.db, &config)?
+        .into_iter()
+        .map(|(provider, models)| {
+            (
+                provider.to_string(),
+                serde_json::json!({ "model": models.model, "embeddingModel": models.embedding_model }),
+            )
+        })
+        .collect();
 
     Ok(serde_json::json!({
         "provider": config.provider,
         "model": config.model,
         "embeddingModel": config.embedding_model,
-        "embeddingModelValidated": embedding_validated,
+        "openRouterValidatedEmbeddingModel": validated_embedding_model,
+        "remembered": remembered,
         "monthlyBudgetUsd": config.monthly_budget_usd,
         "periodStart": config.period_start,
         "hasApiKey": has_api_key,

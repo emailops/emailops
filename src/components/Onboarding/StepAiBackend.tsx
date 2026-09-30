@@ -9,7 +9,7 @@ import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isDataPolicyError } from '@/lib/errors';
 import { credentialStoreKey } from '@/lib/platform';
 import { useLogStore } from '@/stores/logStore';
-import type { CatalogModel, ModelDownloadProgress } from '@/types';
+import type { AiConfig, CatalogModel, ModelDownloadProgress } from '@/types';
 
 const HUGGINGFACE_URL = 'https://huggingface.co';
 
@@ -35,8 +35,14 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
   // Optional: empty means keyword-only search. A typed model must pass the
   // backend's dimension probe before it is saved (see handleContinue).
   const [orEmbedModel, setOrEmbedModel] = useState<string>('');
-  // The saved OpenRouter embedding model that already passed the probe.
+  // The OpenRouter embedding model that already passed the probe.
   const [orValidatedEmbed, setOrValidatedEmbed] = useState<string>('');
+  // The models Ollama was last saved with, if it ever was (it has no picker
+  // here: its models are chosen in Settings).
+  const [ollamaRemembered, setOllamaRemembered] = useState<AiConfig['remembered']['ollama']>({
+    model: null,
+    embeddingModel: null,
+  });
   // The saved zero-data-retention choice, which the probe runs under.
   const [orZeroDataRetention, setOrZeroDataRetention] = useState(false);
   const [testStatus, setTestStatus] = useState<null | 'ok' | 'fail'>(null);
@@ -74,15 +80,16 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
           setBackend(cfg.provider);
         }
         setOrZeroDataRetention(!!cfg.zeroDataRetention);
-        if (cfg.provider === 'openrouter') {
-          setOrChatModel(cfg.model || DEFAULT_OPENROUTER_CHAT_MODEL);
-          setOrEmbedModel(cfg.embeddingModel);
-          if (cfg.embeddingModelValidated) setOrValidatedEmbed(cfg.embeddingModel);
-          setOrHasSavedKey(!!cfg.hasApiKey);
-        } else {
-          setChatModelId(cfg.model || '');
-          setEmbedModelId(cfg.embeddingModel || '');
-        }
+        // Each card starts from the models its provider was last saved with
+        // (the saved provider's are the ones in use), whichever is saved now.
+        const { llamacpp, ollama, openrouter } = cfg.remembered;
+        setOrChatModel(openrouter.model || DEFAULT_OPENROUTER_CHAT_MODEL);
+        setOrEmbedModel(openrouter.embeddingModel ?? '');
+        setOrValidatedEmbed(cfg.openRouterValidatedEmbeddingModel ?? '');
+        setOrHasSavedKey(!!cfg.hasApiKey);
+        setChatModelId(llamacpp.model ?? '');
+        setEmbedModelId(llamacpp.embeddingModel ?? '');
+        setOllamaRemembered(ollama);
       } catch {
         // Non-fatal — first-run defaults stand.
       }
@@ -243,9 +250,14 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
     setError(null);
     try {
       let model = chatModelId;
-      let embedding = embedModelId;
+      let embedding: string | null = embedModelId;
       let apiKey: string | null = null;
-      if (backend === 'llamacpp') {
+      if (backend === 'ollama') {
+        // The in-app embedding model is not one Ollama has: send the one
+        // remembered for Ollama, or none and let the backend pick its default.
+        model = ollamaRemembered.model ?? chatModelId;
+        embedding = ollamaRemembered.embeddingModel;
+      } else if (backend === 'llamacpp') {
         if (!model) model = chatModels.find((m) => m.isLocal)?.id || '';
         if (!embedding) embedding = embedModels.find((m) => m.isLocal)?.id || '';
       } else if (backend === 'openrouter') {

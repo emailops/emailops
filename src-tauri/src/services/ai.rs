@@ -47,6 +47,88 @@ const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
 const OPENROUTER_EMBED_VALIDATED_PREF: &str = "openrouter_embedding_validated_model";
 const OPENROUTER_EMBED_DIMENSIONS_PREF: &str = "openrouter_embedding_dimensions";
 
+/// Every provider a config can be saved for.
+const PROVIDERS: [&str; 3] = ["llamacpp", "ollama", "openrouter"];
+/// The in-app embedding model a fresh install is configured with.
+const DEFAULT_LLAMACPP_EMBEDDING_MODEL: &str = "nomic-embed-text-v1.5-q4_k_m";
+
+/// Preference holding the chat model last saved for `provider`.
+fn remembered_model_pref(provider: &str) -> String {
+    format!("ai_model:{provider}")
+}
+
+/// Preference holding the embedding model last saved for `provider`.
+fn remembered_embedding_pref(provider: &str) -> String {
+    format!("ai_embedding_model:{provider}")
+}
+
+/// The models a provider was last saved with; `None` when nothing is known.
+/// An empty embedding model is OpenRouter's "none" (keyword-only search).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderModels {
+    pub model: Option<String>,
+    pub embedding_model: Option<String>,
+}
+
+/// Whether `provider` can compute Embeddings with `model`. OpenRouter takes a
+/// `vendor/model` id or none; the in-app runtime a catalogue embedding model.
+/// Ollama has no list to check against and namespaced ids of its own, so it
+/// refuses only what is known to be another provider's: a catalogue GGUF id
+/// or `openrouter_model`, the embedding model remembered for OpenRouter.
+fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<&str>) -> bool {
+    use crate::ai::model_catalog;
+    match provider {
+        "openrouter" => model.is_empty() || crate::ai::openrouter::is_openrouter_model_id(model),
+        "llamacpp" => model_catalog::embedding_models().any(|m| m.id == model),
+        _ => !model.is_empty() && model_catalog::find(model).is_none() && openrouter_model != Some(model),
+    }
+}
+
+fn default_embedding_model(provider: &str) -> &'static str {
+    match provider {
+        "openrouter" => "",
+        "llamacpp" => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
+        _ => crate::services::embeddings::DEFAULT_EMBEDDING_MODEL,
+    }
+}
+
+/// The embedding model a save stores, and what it replaced when it had to.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EmbeddingModelPlan {
+    pub model: String,
+    /// The model that was asked for (or stored) but `provider` cannot use.
+    pub corrected_from: Option<String>,
+}
+
+/// Decide the embedding model to store when `provider` is saved. `requested`
+/// is what the caller asked for (`None` keeps `current`, the stored one). The
+/// preference is shared by every provider, so either can be another
+/// provider's id: that is replaced by the model `remembered` for this
+/// provider, else by the provider's default.
+pub fn plan_embedding_model(
+    provider: &str,
+    requested: Option<&str>,
+    current: Option<&str>,
+    remembered: Option<&str>,
+    openrouter_model: Option<&str>,
+) -> EmbeddingModelPlan {
+    let usable = |model: &&str| embedding_model_usable(provider, model, openrouter_model);
+    let candidate = requested.or(current);
+    if let Some(model) = candidate.filter(usable) {
+        return EmbeddingModelPlan {
+            model: model.to_string(),
+            corrected_from: None,
+        };
+    }
+    EmbeddingModelPlan {
+        model: remembered
+            .filter(usable)
+            .unwrap_or_else(|| default_embedding_model(provider))
+            .to_string(),
+        corrected_from: candidate.map(str::to_string),
+    }
+}
+
 pub struct AiService {
     provider: Arc<dyn AIProvider>,
     db: Arc<Database>,
@@ -392,13 +474,52 @@ impl AiService {
         ))
     }
 
-    /// Whether the configured embedding model may be used as it stands. Only
-    /// OpenRouter can hold a model that was saved without passing the probe.
-    pub fn embedding_model_validated(db: &Database, config: &AiConfig) -> Result<bool> {
-        if config.provider != "openrouter" {
-            return Ok(true);
+    /// The OpenRouter embedding model that passed the probe and may be used
+    /// without another one, if any.
+    pub fn validated_openrouter_embedding_model(db: &Database) -> Result<Option<String>> {
+        let Some(model) = db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF)? else {
+            return Ok(None);
+        };
+        Ok(Self::openrouter_embedding_dimensions(db, &model)?.map(|_| model))
+    }
+
+    /// The embedding model recorded for `provider`. Installs from before
+    /// models were remembered have one for OpenRouter all the same: the model
+    /// that passed the probe.
+    fn stored_embedding_model(db: &Database, provider: &str) -> Result<Option<String>> {
+        match db.get_preference(&remembered_embedding_pref(provider))? {
+            None if provider == "openrouter" => db.get_preference(OPENROUTER_EMBED_VALIDATED_PREF),
+            stored => Ok(stored),
         }
-        Ok(Self::openrouter_embedding_dimensions(db, &config.embedding_model)?.is_some())
+    }
+
+    /// The models to offer for each provider when the user switches to it.
+    /// The saved provider's are the ones in use (they can change outside
+    /// `save_config`); an embedding model it cannot use does not count.
+    pub fn remembered_models(db: &Database, config: &AiConfig) -> Result<Vec<(&'static str, ProviderModels)>> {
+        let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
+        let usable =
+            |provider: &str, model: &String| embedding_model_usable(provider, model, openrouter_model.as_deref());
+        PROVIDERS
+            .into_iter()
+            .map(|provider| {
+                let stored = Self::stored_embedding_model(db, provider)?.filter(|m| usable(provider, m));
+                let models = if provider == config.provider {
+                    ProviderModels {
+                        model: Some(config.model.clone()),
+                        embedding_model: Some(config.embedding_model.clone())
+                            .filter(|m| usable(provider, m))
+                            .or(stored),
+                    }
+                } else {
+                    ProviderModels {
+                        model: db.get_preference(&remembered_model_pref(provider))?,
+                        embedding_model: stored,
+                    }
+                };
+                Ok((provider, models))
+            })
+            .collect()
     }
 
     /// Probe `client`'s embedding model against the email index and, when it
@@ -555,7 +676,7 @@ impl AiService {
             .unwrap_or_else(|| "qwen3.5-4b-q4_k_m".to_string());
         let embedding_model = db
             .get_preference("ai_embedding_model")?
-            .unwrap_or_else(|| "nomic-embed-text-v1.5-q4_k_m".to_string());
+            .unwrap_or_else(|| DEFAULT_LLAMACPP_EMBEDDING_MODEL.to_string());
         let api_key_id = db.get_preference("openrouter_api_key_id")?;
         let budget_str = db
             .get_preference("ai_monthly_budget")?
@@ -608,11 +729,46 @@ impl AiService {
         thinking_enabled: Option<bool>,
         zero_data_retention: Option<bool>,
     ) -> Result<()> {
+        let current_embedding = db.get_preference("ai_embedding_model")?;
+        // Leaving a provider: remember the models it was using, which may
+        // have changed outside this function (quick model selector, download
+        // auto-select) since they were last saved.
+        if let Some(previous) = db.get_preference("ai_provider")?.filter(|p| p != provider) {
+            if let Some(previous_model) = db.get_preference("ai_model")? {
+                db.set_preference(&remembered_model_pref(&previous), &previous_model)?;
+            }
+            let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
+            if let Some(previous_embedding) = current_embedding
+                .as_ref()
+                .filter(|m| embedding_model_usable(&previous, m, openrouter_model.as_deref()))
+            {
+                db.set_preference(&remembered_embedding_pref(&previous), previous_embedding)?;
+            }
+        }
+
+        let plan = plan_embedding_model(
+            provider,
+            embedding_model,
+            current_embedding.as_deref(),
+            Self::stored_embedding_model(db, provider)?.as_deref(),
+            Self::stored_embedding_model(db, "openrouter")?.as_deref(),
+        );
+        if let Some(unusable) = &plan.corrected_from {
+            crate::services::logger::log(
+                "warn",
+                "ai",
+                format!(
+                    "Embedding model {unusable:?} cannot be used with {provider}; saved {:?} instead",
+                    plan.model
+                ),
+            );
+        }
+
         db.set_preference("ai_provider", provider)?;
         db.set_preference("ai_model", model)?;
-        if let Some(embed_model) = embedding_model {
-            db.set_preference("ai_embedding_model", embed_model)?;
-        }
+        db.set_preference("ai_embedding_model", &plan.model)?;
+        db.set_preference(&remembered_model_pref(provider), model)?;
+        db.set_preference(&remembered_embedding_pref(provider), &plan.model)?;
         db.set_preference("ai_monthly_budget", &monthly_budget_usd.to_string())?;
         if let Some(thinking) = thinking_enabled {
             db.set_preference("ai_thinking_enabled", if thinking { "true" } else { "false" })?;
@@ -1444,25 +1600,6 @@ mod budget_tests {
         assert!(!AiService::load_provider(&db).unwrap().embedding_configured());
     }
 
-    /// What Settings shows next to the embedding selector: only OpenRouter
-    /// has a model that can be saved without having been checked.
-    #[test]
-    fn only_an_unchecked_openrouter_model_is_reported_as_not_validated() {
-        let db = db_with_budget("0");
-        let config = |db: &Database| AiService::get_config(db).unwrap();
-        assert!(AiService::embedding_model_validated(&db, &config(&db)).unwrap());
-
-        db.set_preference("ai_provider", "openrouter").unwrap();
-        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
-        assert!(!AiService::embedding_model_validated(&db, &config(&db)).unwrap());
-
-        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
-            .unwrap();
-        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "requested")
-            .unwrap();
-        assert!(AiService::embedding_model_validated(&db, &config(&db)).unwrap());
-    }
-
     /// No budget (0) never refuses, whatever was spent.
     #[tokio::test]
     async fn no_budget_never_refuses() {
@@ -1587,6 +1724,191 @@ mod budget_tests {
             .unwrap();
 
         assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
+    }
+}
+
+#[cfg(test)]
+mod provider_models_tests {
+    use super::*;
+    use crate::db::Database;
+
+    const GGUF_EMBED: &str = DEFAULT_LLAMACPP_EMBEDDING_MODEL;
+
+    fn plan(provider: &str, requested: Option<&str>, current: Option<&str>, remembered: Option<&str>) -> String {
+        plan_embedding_model(provider, requested, current, remembered, Some("vendor/embed")).model
+    }
+
+    #[test]
+    fn a_model_the_provider_can_use_is_kept() {
+        assert_eq!(
+            plan("openrouter", Some("vendor/embed"), Some(GGUF_EMBED), None),
+            "vendor/embed"
+        );
+        assert_eq!(
+            plan("openrouter", Some(""), Some("vendor/embed"), Some("vendor/embed")),
+            ""
+        );
+        assert_eq!(
+            plan("llamacpp", Some(GGUF_EMBED), Some("vendor/embed"), None),
+            GGUF_EMBED
+        );
+        assert_eq!(plan("ollama", Some("bge-m3"), None, None), "bge-m3");
+        // Ollama has namespaced models of its own: a slash alone is not OpenRouter's.
+        assert_eq!(plan("ollama", Some("someone/bge-m3"), None, None), "someone/bge-m3");
+        // No model requested keeps the stored one.
+        assert_eq!(plan("ollama", None, Some("bge-m3"), Some("other")), "bge-m3");
+    }
+
+    #[test]
+    fn a_model_of_another_provider_is_replaced_by_the_remembered_one() {
+        assert_eq!(
+            plan("llamacpp", None, Some("vendor/embed"), Some(GGUF_EMBED)),
+            GGUF_EMBED
+        );
+        assert_eq!(plan("ollama", None, Some("vendor/embed"), Some("bge-m3")), "bge-m3");
+        assert_eq!(plan("ollama", Some(GGUF_EMBED), None, Some("bge-m3")), "bge-m3");
+        assert_eq!(
+            plan("openrouter", None, Some(GGUF_EMBED), Some("vendor/embed")),
+            "vendor/embed"
+        );
+        assert_eq!(plan("openrouter", Some("bge-m3"), None, Some("")), "");
+    }
+
+    #[test]
+    fn without_a_usable_remembered_model_the_provider_default_is_used() {
+        assert_eq!(plan("llamacpp", None, Some("vendor/embed"), None), GGUF_EMBED);
+        assert_eq!(plan("llamacpp", Some("bge-m3"), None, Some("vendor/embed")), GGUF_EMBED);
+        assert_eq!(plan("llamacpp", Some(""), None, None), GGUF_EMBED);
+        assert_eq!(plan("ollama", None, Some("vendor/embed"), None), "nomic-embed-text");
+        assert_eq!(plan("ollama", Some(""), None, Some(GGUF_EMBED)), "nomic-embed-text");
+        assert_eq!(plan("openrouter", None, Some(GGUF_EMBED), None), "");
+        assert_eq!(plan("openrouter", None, None, Some("bge-m3")), "");
+    }
+
+    #[test]
+    fn the_plan_says_what_it_corrected() {
+        let kept = plan_embedding_model("ollama", Some("bge-m3"), None, None, None);
+        assert_eq!(kept.corrected_from, None);
+        let fixed = plan_embedding_model("llamacpp", None, Some("vendor/embed"), None, None);
+        assert_eq!(fixed.corrected_from.as_deref(), Some("vendor/embed"));
+        // Nothing stored and nothing requested: a default, not a correction.
+        let fresh = plan_embedding_model("openrouter", None, None, None, None);
+        assert_eq!(fresh.corrected_from, None);
+    }
+
+    fn save(db: &Database, provider: &str, model: &str, embedding: Option<&str>) {
+        AiService::save_config(db, provider, model, embedding, None, 0.0, None, None).unwrap();
+    }
+
+    fn remembered(db: &Database, provider: &str) -> ProviderModels {
+        let config = AiService::get_config(db).unwrap();
+        AiService::remembered_models(db, &config)
+            .unwrap()
+            .into_iter()
+            .find(|(p, _)| *p == provider)
+            .unwrap()
+            .1
+    }
+
+    fn models(model: Option<&str>, embedding_model: Option<&str>) -> ProviderModels {
+        ProviderModels {
+            model: model.map(str::to_string),
+            embedding_model: embedding_model.map(str::to_string),
+        }
+    }
+
+    /// The quick switcher saves a provider without naming an embedding model.
+    #[test]
+    fn saving_another_provider_never_keeps_an_embedding_model_it_cannot_use() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "openrouter", "vendor/model", Some("vendor/embed"));
+
+        save(&db, "llamacpp", "chat-gguf", None);
+
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, GGUF_EMBED);
+    }
+
+    #[test]
+    fn each_provider_gets_its_own_models_back() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "openrouter", "vendor/model", Some("vendor/embed"));
+        save(&db, "ollama", "ollama-chat", Some("bge-m3"));
+        save(&db, "llamacpp", "chat-gguf", Some(GGUF_EMBED));
+
+        assert_eq!(
+            remembered(&db, "openrouter"),
+            models(Some("vendor/model"), Some("vendor/embed"))
+        );
+        assert_eq!(remembered(&db, "ollama"), models(Some("ollama-chat"), Some("bge-m3")));
+        assert_eq!(remembered(&db, "llamacpp"), models(Some("chat-gguf"), Some(GGUF_EMBED)));
+
+        save(&db, "ollama", "ollama-chat", None);
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, "bge-m3");
+    }
+
+    #[test]
+    fn choosing_no_openrouter_embedding_model_is_remembered_as_none() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        save(&db, "openrouter", "vendor/model", Some(""));
+        save(&db, "llamacpp", "chat-gguf", Some(GGUF_EMBED));
+
+        assert_eq!(remembered(&db, "openrouter").embedding_model.as_deref(), Some(""));
+    }
+
+    /// A model changed outside Settings (quick model selector, download
+    /// auto-select) is still the one that comes back.
+    #[test]
+    fn the_models_in_use_are_remembered_when_the_provider_is_left() {
+        let db = Database::new_for_testing().unwrap();
+        save(&db, "ollama", "ollama-chat", Some("bge-m3"));
+        db.set_preference("ai_model", "ollama-other").unwrap();
+
+        save(&db, "openrouter", "vendor/model", Some(""));
+
+        assert_eq!(remembered(&db, "ollama"), models(Some("ollama-other"), Some("bge-m3")));
+    }
+
+    /// An install from before models were remembered: the state the quick
+    /// switcher could leave behind, with nothing recorded per provider.
+    #[test]
+    fn an_existing_install_is_seeded_from_what_it_already_stores() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference("ai_provider", "llamacpp").unwrap();
+        db.set_preference("ai_model", "chat-gguf").unwrap();
+        db.set_preference("ai_embedding_model", "vendor/embed").unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "requested")
+            .unwrap();
+
+        // The saved provider's chat model counts; its embedding model does
+        // not, because the in-app runtime cannot use it.
+        assert_eq!(remembered(&db, "llamacpp"), models(Some("chat-gguf"), None));
+        assert_eq!(remembered(&db, "openrouter"), models(None, Some("vendor/embed")));
+        assert_eq!(remembered(&db, "ollama"), models(None, None));
+        assert_eq!(
+            AiService::validated_openrouter_embedding_model(&db).unwrap().as_deref(),
+            Some("vendor/embed")
+        );
+
+        // Saving that config again repairs it.
+        save(&db, "llamacpp", "chat-gguf", Some("vendor/embed"));
+        assert_eq!(AiService::get_config(&db).unwrap().embedding_model, GGUF_EMBED);
+        assert_eq!(
+            remembered(&db, "openrouter").embedding_model.as_deref(),
+            Some("vendor/embed")
+        );
+    }
+
+    #[test]
+    fn a_validated_model_without_its_dimension_mode_is_not_reported() {
+        let db = Database::new_for_testing().unwrap();
+        assert_eq!(AiService::validated_openrouter_embedding_model(&db).unwrap(), None);
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        assert_eq!(AiService::validated_openrouter_embedding_model(&db).unwrap(), None);
     }
 }
 

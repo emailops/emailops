@@ -46,6 +46,7 @@
     "aiBackend": "Moteur d'IA",
     "aiModel": "Modèle d'IA",
     "aiSettings": "Paramètres d'IA",
+    "switchInSettings": "{{backend}} — à changer dans les Paramètres d'IA",
     "clearLogs": "Effacer les journaux",
     "minimizePanel": "Réduire le panneau",
     "expandPanel": "Agrandir le panneau",

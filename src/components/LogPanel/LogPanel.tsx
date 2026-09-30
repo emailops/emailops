@@ -6,7 +6,7 @@ import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { type LogLevel, type LogSource, useLogStore } from '@/stores/logStore';
-import type { CatalogModel } from '@/types';
+import type { AiConfig, CatalogModel } from '@/types';
 import { BackgroundActivityStatus } from './BackgroundActivityStatus';
 
 /** Options matching the log panel's fixed 24-hour HH:MM:SS time format. */
@@ -86,6 +86,9 @@ export function ModelSelector() {
   // runtime can run (not on Intel Macs). A failed probe leaves it enabled and
   // lets the backend's own guard report the real problem.
   const [embeddedAvailable, setEmbeddedAvailable] = useState<boolean | null>(null);
+  // The saved config, for what a switch to each backend would do to the
+  // embedding model. Null until loaded (or when loading failed): no switch.
+  const [saved, setSaved] = useState<AiConfig | null>(null);
   const addLog = useLogStore((s) => s.addLog);
 
   const loadModels = async (prov: Provider): Promise<string[]> => {
@@ -103,6 +106,7 @@ export function ModelSelector() {
 
   const load = async () => {
     const cfg = await api.getAiConfig().catch(() => null);
+    setSaved(cfg);
     const prov = (cfg?.provider as Provider | undefined) ?? 'ollama';
     setProvider(prov);
     const list = await loadModels(prov);
@@ -132,18 +136,36 @@ export function ModelSelector() {
     };
   }, []);
 
+  // A switch that changes the embedding model replaces the email index, and
+  // only AI Settings asks before doing that. Provider ids differ (OpenRouter,
+  // Ollama and the in-app runtime each name their models their own way), so
+  // this holds for a backend only when it is remembered with the very model
+  // in use. OpenRouter also has no model list to pick a chat model from here.
+  const needsSettings = (p: Provider) =>
+    p !== provider &&
+    (p === 'openrouter' || saved === null || saved.remembered[p].embeddingModel !== saved.embeddingModel);
+
   const handleProviderChange = async (newProv: Provider) => {
+    if (saved === null || needsSettings(newProv)) return;
     const previous = { provider, models, currentModel };
+    const remembered = saved.remembered[newProv];
     setProvider(newProv);
     const list = await loadModels(newProv);
     setModels(list);
-    const newModel = list[0] ?? '';
+    const newModel = list.find((m) => m === remembered.model) ?? list[0] ?? '';
     setCurrentModel(newModel);
-    // Persist provider and model together through the same path AI Settings
+    // Persist provider and models together through the same path AI Settings
     // uses; the rest of the config (budget, thinking) is kept as stored.
     try {
       const cfg = await api.getAiConfig();
-      await api.setAiConfig(newProv, newModel, null, null, cfg.monthlyBudgetUsd, cfg.thinkingEnabled);
+      await api.setAiConfig(
+        newProv,
+        newModel,
+        remembered.embeddingModel,
+        null,
+        cfg.monthlyBudgetUsd,
+        cfg.thinkingEnabled,
+      );
       addLog('info', 'ai', `AI backend → ${PROVIDER_LABELS[newProv]}${newModel ? ` · ${newModel}` : ''}`);
     } catch (err) {
       // Nothing was switched: show the backend that is still in use.
@@ -172,12 +194,10 @@ export function ModelSelector() {
         onChange={(value) => void handleProviderChange(value)}
         options={(Object.keys(PROVIDER_LABELS) as Provider[]).map((p) => ({
           value: p,
-          label: PROVIDER_LABELS[p],
-          // OpenRouter has no model list to pick from and the model preference
-          // is shared by every provider, so switching to it here would send a
-          // local model id: it is set up in AI Settings, where its model is typed.
-          disabled:
-            (p === 'llamacpp' && embeddedAvailable === false) || (p === 'openrouter' && provider !== 'openrouter'),
+          label: needsSettings(p)
+            ? t('dashboard:log.switchInSettings', { backend: PROVIDER_LABELS[p] })
+            : PROVIDER_LABELS[p],
+          disabled: (p === 'llamacpp' && embeddedAvailable === false) || needsSettings(p),
         }))}
         ariaLabel={t('dashboard:log.aiBackend')}
         size="xs"

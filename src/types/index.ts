@@ -332,7 +332,12 @@ export interface AiConfig {
   provider: 'ollama' | 'openrouter' | 'llamacpp';
   model: string;
   embeddingModel: string;
-  embeddingModelValidated: boolean;
+  /** The OpenRouter embedding model that passed the dimension check, if any. */
+  openRouterValidatedEmbeddingModel: string | null;
+  /** The models to offer when switching to each provider: the ones it was
+   *  last saved with (for the saved provider, the ones in use). Null when
+   *  nothing usable is known; an empty embedding model is OpenRouter's "none". */
+  remembered: Record<AiConfig['provider'], { model: string | null; embeddingModel: string | null }>;
   monthlyBudgetUsd: number;
   periodStart: number;
   hasApiKey: boolean;

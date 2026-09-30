@@ -46,6 +46,7 @@
     "aiBackend": "AI Backend",
     "aiModel": "AI Model",
     "aiSettings": "AI Settings",
+    "switchInSettings": "{{backend}} — switch in AI Settings",
     "clearLogs": "Clear logs",
     "minimizePanel": "Minimize panel",
     "expandPanel": "Expand panel",

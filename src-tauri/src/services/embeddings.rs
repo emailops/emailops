@@ -10,7 +10,7 @@ use crate::db::Database;
 use crate::models::error::Result;
 use crate::services::ai::AiService;
 
-const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
+pub(crate) const DEFAULT_EMBEDDING_MODEL: &str = "nomic-embed-text";
 
 /// User-tunable config for which emails get embedded (used for AI Search /
 /// chat retrieval). Persisted in `user_preferences` like the other AI configs.

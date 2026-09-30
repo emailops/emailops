@@ -36,18 +36,32 @@ vi.mock('@/lib/api', () => api);
 
 import { StepAiBackend } from './StepAiBackend';
 
+const NOTHING = { model: null, embeddingModel: null };
+
+// What `get_ai_config` answers: the saved provider's models are its remembered
+// ones, and a saved OpenRouter embedding model has passed the probe.
 function savedConfig(over: Record<string, unknown> = {}) {
-  return {
+  const base = {
     provider: 'llamacpp',
     model: '',
     embeddingModel: '',
-    embeddingModelValidated: true,
     monthlyBudgetUsd: 0,
     periodStart: 0,
     hasApiKey: false,
     thinkingEnabled: false,
     zeroDataRetention: false,
     ...over,
+  };
+  return {
+    openRouterValidatedEmbeddingModel: base.provider === 'openrouter' ? base.embeddingModel : null,
+    ...base,
+    remembered: {
+      llamacpp: NOTHING,
+      ollama: NOTHING,
+      openrouter: NOTHING,
+      [base.provider]: { model: base.model, embeddingModel: base.embeddingModel },
+      ...(over.remembered as object | undefined),
+    },
   };
 }
 
@@ -188,7 +202,6 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
       provider: 'openrouter',
       model: 'vendor/model',
       embeddingModel: 'vendor/embed',
-      embeddingModelValidated: true,
       hasApiKey: true,
     });
     expect(embeddingField().value).toBe('vendor/embed');
@@ -197,5 +210,32 @@ describe('StepAiBackend — OpenRouter embedding model', () => {
     expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
     expect(api.setAiConfig.mock.calls[0].slice(0, 4)).toEqual(['openrouter', 'vendor/model', 'vendor/embed', null]);
     expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers the OpenRouter models remembered while another provider is saved, without a second check', async () => {
+    await mount({
+      hasApiKey: true,
+      openRouterValidatedEmbeddingModel: 'vendor/embed',
+      remembered: { openrouter: { model: 'vendor/model', embeddingModel: 'vendor/embed' } },
+    });
+    expect(embeddingField().value).toBe('vendor/embed');
+    await pressContinue();
+
+    expect(api.validateOpenRouterEmbeddingModel).not.toHaveBeenCalled();
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['openrouter', 'vendor/model', 'vendor/embed']);
+  });
+
+  it('does not save the in-app embedding model for Ollama', async () => {
+    await mount({
+      embeddingModel: 'embed-gguf',
+      remembered: { ollama: { model: 'ollama-chat', embeddingModel: null } },
+    });
+    await act(async () => {
+      button('auth:onboarding.aiBackend.ollamaTitle').click();
+    });
+    await settle();
+    await pressContinue();
+
+    expect(api.setAiConfig.mock.calls[0].slice(0, 3)).toEqual(['ollama', 'ollama-chat', null]);
   });
 });

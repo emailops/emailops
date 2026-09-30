@@ -2334,3 +2334,40 @@ zero-data-retention endpoint, 1M context.
 `anthropic/claude-haiku-4.5` — the developer's choice; `openai/gpt-4o-mini` — no
 zero-data-retention endpoint.
 **Limit:** not measured on the app's chat eval; chosen on catalogue data only.
+
+## 2026-09-30 — AI models are remembered per provider; a save never keeps an unusable embedding model
+
+**Decision:** Supersedes the "Remembering a last-used model per provider" rejection in the
+entry above on onboarding and provider switches.
+- **Remembered per provider:** `ai_model` / `ai_embedding_model` stay the models in use,
+  and every save also records them under `ai_model:<provider>` /
+  `ai_embedding_model:<provider>` (preferences only, no migration). Leaving a provider
+  records the models it was using at that moment. `get_ai_config` returns the remembered
+  models for every provider, and Settings and onboarding offer them on a provider switch
+  before falling back to the defaults. Existing installs are seeded from what they already
+  store: the saved provider's models, and `openrouter_embedding_validated_model` as
+  OpenRouter's embedding model. A remembered OpenRouter model that is still the validated
+  one is not probed again.
+- **Save never keeps an embedding model the provider cannot use:** `save_config` decides
+  with a pure planner (`plan_embedding_model`). OpenRouter takes a `vendor/model` id or
+  none; the in-app runtime takes a catalogue embedding model; Ollama refuses a catalogue
+  GGUF id and the model remembered for OpenRouter. Anything else is replaced by the model
+  remembered for that provider, else by the provider default, and the correction is logged.
+- **Quick switcher does not cross an Embeddings boundary:** the log panel's backend
+  selector only performs a switch when the target provider is remembered with the very
+  embedding model in use. Every other switch is disabled there with a hint to do it in AI
+  Settings, the only place that asks before the email index is replaced.
+**Context:** After saving OpenRouter with an embedding model, switching to the in-app
+provider and coming back showed no embedding model; and the quick switcher, which named no
+embedding model, left the in-app provider saved with OpenRouter's, so local Embeddings
+could not run. Onboarding with Ollama likewise saved the in-app GGUF id for Ollama.
+**Rejected:**
+- *Refusing every `vendor/model` id under Ollama*: Ollama has namespaced models of its
+  own, so a slash alone does not make an id OpenRouter's.
+- *Letting the quick switcher switch and re-index*: it has no room for the warning, and a
+  re-index sends every indexed email to OpenRouter when that is the target.
+- *A migration to per-provider columns*: preferences hold it, and the seeding covers
+  existing installs.
+**Limit:** the in-app runtime and Ollama name the same nomic model differently, so the
+quick switcher no longer switches between them either unless the ids happen to match; in
+practice every backend change now goes through AI Settings.
