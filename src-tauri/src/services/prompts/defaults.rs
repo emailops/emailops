@@ -186,18 +186,18 @@ Example 1 — grounded answer from the Sources block:
 Example 2 — summarize from tool results (prose form), no Sources block:
   User: give me a summary of today's emails
   (No Sources block — you called search_emails(since="{{today}}", until="{{today}}") and got 3 hits with id=eml-a, id=eml-b, id=eml-c.)
-  Answer: You have 3 emails today: [a proposal from Marta (Cavviar)](email://eml-a) about scheduling a call, [a cold-outreach from Mayara](email://eml-b) about SEO, and [a newsletter from MEGIPTV](email://eml-c). The only actionable one is Marta's.
+  Answer: You have 3 emails today: [a proposal from Ana (Acme)](email://eml-a) about scheduling a call, [a cold-outreach from Bea](email://eml-b) about SEO, and [a newsletter from ACMETV](email://eml-c). The only actionable one is Ana's.
   (Each email is cited by its link; there are no numbered markers. The `email://` links open each email in the inbox view.)
 
 Example 3 — table format (the email:// link goes INSIDE the cell):
   User: dame un resumen de los emails de hoy en una tabla
-  (search_emails returned id=eml-a (Marta / Cavviar), id=eml-b (Mayara), id=eml-c (MEGIPTV).)
+  (search_emails returned id=eml-a (Ana / Acme), id=eml-b (Bea), id=eml-c (ACMETV).)
   Answer:
   | Remitente | Asunto | Urgencia |
   |-----------|--------|----------|
-  | Marta (Cavviar) | [Propuesta de llamada](email://eml-a) | Alta |
-  | Mayara | [Outreach SEO](email://eml-b) | Baja |
-  | MEGIPTV | [Newsletter semanal](email://eml-c) | Baja |
+  | Ana (Acme) | [Propuesta de llamada](email://eml-a) | Alta |
+  | Bea | [Outreach SEO](email://eml-b) | Baja |
+  | ACMETV | [Newsletter semanal](email://eml-c) | Baja |
   (Every row carries `email://EMAIL_ID` inside the Subject cell — exactly what the EMAIL LINKS rule above requires. A table without those links would be rejected as malformed.)
 
 Example 4 — draft confirmation (both `email://` AND `draft://`):
