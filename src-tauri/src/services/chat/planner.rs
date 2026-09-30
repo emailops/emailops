@@ -556,15 +556,21 @@ pub async fn plan_search(
                 aux_plan: result.aux_plan,
             }
         }
-        Err(_) => PlanRun {
-            plan: Plan::Defer,
-            outcome: PlanOutcome::ProviderError,
-            prompt_tokens: 0,
-            prefill_ms: None,
-            cached_prompt_tokens: None,
-            aux_plan: None,
-            skill: None,
-        },
+        Err(e) => {
+            super::emit_log(
+                "warn",
+                &format!("planner: the completion failed ({e}) — deferring to the model loop"),
+            );
+            PlanRun {
+                plan: Plan::Defer,
+                outcome: PlanOutcome::ProviderError,
+                prompt_tokens: 0,
+                prefill_ms: None,
+                cached_prompt_tokens: None,
+                aux_plan: None,
+                skill: None,
+            }
+        }
     }
 }
 
@@ -1291,6 +1297,37 @@ mod tests {
 
         assert_eq!(run.plan, Plan::Defer);
         assert_eq!(run.outcome, PlanOutcome::ProviderError);
+    }
+
+    // Sync with its own runtime so the global seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn a_provider_failure_is_logged_with_its_reason() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.fail_completions(Some("planner model unavailable for test"));
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(plan_search(
+                &provider,
+                "Question: {{query}}\nJSON:",
+                "me@example.test",
+                "2026-06-15",
+                "mail from marisol",
+                &TagGlossary::defaults(),
+                None,
+                TEST_CATALOG,
+                "",
+            ));
+        let logged = logger
+            .events()
+            .into_iter()
+            .any(|e| e.message.contains("planner model unavailable for test"));
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        assert!(logged, "the provider's error must reach the log");
     }
 
     #[test]

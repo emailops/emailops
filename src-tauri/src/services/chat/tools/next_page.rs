@@ -6,7 +6,7 @@
 //! have to guess them, and a guessed page 2 does not continue page 1. This
 //! tool takes no arguments; the page it continues comes from
 //! [`ToolCtx::page`](super::ToolCtx::page), which the chat turn seeds from the
-//! previous assistant message's persisted trace.
+//! page the previous turn recorded on its trace (`ChatTrace::search_page`).
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -51,52 +51,34 @@ impl Tool for NextPageTool {
 
 /// The page a new turn can continue, recovered from the conversation history.
 ///
-/// Pure: walks the persisted traces newest-first and returns the first page
-/// that still has matches left. The filters come from the last
-/// `search_emails` call of that turn, the position from the pagination note
-/// the tool wrote into the result — the same line the model saw.
+/// Pure: the newest turn that recorded the conversation's search page decides
+/// (see `ChatTrace::search_page`) — its page if matches are left, otherwise
+/// nothing. A turn that records no page (a form fill) is skipped.
 pub fn pending_page_from_history(history: &[ChatMessage]) -> Option<SearchPage> {
-    history.iter().rev().find_map(|message| {
-        let trace = message.trace.as_ref()?;
-        let mut args: Option<Value> = None;
-        let mut position: Option<(i32, i32)> = None;
-        for call in &trace.tool_calls {
-            if call.name == SearchEmailsTool.name() {
-                args = Some(call.arguments.clone());
-            }
-            if let Some(found) = parse_page_note(&call.result_preview) {
-                position = Some(found);
-            }
-        }
-        let (next_offset, total) = position?;
-        if next_offset >= total {
-            return None;
-        }
-        Some(SearchPage {
-            args: args?,
-            next_offset,
-            total,
-        })
+    let page = history
+        .iter()
+        .rev()
+        .find_map(|message| message.trace.as_ref()?.search_page.clone())?;
+    (page.next_offset < page.total).then_some(SearchPage {
+        args: page.args,
+        next_offset: page.next_offset,
+        total: page.total,
     })
 }
 
-/// Read "(showing 26-50 of 156 matching threads …)" back into
-/// `(next_offset, total)`. A capped probe ("500+") reports the floor, which
-/// is enough to know another page exists.
-fn parse_page_note(result: &str) -> Option<(i32, i32)> {
-    let rest = result.strip_prefix("(showing ")?;
-    let (range, rest) = rest.split_once(" of ")?;
-    let (_, last) = range.split_once('-')?;
-    let (total, _) = rest.split_once(" matching threads")?;
-    let last: i32 = last.trim().parse().ok()?;
-    let total: i32 = total.trim().trim_end_matches('+').parse().ok()?;
-    Some((last, total))
+/// A turn's page, as its trace records it.
+pub fn page_trace(page: &super::PageState) -> Option<crate::models::SearchPageTrace> {
+    page.snapshot().map(|p| crate::models::SearchPageTrace {
+        args: p.args,
+        next_offset: p.next_offset,
+        total: p.total,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ChatTrace, RouteDecision, RouteMode, ToolCallTrace};
+    use crate::models::{ChatTrace, RouteDecision, RouteMode, SearchPageTrace, ToolCallTrace};
 
     fn tool_call(name: &str, arguments: Value, result_preview: &str) -> ToolCallTrace {
         ToolCallTrace {
@@ -143,17 +125,30 @@ mod tests {
             research: None,
             applied_skills: Vec::new(),
             steps: Vec::new(),
+            search_page: None,
         });
         message
     }
 
+    fn with_page(mut message: ChatMessage, args: Value, next_offset: i32, total: i32) -> ChatMessage {
+        if let Some(trace) = message.trace.as_mut() {
+            trace.search_page = Some(SearchPageTrace {
+                args,
+                next_offset,
+                total,
+            });
+        }
+        message
+    }
+
     #[test]
-    fn continues_the_search_that_still_has_matches_left() {
-        let history = vec![assistant_with(vec![tool_call(
-            "search_emails",
+    fn continues_the_page_the_last_turn_persisted() {
+        let history = vec![with_page(
+            assistant_with(vec![]),
             json!({"from": "news@example.com", "limit": 25}),
-            "(showing 1-25 of 54 matching threads — call next_page for the next ones)\n- id=a",
-        )])];
+            25,
+            54,
+        )];
 
         let page = pending_page_from_history(&history).expect("a page to continue");
 
@@ -163,68 +158,45 @@ mod tests {
     }
 
     #[test]
-    fn a_later_page_advances_from_the_note_not_from_the_original_args() {
-        // The second page came from next_page, whose own args carry no filters.
-        let history = vec![assistant_with(vec![
-            tool_call(
+    fn a_result_whose_note_is_not_first_still_continues() {
+        // Other notes (tag coverage, semantic fallback) are prepended to the
+        // page note, so reading the prose missed it; the state is explicit now.
+        let history = vec![with_page(
+            assistant_with(vec![tool_call(
                 "search_emails",
-                json!({"from": "news@example.com", "limit": 25}),
-                "(showing 1-25 of 54 matching threads — call next_page for the next ones)\n- id=a",
-            ),
-            tool_call(
-                "next_page",
-                json!({}),
-                "(showing 26-50 of 54 matching threads — call next_page for the next ones)\n- id=z",
-            ),
-        ])];
+                json!({"from": "news@example.com", "intent": "request"}),
+                "(3 emails carry the intent/topic asked for; …)\n(showing 1-25 of 54 matching threads — …)\n- id=a",
+            )]),
+            json!({"from": "news@example.com", "intent": "request"}),
+            25,
+            54,
+        )];
 
-        let page = pending_page_from_history(&history).expect("a page to continue");
-
-        assert_eq!(page.next_offset, 50);
-        assert_eq!(page.args["from"], json!("news@example.com"));
+        assert_eq!(pending_page_from_history(&history).map(|p| p.next_offset), Some(25));
     }
 
     #[test]
-    fn the_last_page_leaves_nothing_to_continue() {
-        let history = vec![assistant_with(vec![tool_call(
-            "search_emails",
-            json!({"from": "news@example.com", "limit": 25}),
-            "(showing 51-54 of 54 matching threads — this is the last page)\n- id=a",
-        )])];
-
-        assert!(pending_page_from_history(&history).is_none());
-    }
-
-    #[test]
-    fn a_search_that_fit_on_one_page_leaves_nothing_to_continue() {
-        let history = vec![assistant_with(vec![tool_call(
-            "search_emails",
-            json!({"from": "news@example.com"}),
-            "## Primary (3)\n- id=a",
-        )])];
-
-        assert!(pending_page_from_history(&history).is_none());
-    }
-
-    #[test]
-    fn the_newest_search_wins_over_an_older_paged_one() {
+    fn an_exhausted_newest_page_does_not_fall_back_to_an_older_one() {
         let history = vec![
-            assistant_with(vec![tool_call(
-                "search_emails",
-                json!({"from": "old@example.com"}),
-                "(showing 1-25 of 54 matching threads — call next_page for the next ones)\n- id=a",
-            )]),
-            assistant_with(vec![tool_call(
-                "search_emails",
-                json!({"from": "new@example.com"}),
-                "(showing 1-25 of 99 matching threads — call next_page for the next ones)\n- id=b",
-            )]),
+            with_page(assistant_with(vec![]), json!({"from": "old@example.com"}), 25, 54),
+            with_page(assistant_with(vec![]), json!({"from": "new@example.com"}), 4, 4),
         ];
 
-        let page = pending_page_from_history(&history).expect("a page to continue");
+        assert!(pending_page_from_history(&history).is_none());
+    }
 
-        assert_eq!(page.args["from"], json!("new@example.com"));
-        assert_eq!(page.total, 99);
+    #[test]
+    fn a_turn_that_carries_no_page_state_is_skipped() {
+        // A form-fill turn records no search state: the page before it stands.
+        let history = vec![
+            with_page(assistant_with(vec![]), json!({"from": "a@example.com"}), 25, 54),
+            assistant_with(vec![]),
+        ];
+
+        assert_eq!(
+            pending_page_from_history(&history).map(|p| p.args["from"].clone()),
+            Some(json!("a@example.com"))
+        );
     }
 
     #[test]

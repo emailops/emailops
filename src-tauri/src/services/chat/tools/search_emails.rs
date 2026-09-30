@@ -234,6 +234,32 @@ pub(crate) fn semantic_post_filter(
         .collect()
 }
 
+/// The `search_emails` parameters that narrow what a call selects. Kept next
+/// to the schema (a test holds every schema parameter to exactly one of these
+/// two lists) so the chat's "does this call filter anything?" checks cannot
+/// drift from what the tool actually accepts.
+pub(crate) const FILTER_PARAMS: &[&str] = &[
+    "query", "from", "to", "with", "subject", "since", "until", "intent", "topic", "unread",
+];
+
+/// Parameters that shape the result (how many, which page, in what order, in
+/// what detail) but select nothing. Only the drift test reads it.
+#[cfg(test)]
+const SHAPING_PARAMS: &[&str] = &["mode", "limit", "offset", "order", "with_bodies"];
+
+/// The filters a call actually carries, in [`FILTER_PARAMS`] order: a
+/// non-blank string, or a boolean switched on. Pure.
+pub(crate) fn active_filters(args: &Value) -> Vec<(&'static str, String)> {
+    FILTER_PARAMS
+        .iter()
+        .filter_map(|k| match args.get(*k)? {
+            Value::String(v) if !v.trim().is_empty() => Some((*k, v.trim().to_string())),
+            Value::Bool(true) => Some((*k, "true".to_string())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The LLM-facing schema, rendered from the user's tag glossary so the
 /// intent / topic menus (and their one-line meanings) follow Settings.
 fn parameters_schema_with(glossary: &TagGlossary) -> Value {
@@ -397,6 +423,18 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             None => None,
         };
 
+        // This search replaces whatever page an earlier one left open: until it
+        // produces a page of its own (the paged branch below), there is nothing
+        // for `next_page` to continue. Otherwise "the next ones" after a
+        // semantic or fallback result would continue an older, different search.
+        if let Some(state) = ctx.page {
+            state.remember(SearchPage {
+                args: args.clone(),
+                next_offset: 0,
+                total: 0,
+            });
+        }
+
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(20).clamp(1, 25) as i32;
         // Paging is applied after the DB call: the search is thread-deduped and
         // ordered, so the page is a slice of the first `offset + limit` rows.
@@ -489,6 +527,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             offset + limit,
             ascending,
             unread_only,
+            received_only,
             participants_arg,
         );
 
@@ -520,14 +559,6 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
             map
         };
 
-        let primary = primary.map(|emails| {
-            if received_only {
-                emails.into_iter().filter(|e| !e.is_sent).collect()
-            } else {
-                emails
-            }
-        });
-
         // The classifier stores ONE intent per email and older mail carries
         // none, so a tag is a preference, not a gate: when the tagged rows do
         // not fill the page, the same search without the tag tops it up. The
@@ -550,6 +581,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     (offset + limit) * 2,
                     ascending,
                     unread_only,
+                    received_only,
                     participants_arg,
                 )
                 .unwrap_or_default();
@@ -558,9 +590,6 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                 for email in extra {
                     if rows.len() >= wanted {
                         break;
-                    }
-                    if received_only && email.is_sent {
-                        continue;
                     }
                     if !seen.contains(&email.id) {
                         rows.push(email);
@@ -605,6 +634,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         COUNT_PROBE_LIMIT,
                         ascending,
                         unread_only,
+                        received_only,
                         participants_arg,
                     )
                     .map(|all| all.len() as i32)
@@ -656,6 +686,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                         limit,
                         ascending,
                         unread_only,
+                        received_only,
                         participants_arg,
                     );
                     match &retry {
@@ -691,6 +722,7 @@ showing recent matches without since/until instead)\n",
                     tag_filter_arg,
                     limit,
                     unread_only,
+                    received_only,
                     participants_arg,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");
@@ -870,6 +902,37 @@ mod tests {
             None,
             &me()
         ));
+    }
+
+    #[test]
+    fn every_schema_parameter_is_classified_as_filter_or_shaping() {
+        // A new parameter must be sorted into one list, or the chat's
+        // "does this call filter anything?" checks drift from the schema.
+        let schema = SearchEmailsTool.parameters_schema();
+        let mut props: Vec<String> = schema["properties"]
+            .as_object()
+            .expect("properties")
+            .keys()
+            .cloned()
+            .collect();
+        props.sort();
+        let mut classified: Vec<String> = FILTER_PARAMS
+            .iter()
+            .chain(SHAPING_PARAMS.iter())
+            .map(|s| s.to_string())
+            .collect();
+        classified.sort();
+        assert_eq!(props, classified);
+    }
+
+    #[test]
+    fn active_filters_reads_text_and_boolean_filters_only() {
+        let args = json!({"from": " a@b.example ", "unread": true, "with_bodies": true, "query": "  ", "limit": 3});
+        assert_eq!(
+            active_filters(&args),
+            vec![("from", "a@b.example".to_string()), ("unread", "true".to_string())]
+        );
+        assert!(active_filters(&json!({"unread": false})).is_empty());
     }
 
     #[test]

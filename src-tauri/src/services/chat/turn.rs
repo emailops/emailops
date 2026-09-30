@@ -451,6 +451,23 @@ unless the user asks."
     })
 }
 
+/// The per-turn inputs of [`refuse_tool_call`], carried to every place that
+/// dispatches a tool — the tool loop and the synthesis recovery ladder alike,
+/// so a call salvaged after the loop cannot slip past the gate.
+#[derive(Debug, Clone, Copy)]
+struct ToolGate {
+    /// See [`draft_call_allowed`].
+    draft_allowed: bool,
+    /// The planner said the question is about EmailOps itself.
+    app_help: bool,
+}
+
+impl ToolGate {
+    fn refusal(&self, tool_name: &str) -> Option<ToolRefusal> {
+        refuse_tool_call(tool_name, self.draft_allowed, self.app_help)
+    }
+}
+
 /// Name recorded in the trace for a tool call. A refused call is labelled
 /// with why, so the reasoning panel and the eval harness see "the model
 /// asked, the gate said no" rather than a tool that ran.
@@ -542,13 +559,9 @@ const NO_MATCHING_EMAILS: &str = "No matching emails found";
 ///
 /// Pure so the formatting is unit-tested without a tool round-trip.
 fn describe_search_filters(args: &serde_json::Value) -> String {
-    const SELECTIVE: &[&str] = &["query", "from", "to", "subject", "since", "until"];
-    let parts: Vec<String> = SELECTIVE
-        .iter()
-        .filter_map(|k| {
-            let v = args.get(*k)?.as_str()?.trim();
-            (!v.is_empty()).then(|| format!("{k}={v:?}"))
-        })
+    let parts: Vec<String> = tools::search_emails::active_filters(args)
+        .into_iter()
+        .map(|(k, v)| format!("{k}={v:?}"))
         .collect();
     if parts.is_empty() {
         // `search_emails({})` is a real emission from a flaky model — say so
@@ -1162,17 +1175,7 @@ fn correct_mangled_address_args(
 /// `include_bodies` is set like the planner's preseeds so the synthesis has
 /// content in one shot. Returns true when the args were modified.
 fn repair_filterless_search_args(args: &mut serde_json::Value, user_question: &str) -> bool {
-    const SELECTIVE: [&str; 6] = ["query", "from", "to", "subject", "since", "until"];
-    let Some(obj) = args.as_object() else {
-        return false;
-    };
-    let has_filter = SELECTIVE.iter().any(|k| {
-        obj.get(*k)
-            .and_then(|v| v.as_str())
-            .map(|s| !s.trim().is_empty())
-            .unwrap_or(false)
-    });
-    if has_filter {
+    if !args.is_object() || !tools::search_emails::active_filters(args).is_empty() {
         return false;
     }
     let addrs = extract_email_addresses(user_question);
@@ -2681,6 +2684,15 @@ async fn run_tool_loop(
         messages.push(response);
 
         for tc in &tool_calls {
+            // Cancel pressed while an earlier call of this round ran: run
+            // nothing else it asked for (the round loop then stops too).
+            if is_cancelled() {
+                emit_log(
+                    "info",
+                    "tool_loop: cancelled by the user — skipping the remaining tool calls",
+                );
+                break;
+            }
             executed_tool_keys.insert(tool_call_key(tc));
             let name = &tc.function.name;
             let args = &tc.function.arguments;
@@ -3024,6 +3036,25 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
     Some(turn)
 }
 
+/// The planner's skill rule and the skills it may pick this turn. The rule is
+/// rendered from the whole catalog on every turn — it sits in the planner's
+/// cached head, so a turn that rendered it differently would re-prefill that
+/// head then and again on the next turn. On a turn whose skill the user
+/// invoked (`/name`) the planner's pick is ignored instead: nothing it may
+/// select.
+fn planner_skill_setup(
+    catalog: crate::services::skills::SkillCatalog,
+    slash_skill_applied: bool,
+) -> (String, crate::services::skills::SkillCatalog) {
+    let rule = crate::services::skills::render_planner_rule(&catalog.skills);
+    let selectable = if slash_skill_applied {
+        crate::services::skills::SkillCatalog::default()
+    } else {
+        catalog
+    };
+    (rule, selectable)
+}
+
 /// Run one chat turn for a "thread-bound" conversation — one that was seeded
 /// with the cleaned content of an email thread (see
 /// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
@@ -3045,9 +3076,11 @@ async fn run_thread_bound_turn(
     history: Vec<ChatMessage>,
     system_messages: Vec<ChatMessage>,
     turn_start: std::time::Instant,
+    // The flag `run_chat_turn` registered for this turn. Not registered again
+    // here: a second registration under the same id would replace the flag a
+    // Cancel may already have raised.
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
-    // Registered for the whole turn: the chat's Cancel button finds it here.
-    let turn_guard = super::cancel::register_turn(&assistant_message_id);
     /// Bounded so a stuck local model can't leave the UI thinking forever.
     /// Matches the existing final-stream timeout in `run_chat_turn`.
     const STREAM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -3162,7 +3195,7 @@ async fn run_thread_bound_turn(
         false,
         &mut tool_traces,
         &mut llm_calls,
-        Arc::clone(&turn_guard.flag),
+        Arc::clone(&cancel),
     )
     .await;
     let tool_loop_ms = t_tool_loop.elapsed().as_millis() as i64;
@@ -3254,6 +3287,7 @@ async fn run_thread_bound_turn(
         let gate_for_token = gate.clone();
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
+        let cancel_flag = Arc::clone(&cancel);
         let stream_fut = provider.chat_stream(
             ai_messages,
             Box::new(move |token| {
@@ -3273,7 +3307,7 @@ async fn run_thread_bound_turn(
                         },
                     );
                 }
-                true
+                !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             }),
         );
         let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
@@ -3301,7 +3335,14 @@ async fn run_thread_bound_turn(
                 );
             }
         }
-        res
+        // Cancelled while it streamed: keep what was shown, then the note.
+        finish_cancelled_stream(
+            res,
+            cancel.load(std::sync::atomic::Ordering::Relaxed),
+            language.as_code(),
+            &conversation_id,
+            &assistant_message_id,
+        )
     };
 
     let latency_ms = turn_start.elapsed().as_millis() as i64;
@@ -3349,6 +3390,7 @@ async fn run_thread_bound_turn(
                 research: None,
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
+                search_page: tools::next_page::page_trace(&page_state),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -3390,25 +3432,8 @@ async fn run_thread_bound_turn(
             );
             Ok(())
         }
-        Err(e) => {
-            let err_text = format!("Chat failed: {e}");
-            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            crate::services::events::emit(
-                "chat-stream",
-                ChatStreamEvent {
-                    message_id: assistant_message_id.clone(),
-                    conversation_id: conversation_id.clone(),
-                    token: String::new(),
-                    done: true,
-                    error: Some(err_text.clone()),
-                    token_count: None,
-                    latency_ms: Some(latency_ms),
-                    replace: None,
-                },
-            );
-            emit_log("error", &err_text);
-            Err(e)
-        }
+        // Reported (row + terminal event) by `run_chat_turn`, like any error.
+        Err(e) => Err(e),
     }
 }
 
@@ -3437,11 +3462,15 @@ async fn run_gated_synthesis_stream(
     conversation_id: &str,
     assistant_message_id: &str,
     stream_timeout: std::time::Duration,
+    // Raised by the chat's Cancel button: the callback's `false` stops the
+    // generation mid-reply.
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<crate::ai::provider::ChatStreamResult> {
     let gate = Arc::new(std::sync::Mutex::new(crate::ai::stream_gate::StreamGate::new()));
     let gate_for_token = gate.clone();
     let conv_for_token = conversation_id.to_string();
     let msg_for_token = assistant_message_id.to_string();
+    let cancel_flag = Arc::clone(cancel);
     let stream_fut = provider.chat_stream(
         messages,
         Box::new(move |token| {
@@ -3464,7 +3493,7 @@ async fn run_gated_synthesis_stream(
                     },
                 );
             }
-            true
+            !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
         }),
     );
     let res = match timeout(stream_timeout, stream_fut).await {
@@ -3495,6 +3524,41 @@ async fn run_gated_synthesis_stream(
         }
     }
     res
+}
+
+/// A synthesis stream the user cancelled keeps the text it had shown and
+/// ends with the cancellation note, streamed now since no model call follows.
+/// Any other result passes through unchanged.
+fn finish_cancelled_stream(
+    result: Result<crate::ai::provider::ChatStreamResult>,
+    cancelled: bool,
+    language_code: &str,
+    conversation_id: &str,
+    message_id: &str,
+) -> Result<crate::ai::provider::ChatStreamResult> {
+    if !cancelled {
+        return result;
+    }
+    let mut result = result?;
+    let shown = strip_tool_call_markup(&result.content);
+    let content = super::cancel::cancelled_answer(&shown, language_code);
+    let note = content.get(shown.trim_end().len()..).unwrap_or(&content).to_string();
+    emit_log("info", "turn cancelled by the user during the answer");
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token: note,
+            done: false,
+            error: None,
+            token_count: None,
+            latency_ms: None,
+            replace: None,
+        },
+    );
+    result.content = content;
+    Ok(result)
 }
 
 /// Cap on tool calls salvaged from one empty synthesis attempt (a model that
@@ -3540,12 +3604,16 @@ async fn synthesize_with_recovery(
     categories: &[String],
     page: Option<&tools::PageState>,
     user_question: &str,
+    // The turn's side-effect / app-help gate: salvaged calls obey it exactly
+    // like the tool loop's own calls.
+    gate: ToolGate,
     synthesis_messages: Vec<AiMessage>,
     conversation_id: &str,
     assistant_message_id: &str,
     stream_timeout: std::time::Duration,
     llm_calls: &mut Vec<LlmCallTrace>,
     tool_traces: &mut Vec<ToolCallTrace>,
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
 ) -> SynthesisRecovery {
     let mut prompt_messages = synthesis_messages;
     let mut email_refs: Vec<String> = Vec::new();
@@ -3563,8 +3631,19 @@ async fn synthesize_with_recovery(
             conversation_id,
             assistant_message_id,
             stream_timeout,
+            cancel,
         )
         .await;
+
+        // A cancelled turn makes no further model call and runs no tool:
+        // whatever this attempt produced is what the user keeps.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return SynthesisRecovery {
+                result: attempt,
+                email_refs,
+                draft_refs,
+            };
+        }
 
         let empty_result = match attempt {
             Ok(r) if strip_tool_call_markup(&r.content).trim().is_empty() => r,
@@ -3618,19 +3697,36 @@ executing and re-synthesising (round {salvage_rounds}/{MAX_SYNTHESIS_RECOVERY_RO
             });
             for tc in &salvaged {
                 let t_tool = std::time::Instant::now();
-                let dispatched = dispatch_tool(
-                    registry,
-                    db,
-                    account_id,
-                    categories,
-                    page,
-                    user_question,
-                    &tc.function.name,
-                    tc.function.arguments.clone(),
-                )
-                .await;
+                let refusal = gate.refusal(&tc.function.name);
+                let dispatched = match &refusal {
+                    Some(r) => {
+                        emit_log(
+                            "info",
+                            &format!("final synthesis: refused salvaged {} — {}", tc.function.name, r.reason),
+                        );
+                        DispatchedTool {
+                            text: r.note.clone(),
+                            email_refs: Vec::new(),
+                            draft_refs: Vec::new(),
+                            corrected_args: None,
+                        }
+                    }
+                    None => {
+                        dispatch_tool(
+                            registry,
+                            db,
+                            account_id,
+                            categories,
+                            page,
+                            user_question,
+                            &tc.function.name,
+                            tc.function.arguments.clone(),
+                        )
+                        .await
+                    }
+                };
                 tool_traces.push(ToolCallTrace {
-                    name: tc.function.name.clone(),
+                    name: traced_tool_name(&tc.function.name, refusal.as_ref()),
                     // Salvaged from the final synthesis stream, after the loop.
                     round: -3,
                     arguments: dispatched
@@ -3705,6 +3801,7 @@ pub struct TurnContext {
     pub research_estimate_id: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_chat_turn(
     db: Arc<Database>,
     registry: Arc<tools::ToolRegistry>,
@@ -3720,6 +3817,75 @@ pub async fn run_chat_turn(
     // the thread on screen, the view on screen, and whether this is a retry of
     // an answer the user rejected. Grouped so the signature stops growing a
     // parameter per feature.
+    context: TurnContext,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let result = run_chat_turn_inner(
+        Arc::clone(&db),
+        registry,
+        conversation_id.clone(),
+        user_message_id,
+        assistant_message_id.clone(),
+        account_id,
+        user_question,
+        model,
+        history,
+        categories,
+        context,
+    )
+    .await;
+    if let Err(e) = &result {
+        report_turn_failure(
+            &db,
+            &conversation_id,
+            &assistant_message_id,
+            started.elapsed().as_millis() as i64,
+            e,
+        );
+    }
+    result
+}
+
+/// The one place a failed turn is reported, whatever failed and wherever: the
+/// pre-created assistant row gets the failure text and the bubble gets its
+/// terminal `done` event with the error. Every error of a turn — an early `?`
+/// included — reaches it, so none leaves the bubble spinning over an empty row.
+fn report_turn_failure(db: &Database, conversation_id: &str, message_id: &str, latency_ms: i64, e: &AppError) {
+    let err_text = format!("Chat failed: {e}");
+    if let Err(persist) = db.update_chat_message_completion(message_id, &err_text, None, Some(latency_ms)) {
+        emit_log(
+            "error",
+            &format!("failed to persist the failed turn's message: {persist}"),
+        );
+    }
+    crate::services::events::emit(
+        "chat-stream",
+        ChatStreamEvent {
+            message_id: message_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            token: String::new(),
+            done: true,
+            error: Some(err_text.clone()),
+            token_count: None,
+            latency_ms: Some(latency_ms),
+            replace: None,
+        },
+    );
+    emit_log("error", &err_text);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_chat_turn_inner(
+    db: Arc<Database>,
+    registry: Arc<tools::ToolRegistry>,
+    conversation_id: String,
+    user_message_id: String,
+    assistant_message_id: String,
+    account_id: String,
+    user_question: String,
+    model: String,
+    history: Vec<ChatMessage>,
+    categories: Vec<String>,
     context: TurnContext,
 ) -> Result<()> {
     // Registered for the whole turn: the chat's Cancel button finds it here.
@@ -3866,6 +4032,7 @@ pub async fn run_chat_turn(
             history,
             system_messages,
             turn_start,
+            Arc::clone(&turn_guard.flag),
         )
         .await;
     }
@@ -4025,13 +4192,8 @@ pub async fn run_chat_turn(
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
-        // The planner may name a skill only when the user did not invoke one.
-        let skill_catalog = if skill_block.is_none() {
-            crate::services::skills::catalog_for(&db)
-        } else {
-            crate::services::skills::SkillCatalog::default()
-        };
-        let skill_rule = crate::services::skills::render_planner_rule(&skill_catalog.skills);
+        let (skill_rule, skill_catalog) =
+            planner_skill_setup(crate::services::skills::catalog_for(&db), skill_block.is_some());
         let run = super::planner::plan_search(
             provider.as_ref(),
             &template,
@@ -4169,6 +4331,7 @@ pub async fn run_chat_turn(
             &context_form_values,
             &user_question,
             turn_start,
+            &turn_guard.flag,
         )
         .await;
     }
@@ -4424,6 +4587,21 @@ pub async fn run_chat_turn(
         &applied_names,
     );
 
+    // The same gate the tool loop applies to its own calls (it derives it from
+    // these very messages); the synthesis recovery below applies it to the
+    // calls it salvages after the loop.
+    let tool_gate = ToolGate {
+        draft_allowed: draft_call_allowed(
+            &user_question,
+            initial_messages
+                .iter()
+                .rev()
+                .find(|(role, _)| role == "assistant")
+                .map(|(_, content)| content.as_str()),
+        ),
+        app_help,
+    };
+
     // Collected by run_tool_loop; fed into the final ChatTrace below.
     let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
     // Set by the research branch below; `None` on an ordinary turn.
@@ -4502,6 +4680,13 @@ pub async fn run_chat_turn(
         // user's correction; every step sees both.
         let research_q =
             super::research::research_question(&db, &conversation_id, &user_question, context.correction.as_ref());
+        // Registered before the gathering, so a Cancel pressed while the set is
+        // planned and gathered reaches the run; one pressed even earlier (the
+        // turn's own flag) is carried over.
+        let guard = super::research::register_run(&assistant_message_id);
+        if turn_guard.is_cancelled() {
+            guard.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         let confirmed = context
             .research_estimate_id
             .as_deref()
@@ -4541,7 +4726,6 @@ pub async fn run_chat_turn(
         // Read the window now, with the model loaded by the planner: batches
         // and notes are sized to what the runtime really runs with.
         let n_ctx = super::research::resolve_n_ctx(&db, provider.as_ref());
-        let guard = super::research::register_run(&assistant_message_id);
         let run = super::research::run_research(
             super::research::ResearchInput {
                 db: &db,
@@ -4788,12 +4972,14 @@ pub async fn run_chat_turn(
                         &categories,
                         Some(&page_state),
                         &user_question,
+                        tool_gate,
                         retry_messages,
                         &conversation_id,
                         &assistant_message_id,
                         STREAM_TIMEOUT,
                         &mut llm_calls,
                         &mut tool_traces,
+                        &turn_guard.flag,
                     )
                     .await;
                     for id in recovery.email_refs {
@@ -4911,12 +5097,14 @@ pub async fn run_chat_turn(
                     &categories,
                     Some(&page_state),
                     &user_question,
+                    tool_gate,
                     synthesis_messages,
                     &conversation_id,
                     &assistant_message_id,
                     STREAM_TIMEOUT,
                     &mut llm_calls,
                     &mut tool_traces,
+                    &turn_guard.flag,
                 )
                 .await;
                 // Salvaged tool calls can contribute email/draft refs the
@@ -4936,6 +5124,16 @@ pub async fn run_chat_turn(
         }
     };
 
+    // A Cancel pressed while the final answer streamed: the stream stopped
+    // mid-reply; keep what was shown and say so. (A research run writes its
+    // own note; a turn cancelled before this point never streamed.)
+    let stream_result = finish_cancelled_stream(
+        stream_result,
+        streaming_happened && !research_active && turn_guard.is_cancelled(),
+        ai_language.as_code(),
+        &conversation_id,
+        &assistant_message_id,
+    );
     let streaming_ms = t_stream.elapsed().as_millis() as i64;
     let latency_ms = turn_start.elapsed().as_millis() as i64;
 
@@ -5229,6 +5427,7 @@ pub async fn run_chat_turn(
                 research: research_trace.clone(),
                 applied_skills: applied_skills.clone(),
                 steps: Vec::new(),
+                search_page: tools::next_page::page_trace(&page_state),
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
@@ -5271,25 +5470,8 @@ pub async fn run_chat_turn(
             );
             Ok(())
         }
-        Err(e) => {
-            let err_text = format!("Chat failed: {}", e);
-            let _ = db.update_chat_message_completion(&assistant_message_id, &err_text, None, Some(latency_ms));
-            crate::services::events::emit(
-                "chat-stream",
-                ChatStreamEvent {
-                    message_id: assistant_message_id.clone(),
-                    conversation_id,
-                    token: String::new(),
-                    done: true,
-                    error: Some(err_text.clone()),
-                    token_count: None,
-                    latency_ms: Some(latency_ms),
-                    replace: None,
-                },
-            );
-            emit_log("error", &err_text);
-            Err(AppError::AiError(err_text))
-        }
+        // Reported (row + terminal event) by `run_chat_turn`, like any error.
+        Err(e) => Err(e),
     }
 }
 
@@ -6193,12 +6375,17 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6277,12 +6464,17 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6350,12 +6542,17 @@ mod tests {
             &[],
             None,
             "analiza los correos de x@substack.com",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "analiza los correos de x@substack.com")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6414,12 +6611,17 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6453,12 +6655,17 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -6496,12 +6703,17 @@ mod tests {
             &[],
             None,
             "hola",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
             vec![ai_msg("user", "hola")],
             "conv-1",
             "msg-1",
             std::time::Duration::from_secs(5),
             &mut llm_calls,
             &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .await;
 
@@ -8257,5 +8469,531 @@ Preséntalos en una tabla markdown …";
         // structurally a function call after trim.
         let text = "I called search_emails(query=\"foo\") to find it and it worked.";
         assert!(parse_python_call_tool_calls(text, &["search_emails"]).is_empty());
+    }
+
+    /// A scripted tool that counts its executions — for asserting a gated call
+    /// never ran.
+    struct CountingTool {
+        name: &'static str,
+        runs: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl tools::Tool for CountingTool {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn description(&self) -> &'static str {
+            "counting test tool"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(
+            &self,
+            _ctx: &tools::ToolCtx<'_>,
+            _args: serde_json::Value,
+        ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+            self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(tools::ToolOutput::text(format!("{} ran", self.name)))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_draft_salvaged_from_an_empty_synthesis_is_refused_when_none_was_asked() {
+        // The side-effect gate must hold on the recovery ladder too: a draft
+        // call leaked into the synthesis stream is not a request to save one.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "generate_email_draft",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"generate_email_draft\",\"arguments\":{\"instructions\":\"reply\"}}</tool_call>",
+        );
+        provider.push_chat_response("The email asks for the Q3 figures.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let recovery = synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "what does this email ask?",
+            ToolGate {
+                draft_allowed: false,
+                app_help: false,
+            },
+            vec![ai_msg("user", "what does this email ask?")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no draft may be saved"
+        );
+        assert!(
+            tool_traces.iter().any(|t| t.name.contains("refused")),
+            "the refusal is traced: {:?}",
+            tool_traces.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            recovery.result.expect("stream ok").content,
+            "The email asks for the Q3 figures."
+        );
+    }
+
+    #[tokio::test]
+    async fn an_app_help_turn_refuses_calls_salvaged_from_an_empty_synthesis() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response(
+            "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"query\":\"lens\"}}</tool_call>",
+        );
+        provider.push_chat_response("Open Lenses and click New.");
+
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "how do I create a lens?",
+            ToolGate {
+                draft_allowed: true,
+                app_help: true,
+            },
+            vec![ai_msg("user", "how do I create a lens?")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(tool_traces.iter().all(|t| t.name.contains("refused")));
+    }
+
+    /// A provider that records whether a stream callback asked it to stop —
+    /// the FakeAiProvider ignores the callback's answer.
+    struct StopAwareProvider {
+        inner: crate::ai::provider::FakeAiProvider,
+        told_to_stop: std::sync::atomic::AtomicBool,
+    }
+
+    impl StopAwareProvider {
+        fn new() -> Self {
+            Self {
+                inner: crate::ai::provider::FakeAiProvider::new(),
+                told_to_stop: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AIProvider for StopAwareProvider {
+        fn provider_type(&self) -> crate::ai::provider::ProviderType {
+            self.inner.provider_type()
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn embedding_model_name(&self) -> &str {
+            self.inner.embedding_model_name()
+        }
+        async fn is_available(&self) -> bool {
+            self.inner.is_available().await
+        }
+        async fn list_models(&self) -> Result<Vec<crate::ai::provider::ModelInfo>> {
+            self.inner.list_models().await
+        }
+        async fn list_embedding_models(&self) -> Result<Vec<crate::ai::provider::ModelInfo>> {
+            self.inner.list_embedding_models().await
+        }
+        async fn complete(
+            &self,
+            prompt: &str,
+            options: crate::ai::provider::CompletionOptions,
+        ) -> Result<crate::ai::provider::CompletionResult> {
+            self.inner.complete(prompt, options).await
+        }
+        async fn complete_with_prefix(
+            &self,
+            prefix: &str,
+            suffix: &str,
+            options: crate::ai::provider::CompletionOptions,
+        ) -> Result<crate::ai::provider::CompletionResult> {
+            self.inner.complete_with_prefix(prefix, suffix, options).await
+        }
+        async fn embed(&self, text: &str) -> Result<crate::ai::provider::EmbeddingResult> {
+            self.inner.embed(text).await
+        }
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<crate::ai::provider::EmbeddingResult>> {
+            self.inner.embed_batch(texts).await
+        }
+        async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+            self.inner.chat_with_tools(messages, tools).await
+        }
+        async fn chat_stream(
+            &self,
+            messages: Vec<AiMessage>,
+            mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+        ) -> Result<crate::ai::provider::ChatStreamResult> {
+            let resp = self.inner.chat_with_tools(&messages, &[]).await?;
+            if !on_token(resp.content.clone()) {
+                self.told_to_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(crate::ai::provider::ChatStreamResult {
+                content: resp.content,
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_the_synthesis_stream_mid_reply() {
+        let provider = StopAwareProvider::new();
+        provider.inner.push_chat_response("Half an answer");
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        run_gated_synthesis_stream(
+            &provider,
+            vec![ai_msg("user", "q")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &cancel,
+        )
+        .await
+        .expect("stream ok");
+        assert!(
+            provider.told_to_stop.load(std::sync::atomic::Ordering::SeqCst),
+            "the token callback must tell the provider to stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_synthesis_makes_no_recovery_call() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        }) as Arc<dyn tools::Tool>]);
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        for _ in 0..4 {
+            provider.push_chat_response(
+                "<tool_call>{\"name\":\"search_emails\",\"arguments\":{\"query\":\"x\"}}</tool_call>",
+            );
+        }
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        synthesize_with_recovery(
+            &provider,
+            &registry,
+            &db,
+            "acct-1",
+            &[],
+            None,
+            "q",
+            ToolGate {
+                draft_allowed: true,
+                app_help: false,
+            },
+            vec![ai_msg("user", "q")],
+            "conv-1",
+            "msg-1",
+            std::time::Duration::from_secs(5),
+            &mut llm_calls,
+            &mut tool_traces,
+            &cancel,
+        )
+        .await;
+        assert_eq!(
+            provider.chat_calls().len(),
+            1,
+            "no salvage or corrective retry after a cancel"
+        );
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no salvaged tool runs"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancel_during_a_tool_batch_skips_the_remaining_tools() {
+        // The first tool of a two-call round raises the cancel (standing in for
+        // the user pressing Cancel while it runs); the second must not run.
+        struct CancellingTool {
+            cancel: Arc<std::sync::atomic::AtomicBool>,
+        }
+        #[async_trait::async_trait]
+        impl tools::Tool for CancellingTool {
+            fn name(&self) -> &'static str {
+                "get_email_body"
+            }
+            fn description(&self) -> &'static str {
+                "raises the cancel flag"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({ "type": "object", "properties": {} })
+            }
+            async fn execute(
+                &self,
+                _ctx: &tools::ToolCtx<'_>,
+                _args: serde_json::Value,
+            ) -> std::result::Result<tools::ToolOutput, tools::ToolError> {
+                self.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(tools::ToolOutput::text("body".to_string()))
+            }
+        }
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![
+            Arc::new(CancellingTool {
+                cancel: Arc::clone(&cancel),
+            }) as Arc<dyn tools::Tool>,
+            Arc::new(CountingTool {
+                name: "search_emails",
+                runs: Arc::clone(&runs),
+            }) as Arc<dyn tools::Tool>,
+        ]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let mut body = ai_tool_call("get_email_body");
+        body.function.arguments = serde_json::json!({"email_id": "e1"});
+        let mut search = ai_tool_call("search_emails");
+        search.function.arguments = serde_json::json!({"query": "x"});
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![body, search]),
+        });
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            Arc::clone(&cancel),
+        )
+        .await;
+        assert!(outcome.cancelled);
+        assert_eq!(
+            runs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the second tool must not run"
+        );
+        assert_eq!(provider.chat_calls().len(), 1, "no model round after the cancel");
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_turn_honours_a_cancel_raised_before_it_started() {
+        // run_chat_turn registers the turn and then hands over to the
+        // thread-bound path: a Cancel pressed in between must still count.
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        provider.push_chat_response("An answer nobody wants any more.");
+        let guard = super::super::cancel::register_turn("msg-thread-cancel");
+        assert!(super::super::cancel::request_cancel("msg-thread-cancel"));
+        let result = run_thread_bound_turn(
+            Arc::clone(&db),
+            provider.clone() as Arc<dyn AIProvider>,
+            "conv-1".to_string(),
+            "msg-thread-cancel".to_string(),
+            "acct-1".to_string(),
+            "summarise this thread".to_string(),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::time::Instant::now(),
+            Arc::clone(&guard.flag),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(provider.chat_calls().is_empty(), "no model call after the cancel");
+    }
+
+    #[test]
+    fn a_synthesis_cut_by_a_cancel_keeps_its_text_and_says_so() {
+        let result = crate::ai::provider::ChatStreamResult {
+            content: "Half an ans".to_string(),
+            ..Default::default()
+        };
+        let out = finish_cancelled_stream(Ok(result), true, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "Half an ans\n\n_Cancelled by the user._");
+        let untouched = crate::ai::provider::ChatStreamResult {
+            content: "Full answer.".to_string(),
+            ..Default::default()
+        };
+        let out = finish_cancelled_stream(Ok(untouched), false, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "Full answer.");
+    }
+
+    #[test]
+    fn a_search_filtered_by_any_schema_filter_is_not_repaired() {
+        // `with`, `intent`, `topic` and `unread` are real filters: injecting
+        // the question's address on top of them narrowed a valid call.
+        let question = "emails with ana@example.com about the offer";
+        for args in [
+            serde_json::json!({"with": "Ana"}),
+            serde_json::json!({"intent": "request"}),
+            serde_json::json!({"topic": "billing"}),
+            serde_json::json!({"unread": true}),
+        ] {
+            let mut repaired = args.clone();
+            assert!(
+                !repair_filterless_search_args(&mut repaired, question),
+                "{args} already filters"
+            );
+            assert_eq!(repaired, args);
+        }
+    }
+
+    #[test]
+    fn the_zero_result_log_names_every_filter_the_call_carried() {
+        let args = serde_json::json!({"with": "Ana", "intent": "request", "unread": true, "limit": 5});
+        let described = describe_search_filters(&args);
+        assert!(described.contains("with=\"Ana\""), "{described}");
+        assert!(described.contains("intent=\"request\""), "{described}");
+        assert!(described.contains("unread"), "{described}");
+        assert!(!described.contains("limit"), "{described}");
+    }
+
+    // Sync with its own runtime so the global seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn a_turn_that_fails_early_still_ends_the_stream_and_fills_its_row() {
+        // An error before the answer (here: AI switched off, the provider never
+        // loads) used to bubble out with no terminal event: the bubble kept
+        // spinning and the pre-created assistant row stayed empty.
+        let _g = crate::services::events::seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES ('a1', 'gmail', 'a@example.com', 'a', 0, 0, 1)",
+                [],
+            )
+            .expect("seed account");
+        db.set_preference("ai_enabled", "false").expect("pref");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db.insert_chat_message(&conv.id, "user", "hola", None).expect("user");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant");
+
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(run_chat_turn(
+                Arc::clone(&db),
+                Arc::new(tools::ToolRegistry::with_tools(vec![])),
+                conv.id.clone(),
+                user.id.clone(),
+                assistant.id.clone(),
+                "a1".to_string(),
+                "hola".to_string(),
+                String::new(),
+                Vec::new(),
+                Vec::new(),
+                TurnContext::default(),
+            ));
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+
+        assert!(result.is_err());
+        let terminal: Vec<serde_json::Value> = sink
+            .payloads_for("chat-stream")
+            .into_iter()
+            // Other tests may emit into the global sink concurrently.
+            .filter(|p| p["messageId"] == serde_json::json!(assistant.id) && p["done"] == serde_json::json!(true))
+            .collect();
+        assert_eq!(terminal.len(), 1, "exactly one terminal event: {terminal:?}");
+        assert!(terminal[0]["error"].as_str().is_some_and(|e| !e.is_empty()));
+        let row = db
+            .get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row");
+        assert!(row.content.starts_with("Chat failed"), "{}", row.content);
+    }
+
+    #[test]
+    fn the_planner_head_is_the_same_on_a_slash_skill_turn() {
+        // The skill rule rides in the planner's cached head: an empty rule on a
+        // `/name` turn re-prefilled that head on that turn and the next.
+        let catalog = crate::services::skills::SkillCatalog {
+            skills: vec![crate::services::skills::Skill {
+                name: "weekly-digest".to_string(),
+                description: "Summarise the week's mail".to_string(),
+                body: "Steps".to_string(),
+                path: std::path::PathBuf::new(),
+                files: Vec::new(),
+            }],
+            errors: Vec::new(),
+        };
+        let (rule_plain, selectable_plain) = planner_skill_setup(catalog.clone(), false);
+        let (rule_slash, selectable_slash) = planner_skill_setup(catalog, true);
+        let glossary = crate::services::classification::TagGlossary::defaults();
+        let template = crate::services::prompts::defaults::CHAT_QUERY_PLAN;
+        let head = |rule: &str| {
+            super::super::planner::split_planner_prompt(
+                template,
+                "me@example.com",
+                "2026-09-29",
+                "q",
+                &glossary,
+                None,
+                "- lens.create: Create a Lens",
+                rule,
+            )
+            .0
+        };
+        assert!(!rule_plain.is_empty());
+        assert_eq!(head(&rule_plain), head(&rule_slash), "byte-identical cached head");
+        assert!(selectable_plain.get("weekly-digest").is_some());
+        assert!(
+            selectable_slash.get("weekly-digest").is_none(),
+            "a skill the user already invoked is not stacked with a planner pick"
+        );
     }
 }

@@ -159,6 +159,9 @@ pub fn search_emails_filtered(
     ascending: bool,
     // `true` keeps only mail the user has not read (filtered in SQL).
     unread_only: bool,
+    // `true` keeps only mail the user received, not their own sent mail
+    // (filtered in SQL, so the limit and a count see the same set).
+    received_only: bool,
     // "Emails exchanged with X": the person's name plus the addresses it
     // resolves to; see `Database::search_emails_ordered`.
     participants: Option<&[String]>,
@@ -178,6 +181,7 @@ pub fn search_emails_filtered(
         // Chat never wants spam or phishing in its results.
         true,
         unread_only,
+        received_only,
         participants,
     )
 }

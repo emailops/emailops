@@ -505,6 +505,7 @@ impl Database {
         ascending: bool,
         exclude_spam: bool,
         unread_only: bool,
+        received_only: bool,
     ) -> Result<Vec<Email>> {
         let conn = self.reader();
         let mut conditions: Vec<String> = vec![
@@ -518,6 +519,9 @@ impl Database {
         }
         if unread_only {
             conditions.push("e.is_read = 0".to_string());
+        }
+        if received_only {
+            conditions.push("e.is_sent = 0".to_string());
         }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(account_id.to_string())];
         let mut param_idx = 2usize;
@@ -605,6 +609,7 @@ impl Database {
             false,
             false,
             false,
+            false,
             None,
         )
     }
@@ -634,6 +639,10 @@ impl Database {
         // `true` keeps only mail the user has not read. Applied in SQL, so an
         // `ascending` + `limit` query returns the oldest UNREAD email.
         unread_only: bool,
+        // `true` keeps only mail the user received (not their own sent mail).
+        // Applied in SQL like `unread_only`, so a limit and a count see the
+        // same set.
+        received_only: bool,
         // "Emails exchanged with X": an email matches when any of these terms
         // is in its sender (name or address), recipients or cc. Pass the
         // person's name and the addresses it resolves to (see
@@ -654,6 +663,7 @@ impl Database {
             ascending,
             exclude_spam,
             unread_only,
+            received_only,
             participants,
         )
     }
@@ -698,6 +708,7 @@ impl Database {
         ascending: bool,
         exclude_spam: bool,
         unread_only: bool,
+        received_only: bool,
         participants: Option<&[String]>,
     ) -> Result<Vec<Email>> {
         let participants: Vec<String> = participants
@@ -728,6 +739,7 @@ impl Database {
                 ascending,
                 exclude_spam,
                 unread_only,
+                received_only,
             );
         }
 
@@ -762,6 +774,9 @@ impl Database {
         // representative is the latest UNREAD matching email of the thread.
         if unread_only {
             cte_conditions.push("match_e.is_read = 0".to_string());
+        }
+        if received_only {
+            cte_conditions.push("match_e.is_sent = 0".to_string());
         }
         param_idx += 1;
 
@@ -2213,6 +2228,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 None,
             )
             .unwrap();
@@ -2262,7 +2278,7 @@ mod tests {
 
     fn oldest_first(db: &Database, from: Option<&str>, subject: Option<&str>) -> Vec<String> {
         db.search_emails_ordered(
-            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, None,
+            "acc1", "", None, from, None, subject, None, None, None, 1, true, false, false, false, None,
         )
         .unwrap()
         .into_iter()
@@ -3538,6 +3554,7 @@ mod tests {
                 None,
                 None,
                 50,
+                false,
                 false,
                 false,
                 false,

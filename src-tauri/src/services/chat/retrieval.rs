@@ -534,7 +534,13 @@ pub async fn retrieve_context_full(
     let mut pool: Vec<ScoredEmail> = Vec::with_capacity(ranked.len());
     for (citation_idx, (email_id, score)) in ranked.into_iter().enumerate() {
         if let Some(email) = emails_by_id.remove(&email_id) {
-            let body = db.get_email_body(&email_id).unwrap_or_default();
+            let body = db.get_email_body(&email_id).unwrap_or_else(|e| {
+                super::emit_log(
+                    "warn",
+                    &format!("retrieval: body of {email_id} unavailable ({e}) — using none"),
+                );
+                String::new()
+            });
             pool.push(ScoredEmail {
                 email,
                 body,
@@ -601,7 +607,13 @@ pub async fn retrieve_context_full(
             // get_thread returns emails ASC by timestamp; iterate in reverse to
             // find the most-recent sibling not already in results.
             if let Some(latest) = thread_emails.iter().rev().find(|e| !retrieved_ids.contains(&e.id)) {
-                let body = db.get_email_body(&latest.id).unwrap_or_default();
+                let body = db.get_email_body(&latest.id).unwrap_or_else(|e| {
+                    super::emit_log(
+                        "warn",
+                        &format!("retrieval: body of {} unavailable ({e}) — using none", latest.id),
+                    );
+                    String::new()
+                });
                 // Score it just below the weakest existing hit from this thread.
                 let thread_min_score = results
                     .iter()
