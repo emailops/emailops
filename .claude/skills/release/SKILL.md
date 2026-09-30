@@ -319,10 +319,8 @@ full, but the installers land as a downloadable workflow artifact instead of a
 GitHub Release, and `tag_name` can be any existing branch/tag, not just a real
 release tag.
 
-Then poll until it finishes — do not block silently for a long time without
-telling the user; there is currently no empirical timing for this build (it has
-never been run to completion as of this skill's last update), so warn that it
-may take a while:
+Then poll until it finishes, telling the user it takes roughly 30-45 min (the
+CUDA leg is the longest):
 
 ```bash
 gh run list --workflow=release.yml --limit 1 --json databaseId,status,conclusion,url

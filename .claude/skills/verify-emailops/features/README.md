@@ -51,3 +51,4 @@ Each file has an H1, one paragraph of user-visible behaviour, then exactly four 
 - [Chat with the inbox](./chat.md) — panel, ask, sources, new chat. Selectors confirmed present, not yet driven.
 - [Tag Board](./tag-board.md) — blocks per classified tag, range filter, tag search. Entry button confirmed, not yet driven.
 - [Compose](./compose.md) — new email, fields, discard, send-without-credentials path. Entry button confirmed, not yet driven.
+- [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.
