@@ -278,6 +278,41 @@ user guides. You will score the assistant's response on \
 several numeric metrics in [0.0, 1.0] and return them as strict JSON (no prose outside JSON). \
 Be conservative — only award high scores when the claim is clearly justified by the sources.";
 
+/// What the judge must know when the context budget cut this turn's tool
+/// results: the TOOL CALLS block shows them whole, but the assistant saw only
+/// their start. Empty when no tool result was cut.
+fn budget_section(budget: Option<&crate::models::BudgetTrace>) -> String {
+    let (results, dropped) =
+        budget
+            .map(|b| &b.cuts[..])
+            .unwrap_or_default()
+            .iter()
+            .fold((0, 0), |(r, d), cut| match cut {
+                crate::models::BudgetCut::ToolResults {
+                    results, chars_dropped, ..
+                } => (r + results, d + chars_dropped),
+                _ => (r, d),
+            });
+    if results == 0 {
+        return String::new();
+    }
+    format!(
+        "\nCONTEXT BUDGET: {results} of the tool results above were cut to fit the assistant's context window \
+({dropped} characters dropped from their ends). The assistant did NOT see the end of those results. Saying a \
+result was cut is faithful, and leaving out what only the cut part holds is not a relevancy failure; claiming \
+the cut part lacks something is.\n"
+    )
+}
+
+/// A tool result as the model saw it: cut to `kept_chars` the way the context
+/// budget cut it, or whole when the turn cut nothing.
+fn result_as_seen(result: &str, kept_chars: Option<u32>) -> String {
+    match kept_chars {
+        Some(cap) => crate::services::chat::budget::cut_tool_result(result, cap as usize),
+        None => result.to_string(),
+    }
+}
+
 fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     let expected = case
         .expected_output
@@ -318,6 +353,13 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
     // so the judge can score faithfulness against those results. Without this,
     // tools-first cases were auto-scoring faithfulness = 0 because the judge
     // saw no grounding at all.
+    let budget = outcome.assistant_trace.as_ref().and_then(|t| t.budget.as_ref());
+    let kept_chars = budget.and_then(|b| {
+        b.cuts.iter().find_map(|c| match c {
+            crate::models::BudgetCut::ToolResults { kept_chars, .. } => *kept_chars,
+            _ => None,
+        })
+    });
     let tool_calls_section = outcome
         .assistant_trace
         .as_ref()
@@ -333,12 +375,13 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
                     call.name,
                     serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".into()),
                     call.result_chars,
-                    indent_lines(&call.result_preview, "    "),
+                    indent_lines(&result_as_seen(&call.result_preview, kept_chars), "    "),
                 ));
             }
             s
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+        + &budget_section(budget);
 
     // An open email is the third kind of grounding: the turn answered from
     // that thread, with no RAG sources and no tools, so without it the judge
@@ -421,7 +464,9 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod judge_rule_tests {
-    use super::{build_prompt, case_passes, judge_passes, parse_judge_content, JudgeScores};
+    use super::{
+        budget_section, build_prompt, case_passes, judge_passes, parse_judge_content, result_as_seen, JudgeScores,
+    };
     use crate::evals::case_loader::{EvalCase, MetricKind};
     use crate::evals::harness::CaseOutcome;
 
@@ -552,6 +597,47 @@ mod judge_rule_tests {
         assert!(with.contains("AC-1234"));
         let without = build_prompt(&case, &outcome_with(None));
         assert!(!without.contains("MEMORY SHOWN TO THE ASSISTANT"));
+    }
+
+    /// The tool calls block shows each result whole, but the context budget
+    /// may have cut it before the model saw it: an answer saying "the email
+    /// was cut" scored faithfulness 0 against text the model never got.
+    #[test]
+    fn budget_section_tells_the_judge_when_tool_results_were_cut() {
+        use crate::models::{BudgetCut, BudgetTrace};
+        let budget = |cuts| BudgetTrace {
+            n_ctx: 8192,
+            reply_reserve: 1024,
+            estimated_prompt_tokens: 6900,
+            cuts,
+            fits: true,
+        };
+        let cut = budget(vec![BudgetCut::ToolResults {
+            results: 1,
+            chars_dropped: 3375,
+            kept_chars: Some(2_000),
+        }]);
+        let section = budget_section(Some(&cut));
+        assert!(section.contains("3375"), "{section}");
+        assert!(section.contains("did NOT see"), "{section}");
+        let history_only = budget(vec![BudgetCut::HistoryTurns { messages: 2 }]);
+        assert_eq!(budget_section(Some(&history_only)), "");
+        assert_eq!(budget_section(None), "");
+    }
+
+    /// The judge scored "the email was cut" as a hallucination because it read
+    /// the whole result; it must read the result as cut as the model did.
+    #[test]
+    fn tool_results_are_shown_to_the_judge_as_cut_as_the_model_saw_them() {
+        let whole = format!("{}SECRET_TAIL", "x".repeat(5_000));
+        let shown = result_as_seen(&whole, Some(2_000));
+        assert!(!shown.contains("SECRET_TAIL"), "{shown}");
+        assert!(shown.contains("cut here"), "{shown}");
+        assert_eq!(
+            result_as_seen(&whole, None),
+            whole,
+            "an uncut turn shows the result whole"
+        );
     }
 
     #[test]
