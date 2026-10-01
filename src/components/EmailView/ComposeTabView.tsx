@@ -158,6 +158,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     sent,
     draftAttachments,
     hasDraftAttachments,
+    tab.replyToEmailId,
   ]);
 
   const addRecipient = (field: 'to' | 'cc', email: string) => {
