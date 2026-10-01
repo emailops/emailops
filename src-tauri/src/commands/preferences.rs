@@ -94,6 +94,14 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "calendar.enabled must be true or false, got: {value}"
         )));
+    } else if is_new_mail_notification_switch(key) && !matches!(value, "true" | "false") {
+        return Err(AppError::InvalidInput(format!(
+            "{key} must be true or false, got: {value}"
+        )));
+    } else if key == crate::services::mail_notifications::PREF_CONTENT && !matches!(value, "preview" | "hidden") {
+        return Err(AppError::InvalidInput(format!(
+            "{key} must be preview or hidden, got: {value}"
+        )));
     } else if key == crate::models::outbox::UNDO_SEND_DELAY_PREF {
         // Undo-send window: 0 (off) or one of the delays the outbox accepts.
         let valid = value
@@ -107,6 +115,12 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+/// The boolean new-mail notification switches: master, per-account, focus.
+fn is_new_mail_notification_switch(key: &str) -> bool {
+    use crate::services::mail_notifications as n;
+    key == n::PREF_ENABLED || key == n::PREF_ONLY_UNFOCUSED || key.starts_with(n::PREF_ACCOUNT_PREFIX)
 }
 
 #[tauri::command]
@@ -283,6 +297,26 @@ mod tests {
         assert!(validate_pref("calendar_notifications_enabled", "false").is_ok());
         let err = validate_pref("calendar_notifications_enabled", "yes").unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn validate_pref_new_mail_notification_prefs() {
+        use crate::services::mail_notifications as n;
+        let account_key = format!("{}acc1", n::PREF_ACCOUNT_PREFIX);
+        for key in [n::PREF_ENABLED, n::PREF_ONLY_UNFOCUSED, account_key.as_str()] {
+            assert!(validate_pref(key, "true").is_ok());
+            assert!(validate_pref(key, "false").is_ok());
+            assert!(
+                matches!(validate_pref(key, "yes"), Err(AppError::InvalidInput(_))),
+                "{key}"
+            );
+        }
+        assert!(validate_pref(n::PREF_CONTENT, "preview").is_ok());
+        assert!(validate_pref(n::PREF_CONTENT, "hidden").is_ok());
+        assert!(matches!(
+            validate_pref(n::PREF_CONTENT, "body"),
+            Err(AppError::InvalidInput(_))
+        ));
     }
 
     #[test]

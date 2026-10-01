@@ -446,6 +446,8 @@ pub fn run() {
             // sources, and progress events reach the frontend. Sibling of the
             // logger install above; until this runs the global is a NoopEventSink.
             services::events::install(Arc::new(services::events::TauriEventSink::new(app.handle().clone())));
+            // Desktop notifications (new mail, snoozed conversations back).
+            services::notifier::install(Arc::new(services::notifier::TauriNotifier::new(app.handle().clone())));
 
             let t = std::time::Instant::now();
             // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.

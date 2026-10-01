@@ -5,6 +5,8 @@
     "appearanceDesc": "Layout des Posteingangs",
     "signatures": "Signaturen",
     "signaturesDesc": "E-Mail-Signatur je Konto",
+    "notifications": "Benachrichtigungen",
+    "notificationsDesc": "Desktop-Benachrichtigungen für neue E-Mails",
     "calendar": "Kalender",
     "calendarDesc": "Konten & Meeting-Benachrichtigungen",
     "ai": "KI: Backend & Modelle",
@@ -611,5 +613,22 @@
     "importNone": "Diese Adresse hat in Gmail keine Signatur.",
     "noAccounts": "Verbinden Sie ein Konto, um seine Signatur festzulegen.",
     "loadFailed": "Die Signatur konnte nicht geladen werden. Details stehen im Ausgabebereich."
+  },
+  "notifications": {
+    "enabledLabel": "Benachrichtigungen für neue E-Mails",
+    "enabledDesc": "Zeigt eine Desktop-Benachrichtigung, wenn neue E-Mails im Posteingang eintreffen und wenn eine zurückgestellte Unterhaltung wieder da ist. Nie bei der ersten Synchronisierung eines Kontos, für ältere oder bereits gelesene E-Mails, Junk oder blockierte Absender.",
+    "accountsLabel": "Konten",
+    "accountsDesc": "Wähle, welche Konten benachrichtigen.",
+    "accountToggleAria": "Benachrichtigen für {{email}}",
+    "noAccounts": "Noch keine Konten verbunden.",
+    "contentLabel": "Inhalt der Benachrichtigung",
+    "contentDesc": "Was eine Benachrichtigung auf dem Bildschirm zeigen darf. Der Nachrichtentext wird nie angezeigt.",
+    "contentPreview": "Absender und Betreff anzeigen",
+    "contentPreviewDesc": "Der Absender als Titel, der Betreff als Text.",
+    "contentHidden": "Inhalt ausblenden",
+    "contentHiddenDesc": "Nur „Neue Nachricht in“ und das Konto.",
+    "onlyUnfocusedLabel": "Nur wenn EmailOps nicht im Vordergrund ist",
+    "onlyUnfocusedDesc": "Bleibt still, während du in EmailOps arbeitest.",
+    "footnote": "Mehr als drei neue Nachrichten auf einmal werden zu einer Zusammenfassung. Solange die App mit dem Hauptpasswort gesperrt ist, zeigen Benachrichtigungen nie Absender oder Betreff."
   }
 }

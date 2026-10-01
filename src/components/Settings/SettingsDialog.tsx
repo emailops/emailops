@@ -16,6 +16,7 @@ import { JunkSettings } from './JunkSettings';
 import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
 import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
+import { NotificationsSettings } from './NotificationsSettings';
 import { PrivacySettings } from './PrivacySettings';
 import { SignaturesSettings } from './SignaturesSettings';
 import { SkillsSettings } from './SkillsSettings';
@@ -25,6 +26,7 @@ import { UndoSendSetting } from './UndoSendSetting';
 export type SettingsTab =
   | 'appearance'
   | 'signatures'
+  | 'notifications'
   | 'calendar'
   | 'ai'
   | 'classification'
@@ -66,6 +68,7 @@ type TabSpec = { id: SettingsTab; experimental?: boolean; needsAi?: boolean };
 const ALL_TABS: TabSpec[] = [
   { id: 'appearance' },
   { id: 'signatures' },
+  { id: 'notifications' },
   { id: 'calendar' },
   { id: 'ai' },
   { id: 'classification', needsAi: true },
@@ -216,6 +219,7 @@ export function SettingsDialog({
 
           {tab === 'appearance' && <AppearancePanel currentLayout={currentLayout} onChangeLayout={onChangeLayout} />}
           {tab === 'signatures' && <SignaturesSettings accounts={accounts} />}
+          {tab === 'notifications' && <NotificationsSettings accounts={accounts} />}
           {tab === 'calendar' && <CalendarSettings />}
           {tab === 'ai' && <AiSettings />}
           {tab === 'classification' && (

@@ -795,12 +795,17 @@ async fn snooze_wake_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<Atom
             return;
         }
         let now = crate::services::clock::now_secs();
-        if let Err(e) = crate::services::emails::wake_due_snoozes(&db, now, Some(app.clone())).await {
-            crate::services::logger::log(
+        match crate::services::emails::wake_due_snoozes(&db, now, Some(app.clone())).await {
+            Ok(woken) => crate::services::mail_notifications::notify_snooze_returns(
+                &db,
+                crate::services::notifier::current().as_ref(),
+                &woken,
+            ),
+            Err(e) => crate::services::logger::log(
                 "error",
                 "system",
                 format!("Snoozed conversations could not be brought back: {e}"),
-            );
+            ),
         }
     }
 }

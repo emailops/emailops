@@ -2938,3 +2938,29 @@ clients disagree and the provider's own filter never learns; *creating a Gmail f
 needs a broader OAuth scope for one feature; *a global (all-accounts) block list* — differs
 from both providers and makes a per-account unblock impossible to express; *deleting
 blocked mail* — irreversible, and a block entered by mistake would destroy mail.
+
+## 2026-10-01 — New-mail desktop notifications: sync-side planner, no click-to-open
+
+**Decision:** New-mail notifications are decided in the backend at the end of each
+sync (`services::mail_notifications::plan_new_mail_notifications`), after junk scoring
+and the blocked-sender hook, so junk and blocked mail never notify. Only mail from the
+sync's incremental pass qualifies — never an account's first sync, a backfill slice,
+mail older than the inbox watermark, mail already read elsewhere, mail sent by the
+user, promotions, or anything outside the inbox. 1–3 messages notify one by one; more
+become one "N new messages in <account>" summary, at most one per account per minute.
+Content defaults to sender + subject (Gmail/Outlook default), never the body; "Hide
+content" and a locked app (main password not yet entered this session) show only the
+account. Settings → Notifications holds the master switch, per-account switches, the
+content option and "only when EmailOps is not focused" (all default on, SQLite prefs).
+A snoozed conversation coming back notifies behind the same switches. Notifications go
+through a `Notifier` trait seam (`services::notifier`) so tests never hit the OS.
+**Context:** Gmail/Outlook parity (docs/COMPETITOR-PARITY.md). The notification plugin
+was already wired for meeting reminders.
+**Rejected:** Click-to-open the conversation — `tauri-plugin-notification` delivers no
+click events on desktop (same limit recorded for meeting reminders); a click only
+focuses the app, and the notification carries its thread so a future plugin can open
+it without a planner change. No workaround (custom native notification code) was built.
+A dock/taskbar unread badge was skipped: there is no unread-inbox count query to feed
+it yet, and it is optional for parity. Deciding in the frontend on `sync-progress`
+events was rejected: the webview may be hidden or locked, and it cannot see junk
+verdicts or the blocked-sender filing reliably.

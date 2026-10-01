@@ -5,6 +5,8 @@
     "appearanceDesc": "Disposition de la boîte de réception",
     "signatures": "Signatures",
     "signaturesDesc": "Signature de chaque compte",
+    "notifications": "Notifications",
+    "notificationsDesc": "Notifications de bureau pour le nouveau courrier",
     "calendar": "Calendrier",
     "calendarDesc": "Comptes et notifications de réunion",
     "ai": "IA : backend et modèles",
@@ -611,5 +613,22 @@
     "importNone": "Cette adresse n’a pas de signature dans Gmail.",
     "noAccounts": "Connectez un compte pour définir sa signature.",
     "loadFailed": "Impossible de charger la signature. Les détails sont dans le panneau de sortie."
+  },
+  "notifications": {
+    "enabledLabel": "Notifications de nouveau courrier",
+    "enabledDesc": "Affiche une notification de bureau quand un nouveau message arrive dans la boîte de réception et quand une conversation mise en attente revient. Jamais lors de la première synchronisation d'un compte, ni pour le courrier ancien, déjà lu, indésirable ou d'expéditeurs bloqués.",
+    "accountsLabel": "Comptes",
+    "accountsDesc": "Choisissez les comptes qui envoient des notifications.",
+    "accountToggleAria": "Notifier pour {{email}}",
+    "noAccounts": "Aucun compte connecté pour le moment.",
+    "contentLabel": "Contenu de la notification",
+    "contentDesc": "Ce qu'une notification peut afficher à l'écran. Le texte du message n'est jamais affiché.",
+    "contentPreview": "Afficher l'expéditeur et l'objet",
+    "contentPreviewDesc": "L'expéditeur en titre et l'objet en texte.",
+    "contentHidden": "Masquer le contenu",
+    "contentHiddenDesc": "Seulement « Nouveau message dans » et le compte.",
+    "onlyUnfocusedLabel": "Seulement quand EmailOps n'est pas au premier plan",
+    "onlyUnfocusedDesc": "Reste silencieux pendant que vous travaillez dans EmailOps.",
+    "footnote": "Plus de trois nouveaux messages à la fois sont regroupés en un seul résumé. Tant que l'application est verrouillée par le mot de passe principal, les notifications n'affichent jamais l'expéditeur ni l'objet."
   }
 }

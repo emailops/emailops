@@ -5,6 +5,8 @@
     "appearanceDesc": "Inbox layout",
     "signatures": "Signatures",
     "signaturesDesc": "Per-account email signatures",
+    "notifications": "Notifications",
+    "notificationsDesc": "New mail desktop notifications",
     "calendar": "Calendar",
     "calendarDesc": "Accounts & meeting notifications",
     "ai": "AI Backend & Models",
@@ -611,5 +613,22 @@
     "importNone": "This address has no signature in Gmail.",
     "noAccounts": "Connect an account to set its signature.",
     "loadFailed": "The signature could not be loaded. Details are in the output panel."
+  },
+  "notifications": {
+    "enabledLabel": "New mail notifications",
+    "enabledDesc": "Show a desktop notification when new mail arrives in your inbox, and when a snoozed conversation comes back. Never for the first sync of an account, older mail, mail you already read, junk, or blocked senders.",
+    "accountsLabel": "Accounts",
+    "accountsDesc": "Choose which accounts notify.",
+    "accountToggleAria": "Notify for {{email}}",
+    "noAccounts": "No accounts connected yet.",
+    "contentLabel": "Notification content",
+    "contentDesc": "What a notification may show on your screen. The message text is never shown.",
+    "contentPreview": "Show sender and subject",
+    "contentPreviewDesc": "The sender as the title and the subject as the text.",
+    "contentHidden": "Hide content",
+    "contentHiddenDesc": "Only \"New message in\" and the account.",
+    "onlyUnfocusedLabel": "Only when EmailOps is not focused",
+    "onlyUnfocusedDesc": "Stay quiet while you are working in EmailOps.",
+    "footnote": "More than three new messages at once become a single summary. While the app is locked with the main password, notifications never show the sender or subject."
   }
 }

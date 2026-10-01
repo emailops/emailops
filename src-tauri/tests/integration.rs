@@ -2303,6 +2303,77 @@ async fn sync_with_provider_stores_new_emails() {
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
+/// New-mail notifications: the first sync of an account never notifies; a
+/// later sync notifies only unread inbox mail that is not from a blocked
+/// sender (the blocked-sender hook runs first and marks it junk).
+#[tokio::test]
+async fn sync_notifies_only_genuinely_new_mail() {
+    use emailops_lib::services::notifier;
+    emailops_lib::services::logger::install_for_testing();
+    let shown = Arc::new(notifier::VecNotifier::new());
+    notifier::install(shown.clone());
+
+    let db = test_db();
+    db.insert_account(&make_account("acc-nt", "nt@example.com")).unwrap();
+    let account = db.get_account("acc-nt").unwrap().unwrap();
+    db.insert_blocked_sender("acc-nt", "deals@shop.example", 1).unwrap();
+
+    let old = || make_email_with("nt-old", "acc-nt", 1000, "friend@example.com", "inbox");
+    let first = FakeEmailProvider::new("nt@example.com", "Nt");
+    first.add_message(old(), EmailCategory::Primary, vec![]);
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue.clone(),
+        abort_flags.clone(),
+        Box::new(first),
+    )
+    .await
+    .expect("first sync");
+    let ours = |shown: &notifier::VecNotifier| {
+        shown
+            .shown()
+            .into_iter()
+            .filter_map(|n| n.thread)
+            .filter(|t| t.account_id == "acc-nt")
+            .map(|t| t.thread_id)
+            .collect::<Vec<_>>()
+    };
+    assert!(ours(&shown).is_empty(), "the first sync never notifies");
+
+    let second = FakeEmailProvider::new("nt@example.com", "Nt");
+    second.add_message(old(), EmailCategory::Primary, vec![]);
+    second.add_message(
+        make_email_with("nt-new", "acc-nt", 5000, "friend@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    second.add_message(
+        make_email_with("nt-blocked", "acc-nt", 5001, "deals@shop.example", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    let mut read = make_email_with("nt-read", "acc-nt", 5002, "friend@example.com", "inbox");
+    read.is_read = true;
+    second.add_message(read, EmailCategory::Primary, vec![]);
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(second),
+    )
+    .await
+    .expect("second sync");
+
+    assert_eq!(ours(&shown), vec!["thread-nt-new".to_string()]);
+}
+
 /// Block sender: mail from a blocked address that arrives in a sync never
 /// stays in the inbox — it is marked junk and filed in the provider's Spam.
 #[tokio::test]

@@ -5,6 +5,8 @@
     "appearanceDesc": "Diseño de la bandeja de entrada",
     "signatures": "Firmas",
     "signaturesDesc": "Firma de correo de cada cuenta",
+    "notifications": "Notificaciones",
+    "notificationsDesc": "Notificaciones de escritorio de correo nuevo",
     "calendar": "Calendario",
     "calendarDesc": "Cuentas y notificaciones de reuniones",
     "ai": "IA: backend y modelos",
@@ -611,5 +613,22 @@
     "importNone": "Esta dirección no tiene firma en Gmail.",
     "noAccounts": "Conecta una cuenta para configurar su firma.",
     "loadFailed": "No se pudo cargar la firma. Los detalles están en el panel de salida."
+  },
+  "notifications": {
+    "enabledLabel": "Notificaciones de correo nuevo",
+    "enabledDesc": "Muestra una notificación de escritorio cuando llega correo nuevo a la bandeja de entrada y cuando vuelve una conversación pospuesta. Nunca en la primera sincronización de una cuenta, ni para correo antiguo, ya leído, correo no deseado o de remitentes bloqueados.",
+    "accountsLabel": "Cuentas",
+    "accountsDesc": "Elige qué cuentas avisan.",
+    "accountToggleAria": "Avisar para {{email}}",
+    "noAccounts": "Todavía no hay cuentas conectadas.",
+    "contentLabel": "Contenido de la notificación",
+    "contentDesc": "Lo que una notificación puede mostrar en pantalla. El texto del mensaje nunca se muestra.",
+    "contentPreview": "Mostrar remitente y asunto",
+    "contentPreviewDesc": "El remitente como título y el asunto como texto.",
+    "contentHidden": "Ocultar contenido",
+    "contentHiddenDesc": "Solo «Nuevo mensaje en» y la cuenta.",
+    "onlyUnfocusedLabel": "Solo cuando EmailOps no está en primer plano",
+    "onlyUnfocusedDesc": "No avisa mientras trabajas en EmailOps.",
+    "footnote": "Más de tres mensajes nuevos a la vez se agrupan en un único resumen. Mientras la app está bloqueada con la contraseña principal, las notificaciones nunca muestran remitente ni asunto."
   }
 }

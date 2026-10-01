@@ -460,6 +460,9 @@ pub async fn sync_account_with_provider(
     let mut synced_count: u32 = 0;
     let mut all_new_ids: Vec<String> = Vec::new();
     let mut ai_followups_kicked = false;
+    // New mail the incremental pass stored, judged for desktop notifications
+    // once the whole sync has ingested it (see `mail_notifications`).
+    let mut notify_candidates: Vec<crate::services::mail_notifications::MailCandidate> = Vec::new();
 
     // Load attachment rules for this account (empty vec if none defined)
     let attachment_rules = db.get_attachment_rules(account_id)?;
@@ -817,6 +820,18 @@ pub async fn sync_account_with_provider(
                     )
                     .await;
 
+                    // Only the incremental pass brings genuinely new mail: a
+                    // first sync has none, and backfill slices are history.
+                    if incremental_after_timestamp.is_some() {
+                        notify_candidates.extend(emails_only.iter().map(|e| {
+                            crate::services::mail_notifications::MailCandidate::from_email(
+                                e,
+                                &account.email,
+                                backfill_ref_ids.contains(&e.id),
+                            )
+                        }));
+                    }
+
                     all_new_ids.extend(ids_to_remove);
                     synced_count += chunk_emails.len() as u32;
 
@@ -886,6 +901,17 @@ pub async fn sync_account_with_provider(
             break;
         }
     }
+
+    // After junk scoring and the blocked-sender hook ran on every chunk, so
+    // junk and blocked mail never notify.
+    crate::services::mail_notifications::notify_new_mail(
+        db,
+        crate::services::notifier::current().as_ref(),
+        account,
+        incremental_after_timestamp,
+        notify_candidates,
+        crate::services::clock::now_secs(),
+    );
 
     // The incremental window was listed to its end and every chunk of it went
     // through the download loop: the next sync can start from the newest
