@@ -37,6 +37,11 @@ struct Cli {
     /// Target demo data dir holding the demo emailops.db.
     #[arg(long)]
     demo_dir: Option<PathBuf>,
+
+    /// Only create `<demo-dir>/emailops.db` with this checkout's migrations
+    /// applied, and no rows: the schema source `generate_demo_db.py` fills.
+    #[arg(long)]
+    init_schema: bool,
 }
 
 fn home() -> PathBuf {
@@ -88,6 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let source_dir = cli.source_dir.unwrap_or_else(default_source_dir);
     let demo_dir = cli.demo_dir.unwrap_or_else(default_demo_dir);
+
+    if cli.init_schema {
+        std::fs::create_dir_all(&demo_dir)?;
+        Database::new(demo_dir.clone())?;
+        println!("[embed] migrated an empty DB at {}", demo_dir.display());
+        return Ok(());
+    }
 
     let demo_db = demo_dir.join("emailops.db");
     if !demo_db.exists() {
