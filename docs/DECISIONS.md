@@ -2639,3 +2639,26 @@ against the whole suite.
   without the checkout path, so two checkouts overwrite each other's incremental cache
   (43 s per mutant build instead of 4–6 s).
 - *cargo-nextest*: not needed at this scale, and no new tool beyond the three above.
+
+## 2026-10-01 — Commands check that a record belongs to the account; Outlook grants are removed by the user
+
+**Decision:** Every command that acts on a per-account record named by id (email, draft,
+attachment rule, chat conversation, memory fact, task) takes the account the UI is working
+in and refuses a record of another account with `NotFound`, through
+`services::ownership`. Removing an Outlook account deletes its local tokens and tells the
+user, in the delete confirmation and the removal log, where to remove EmailOps' access at
+Microsoft (account.live.com/consent/Manage, or My Apps for work and school accounts).
+**Context:** The CASA review (control 3.1.4) found commands that looked records up by id
+alone. EmailOps is single-user, so this is not a barrier between people, but several were
+real cross-account bugs: saving or deleting a draft could reach another account's draft and
+its provider copy, deleting an attachment rule removed another account's files, and junk
+feedback or a new task could point at another account's email. Google revokes a grant
+through an RFC 7009 endpoint; Microsoft has no per-application revocation.
+**Rejected:**
+- *Microsoft Graph `revokeSignInSessions`*: it revokes every refresh token of the user, signing
+  them out of all apps and devices — far more than removing one account here should do.
+- *Scoping the batch reads (`get_email_tags_batch`, `get_junk_verdicts`)*: the unified inbox
+  asks for many accounts at once and the `email-junk-scored` event carries no account; they
+  return only tags and verdicts, so they stay keyed by email id.
+- *Lens commands*: lenses can span every account (`account_id` NULL), so there is no single
+  account to check against.
