@@ -6,6 +6,7 @@ import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
 import * as api from '@/lib/api';
 import { findThreadReplyDraft } from '@/lib/composeDraft';
+import { isDeleteShortcut } from '@/lib/deleteShortcut';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { formatShortcut } from '@/lib/platform';
@@ -139,6 +140,8 @@ export function EmailView({
   const [threadDraft, setThreadDraft] = useState<Draft | null>(null);
   const [replyBody, setReplyBody] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  // Synchronous guard: two quick Delete presses must not start two deletes.
+  const isDeletingRef = useRef(false);
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) can match incoming events without re-binding
@@ -291,6 +294,48 @@ export function EmailView({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openThreadSearch]);
+
+  /** Move the open thread to the Trash (the provider's Trash folder; IMAP
+   *  never expunges in place). Shared by the trash button and the Delete key. */
+  const deleteThread = async () => {
+    const latest = threadEmails[threadEmails.length - 1];
+    if (!latest || isDeletingRef.current) return;
+    isDeletingRef.current = true;
+    setIsDeleting(true);
+    addLog('info', 'sync', `Deleting thread "${latest.subject.slice(0, 50)}"...`);
+    try {
+      for (const email of threadEmails) {
+        await deleteEmailFromStore(email.accountId, email.id);
+      }
+      addLog('success', 'sync', 'Thread deleted');
+      onClose();
+    } catch (err) {
+      addLog('error', 'sync', `Delete failed: ${err}`);
+    } finally {
+      isDeletingRef.current = false;
+      setIsDeleting(false);
+    }
+  };
+  const deleteThreadRef = useRef(deleteThread);
+  deleteThreadRef.current = deleteThread;
+
+  // Delete / Backspace moves the open thread to the Trash, like the trash
+  // button. Never while typing, with a reply open, or behind a dialog — see
+  // `isDeleteShortcut`.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const ctx = {
+        hasThread: threadEmails.length > 0,
+        isReplyOpen: isReplyOpenRef.current,
+        isDeleting: isDeletingRef.current,
+      };
+      if (!isDeleteShortcut(e, ctx)) return;
+      e.preventDefault();
+      void deleteThreadRef.current();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [threadEmails.length]);
 
   // When a search is active, find the oldest email in the thread whose subject,
   // snippet, or (already-loaded) body contains the query. We highlight that email
@@ -634,25 +679,10 @@ export function EmailView({
               </button>
             )}
             <button
-              onClick={async () => {
-                if (!latestEmail) return;
-                setIsDeleting(true);
-                addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
-                try {
-                  for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.accountId, email.id);
-                  }
-                  addLog('success', 'sync', 'Thread deleted');
-                  onClose();
-                } catch (err) {
-                  addLog('error', 'sync', `Delete failed: ${err}`);
-                } finally {
-                  setIsDeleting(false);
-                }
-              }}
+              onClick={() => void deleteThread()}
               disabled={isDeleting}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-              title={t('inbox:emailView.deleteThread')}
+              title={t('inbox:emailView.deleteThreadShortcut')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path

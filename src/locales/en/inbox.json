@@ -86,6 +86,7 @@
     "aiDraftTitle": "Generate a reply with AI (uses Reply All recipients)",
     "openInNewTab": "Open in new tab",
     "deleteThread": "Delete thread",
+    "deleteThreadShortcut": "Delete thread (Delete)",
     "closeTab": "Close tab",
     "trustSender": "Always trust this sender",
     "untrustSender": "Stop trusting this sender",
