@@ -536,7 +536,7 @@
       "dim": "Still in place, just easier for the eye to skip. Fully recoverable at a glance.",
       "hide": "Removed from the inbox list. Still reachable through search and your provider’s own folders."
     },
-    "neverMoves": "Neither option ever moves or deletes mail on the server. Only the “Confirm junk” button does that, and only when you press it.",
+    "neverMoves": "Neither option ever moves or deletes mail on the server. Only “Confirm junk” and “Block sender” do that, and only when you use them.",
     "phishing": "Warn about impersonation attempts",
     "phishingDesc": "Off by default. This is the only check that accuses a message of fraud, and it has far less evidence behind it than the other two — a wrong red banner costs more trust than a correct one earns.",
     "statusTitle": "Status",
@@ -554,7 +554,14 @@
     "modelNotYet": "not enough labels yet — {{pos}} junk / {{neg}} legitimate",
     "backfill": "Score {{count}} older messages",
     "backfillStarted": "Scoring older messages in the background",
-    "backfillRunning": "Scoring… {{count}} left"
+    "backfillRunning": "Scoring… {{count}} left",
+    "blocked": {
+      "title": "Blocked senders",
+      "desc": "Mail from these senders is moved to Spam as it arrives.",
+      "empty": "You haven’t blocked anyone. Block a sender from a message’s ⋮ menu.",
+      "since": "blocked {{date}}",
+      "unblock": "Unblock"
+    }
   },
   "skills": {
     "enable": "Enable skills",

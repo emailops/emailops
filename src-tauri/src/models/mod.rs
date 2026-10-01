@@ -126,6 +126,17 @@ pub struct AccountSignature {
     pub updated_at: Option<i64>,
 }
 
+/// A sender the user blocked in one account (V034 `blocked_senders`):
+/// their mail is filed as spam on arrival. `address` is lowercase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedSender {
+    pub account_id: String,
+    pub address: String,
+    pub created_at: i64,
+}
+
 /// What the signature editor saves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

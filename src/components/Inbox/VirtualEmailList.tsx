@@ -32,7 +32,7 @@ interface VirtualEmailListProps {
   onSelectEmail: (email: Email) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   onOpenInTab?: (email: Email) => void;
@@ -62,7 +62,7 @@ export function VirtualEmailList({
   onSelectEmail,
   onLoadMore,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   onOpenInTab,
@@ -283,7 +283,7 @@ export function VirtualEmailList({
                 isSelected={email.id === selectedEmailId}
                 onClick={() => onSelectEmail(email)}
                 onAddSenderFilter={onAddSenderFilter}
-                onBlockSender={onBlockSender}
+                onHideSenderFromFilters={onHideSenderFromFilters}
                 onCreateAttachmentRule={onCreateAttachmentRule}
                 onCreateClassificationRule={onCreateClassificationRule}
                 onOpenInTab={onOpenInTab}

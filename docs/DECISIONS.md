@@ -2873,3 +2873,68 @@ be a second, hand-maintained copy. A keyboard library (react-hotkeys-hook, tinyk
 sequences, platform modifiers and the editable/modal rules are a few dozen lines that are
 easier to test as pure functions. User-rebindable keys and a command palette — out of the
 parity gap.
+
+## 2026-10-01 — One-click unsubscribe contacts the sender only when the user asks
+
+**Decision:** The reading pane offers "Unsubscribe" on any message whose stored
+`List-Unsubscribe` header yields a usable method, preferred in this order: RFC 8058
+one-click (an https URI plus `List-Unsubscribe-Post: List-Unsubscribe=One-Click`), then
+`mailto:`, then an https page. Only `<…>`-bracketed `https:` and `mailto:` URIs count;
+`http:`, `javascript:`, `file:`, custom schemes, credentials in the URL, multi-address
+mailtos and overlong values are refused. The raw headers stay in the backend: the webview
+receives a derived `UnsubscribeOption` (method, host or address, and the URL only for a
+page it must open), and the unsubscribe command re-parses the stored headers rather than
+trusting anything the frontend sends. One-click is a backend HTTPS POST with the body
+`List-Unsubscribe=One-Click` (form-encoded), a plain `EmailOps` user agent, no cookie
+store, 10 s connect / 20 s total timeouts and redirects followed only to https (at most
+three); only a 2xx counts. A mailto is sent from the account that received the message,
+with the list's subject and body and no "Sent with EmailOps" footer. A page is never fetched
+by the backend: it opens in the system browser through the same https check as links in
+mail. Every request is recorded per account and sender (`sender_unsubscribes`) so the pane
+says "Unsubscribed"; the confirmation offers to block the sender afterwards.
+**Context:** The privacy rule is "no external calls except to email providers or AI
+providers the user chose". An unsubscribe request goes to the *sender's* server, a third
+party, so it is allowed only as an explicit user action: the confirmation dialog names the
+host it will contact (or the address it will email) and says it is the sender, not the
+mail provider, before anything is sent — the same reasoning that lets a user open a link
+from a message. Nothing is contacted automatically (no prefetch, no background
+"unsubscribe from everything"), and the request carries nothing beyond what the list put
+in its own URI.
+**Rejected:** *Fetching the https page from the backend* — a page is meant for a person, may
+need a click or a CAPTCHA, and fetching it silently confirms the address to trackers;
+*sending the raw header to the webview to parse there* — breaks the rule that raw headers
+never reach the webview, and moves URL validation to the less trusted side; *following
+any redirect* — a one-click endpoint that bounces to plain http would leak the token in
+the clear; *recording "unsubscribed" per List-Id* — not every list sends one, and the
+sender address is what the user recognises in the banner.
+
+## 2026-10-01 — Block sender files arrivals in the provider's spam folder; blocks are per account
+
+**Decision:** "Block sender" stores the address (lowercased) per account in
+`blocked_senders`. Every message that a sync stores in that account's inbox from a blocked
+address is marked junk locally (the user's override, recorded first) and then filed in the
+provider's Spam/Junk folder before the batch is announced — Gmail adds `SPAM` and drops
+`INBOX`, Graph moves it to `junkemail`, IMAP moves it to the `\Junk` folder (or one named
+like it) and re-keys it to the id the Spam pass uses. An IMAP server with no Junk folder
+keeps the message in place, marked junk. Blocking offers to file the sender's existing
+inbox and archived mail too (checkbox, on by default, up to 500 messages); unblocking —
+from the message banner or Settings → Junk → Blocked senders — offers the inverse, bringing
+their Spam back to the inbox and forgetting the block's junk mark (checkbox, on by
+default). "Report junk" uses the same provider move (`EmailProvider::move_to_spam`), so it
+now files on Gmail and Outlook as well, not only IMAP. The old ⋮ item that only hid the
+sender's smart-filter chip is kept under its real name, "Hide from smart filters".
+**Context:** Gmail's own block creates a server-side filter, which needs the
+`gmail.settings.basic` scope; the app asks only for `gmail.modify` and should not widen
+OAuth consent for this. Outlook's blocked-senders list is not in Graph's mail API, and IMAP
+has no filters at all. Applying the block in the app on ingest works the same on all three,
+and pushing the move to the provider keeps other clients (phone, webmail) in agreement —
+a local-only hide would leave the mail sitting in every other inbox. Blocks are per
+account like Gmail's: the same address can be wanted in one mailbox and not another.
+This does not contradict the local-flag-only junk decision (2026-07-28): that one forbids
+the *detector* from moving mail on its own; a block is an explicit, attributable user rule
+with a reachable inverse.
+**Rejected:** *A local-only hide (the junk detector's "keep out of the inbox" mode)* — other
+clients disagree and the provider's own filter never learns; *creating a Gmail filter* —
+needs a broader OAuth scope for one feature; *a global (all-accounts) block list* — differs
+from both providers and makes a per-account unblock impossible to express; *deleting
+blocked mail* — irreversible, and a block entered by mistake would destroy mail.

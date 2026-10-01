@@ -67,7 +67,8 @@
     "star": "Destacar",
     "unstar": "Quitar destacado",
     "archive": "Archivar",
-    "moveArchivedToInbox": "Mover a Recibidos"
+    "moveArchivedToInbox": "Mover a Recibidos",
+    "hideFromFilters": "Ocultar de los filtros inteligentes"
   },
   "header": {
     "totalCount": "{{count}} correos",
@@ -268,5 +269,37 @@
     "until": "Pospuesta hasta {{when}}",
     "marker": "Pospuesta",
     "markerTitle": "Vuelve tras posponerla"
+  },
+  "sender": {
+    "unsubscribe": "Cancelar suscripción",
+    "unsubscribed": "Suscripción cancelada",
+    "unsubscribeTitle": "¿Cancelar la suscripción a {{name}}?",
+    "unsubscribeOneClick": "EmailOps enviará una solicitud de baja directamente a {{target}}. Esto contacta con el servidor del remitente, no con tu proveedor de correo; no se envía nada más que la propia solicitud.",
+    "unsubscribeMailto": "EmailOps enviará un correo de baja desde esta cuenta a {{target}}. El remitente verá que viene de ti.",
+    "unsubscribeLink": "La página de baja del remitente en {{target}} se abrirá en tu navegador. Termina la baja allí.",
+    "unsubscribeConfirm": "Cancelar suscripción",
+    "openPage": "Abrir página",
+    "unsubscribeDone": "Suscripción a {{name}} cancelada. Sus correos pueden tardar unos días en dejar de llegar.",
+    "unsubscribeLinkDone": "Página de baja abierta. Termina allí.",
+    "unsubscribeFailed": "No se pudo cancelar la suscripción",
+    "alsoBlock": "Bloquear también a este remitente",
+    "unsubscribedBanner": "Cancelaste la suscripción a este remitente el {{date}}.",
+    "blockTitle": "¿Bloquear a {{address}}?",
+    "blockBody": "Los correos nuevos de este remitente irán directamente a Spam en esta cuenta y se notificarán como spam a tu proveedor de correo. Puedes desbloquearlo cuando quieras.",
+    "blockMoveExisting": "Mover también sus mensajes actuales a Spam",
+    "blockConfirm": "Bloquear",
+    "blocked": "{{address}} bloqueado",
+    "blockedMoved": "{{address}} bloqueado. Mensajes movidos a Spam: {{count}}",
+    "blockLocalOnly": "Mensajes marcados como basura solo aquí, porque el servidor no tiene carpeta de correo no deseado: {{count}}",
+    "blockPartial": "Mensajes que no se pudieron mover: {{count}}",
+    "blockFailed": "No se pudo bloquear al remitente",
+    "unblockTitle": "¿Desbloquear a {{address}}?",
+    "unblockBody": "Sus correos nuevos volverán a llegar a tu bandeja de entrada.",
+    "unblockRestore": "Devolver también a la bandeja de entrada sus mensajes en Spam",
+    "unblockConfirm": "Desbloquear",
+    "unblocked": "{{address}} desbloqueado",
+    "unblockFailed": "No se pudo desbloquear al remitente",
+    "blockedBanner": "Bloqueaste a este remitente. Sus correos nuevos van a Spam.",
+    "unblockAction": "Desbloquear"
   }
 }

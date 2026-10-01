@@ -2303,6 +2303,59 @@ async fn sync_with_provider_stores_new_emails() {
     assert_eq!(emails.len(), 2, "both new emails must be stored");
 }
 
+/// Block sender: mail from a blocked address that arrives in a sync never
+/// stays in the inbox — it is marked junk and filed in the provider's Spam.
+#[tokio::test]
+async fn sync_files_new_mail_from_a_blocked_sender_as_spam() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-bl", "bl@example.com")).unwrap();
+    let account = db.get_account("acc-bl").unwrap().unwrap();
+    db.insert_blocked_sender("acc-bl", "deals@shop.example", 1).unwrap();
+
+    let provider = FakeEmailProvider::new("bl@example.com", "Bl");
+    provider.add_message(
+        make_email_with("blocked-1", "acc-bl", 1000, "Deals@Shop.example", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    provider.add_message(
+        make_email_with("friend-1", "acc-bl", 2000, "friend@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert_eq!(db.get_email("blocked-1").unwrap().unwrap().mailbox, "spam");
+    assert_eq!(db.get_email("friend-1").unwrap().unwrap().mailbox, "inbox");
+    let inbox = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-bl"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        inbox.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["friend-1"]
+    );
+}
+
 /// Regression for #50: an account narrowed to a recent window must stop
 /// re-listing its whole history on every sync.
 ///

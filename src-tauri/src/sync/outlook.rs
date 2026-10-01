@@ -1520,6 +1520,22 @@ impl EmailProvider for OutlookClient {
         })
     }
 
+    /// Move the message to the well-known `junkemail` folder
+    /// (`Mail.ReadWrite`). Graph re-keys a moved message.
+    async fn move_to_spam(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        let moved = self
+            .move_to_well_known_folder(message_id, "junkemail", "move message to junk")
+            .await?;
+        Ok(provider::MessageLocation {
+            id: moved.id,
+            mailbox: "spam".to_string(),
+        })
+    }
+
     /// Only the inbox is a move target on Outlook: the app syncs no custom
     /// Graph folders. Used to bring archived mail back.
     async fn move_message(
@@ -2859,6 +2875,36 @@ mod tests {
         let requests = server.received_requests().await.expect("requests");
         let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
         assert_eq!(body, serde_json::json!({ "destinationId": "archive" }));
+    }
+
+    #[tokio::test]
+    async fn moving_to_spam_moves_to_the_junk_folder_and_reports_the_new_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-5/move"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_raw(r#"{"id":"m-5-junk","conversationId":"c-3"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let location = EmailProvider::move_to_spam(&client, "m-5", None).await.expect("spam");
+
+        assert_eq!(
+            location,
+            provider::MessageLocation {
+                id: "m-5-junk".to_string(),
+                mailbox: "spam".to_string(),
+            }
+        );
+        let requests = server.received_requests().await.expect("requests");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "junkemail" }));
     }
 
     #[tokio::test]

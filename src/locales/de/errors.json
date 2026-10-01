@@ -72,6 +72,7 @@
     "skill_changed_on_disk": "{{name}}/SKILL.md wurde seit dem Öffnen auf der Festplatte geändert. Lade die Datei neu, bevor du speicherst.",
     "skill_already_exists": "Ein Skill namens {{name}} existiert bereits. Wähle einen anderen Namen.",
     "no_archive_folder": "Dieses Konto hat keinen Archivordner. Legen Sie einen Ordner namens „Archive“ an, um E-Mails zu archivieren.",
-    "outbox_not_pending": "Diese Nachricht wird bereits gesendet und kann nicht mehr geändert werden."
+    "outbox_not_pending": "Diese Nachricht wird bereits gesendet und kann nicht mehr geändert werden.",
+    "no_spam_folder": "Dieses Konto hat keinen Junk-Ordner, in dem Spam abgelegt werden kann."
   }
 }

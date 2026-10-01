@@ -25,7 +25,7 @@ interface EmailRowProps {
   isSelected: boolean;
   onClick: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   onOpenInTab?: (email: Email) => void;
@@ -54,7 +54,7 @@ export function EmailRow({
   isSelected,
   onClick,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   onOpenInTab,
@@ -236,7 +236,7 @@ export function EmailRow({
           <EmailActionsMenu
             email={email}
             onAddSenderFilter={onAddSenderFilter}
-            onBlockSender={onBlockSender}
+            onHideSenderFromFilters={onHideSenderFromFilters}
             onCreateAttachmentRule={onCreateAttachmentRule}
             onCreateClassificationRule={onCreateClassificationRule}
             onOpenInTab={onOpenInTab}
@@ -301,7 +301,7 @@ export function EmailRow({
             <EmailActionsMenu
               email={email}
               onAddSenderFilter={onAddSenderFilter}
-              onBlockSender={onBlockSender}
+              onHideSenderFromFilters={onHideSenderFromFilters}
               onCreateAttachmentRule={onCreateAttachmentRule}
               onCreateClassificationRule={onCreateClassificationRule}
               onOpenInTab={onOpenInTab}

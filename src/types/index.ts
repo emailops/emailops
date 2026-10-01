@@ -1442,3 +1442,44 @@ export interface JunkStats {
   markedNotJunk: number;
   models: JunkModelInfo[];
 }
+
+// ── Sender controls (block sender, one-click unsubscribe) ───────────────────
+
+/** How a list can be left: RFC 8058 one-click POST, an email, or the
+ *  sender's unsubscribe page (opened in the system browser). */
+export type UnsubscribeKind = 'oneClick' | 'mailto' | 'link';
+
+/** Derived from the message's `List-Unsubscribe` headers by the backend; the
+ *  raw headers never reach the webview. */
+export interface UnsubscribeOption {
+  kind: UnsubscribeKind;
+  /** The host a one-click or link contacts, or the mailto address. */
+  target: string;
+  /** The validated https page to open; only set for `link`. */
+  url: string | null;
+}
+
+/** What the reading pane shows about a message's sender. */
+export interface SenderStatus {
+  /** Lowercase sender address. */
+  address: string;
+  blocked: boolean;
+  unsubscribe: UnsubscribeOption | null;
+  /** Unix seconds of the user's last unsubscribe request for this sender. */
+  unsubscribedAt: number | null;
+}
+
+/** Outcome of moving a sender's existing mail on block (to Spam) or unblock
+ *  (back to the inbox). */
+export interface SenderMoveReport {
+  moved: number;
+  /** Marked junk but left in place: the server has no Junk folder. */
+  localOnly: number;
+  failed: number;
+}
+
+export interface BlockedSender {
+  accountId: string;
+  address: string;
+  createdAt: number;
+}

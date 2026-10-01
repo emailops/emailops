@@ -67,7 +67,8 @@
     "star": "Mit Stern markieren",
     "unstar": "Stern entfernen",
     "archive": "Archivieren",
-    "moveArchivedToInbox": "In den Posteingang verschieben"
+    "moveArchivedToInbox": "In den Posteingang verschieben",
+    "hideFromFilters": "Aus den intelligenten Filtern ausblenden"
   },
   "header": {
     "totalCount": "{{count}} E-Mails",
@@ -268,5 +269,37 @@
     "until": "Zurückgestellt bis {{when}}",
     "marker": "Zurückgestellt",
     "markerTitle": "Aus dem Zurückstellen zurück"
+  },
+  "sender": {
+    "unsubscribe": "Abbestellen",
+    "unsubscribed": "Abbestellt",
+    "unsubscribeTitle": "{{name}} abbestellen?",
+    "unsubscribeOneClick": "EmailOps sendet eine Abmeldeanfrage direkt an {{target}}. Dabei wird der Server des Absenders kontaktiert, nicht Ihr E-Mail-Anbieter; außer der Anfrage selbst wird nichts gesendet.",
+    "unsubscribeMailto": "EmailOps sendet von diesem Konto eine Abmelde-E-Mail an {{target}}. Der Absender sieht, dass sie von Ihnen kommt.",
+    "unsubscribeLink": "Die Abmeldeseite des Absenders auf {{target}} wird in Ihrem Browser geöffnet. Schließen Sie die Abmeldung dort ab.",
+    "unsubscribeConfirm": "Abbestellen",
+    "openPage": "Seite öffnen",
+    "unsubscribeDone": "{{name}} abbestellt. Es kann einige Tage dauern, bis keine E-Mails mehr kommen.",
+    "unsubscribeLinkDone": "Abmeldeseite geöffnet. Schließen Sie die Abmeldung dort ab.",
+    "unsubscribeFailed": "Abbestellen fehlgeschlagen",
+    "alsoBlock": "Diesen Absender auch blockieren",
+    "unsubscribedBanner": "Sie haben diesen Absender am {{date}} abbestellt.",
+    "blockTitle": "{{address}} blockieren?",
+    "blockBody": "Neue E-Mails dieses Absenders landen in diesem Konto direkt im Spam und werden Ihrem E-Mail-Anbieter als Spam gemeldet. Sie können die Blockierung jederzeit aufheben.",
+    "blockMoveExisting": "Vorhandene Nachrichten ebenfalls in den Spam verschieben",
+    "blockConfirm": "Blockieren",
+    "blocked": "{{address}} blockiert",
+    "blockedMoved": "{{address}} blockiert. In den Spam verschobene Nachrichten: {{count}}",
+    "blockLocalOnly": "Nur hier als Junk markierte Nachrichten, weil der Server keinen Junk-Ordner hat: {{count}}",
+    "blockPartial": "Nachrichten, die nicht verschoben werden konnten: {{count}}",
+    "blockFailed": "Absender konnte nicht blockiert werden",
+    "unblockTitle": "Blockierung von {{address}} aufheben?",
+    "unblockBody": "Neue E-Mails dieses Absenders kommen wieder in Ihrem Posteingang an.",
+    "unblockRestore": "Nachrichten im Spam ebenfalls zurück in den Posteingang verschieben",
+    "unblockConfirm": "Blockierung aufheben",
+    "unblocked": "Blockierung von {{address}} aufgehoben",
+    "unblockFailed": "Blockierung konnte nicht aufgehoben werden",
+    "blockedBanner": "Sie haben diesen Absender blockiert. Neue E-Mails landen im Spam.",
+    "unblockAction": "Blockierung aufheben"
   }
 }

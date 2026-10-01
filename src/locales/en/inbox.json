@@ -67,7 +67,8 @@
     "star": "Star",
     "unstar": "Remove star",
     "archive": "Archive",
-    "moveArchivedToInbox": "Move to Inbox"
+    "moveArchivedToInbox": "Move to Inbox",
+    "hideFromFilters": "Hide from smart filters"
   },
   "header": {
     "totalCount": "{{count}} emails",
@@ -268,5 +269,37 @@
     "until": "Snoozed until {{when}}",
     "marker": "Snoozed",
     "markerTitle": "Back from snooze"
+  },
+  "sender": {
+    "unsubscribe": "Unsubscribe",
+    "unsubscribed": "Unsubscribed",
+    "unsubscribeTitle": "Unsubscribe from {{name}}?",
+    "unsubscribeOneClick": "EmailOps will send an unsubscribe request straight to {{target}}. This contacts the sender’s server, not your mail provider; nothing but the request itself is sent.",
+    "unsubscribeMailto": "EmailOps will send an unsubscribe email from this account to {{target}}. The sender will see it comes from you.",
+    "unsubscribeLink": "The sender’s unsubscribe page on {{target}} will open in your browser. Finish unsubscribing there.",
+    "unsubscribeConfirm": "Unsubscribe",
+    "openPage": "Open page",
+    "unsubscribeDone": "Unsubscribed from {{name}}. It can take a few days for their mail to stop.",
+    "unsubscribeLinkDone": "Unsubscribe page opened. Finish there.",
+    "unsubscribeFailed": "Could not unsubscribe",
+    "alsoBlock": "Also block this sender",
+    "unsubscribedBanner": "You unsubscribed from this sender on {{date}}.",
+    "blockTitle": "Block {{address}}?",
+    "blockBody": "New mail from this sender will go straight to Spam in this account, and is reported to your mail provider as spam. You can unblock them any time.",
+    "blockMoveExisting": "Also move their existing messages to Spam",
+    "blockConfirm": "Block",
+    "blocked": "Blocked {{address}}",
+    "blockedMoved": "Blocked {{address}}. Messages moved to Spam: {{count}}",
+    "blockLocalOnly": "Messages marked as junk here only, because the server has no Junk folder: {{count}}",
+    "blockPartial": "Messages that could not be moved: {{count}}",
+    "blockFailed": "Could not block the sender",
+    "unblockTitle": "Unblock {{address}}?",
+    "unblockBody": "Their new mail will arrive in your inbox again.",
+    "unblockRestore": "Also move their messages in Spam back to the inbox",
+    "unblockConfirm": "Unblock",
+    "unblocked": "Unblocked {{address}}",
+    "unblockFailed": "Could not unblock the sender",
+    "blockedBanner": "You blocked this sender. Their new mail goes to Spam.",
+    "unblockAction": "Unblock"
   }
 }

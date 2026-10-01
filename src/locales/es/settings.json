@@ -536,7 +536,7 @@
       "dim": "Sigue donde estaba, solo que la vista lo salta más fácil. Recuperable de un vistazo.",
       "hide": "Se quita de la lista de la bandeja. Sigue accesible desde la búsqueda y desde las carpetas de tu proveedor."
     },
-    "neverMoves": "Ninguna de las dos opciones mueve ni borra nada en el servidor. Eso solo lo hace el botón «Confirmar basura», y solo cuando lo pulsas tú.",
+    "neverMoves": "Ninguna de las dos opciones mueve ni borra correo en el servidor. Solo «Confirmar basura» y «Bloquear remitente» lo hacen, y solo cuando los usas.",
     "phishing": "Avisar de intentos de suplantación",
     "phishingDesc": "Desactivado por defecto. Es la única comprobación que acusa a un mensaje de fraude, y tiene mucha menos evidencia detrás que las otras dos — un banner rojo equivocado cuesta más confianza de la que gana uno acertado.",
     "statusTitle": "Estado",
@@ -554,7 +554,14 @@
     "modelNotYet": "aún sin etiquetas suficientes — {{pos}} basura / {{neg}} legítimos",
     "backfill": "Puntuar {{count}} mensajes antiguos",
     "backfillStarted": "Puntuando mensajes antiguos en segundo plano",
-    "backfillRunning": "Puntuando… quedan {{count}}"
+    "backfillRunning": "Puntuando… quedan {{count}}",
+    "blocked": {
+      "title": "Remitentes bloqueados",
+      "desc": "El correo de estos remitentes se mueve a Spam en cuanto llega.",
+      "empty": "No has bloqueado a nadie. Bloquea a un remitente desde el menú ⋮ de un mensaje.",
+      "since": "bloqueado el {{date}}",
+      "unblock": "Desbloquear"
+    }
   },
   "skills": {
     "enable": "Activar skills",

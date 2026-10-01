@@ -319,7 +319,7 @@ pub async fn move_emails(
 /// concurrent sync already ingested the moved message under its new id,
 /// re-keying would collide — the stale source row is dropped instead. Shared
 /// by folder moves, archive and move-to-inbox.
-pub(super) fn refile_moved_row(db: &Database, old_id: &str, new_id: &str, new_mailbox: &str) -> Result<()> {
+pub(crate) fn refile_moved_row(db: &Database, old_id: &str, new_id: &str, new_mailbox: &str) -> Result<()> {
     if new_id != old_id && db.get_email(new_id)?.is_some() {
         db.hard_delete_email(old_id)
     } else {

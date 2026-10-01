@@ -79,6 +79,11 @@ pub enum AppError {
     #[error("This account has no Archive folder — create a folder named Archive to archive mail")]
     NoArchiveFolder,
 
+    /// Filing a message as spam on an IMAP account with no Junk/Spam folder
+    /// (neither a `\Junk` special-use folder nor one named like it).
+    #[error("This account has no Junk folder to file spam in")]
+    NoSpamFolder,
+
     /// Undo, edit, delete or "send now" on an outbox message that is no
     /// longer waiting: the dispatcher has already started sending it (or it
     /// was sent or cancelled meanwhile).
@@ -123,6 +128,7 @@ impl AppError {
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
             AppError::NoArchiveFolder => "no_archive_folder",
+            AppError::NoSpamFolder => "no_spam_folder",
             AppError::OutboxNotPending => "outbox_not_pending",
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::Skill(problem) => problem.code(),
@@ -162,7 +168,11 @@ impl AppError {
             AppError::AiDataPolicy { model } => {
                 p.insert("model", model.clone());
             }
-            AppError::AiDisabled | AppError::Cancelled | AppError::NoArchiveFolder | AppError::OutboxNotPending => {}
+            AppError::AiDisabled
+            | AppError::Cancelled
+            | AppError::NoArchiveFolder
+            | AppError::NoSpamFolder
+            | AppError::OutboxNotPending => {}
             AppError::AttachmentConfirmationRequired { filename, kind } => {
                 p.insert("filename", filename.clone());
                 p.insert("kind", (*kind).to_string());
@@ -217,6 +227,7 @@ mod tests {
         assert_eq!(AppError::AiDisabled.code(), "ai_disabled");
         assert_eq!(AppError::Cancelled.code(), "cancelled");
         assert_eq!(AppError::NoArchiveFolder.code(), "no_archive_folder");
+        assert_eq!(AppError::NoSpamFolder.code(), "no_spam_folder");
         assert_eq!(AppError::OutboxNotPending.code(), "outbox_not_pending");
         assert_eq!(AppError::NeedsReauth { account_id: "a".into() }.code(), "needs_reauth");
         assert_eq!(

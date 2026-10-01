@@ -33,6 +33,7 @@ pub mod prompts;
 pub mod retrieval;
 pub mod search;
 pub mod secrets_vault;
+pub mod sender_controls;
 pub mod signatures;
 pub mod skills;
 pub mod storage_stats;
@@ -48,6 +49,7 @@ pub mod tasks;
 pub mod thread_clean;
 pub mod thread_reader;
 pub mod translation;
+pub mod unsubscribe;
 // Desktop-only: the GitHub-release update checker. Meaningless for a served app.
 #[cfg(feature = "desktop")]
 pub mod updates;

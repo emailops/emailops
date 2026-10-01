@@ -536,7 +536,7 @@
       "dim": "Bleibt an Ort und Stelle, nur leichter zu überspringen.",
       "hide": "Aus der Liste entfernt. Weiterhin über die Suche und die Ordner Ihres Anbieters erreichbar."
     },
-    "neverMoves": "Keine der Optionen verschiebt oder löscht etwas auf dem Server. Das tut nur die Schaltfläche „Als Spam bestätigen“, und nur wenn Sie sie drücken.",
+    "neverMoves": "Keine der beiden Optionen verschiebt oder löscht E-Mails auf dem Server. Nur „Als Spam bestätigen“ und „Absender blockieren“ tun das, und nur, wenn Sie sie verwenden.",
     "phishing": "Vor Identitätsmissbrauch warnen",
     "phishingDesc": "Standardmäßig aus. Dies ist die einzige Prüfung, die einer Nachricht Betrug vorwirft, und sie hat weit weniger Belege hinter sich als die anderen beiden.",
     "statusTitle": "Status",
@@ -554,7 +554,14 @@
     "modelNotYet": "noch zu wenige Labels — {{pos}} / {{neg}}",
     "backfill": "{{count}} ältere Nachrichten bewerten",
     "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet",
-    "backfillRunning": "Wird bewertet… noch {{count}}"
+    "backfillRunning": "Wird bewertet… noch {{count}}",
+    "blocked": {
+      "title": "Blockierte Absender",
+      "desc": "E-Mails dieser Absender werden beim Eintreffen in den Spam verschoben.",
+      "empty": "Sie haben niemanden blockiert. Blockieren Sie einen Absender über das ⋮-Menü einer Nachricht.",
+      "since": "blockiert am {{date}}",
+      "unblock": "Blockierung aufheben"
+    }
   },
   "skills": {
     "enable": "Skills aktivieren",

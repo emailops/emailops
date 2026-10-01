@@ -654,6 +654,22 @@ pub trait EmailProvider: Send + Sync {
         ))
     }
 
+    /// File one message in the provider's Spam/Junk folder, as the provider's
+    /// own "Report spam" does: Gmail adds `SPAM` and drops `INBOX` (id
+    /// unchanged), Graph moves it to the well-known `junkemail` folder and
+    /// IMAP to the `\Junk` folder (or one named like it) — both re-key it, so
+    /// the answer is the id it has now and the `spam` mailbox.
+    ///
+    /// `AppError::NotFound` means the provider no longer has the message under
+    /// this id; an IMAP account without a Junk folder is
+    /// `AppError::NoSpamFolder`. The inverse is [`Self::move_message`] with
+    /// [`MoveTarget::Inbox`].
+    async fn move_to_spam(&self, _message_id: &str, _message_id_header: Option<&str>) -> Result<MessageLocation> {
+        Err(AppError::InvalidInput(
+            "mailbox state writes are not supported by this provider".to_string(),
+        ))
+    }
+
     /// Move one message to the provider's Trash. Recoverable by the user from
     /// the provider's own UI — this is not a permanent delete.
     ///
@@ -956,6 +972,9 @@ pub enum FakeMailboxOp {
         starred: bool,
     },
     Archive {
+        message_id: String,
+    },
+    Spam {
         message_id: String,
     },
 }
@@ -1740,6 +1759,31 @@ impl EmailProvider for FakeEmailProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(FakeMailboxOp::Archive {
+                message_id: message_id.to_string(),
+            });
+        Ok(location)
+    }
+
+    async fn move_to_spam(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<MessageLocation> {
+        self.record_call("move_to_spam");
+        self.mailbox_write_gate()?;
+        let location = MessageLocation {
+            id: message_id.to_string(),
+            mailbox: "spam".to_string(),
+        };
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.mailbox = location.mailbox.clone();
+        }
+        self.mailbox_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeMailboxOp::Spam {
                 message_id: message_id.to_string(),
             });
         Ok(location)

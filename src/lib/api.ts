@@ -17,6 +17,7 @@ import type {
   AttachmentRule,
   AttachmentRuleSuggestion,
   BackfillStatus,
+  BlockedSender,
   Calendar,
   CalendarEvent,
   CalendarInvite,
@@ -69,6 +70,8 @@ import type {
   RefreshServerTotalResponse,
   ResearchEstimate,
   SendChatResponse,
+  SenderMoveReport,
+  SenderStatus,
   SignatureInput,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -80,6 +83,7 @@ import type {
   TaskCountsSummary,
   ThreadParticipants,
   ThreadState,
+  UnsubscribeKind,
   UpdateLensInput,
 } from '@/types';
 
@@ -2069,12 +2073,49 @@ export async function previewLensExtraction(
 }
 
 /**
- * Confirm a message is junk and file it in the server's Junk folder where the
- * provider supports moves (IMAP today). Resolves to `false` when the account has
- * no server-side Junk folder — the local override is recorded either way.
+ * Confirm a message is junk and file it in the server's Spam/Junk folder
+ * (Gmail `SPAM` label, Outlook Junk Email, the IMAP Junk folder). Resolves to
+ * `false` when the account has no server-side Junk folder — the local override
+ * is recorded either way.
  */
 export async function reportJunkToProvider(accountId: string, emailId: string): Promise<boolean> {
   return invoke('report_junk_to_provider', { accountId, emailId });
+}
+
+/** Sender facts for the reading pane: blocked, unsubscribe option (derived
+ *  from the headers, which stay in the backend), already unsubscribed. */
+export async function getSenderStatus(accountId: string, emailId: string): Promise<SenderStatus> {
+  return invoke('get_sender_status', { accountId, emailId });
+}
+
+/**
+ * Unsubscribe from the list a message came from: a one-click POST to the
+ * list's server, or an email from the receiving account. For a `link` option
+ * the caller opens the page itself first; this only records it. Contacts a
+ * third party — call only after the user confirmed.
+ */
+export async function unsubscribeFromSender(accountId: string, emailId: string): Promise<UnsubscribeKind> {
+  return invoke('unsubscribe_from_sender', { accountId, emailId });
+}
+
+/** Block a sender in one account; with `moveExisting` their inbox and archived
+ *  mail is filed in Spam too. */
+export async function blockSender(
+  accountId: string,
+  address: string,
+  moveExisting: boolean,
+): Promise<SenderMoveReport> {
+  return invoke('block_sender', { accountId, address, moveExisting });
+}
+
+/** Unblock a sender; with `restore` their mail in Spam comes back to the inbox. */
+export async function unblockSender(accountId: string, address: string, restore: boolean): Promise<SenderMoveReport> {
+  return invoke('unblock_sender', { accountId, address, restore });
+}
+
+/** Every blocked sender, or one account's. */
+export async function listBlockedSenders(accountId: string | null): Promise<BlockedSender[]> {
+  return invoke('list_blocked_senders', { accountId });
 }
 
 export async function getJunkConfig(): Promise<JunkConfig> {

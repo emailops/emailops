@@ -818,6 +818,16 @@ impl GmailClient {
 
     /// Add or remove one label (`users.messages.modify`, `gmail.modify`
     /// scope). Answers the message's thread id.
+    /// Add and remove labels in one `messages.modify` call. Returns the
+    /// thread id Gmail reports.
+    async fn modify_labels(&self, message_id: &str, add: &[&str], remove: &[&str], operation: &str) -> Result<String> {
+        let payload = serde_json::json!({ "addLabelIds": add, "removeLabelIds": remove });
+        let url = format!("{}/users/me/messages/{}/modify", self.base_url, message_id);
+        let response = self.send_post_json_with_retry(&url, &payload, operation).await?;
+        let modified: GmailModifiedMessage = response.json().await?;
+        Ok(modified.thread_id.unwrap_or_default())
+    }
+
     async fn modify_label(&self, message_id: &str, label: &str, add: bool, operation: &str) -> Result<String> {
         let payload = if add {
             serde_json::json!({ "addLabelIds": [label] })
@@ -2013,6 +2023,20 @@ impl EmailProvider for GmailClient {
         })
     }
 
+    /// Spam is the `SPAM` label without `INBOX`; the message keeps its id.
+    async fn move_to_spam(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        self.modify_labels(message_id, &["SPAM"], &["INBOX"], "move message to spam")
+            .await?;
+        Ok(provider::MessageLocation {
+            id: message_id.to_string(),
+            mailbox: "spam".to_string(),
+        })
+    }
+
     /// Only the inbox is a move target on Gmail (adding `INBOX` back); the
     /// app maps no user labels to folders.
     async fn move_message(
@@ -2022,9 +2046,11 @@ impl EmailProvider for GmailClient {
         target: &provider::MoveTarget,
     ) -> Result<Option<MessageRef>> {
         match target {
+            // `SPAM` goes too, so the inverse of `move_to_spam` is this move.
+            // Removing a label the message does not carry is a no-op.
             provider::MoveTarget::Inbox => {
                 let thread_id = self
-                    .modify_label(message_id, "INBOX", true, "move message to inbox")
+                    .modify_labels(message_id, &["INBOX"], &["SPAM"], "move message to inbox")
                     .await?;
                 Ok(Some(MessageRef {
                     id: message_id.to_string(),
@@ -3295,6 +3321,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moving_to_spam_adds_the_spam_label_and_drops_the_inbox_one() {
+        let server = modify_server("m-1").await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let location = EmailProvider::move_to_spam(&client, "m-1", None).await.unwrap();
+
+        assert_eq!(
+            location,
+            provider::MessageLocation {
+                id: "m-1".to_string(),
+                mailbox: "spam".to_string()
+            }
+        );
+        assert_eq!(
+            modify_bodies(&server).await,
+            vec![serde_json::json!({ "addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX"] })]
+        );
+    }
+
+    #[tokio::test]
     async fn moving_to_the_inbox_adds_the_inbox_label_back() {
         let server = modify_server("m-1").await;
         let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
@@ -3307,7 +3353,8 @@ mod tests {
         assert_eq!((moved.id.as_str(), moved.thread_id.as_str()), ("m-1", "t-9"));
         assert_eq!(
             modify_bodies(&server).await,
-            vec![serde_json::json!({ "addLabelIds": ["INBOX"] })]
+            vec![serde_json::json!({ "addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"] })],
+            "out of Spam too: a message brought back from spam must not stay labelled SPAM"
         );
         assert!(
             EmailProvider::move_message(&client, "m-1", None, &provider::MoveTarget::Folder("x".into()))

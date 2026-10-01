@@ -67,7 +67,8 @@
     "star": "Ajouter aux favoris",
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
-    "moveArchivedToInbox": "Déplacer vers la boîte de réception"
+    "moveArchivedToInbox": "Déplacer vers la boîte de réception",
+    "hideFromFilters": "Masquer des filtres intelligents"
   },
   "header": {
     "totalCount": "{{count}} courriels",
@@ -268,5 +269,37 @@
     "until": "En attente jusqu’au {{when}}",
     "marker": "En attente",
     "markerTitle": "Revenue de la mise en attente"
+  },
+  "sender": {
+    "unsubscribe": "Se désabonner",
+    "unsubscribed": "Désabonné",
+    "unsubscribeTitle": "Se désabonner de {{name}} ?",
+    "unsubscribeOneClick": "EmailOps enverra une demande de désabonnement directement à {{target}}. Cela contacte le serveur de l’expéditeur, pas votre fournisseur de messagerie ; seule la demande elle-même est envoyée.",
+    "unsubscribeMailto": "EmailOps enverra un e-mail de désabonnement depuis ce compte à {{target}}. L’expéditeur verra qu’il vient de vous.",
+    "unsubscribeLink": "La page de désabonnement de l’expéditeur sur {{target}} s’ouvrira dans votre navigateur. Terminez le désabonnement là-bas.",
+    "unsubscribeConfirm": "Se désabonner",
+    "openPage": "Ouvrir la page",
+    "unsubscribeDone": "Désabonné de {{name}}. Leurs e-mails peuvent mettre quelques jours à s’arrêter.",
+    "unsubscribeLinkDone": "Page de désabonnement ouverte. Terminez là-bas.",
+    "unsubscribeFailed": "Impossible de se désabonner",
+    "alsoBlock": "Bloquer aussi cet expéditeur",
+    "unsubscribedBanner": "Vous vous êtes désabonné de cet expéditeur le {{date}}.",
+    "blockTitle": "Bloquer {{address}} ?",
+    "blockBody": "Les nouveaux e-mails de cet expéditeur iront directement dans les spams de ce compte et seront signalés comme spam à votre fournisseur de messagerie. Vous pouvez le débloquer à tout moment.",
+    "blockMoveExisting": "Déplacer aussi ses messages existants dans les spams",
+    "blockConfirm": "Bloquer",
+    "blocked": "{{address}} bloqué",
+    "blockedMoved": "{{address}} bloqué. Messages déplacés dans les spams : {{count}}",
+    "blockLocalOnly": "Messages marqués comme indésirables ici seulement, car le serveur n’a pas de dossier de courrier indésirable : {{count}}",
+    "blockPartial": "Messages qui n’ont pas pu être déplacés : {{count}}",
+    "blockFailed": "Impossible de bloquer l’expéditeur",
+    "unblockTitle": "Débloquer {{address}} ?",
+    "unblockBody": "Ses nouveaux e-mails arriveront de nouveau dans votre boîte de réception.",
+    "unblockRestore": "Remettre aussi dans la boîte de réception ses messages en spam",
+    "unblockConfirm": "Débloquer",
+    "unblocked": "{{address}} débloqué",
+    "unblockFailed": "Impossible de débloquer l’expéditeur",
+    "blockedBanner": "Vous avez bloqué cet expéditeur. Ses nouveaux e-mails vont dans les spams.",
+    "unblockAction": "Débloquer"
   }
 }

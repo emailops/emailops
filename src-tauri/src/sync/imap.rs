@@ -711,6 +711,46 @@ impl ImapClient {
         Ok((archive_path, new_uid))
     }
 
+    /// The blocking half of [`EmailProvider::move_to_spam`]: the message's
+    /// UID in the Junk folder, when it could be found. Like archive, the UID
+    /// is checked against the Message-ID before anything moves.
+    fn spam_uid_blocking(
+        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+        source: &ImapFolder,
+        uid: u32,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<u32>> {
+        if *source == ImapFolder::Spam {
+            return Ok(Some(uid));
+        }
+        let entries =
+            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let spam_path = resolve_role_folder(WellKnownFolder::Spam, &entries).ok_or(AppError::NoSpamFolder)?;
+        if !Self::select_folder_blocking(session, source) {
+            return Err(AppError::SyncError(format!(
+                "IMAP source folder {source:?} not found on server"
+            )));
+        }
+        if let Some(header) = message_id_header {
+            let holds_it = imap_search::uid_search(session, &format!("UID {uid} HEADER Message-ID \"{header}\""))?;
+            if !holds_it.contains(&uid) {
+                return Err(AppError::SyncError(
+                    "The message changed on the server since the last sync; sync the account and try again".to_string(),
+                ));
+            }
+        }
+        Self::move_uid_blocking(session, uid, &spam_path)?;
+        let mut new_uid = None;
+        if let Some(header) = message_id_header {
+            if imap_search::select(session, &spam_path).is_ok() {
+                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                    new_uid = found.into_iter().max();
+                }
+            }
+        }
+        Ok(new_uid)
+    }
+
     /// Connect and login synchronously — intended for use inside `spawn_blocking`.
     ///
     /// Enforces TCP connect / read / write timeouts so a wrong host or an
@@ -1774,6 +1814,39 @@ impl EmailProvider for ImapClient {
                 |u| self.make_folder_email_id(&archive_path, u),
             ),
             mailbox: format!("folder:{archive_path}"),
+        })
+    }
+
+    /// Move the message to the account's Junk folder
+    /// ([`WellKnownFolder::Spam`]); none is [`AppError::NoSpamFolder`]. The
+    /// row is re-keyed to the `SPAM::` id the Spam sync pass gives it, so the
+    /// next pass recognises it instead of storing a second copy.
+    async fn move_to_spam(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        let (source, uid_str) = self.parse_message_ref(message_id);
+        let uid: u32 = uid_str
+            .parse()
+            .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
+        let header = message_id_header
+            .map(str::trim)
+            .filter(|h| !h.is_empty() && !h.contains('"'))
+            .map(str::to_string);
+        let creds = self.credentials.clone();
+        let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
+            let mut session =
+                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let result = Self::spam_uid_blocking(&mut session, &source, uid, header.as_deref());
+            let _ = session.logout();
+            result
+        })
+        .await
+        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        Ok(provider::MessageLocation {
+            id: new_uid.map_or_else(|| message_id.to_string(), |u| self.located_id(&ImapFolder::Spam, u)),
+            mailbox: ImapFolder::Spam.mailbox_value(),
         })
     }
 

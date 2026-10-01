@@ -39,6 +39,7 @@ import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
 import { SkillsView } from '@/components/Skills/SkillsView';
+import { SenderDialogs } from '@/components/shared/SenderDialogs';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
@@ -467,7 +468,7 @@ function AppInner() {
     removeFilter: handleRemoveFilter,
     forceRefresh: forceRefreshFilters,
     addSenderAsFilter,
-    blockSender: handleBlockSender,
+    hideSenderFromFilters: handleHideSenderFromFilters,
     isPinned: isFilterPinned,
   } = useSmartFilters();
 
@@ -1604,7 +1605,7 @@ function AppInner() {
                 onChangeDensity={setTagBoardDensity}
                 cardActions={{
                   onAddSenderFilter: addSenderAsFilter,
-                  onBlockSender: handleBlockSender,
+                  onHideSenderFromFilters: handleHideSenderFromFilters,
                   onCreateAttachmentRule: handleCreateAttachmentRule,
                   onCreateClassificationRule: (prefill) => {
                     setClassificationRulePrefill(prefill);
@@ -1704,7 +1705,7 @@ function AppInner() {
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onAddSenderFilter={addSenderAsFilter}
-                    onBlockSender={handleBlockSender}
+                    onHideSenderFromFilters={handleHideSenderFromFilters}
                     onCreateAttachmentRule={handleCreateAttachmentRule}
                     onCreateClassificationRule={(prefill) => {
                       setClassificationRulePrefill(prefill);
@@ -1831,6 +1832,7 @@ function AppInner() {
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
       <ToastHost />
       <ShortcutHelpModal />
+      <SenderDialogs />
 
       {isSearchOpen && (
         <SearchBar

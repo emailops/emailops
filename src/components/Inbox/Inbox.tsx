@@ -28,7 +28,7 @@ interface InboxProps {
   onSelectEmail: (email: Email, opts?: { auto?: boolean }) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   selectedCategories: Set<EmailCategory>;
@@ -156,7 +156,7 @@ export function Inbox({
   onSelectEmail,
   onLoadMore,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   selectedCategories,
@@ -613,7 +613,7 @@ export function Inbox({
         onSelectEmail={handleSelectEmail}
         onLoadMore={onLoadMore}
         onAddSenderFilter={onAddSenderFilter}
-        onBlockSender={onBlockSender}
+        onHideSenderFromFilters={onHideSenderFromFilters}
         onCreateAttachmentRule={onCreateAttachmentRule}
         onCreateClassificationRule={onCreateClassificationRule}
         onOpenInTab={onOpenInTab}

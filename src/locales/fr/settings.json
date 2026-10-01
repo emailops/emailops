@@ -536,7 +536,7 @@
       "dim": "Toujours à leur place, simplement plus faciles à ignorer.",
       "hide": "Retirés de la liste. Toujours accessibles par la recherche et les dossiers de votre fournisseur."
     },
-    "neverMoves": "Aucune de ces options ne déplace ni ne supprime quoi que ce soit sur le serveur. Seul le bouton « Confirmer » le fait, et seulement si vous le pressez.",
+    "neverMoves": "Aucune de ces options ne déplace ni ne supprime de courrier sur le serveur. Seuls les boutons « Confirmer » d’un message indésirable et « Bloquer l'expéditeur » le font, et seulement quand vous les utilisez.",
     "phishing": "Avertir des tentatives d'usurpation",
     "phishingDesc": "Désactivé par défaut. C'est la seule vérification qui accuse un message de fraude, et elle repose sur beaucoup moins de preuves que les deux autres.",
     "statusTitle": "État",
@@ -554,7 +554,14 @@
     "modelNotYet": "pas assez d'étiquettes — {{pos}} / {{neg}}",
     "backfill": "Analyser {{count}} anciens messages",
     "backfillStarted": "Analyse des anciens messages en arrière-plan",
-    "backfillRunning": "Analyse… {{count}} restants"
+    "backfillRunning": "Analyse… {{count}} restants",
+    "blocked": {
+      "title": "Expéditeurs bloqués",
+      "desc": "Le courrier de ces expéditeurs est déplacé dans les spams dès son arrivée.",
+      "empty": "Vous n’avez bloqué personne. Bloquez un expéditeur depuis le menu ⋮ d’un message.",
+      "since": "bloqué le {{date}}",
+      "unblock": "Débloquer"
+    }
   },
   "skills": {
     "enable": "Activer les skills",

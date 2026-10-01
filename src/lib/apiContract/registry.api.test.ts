@@ -25,6 +25,7 @@ const CHECKED_FILES = [
   'prompts.rs',
   'search.rs',
   'security.rs',
+  'sender_controls.rs',
   'skills.rs',
   'system.rs',
   'translation.rs',

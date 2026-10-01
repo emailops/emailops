@@ -807,6 +807,16 @@ pub async fn sync_account_with_provider(
                         }
                     }
 
+                    // Also before the batch is announced: mail from a blocked
+                    // sender goes to Spam without ever showing in the inbox.
+                    crate::services::sender_controls::file_blocked_arrivals(
+                        db,
+                        account,
+                        email_provider.as_ref(),
+                        &emails_only,
+                    )
+                    .await;
+
                     all_new_ids.extend(ids_to_remove);
                     synced_count += chunk_emails.len() as u32;
 
