@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { mailProviderName } from '@/lib/providerNames';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
 import { SettingsPanel } from './SettingsPanel';
@@ -158,7 +159,7 @@ export function NotificationsSettings({ accounts }: { accounts: Account[] }) {
                 <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
                   <div className="min-w-0">
                     <span className="text-sm text-gray-100 block truncate">{account.email}</span>
-                    <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
+                    <span className="text-xs text-gray-500">{mailProviderName(account.provider)}</span>
                   </div>
                   <Switch
                     label={t('notifications.accountToggleAria', { email: account.email })}

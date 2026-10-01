@@ -4,6 +4,7 @@ import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { calendarColor } from '@/lib/calendarColor';
 import { errorText, isAuthError } from '@/lib/errors';
+import { mailProviderName } from '@/lib/providerNames';
 import { useAccountStore } from '@/stores/accountStore';
 import { calendarCapableAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
@@ -229,7 +230,7 @@ export function CalendarSettings() {
                   <div className="flex items-center justify-between gap-4 px-4 py-3">
                     <div className="min-w-0">
                       <span className="text-sm text-gray-100 block truncate">{account.email}</span>
-                      <span className="text-xs text-gray-500 capitalize">{account.provider}</span>
+                      <span className="text-xs text-gray-500">{mailProviderName(account.provider)}</span>
                     </div>
                     <button
                       type="button"
