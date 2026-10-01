@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposeSignature } from '@/hooks/useComposeSignature';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -18,6 +19,7 @@ import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/com
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
+import { bodyWithoutSignature, stripSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
@@ -155,6 +157,17 @@ export function ReplyCompose({
   const [bodyHtml, setBodyHtml] = useState<string>(() =>
     restoredDraft ? (restoredDraft.bodyHtml ?? plainTextToHtml(restoredDraft.body)) : plainTextToHtml(initialBody),
   );
+  // The From account's signature: between the reply and the quoted original.
+  // A restored draft already holds one; it is replaced, never duplicated.
+  const { withSignature, withDraftSignature } = useComposeSignature(fromAccountId, setBodyHtml);
+  const withSignatureRef = useRef(withSignature);
+  withSignatureRef.current = withSignature;
+  const withDraftSignatureRef = useRef(withDraftSignature);
+  withDraftSignatureRef.current = withDraftSignature;
+  // True while an AI draft is pending, so the body it produces is signed per
+  // the AI sign-off setting rather than always with the custom signature.
+  const awaitingDraftRef = useRef(isLoadingDraft);
+  if (isLoadingDraft) awaitingDraftRef.current = true;
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   // Thread-language detection (populated by the reading view when the email
@@ -165,12 +178,17 @@ export function ReplyCompose({
   // Sync body when the parent updates initialBody (e.g. AI draft generation
   // replaces the "Generating draft..." placeholder with the actual draft).
   // Only on a change: on mount the body is already set, and a restored draft
-  // must not be replaced by the empty template.
+  // must not be replaced by the empty template. The new body replaces the old
+  // one, so the signature is re-attached — for an AI draft, according to the
+  // AI sign-off setting.
   const appliedInitialBody = useRef(initialBody);
   useEffect(() => {
     if (appliedInitialBody.current === initialBody) return;
     appliedInitialBody.current = initialBody;
-    setBodyHtml(plainTextToHtml(initialBody));
+    const fromDraft = awaitingDraftRef.current && initialBody.trim() !== '';
+    if (fromDraft) awaitingDraftRef.current = false;
+    const sign = fromDraft ? withDraftSignatureRef.current : withSignatureRef.current;
+    setBodyHtml(sign(plainTextToHtml(initialBody)));
   }, [initialBody]);
 
   // Compute initial recipients
@@ -241,8 +259,12 @@ export function ReplyCompose({
   useEffect(() => {
     if (!keepsDraft || isLoadingDraft) return;
     const opened = openedWith.current;
+    // Compared without the signature: it is added after the panel opens (it
+    // loads asynchronously), and adding it is not the user writing anything.
     const edited =
-      bodyHtml !== opened.body || toRecipients.join() !== opened.to.join() || ccRecipients.join() !== opened.cc.join();
+      stripSignature(bodyHtml) !== stripSignature(opened.body) ||
+      toRecipients.join() !== opened.to.join() ||
+      ccRecipients.join() !== opened.cc.join();
     if (!edited) return;
     const state = {
       emailId: restoredDraft?.emailId ?? email.id,
@@ -413,10 +435,13 @@ export function ReplyCompose({
     // recipient the user means — it must not be dropped from the send.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
-    if (to.length === 0 || !plain) return;
+    // A signature alone is not a reply (a forward may carry only the quote).
+    const written = bodyWithoutSignature(bodyHtml);
+    if (to.length === 0 || !written) return;
     // A forward quotes someone else's text, which may well say "attached".
+    // The signature is not checked either ("attachments are confidential"…).
     if (!force && mode !== 'forward') {
-      const warnings = findSendWarnings(plain, attachments.length);
+      const warnings = findSendWarnings(written, attachments.length);
       if (warnings.length > 0) {
         setSendWarnings(warnings);
         return;
@@ -676,7 +701,10 @@ export function ReplyCompose({
           type="button"
           onClick={() => void handleSend()}
           disabled={
-            isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
+            isSending ||
+            isLoadingDraft ||
+            mergePendingRecipient(toRecipients, toInput).length === 0 ||
+            !bodyWithoutSignature(bodyHtml)
           }
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >

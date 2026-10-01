@@ -431,7 +431,19 @@
     "resetToDefault": "Reset to default",
     "promptHelpStart": "Full template the AI receives. Placeholders:",
     "promptHelpEnd": ". Anything else is passed through as literal text.",
-    "saved": "Saved."
+    "saved": "Saved.",
+    "signoff": "How AI drafts end",
+    "signoffHelp": "Applies to AI reply drafts and new-email drafts.",
+    "signoffOptions": {
+      "signature": "Closing line + my custom signature",
+      "signatureDesc": "The AI writes \"Best regards,\" without a name; your account signature (text and image) is added below.",
+      "name": "Closing line + a name",
+      "nameDesc": "The AI signs with the name you type below.",
+      "none": "Nothing",
+      "noneDesc": "No closing line and no name."
+    },
+    "signoffName": "Name to sign with",
+    "signoffNamePlaceholder": "e.g. Maxime"
   },
   "aiSearch": {
     "title": "AI search",

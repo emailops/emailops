@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposeSignature } from '@/hooks/useComposeSignature';
 import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -19,6 +20,7 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
+import { bodyWithoutSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
 import type { Account } from '@/types';
 
@@ -84,6 +86,8 @@ export function ComposeModal({
   const [subject, setSubject] = useState('');
   // Rich-text HTML body. Empty string → editor shows empty state.
   const [bodyHtml, setBodyHtml] = useState('');
+  // The From account's signature, kept in the body (swapped on account change).
+  const { withDraftSignature } = useComposeSignature(fromAccountId, setBodyHtml);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -137,8 +141,9 @@ export function ComposeModal({
     }
     // Replace the body with the generated draft (the typed text was the
     // brief, sent as instructions). Convert plain text → HTML so the
-    // rich-text editor renders line breaks correctly.
-    setBodyHtml(plainTextToHtml(outcome.event.body));
+    // rich-text editor renders line breaks correctly. The signature is
+    // re-attached: the draft replaced the whole body.
+    setBodyHtml(withDraftSignature(plainTextToHtml(outcome.event.body)));
     addLog('success', 'ai', 'AI draft ready');
   };
 
@@ -310,7 +315,8 @@ export function ComposeModal({
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) {
+    // A body holding only the signature is not a draft worth saving.
+    if (!shouldAutosaveDraft({ ...state, plainBody: bodyWithoutSignature(bodyHtml) })) {
       // Sending / sent: a save still waiting must not resurrect the draft.
       debouncedRef.current.cancel();
       return;
@@ -348,7 +354,8 @@ export function ComposeModal({
     const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain || isLoadingAttachments) return;
+    // A signature alone is not a message.
+    if (to.length === 0 || !subject.trim() || !bodyWithoutSignature(bodyHtml) || isLoadingAttachments) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -389,7 +396,8 @@ export function ComposeModal({
     // Whatever the user has already typed in the body becomes the freeform
     // brief for the model (subject is folded in backend-side). Empty is fine —
     // the model then drafts purely from recipients + subject.
-    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    // The signature is not part of the brief.
+    const brief = bodyWithoutSignature(bodyHtml);
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
     draftTrackerRef.current.begin();
@@ -754,7 +762,7 @@ export function ComposeModal({
               isLoadingAttachments ||
               mergePendingRecipient(toRecipients, toInput).length === 0 ||
               !subject.trim() ||
-              !bodyHtml.trim()
+              !bodyWithoutSignature(bodyHtml)
             }
             className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
           >

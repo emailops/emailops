@@ -16,10 +16,18 @@ Language: Match the language of the original email.
 
 {thread_context}
 {rag_context}
-{instructions}Write the reply (body only, no subject line, no signature):`;
+{instructions}Write the reply (body only, no subject line, ending as instructed above):`;
 
 const DEFAULT_PERSONA = 'a freelance CTO and technical consultant';
 const DEFAULT_STYLE = 'concise, friendly but professional, uses short paragraphs, avoids corporate jargon';
+
+/** How an AI draft ends. Mirror of `DraftSignoff` in `services/emails/drafts.rs`. */
+type Signoff = 'signature' | 'name' | 'none';
+const SIGNOFFS: Signoff[] = ['signature', 'name', 'none'];
+
+function parseSignoff(value: string | null): Signoff {
+  return value === 'name' || value === 'none' ? value : 'signature';
+}
 
 export function AiDraftsSettings() {
   const { t } = useTranslation(['common', 'settings']);
@@ -32,20 +40,26 @@ export function AiDraftsSettings() {
   const [persona, setPersona] = useState(DEFAULT_PERSONA);
   const [style, setStyle] = useState(DEFAULT_STYLE);
   const [promptTemplate, setPromptTemplate] = useState(DEFAULT_PROMPT_TEMPLATE);
+  const [signoff, setSignoff] = useState<Signoff>('signature');
+  const [signoffName, setSignoffName] = useState('');
 
   useEffect(() => {
     void (async () => {
       try {
-        const [en, pers, sty, tpl] = await Promise.all([
+        const [en, pers, sty, tpl, so, soName] = await Promise.all([
           api.getPref('ai_drafts_enabled'),
           api.getPref('draft_persona'),
           api.getPref('draft_style'),
           api.getPref('draft_prompt_template'),
+          api.getPref('draft_signoff'),
+          api.getPref('draft_signoff_name'),
         ]);
         setEnabled(en !== 'false');
         if (pers) setPersona(pers);
         if (sty) setStyle(sty);
         if (tpl) setPromptTemplate(tpl);
+        setSignoff(parseSignoff(so));
+        if (soName) setSignoffName(soName);
       } catch (e) {
         setError(errorText(e));
       } finally {
@@ -64,6 +78,9 @@ export function AiDraftsSettings() {
         api.setPref('draft_persona', persona.trim() || DEFAULT_PERSONA),
         api.setPref('draft_style', style.trim() || DEFAULT_STYLE),
         api.setPref('draft_prompt_template', promptTemplate.trim() ? promptTemplate : DEFAULT_PROMPT_TEMPLATE),
+        // "Name" without a name would sign with nothing: save it as the default instead.
+        api.setPref('draft_signoff', signoff === 'name' && !signoffName.trim() ? 'signature' : signoff),
+        api.setPref('draft_signoff_name', signoffName.trim()),
       ]);
       setSuccess(t('settings:aiDrafts.saved'));
       setTimeout(() => setSuccess(null), 2000);
@@ -154,6 +171,44 @@ export function AiDraftsSettings() {
           className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
           placeholder={DEFAULT_STYLE}
         />
+      </section>
+
+      <section>
+        <span className="block text-sm font-medium text-gray-300 mb-1">{t('settings:aiDrafts.signoff')}</span>
+        <p className="text-xs text-gray-500 mb-2">{t('settings:aiDrafts.signoffHelp')}</p>
+        <div role="radiogroup" aria-label={t('settings:aiDrafts.signoff')} className="space-y-2">
+          {SIGNOFFS.map((option) => (
+            <label key={option} className="flex items-start gap-2 text-sm text-gray-300 cursor-pointer">
+              <input
+                type="radio"
+                name="draft-signoff"
+                value={option}
+                checked={signoff === option}
+                onChange={() => setSignoff(option)}
+                disabled={!enabled}
+                className="mt-0.5"
+              />
+              <span>
+                {t(`settings:aiDrafts.signoffOptions.${option}` as const)}
+                <span className="block text-xs text-gray-500">
+                  {t(`settings:aiDrafts.signoffOptions.${option}Desc` as const)}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {signoff === 'name' && (
+          <input
+            type="text"
+            value={signoffName}
+            onChange={(e) => setSignoffName(e.target.value)}
+            disabled={!enabled}
+            maxLength={80}
+            aria-label={t('settings:aiDrafts.signoffName')}
+            placeholder={t('settings:aiDrafts.signoffNamePlaceholder')}
+            className="mt-2 w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
+          />
+        )}
       </section>
 
       <section>

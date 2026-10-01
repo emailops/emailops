@@ -43,7 +43,63 @@ Language: Match the language of the original email.
 
 {thread_context}
 {rag_context}
-{instructions}Write the reply (body only, no subject line, no signature):"#;
+{instructions}Write the reply (body only, no subject line, ending as instructed above):"#;
+
+/// How an AI draft ends. Preference `draft_signoff`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DraftSignoff {
+    /// No closing line and no name: the model stops after the last sentence.
+    None,
+    /// A short closing line ("Cordialement,") followed by this name.
+    Name(String),
+    /// A short closing line with no name; the app appends the account's
+    /// custom signature (text + image) below the draft. The default.
+    Signature,
+}
+
+impl DraftSignoff {
+    /// Read `draft_signoff` (`none` / `name` / `signature`) and, for `name`,
+    /// `draft_signoff_name`. `name` without a usable name, or an unknown
+    /// value, falls back to `Signature`.
+    pub fn from_prefs(mode: Option<&str>, name: Option<&str>) -> Self {
+        match mode.map(str::trim) {
+            Some("none") => Self::None,
+            Some("name") => match name.map(str::trim).filter(|n| !n.is_empty()) {
+                Some(n) => Self::Name(truncate_utf8(n, 80).to_string()),
+                None => Self::Signature,
+            },
+            _ => Self::Signature,
+        }
+    }
+
+    fn load(db: &Database) -> Result<Self> {
+        let mode = db.get_preference("draft_signoff")?;
+        let name = db.get_preference("draft_signoff_name")?;
+        Ok(Self::from_prefs(mode.as_deref(), name.as_deref()))
+    }
+
+    /// The sign-off rule appended to the prompt, just before the model writes.
+    /// Stated explicitly because models add "Best, Maxime" on their own
+    /// otherwise, and the app's signature would then follow a second name.
+    /// Prefixed "Sign-off rule (overrides …)" so it also wins over a saved
+    /// custom template that still ends with the old "no signature" wording.
+    pub fn prompt_rule(&self) -> String {
+        let rule = match self {
+            Self::None => "end the email after its last sentence: no closing line (no \"Best regards\", \
+\"Cordialement\", etc.) and no name or signature."
+                .to_string(),
+            Self::Name(name) => format!(
+                "end with a short closing line in the email's language (e.g. \"Best regards,\" or \
+\"Cordialement,\"), then the name \"{name}\" on its own line. Nothing after the name."
+            ),
+            Self::Signature => "end with a short closing line in the email's language (e.g. \"Best regards,\" or \
+\"Cordialement,\") and stop there: do NOT write any name, title, company or contact details after it \
+— the user's signature is added automatically below."
+                .to_string(),
+        };
+        format!("Sign-off rule (overrides any other instruction about signatures): {rule}\n")
+    }
+}
 
 /// One past thread fed into the draft prompt as precedent. Returned to the
 /// frontend so the user can see *why* the draft looks the way it does and
@@ -134,6 +190,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         build_style_context(&style_samples, &email.sender),
         build_rag_context(&sources, &user_email)
     );
+    let signoff = DraftSignoff::load(db)?;
     let prompt = plan_reply_prompt(&ReplyPromptInput {
         template: &prompt_template,
         persona: &persona,
@@ -141,6 +198,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         thread: &thread_messages,
         rag_context: &rag_context,
         instructions,
+        signoff: &signoff,
     });
 
     // ── Model call ───────────────────────────────────────────────────────
@@ -233,7 +291,7 @@ Write the entire email in {lang}.\n\n\
 Compose a NEW email (not a reply). There is no prior thread to reference.\n\n\
 Recipients: {recipients}\n\
 Subject: {subject}\n\n\
-{instructions_section}Write the body only (no subject line, no greeting headers, no signature):",
+{instructions_section}Write the body only (no subject line, no greeting headers, ending as instructed above):",
         persona = persona,
         style = style,
         lang = language.english_name(),
@@ -283,9 +341,12 @@ pub async fn generate_new_draft(
         ),
     );
 
+    let signoff = DraftSignoff::load(db)?;
     let instructions_section = match instructions {
-        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
-        _ => String::new(),
+        Some(i) if !i.trim().is_empty() => {
+            format!("Additional instructions: {}\n{}\n", i.trim(), signoff.prompt_rule())
+        }
+        _ => format!("{}\n", signoff.prompt_rule()),
     };
 
     // Honor the user's explicit AI output language (ai_output_language_v2 →
@@ -459,6 +520,9 @@ struct ReplyPromptInput<'a> {
     thread: &'a [ThreadMessage],
     rag_context: &'a str,
     instructions: Option<&'a str>,
+    /// How the draft ends; its rule goes right before the final "Write the
+    /// reply" line so it is the last thing the model reads.
+    signoff: &'a DraftSignoff,
 }
 
 /// The reply prompt split for the prefix KV cache: `prefix` depends only on
@@ -492,9 +556,15 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .unwrap_or(template.len());
     let (prefix, suffix_template) = template.split_at(split);
 
+    // The sign-off rule rides in the per-draft `{instructions}` slot, so the
+    // cached prefix and user-edited templates are unaffected.
     let instructions_section = match input.instructions {
-        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
-        _ => String::new(),
+        Some(i) if !i.trim().is_empty() => format!(
+            "Additional instructions: {}\n{}\n",
+            i.trim(),
+            input.signoff.prompt_rule()
+        ),
+        _ => format!("{}\n", input.signoff.prompt_rule()),
     };
 
     let fixed_len = template.len() + input.rag_context.len() + instructions_section.len();
@@ -1088,6 +1158,15 @@ mod tests {
     }
 
     fn plan(thread: &[ThreadMessage], rag: &str, instructions: Option<&str>) -> ReplyPrompt {
+        plan_with(thread, rag, instructions, &DraftSignoff::Signature)
+    }
+
+    fn plan_with(
+        thread: &[ThreadMessage],
+        rag: &str,
+        instructions: Option<&str>,
+        signoff: &DraftSignoff,
+    ) -> ReplyPrompt {
         plan_reply_prompt(&ReplyPromptInput {
             template: DEFAULT_PROMPT_TEMPLATE,
             persona: "a consultant",
@@ -1095,6 +1174,7 @@ mod tests {
             thread,
             rag_context: rag,
             instructions,
+            signoff,
         })
     }
 
@@ -1119,7 +1199,11 @@ mod tests {
     fn reply_prompt_never_cuts_the_closing_instruction() {
         let huge = "x".repeat(60_000);
         let p = plan(&[msg("Alice", &huge), msg("Bob", &huge)], "", Some("say yes"));
-        assert!(p.suffix.trim_end().ends_with("no signature):"));
+        assert!(p.suffix.trim_end().ends_with("ending as instructed above):"));
+        assert!(
+            p.suffix.contains("do NOT write any name"),
+            "sign-off rule must survive truncation"
+        );
         assert!(p.suffix.contains("say yes"));
         assert!(p.prefix.len() + p.suffix.len() <= MAX_PROMPT_CHARS + 500);
     }
@@ -1140,8 +1224,46 @@ mod tests {
             thread: &[msg("Alice", "hi")],
             rag_context: "",
             instructions: None,
+            signoff: &DraftSignoff::Signature,
         });
         assert_eq!(format!("{}{}", p.prefix, p.suffix), "Just write something nice.");
+    }
+
+    // ── DraftSignoff ──────────────────────────────────────────────────────
+
+    #[test]
+    fn signoff_prefs_default_to_the_custom_signature() {
+        assert_eq!(DraftSignoff::from_prefs(None, None), DraftSignoff::Signature);
+        assert_eq!(DraftSignoff::from_prefs(Some("garbage"), None), DraftSignoff::Signature);
+        assert_eq!(DraftSignoff::from_prefs(Some("none"), None), DraftSignoff::None);
+        assert_eq!(
+            DraftSignoff::from_prefs(Some("name"), Some("  Maxime Theriault ")),
+            DraftSignoff::Name("Maxime Theriault".into())
+        );
+        // "name" with no name to use is the signature mode, never a nameless "Name".
+        assert_eq!(
+            DraftSignoff::from_prefs(Some("name"), Some("  ")),
+            DraftSignoff::Signature
+        );
+    }
+
+    #[test]
+    fn reply_prompt_tells_the_model_how_to_sign_off() {
+        let thread = [msg("Alice", "can we meet?")];
+
+        let sig = plan_with(&thread, "", None, &DraftSignoff::Signature);
+        assert!(sig.suffix.contains("do NOT write any name"));
+
+        let named = plan_with(&thread, "", Some("say yes"), &DraftSignoff::Name("Maxime".into()));
+        assert!(named.suffix.contains("the name \"Maxime\""));
+        assert!(named.suffix.contains("say yes"), "user instructions must be kept");
+
+        let none = plan_with(&thread, "", None, &DraftSignoff::None);
+        assert!(none.suffix.contains("no closing line"));
+
+        // The rule is per-draft: the cached prefix is identical in every mode.
+        assert_eq!(sig.prefix, named.prefix);
+        assert_eq!(sig.prefix, none.prefix);
     }
 
     // ── build_style_context ───────────────────────────────────────────────

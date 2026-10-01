@@ -339,6 +339,15 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_width_of_an_inline_signature_image() {
+        // The per-account signature image is sent as a cid: part with the
+        // width the user picked; it must reach the recipient unchanged.
+        let out = sanitize_outgoing_html(r#"<p>--</p><p>Max</p><img src="cid:sig-1" alt="Signature" width="160">"#);
+        assert!(out.contains(r#"src="cid:sig-1""#), "signature image lost: {out}");
+        assert!(out.contains(r#"width="160""#), "signature width lost: {out}");
+    }
+
+    #[test]
     fn empty_input_returns_empty() {
         assert_eq!(sanitize_outgoing_html(""), "");
     }
