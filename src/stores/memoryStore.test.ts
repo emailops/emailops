@@ -223,7 +223,7 @@ describe('memoryStore tasks', () => {
     expect(useMemoryStore.getState().tasks.map((t) => t.id)).toEqual(['t2']);
     pending.resolve();
     await done;
-    expect(api.updatePendingTaskStatus).toHaveBeenCalledWith('t1', 'done');
+    expect(api.updatePendingTaskStatus).toHaveBeenCalledWith('acc-1', 't1', 'done');
   });
 
   it('keeps a task that is set back to open in the list', async () => {
@@ -277,7 +277,7 @@ describe('memoryStore facts', () => {
     expect(useMemoryStore.getState().facts[0].status).toBe('promoted');
     await settle();
 
-    expect(api.promoteMemoryFact).toHaveBeenCalledWith('f1');
+    expect(api.promoteMemoryFact).toHaveBeenCalledWith('acc-1', 'f1');
     expect(api.getMemoryCounts).toHaveBeenCalled();
     expect(api.listMemoryFacts).toHaveBeenCalledWith('acc-1', { status: 'candidate' });
   });
@@ -326,7 +326,7 @@ describe('memoryStore facts', () => {
     useMemoryStore.setState({ accountId: 'acc-1', facts: [fact('f1')] });
     await useMemoryStore.getState().updateFact('f1', 'Prefers morning meetings');
     expect(useMemoryStore.getState().facts[0].fact).toBe('Prefers morning meetings');
-    expect(api.updateMemoryFact).toHaveBeenCalledWith('f1', 'Prefers morning meetings');
+    expect(api.updateMemoryFact).toHaveBeenCalledWith('acc-1', 'f1', 'Prefers morning meetings');
 
     api.updateMemoryFact.mockRejectedValue(new Error('refused'));
     await expect(useMemoryStore.getState().updateFact('f1', 'Other text')).rejects.toThrow('refused');

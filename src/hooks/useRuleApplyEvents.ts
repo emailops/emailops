@@ -8,6 +8,8 @@ import { useLogStore } from '@/stores/logStore';
 /** Payload of `attachment-rule-apply-finished`. */
 export interface RuleApplyFinished {
   ruleId: string;
+  /** The account the rule belongs to. */
+  accountId: string;
   runId: string;
   status: 'done' | 'failed' | 'cancelled';
   saved: number;
@@ -31,6 +33,7 @@ export function isRuleApplyFinished(p: unknown): p is RuleApplyFinished {
   const o = p as Record<string, unknown>;
   return (
     typeof o.ruleId === 'string' &&
+    typeof o.accountId === 'string' &&
     typeof o.runId === 'string' &&
     (o.status === 'done' || o.status === 'failed' || o.status === 'cancelled') &&
     typeof o.saved === 'number' &&
@@ -54,7 +57,7 @@ export function useRuleApplyEvents(onApplied: () => void) {
   onAppliedRef.current = onApplied;
 
   useEffect(() => {
-    const finished = async ({ ruleId, runId, status, saved, error }: RuleApplyFinished) => {
+    const finished = async ({ ruleId, accountId, runId, status, saved, error }: RuleApplyFinished) => {
       if (status === 'cancelled') {
         // Superseded by a newer scan, or the rule was edited / deleted.
         dropRuleApply(ruleId, runId);
@@ -70,7 +73,7 @@ export function useRuleApplyEvents(onApplied: () => void) {
       }
       // `saved` is only what this run added; re-applying an edited rule adds
       // nothing new, and "0" read as if the rule had found nothing.
-      const collected = await api.countAttachmentsForRule(ruleId).catch((err) => {
+      const collected = await api.countAttachmentsForRule(accountId, ruleId).catch((err) => {
         addLog('error', 'attachments', `Failed to count rule attachments: ${errorText(err)}`);
         return undefined;
       });

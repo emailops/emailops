@@ -127,6 +127,7 @@ describe('chatStore selectConversation', () => {
     // backgrounded conversation is dropped by handleStreamToken's conversation
     // guard, so the streaming flags are still set when the user returns.
     useChatStore.setState({
+      currentAccountId: 'acc-1',
       activeConversationId: 'conv-2',
       streamingMessageId: 'msg-1',
       streamingPhase: 'runningTools',
@@ -548,6 +549,7 @@ describe('a running turn survives leaving its conversation', () => {
     vi.clearAllMocks();
     // A research turn mid-flight in conv-1: no answer text yet, only status.
     useChatStore.setState({
+      currentAccountId: 'acc-1',
       conversations: [],
       activeConversationId: 'conv-1',
       messages: [msg('user-1', 'user', 'q'), msg('msg-1', 'assistant')],
@@ -558,7 +560,7 @@ describe('a running turn survives leaving its conversation', () => {
       isSending: false,
       error: null,
     });
-    vi.mocked(api.getChatMessages).mockImplementation(async (id: string) =>
+    vi.mocked(api.getChatMessages).mockImplementation(async (_accountId: string, id: string) =>
       id === 'conv-1' ? [msg('user-1', 'user', 'q'), msg('msg-1', 'assistant')] : [],
     );
   });
@@ -858,6 +860,7 @@ describe('leaving a conversation with a running turn for a new or deleted one', 
   beforeEach(() => {
     vi.clearAllMocks();
     useChatStore.setState({
+      currentAccountId: 'acc-1',
       conversations: [],
       activeConversationId: 'conv-1',
       messages: [{ ...assistantMessage('msg-1'), content: 'partial' }],

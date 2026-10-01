@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Emitter, State};
 
-use crate::db::Database;
 use crate::models::error::AppError;
 use crate::models::{Email, SyncStatus};
 use crate::services;
@@ -14,15 +13,6 @@ use crate::AppState;
 /// Returns `AppError::NotFound` whether the email is missing OR belongs to
 /// another account — the IPC surface deliberately doesn't tell the caller
 /// the email exists under a different owner.
-fn ensure_email_in_account(db: &Database, account_id: &str, email_id: &str) -> Result<Email, AppError> {
-    let email = db
-        .get_email(email_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Email {email_id} not found")))?;
-    if email.account_id != account_id {
-        return Err(AppError::NotFound(format!("Email {email_id} not found")));
-    }
-    Ok(email)
-}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,7 +133,7 @@ pub async fn move_email(
     email_id: String,
     target_mailbox: String,
 ) -> Result<(), AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     let (account, provider) = account_and_provider(&state, app, &account_id).await?;
     services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target_mailbox).await
 }
@@ -163,19 +153,31 @@ pub async fn get_email_body(
     account_id: String,
     email_id: String,
 ) -> Result<String, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     state.db.get_email_body(&email_id)
 }
 
 #[tauri::command]
-pub async fn mark_as_read(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+pub async fn mark_as_read(
+    state: State<'_, AppState>,
+    account_id: String,
+    app: AppHandle,
+    email_id: String,
+) -> Result<(), AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     services::emails::mark_as_read(&state.db, &email_id, Some(app)).await?;
     services::tasks::on_email_read(&state.db, &email_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_email(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+pub async fn delete_email(
+    state: State<'_, AppState>,
+    account_id: String,
+    app: AppHandle,
+    email_id: String,
+) -> Result<(), AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     // Memory is logged only once the delete actually succeeded (including at
     // the provider). `on_archived` reads the row by id, which a soft delete
     // leaves in place, so running it afterwards still resolves thread/account.
@@ -325,9 +327,11 @@ struct DraftFailedEvent {
 pub async fn generate_draft(
     app: AppHandle,
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
     instructions: Option<String>,
 ) -> Result<String, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     // Hard gate: respect both the master AI switch and the per-feature
     // `ai_drafts_enabled` preference so a user who disabled drafts in
     // Settings cannot still trigger a generation via the keyboard.
@@ -471,7 +475,13 @@ pub async fn generate_new_draft(
 }
 
 #[tauri::command]
-pub async fn redownload_email(app: AppHandle, state: State<'_, AppState>, email_id: String) -> Result<Email, AppError> {
+pub async fn redownload_email(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+) -> Result<Email, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     services::emails::redownload_email(&state.db, &email_id, &state.app_data_dir, app).await
 }
 
@@ -801,7 +811,7 @@ pub async fn get_email_by_id(
     account_id: String,
     email_id: String,
 ) -> Result<Email, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)
 }
 
 /// `account_id: None` counts across every enabled account (unified "All

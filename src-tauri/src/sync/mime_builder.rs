@@ -128,6 +128,13 @@ pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage
     Ok(msg)
 }
 
+/// The Message-ID a message replies to, read from its `References` header:
+/// the last entry, since a reply appends its parent's id there (RFC 5322
+/// §3.6.4) — which [`build_send_mime`] does for replies and reply drafts.
+pub fn answered_message_id(references: Option<&str>) -> Option<String> {
+    references?.split_whitespace().last().map(str::to_string)
+}
+
 /// Normalize a subject for a reply: prefix `Re: ` unless one (in any case)
 /// is already present. Shared by the Gmail send path and the optimistic
 /// local Sent row so the stored subject matches what goes on the wire.
@@ -260,6 +267,20 @@ fn decode_base64(data: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_answered_message_is_the_last_reference() {
+        assert_eq!(
+            answered_message_id(Some("<root@example.com> <parent@example.com>")).as_deref(),
+            Some("<parent@example.com>")
+        );
+        assert_eq!(
+            answered_message_id(Some("<only@example.com>")).as_deref(),
+            Some("<only@example.com>")
+        );
+        assert_eq!(answered_message_id(Some("  ")), None);
+        assert_eq!(answered_message_id(None), None);
+    }
 
     fn p(body: &EmailBody, attachments: &[EmailAttachment]) -> String {
         let to = vec!["you@example.com".to_string()];

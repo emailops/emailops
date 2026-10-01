@@ -5,14 +5,16 @@ import { TagChips } from '@/components/common/TagChips';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
 import * as api from '@/lib/api';
+import { findThreadReplyDraft } from '@/lib/composeDraft';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import { errorText } from '@/lib/errors';
 import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
-import type { Account, Email, EmailAttachmentMeta } from '@/types';
+import type { Account, Draft, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
 import { forwardQuote, forwardSubject, loadForwardBody } from './forward';
 import { ReplyCompose } from './ReplyCompose';
@@ -131,6 +133,10 @@ export function EmailView({
   // Attachments carried over from the message being forwarded, loaded on demand
   // — a forward that drops the boarding pass is worse than useless.
   const [forwardAttachments, setForwardAttachments] = useState<EmailAttachment[]>(EMPTY_ATTACHMENTS);
+  // The reply draft saved for this thread, if any: restored when the thread
+  // opens, and kept current as the reply panel saves, so reopening Reply
+  // continues the same draft instead of starting a second one.
+  const [threadDraft, setThreadDraft] = useState<Draft | null>(null);
   const [replyBody, setReplyBody] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
@@ -201,7 +207,7 @@ export function EmailView({
     addLog('info', 'ai', instructions ? 'Requesting AI draft with instructions…' : 'Requesting AI draft…');
     draftTrackerRef.current.begin();
     try {
-      const requestId = await api.generateDraft(target.id, instructions || null);
+      const requestId = await api.generateDraft(target.accountId, target.id, instructions || null);
       const early = draftTrackerRef.current.resolve(requestId);
       if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
@@ -225,6 +231,12 @@ export function EmailView({
   const latestEmailId = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1].id : '';
   const emailTags = useTagStore((s) => s.tagsByEmail[latestEmailId] || EMPTY_TAGS);
   const latestEmailForEffect = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1] : null;
+  // Read inside the draft-restore effect, which must run once per thread (keyed
+  // on the latest email) rather than on every refresh of these values.
+  const threadEmailsRef = useRef(threadEmails);
+  threadEmailsRef.current = threadEmails;
+  const isReplyOpenRef = useRef(isReplyOpen);
+  isReplyOpenRef.current = isReplyOpen;
   const isThread = threadEmails.length > 1;
 
   const threadSearchActive = threadSearchOpen && threadSearchQuery.trim().length > 0;
@@ -313,6 +325,7 @@ export function EmailView({
 
     setIsReplyOpen(false);
     setReplyBody('');
+    setThreadDraft(null);
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -347,6 +360,37 @@ export function EmailView({
     draftTrackerRef.current.cancel();
     consumePendingChatDraft();
   }, [pendingChatDraft, threadEmails, consumePendingChatDraft]);
+
+  // A reply the user started and left is saved as a draft of this thread:
+  // opening the thread again brings it back in the reply panel. Runs after
+  // the reset above; a reply already opened meanwhile (e.g. a chat draft) wins.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per thread, keyed on its latest email
+  useEffect(() => {
+    const emails = threadEmailsRef.current;
+    const latest = emails[emails.length - 1];
+    if (!latest) return;
+    let cancelled = false;
+    api
+      .listDrafts(latest.accountId)
+      .then((drafts) => {
+        if (cancelled) return;
+        const draft = findThreadReplyDraft(
+          drafts,
+          emails.map((e) => e.id),
+        );
+        if (!draft) return;
+        setThreadDraft(draft);
+        if (isReplyOpenRef.current) return;
+        setReplyMode('reply');
+        setReplyBody('');
+        setForwardAttachments(EMPTY_ATTACHMENTS);
+        setIsReplyOpen(true);
+      })
+      .catch((err) => addLog('error', 'sync', `Could not load this thread's reply draft: ${errorText(err)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [latestEmailId, addLog]);
 
   if (threadEmails.length === 0 && !isLoading) {
     return (
@@ -596,7 +640,7 @@ export function EmailView({
                 addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
                 try {
                   for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.id);
+                    await deleteEmailFromStore(email.accountId, email.id);
                   }
                   addLog('success', 'sync', 'Thread deleted');
                   onClose();
@@ -651,6 +695,8 @@ export function EmailView({
               accounts={accounts}
               defaultAccountId={activeAccountId || latestEmail.accountId}
               mode={replyMode}
+              restoredDraft={replyMode === 'forward' ? null : threadDraft}
+              onDraftSaved={setThreadDraft}
               initialBody={replyBody}
               initialAttachments={forwardAttachments}
               isLoadingDraft={isGeneratingDraft}
@@ -658,6 +704,7 @@ export function EmailView({
               onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
               onCancel={() => {
                 setIsReplyOpen(false);
+                setThreadDraft(null);
                 setReplyBody('');
                 setDraftSources([]);
                 setIsGeneratingDraft(false);
@@ -671,6 +718,7 @@ export function EmailView({
                 bodyHtml,
                 inlineImages,
                 attachments,
+                draftId,
               }) => {
                 const isForward = replyMode === 'forward';
                 addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
@@ -700,6 +748,16 @@ export function EmailView({
                     attachments,
                   );
                 }
+                // The reply is out: its draft goes now, before the thread
+                // refresh below would find and reopen it.
+                if (draftId) {
+                  await api
+                    .deleteDraft(draftId, latestEmail.accountId)
+                    .catch((err) =>
+                      addLog('error', 'sync', `Could not delete the sent reply's draft: ${errorText(err)}`),
+                    );
+                }
+                setThreadDraft(null);
                 // The backend inserted the optimistic Sent row before the send
                 // command returned (and already enqueued the follow-up account
                 // sync) — refetching the thread shows the reply instantly.

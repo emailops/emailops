@@ -1,4 +1,5 @@
 import type { DraftAttachmentInput, SaveDraftRequest } from '@/lib/api';
+import type { Draft } from '@/types';
 
 /**
  * Snapshot of the composer used to decide whether to auto-save and to build the
@@ -7,6 +8,9 @@ import type { DraftAttachmentInput, SaveDraftRequest } from '@/lib/api';
 export interface ComposeDraftState {
   /** Existing draft id being edited, or undefined for a not-yet-saved draft. */
   draftId?: string;
+  /** The email a reply draft answers; it ties the draft to its thread and
+   *  makes a later send go out as a reply. Unset for a new message. */
+  emailId?: string;
   accountId: string;
   toAddresses: string[];
   ccAddresses: string[];
@@ -40,6 +44,7 @@ export function shouldAutosaveDraft(s: ComposeDraftState): boolean {
 export function buildSaveDraftRequest(s: ComposeDraftState): SaveDraftRequest {
   return {
     id: s.draftId,
+    ...(s.emailId ? { emailId: s.emailId } : {}),
     accountId: s.accountId,
     toAddresses: s.toAddresses,
     ccAddresses: s.ccAddresses,
@@ -50,6 +55,26 @@ export function buildSaveDraftRequest(s: ComposeDraftState): SaveDraftRequest {
     // files; send the (possibly empty) list when the composer manages them.
     ...(s.attachments !== undefined ? { attachments: s.attachments } : {}),
   };
+}
+
+/**
+ * `Re: <subject>`, never `Re: Re: <subject>` — the same rule the backend
+ * applies when it builds the reply, so the draft shows the subject it will send.
+ */
+export function replySubject(subject: string): string {
+  const trimmed = subject.trim();
+  return trimmed.toLowerCase().startsWith('re:') ? trimmed : `Re: ${trimmed}`;
+}
+
+/**
+ * The reply draft to bring back when a thread opens: the most recently edited
+ * draft that answers one of the thread's emails, or `null`.
+ */
+export function findThreadReplyDraft(drafts: Draft[], threadEmailIds: string[]): Draft | null {
+  const ids = new Set(threadEmailIds);
+  return drafts
+    .filter((d) => d.emailId !== null && ids.has(d.emailId))
+    .reduce<Draft | null>((latest, d) => (latest === null || d.updatedAt > latest.updatedAt ? d : latest), null);
 }
 
 /** Persist a draft and return at least its id (structurally compatible with `api.saveDraft`). */

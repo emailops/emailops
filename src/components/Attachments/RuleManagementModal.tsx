@@ -189,7 +189,7 @@ export function RuleManagementModal({
     let cancelled = false;
     setPendingDeleteCount(null);
     api
-      .countAttachmentsForRule(pendingDeleteId)
+      .countAttachmentsForRule(accountId, pendingDeleteId)
       .then((n) => {
         if (!cancelled) setPendingDeleteCount(n);
       })
@@ -202,7 +202,7 @@ export function RuleManagementModal({
     return () => {
       cancelled = true;
     };
-  }, [pendingDeleteId, addLog]);
+  }, [pendingDeleteId, accountId, addLog]);
 
   const resetForm = () => {
     setForm(EMPTY_FORM);

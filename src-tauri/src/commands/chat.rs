@@ -8,6 +8,7 @@ use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
 use crate::models::{ChatConversation, ChatMessage};
+use crate::services;
 use crate::services::ai::AiService;
 use crate::services::chat;
 use crate::AppState;
@@ -86,20 +87,33 @@ pub async fn create_chat_conversation_with_thread(
 }
 
 #[tauri::command]
-pub async fn rename_chat_conversation(state: State<'_, AppState>, id: String, title: String) -> Result<(), AppError> {
+pub async fn rename_chat_conversation(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+    title: String,
+) -> Result<(), AppError> {
+    services::ownership::conversation_in_account(&state.db, &account_id, &id)?;
     chat::rename_conversation(&state.db, &id, &title)
 }
 
 #[tauri::command]
-pub async fn delete_chat_conversation(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+pub async fn delete_chat_conversation(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+) -> Result<(), AppError> {
+    services::ownership::conversation_in_account(&state.db, &account_id, &id)?;
     chat::delete_conversation(&state.db, &id)
 }
 
 #[tauri::command]
 pub async fn get_chat_messages(
     state: State<'_, AppState>,
+    account_id: String,
     conversation_id: String,
 ) -> Result<Vec<ChatMessage>, AppError> {
+    services::ownership::conversation_in_account(&state.db, &account_id, &conversation_id)?;
     chat::get_messages(&state.db, &conversation_id)
 }
 

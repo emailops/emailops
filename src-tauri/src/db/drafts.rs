@@ -288,12 +288,19 @@ impl Database {
 
         let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         conn.execute(
+            // A reply draft is linked back to the email it answers by the
+            // Message-ID its provider copy carries, so one re-imported from the
+            // provider still belongs to its thread. An existing link is kept.
             "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                                  subject, body, body_html, ai_generated, status,
                                  provider_draft_id, provider_message_id, created_at, updated_at)
-             VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
+             VALUES (?1,
+                     (SELECT id FROM emails WHERE account_id = ?2
+                        AND message_id IN (?12, trim(?12, '<>')) LIMIT 1),
+                     ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
                      COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11)
              ON CONFLICT(id) DO UPDATE SET
+                email_id = COALESCE(drafts.email_id, excluded.email_id),
                 to_addresses_json = excluded.to_addresses_json,
                 cc_addresses_json = excluded.cc_addresses_json,
                 subject = excluded.subject,
@@ -315,6 +322,7 @@ impl Database {
                 draft.provider_message_id,
                 now,
                 updated_at,
+                draft.in_reply_to,
             ],
         )?;
         Ok(id)
@@ -507,6 +515,7 @@ mod tests {
             body_html: None,
             updated_at: None,
             provider_message_id: None,
+            in_reply_to: None,
         }
     }
 

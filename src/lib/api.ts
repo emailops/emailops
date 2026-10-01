@@ -291,8 +291,8 @@ export async function getEmailBody(accountId: string, emailId: string): Promise<
   return invoke('get_email_body', { accountId, emailId });
 }
 
-export async function markAsRead(emailId: string): Promise<void> {
-  return invoke('mark_as_read', { emailId });
+export async function markAsRead(accountId: string, emailId: string): Promise<void> {
+  return invoke('mark_as_read', { accountId, emailId });
 }
 
 export async function sendReply(
@@ -365,8 +365,8 @@ export async function autocompleteRecipients(
   return invoke('autocomplete_recipients', { accountId, prefix, contextDomain, limit });
 }
 
-export async function deleteEmail(emailId: string): Promise<void> {
-  return invoke('delete_email', { emailId });
+export async function deleteEmail(accountId: string, emailId: string): Promise<void> {
+  return invoke('delete_email', { accountId, emailId });
 }
 
 /**
@@ -406,8 +406,8 @@ export interface DraftFailedEvent {
  * Heavy AI work runs on the backend's `ai_queue`; the frontend should listen
  * for the matching event rather than awaiting the draft inline.
  */
-export async function generateDraft(emailId: string, instructions?: string | null): Promise<string> {
-  return invoke('generate_draft', { emailId, instructions });
+export async function generateDraft(accountId: string, emailId: string, instructions?: string | null): Promise<string> {
+  return invoke('generate_draft', { accountId, emailId, instructions });
 }
 
 /**
@@ -471,8 +471,8 @@ export interface TranslationFailedEvent {
  * logged backend-side only — no failure event, the Translate button simply
  * never appears.
  */
-export async function detectEmailLanguage(emailId: string): Promise<string> {
-  return invoke('detect_email_language', { emailId });
+export async function detectEmailLanguage(accountId: string, emailId: string): Promise<string> {
+  return invoke('detect_email_language', { accountId, emailId });
 }
 
 /**
@@ -480,8 +480,12 @@ export async function detectEmailLanguage(emailId: string): Promise<string> {
  * AI language. Returns a `requestId`; result on `email-translated`, failure
  * on `translation-failed`.
  */
-export async function translateEmail(emailId: string, targetLanguage?: string | null): Promise<string> {
-  return invoke('translate_email', { emailId, targetLanguage });
+export async function translateEmail(
+  accountId: string,
+  emailId: string,
+  targetLanguage?: string | null,
+): Promise<string> {
+  return invoke('translate_email', { accountId, emailId, targetLanguage });
 }
 
 /**
@@ -493,8 +497,8 @@ export async function translateComposeText(text: string, targetLanguage: string)
   return invoke('translate_compose_text', { text, targetLanguage });
 }
 
-export async function redownloadEmail(emailId: string): Promise<Email> {
-  return invoke('redownload_email', { emailId });
+export async function redownloadEmail(accountId: string, emailId: string): Promise<Email> {
+  return invoke('redownload_email', { accountId, emailId });
 }
 
 /**
@@ -714,6 +718,7 @@ export async function createAttachmentRule(
 }
 
 export async function updateAttachmentRule(
+  accountId: string,
   ruleId: string,
   name: string,
   senderEmailPattern?: string | null,
@@ -723,6 +728,7 @@ export async function updateAttachmentRule(
   enabled?: boolean,
 ): Promise<AttachmentRule> {
   return invoke('update_attachment_rule', {
+    accountId,
     ruleId,
     name,
     senderEmailPattern,
@@ -741,8 +747,8 @@ export async function listAttachmentRules(accountId: string): Promise<Attachment
   return invoke('list_attachment_rules', { accountId });
 }
 
-export async function countAttachmentsForRule(ruleId: string): Promise<number> {
-  return invoke('count_attachments_for_rule', { ruleId });
+export async function countAttachmentsForRule(accountId: string, ruleId: string): Promise<number> {
+  return invoke('count_attachments_for_rule', { accountId, ruleId });
 }
 
 export async function listAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
@@ -1097,8 +1103,8 @@ export async function classifyPreviousEmails(accountId: string): Promise<void> {
   return invoke('classify_previous_emails', { accountId });
 }
 
-export async function getEmailTags(emailId: string): Promise<EmailTag[]> {
-  return invoke('get_email_tags', { emailId });
+export async function getEmailTags(accountId: string, emailId: string): Promise<EmailTag[]> {
+  return invoke('get_email_tags', { accountId, emailId });
 }
 
 export async function getEmailTagsBatch(emailIds: string[]): Promise<EmailTag[]> {
@@ -1319,8 +1325,8 @@ export async function listDrafts(accountId: string): Promise<Draft[]> {
   return invoke('list_drafts', { accountId });
 }
 
-export async function getDraft(draftId: string): Promise<Draft | null> {
-  return invoke('get_draft', { draftId });
+export async function getDraft(accountId: string, draftId: string): Promise<Draft | null> {
+  return invoke('get_draft', { accountId, draftId });
 }
 
 /**
@@ -1333,8 +1339,8 @@ export async function refreshDrafts(accountId: string): Promise<number> {
   return invoke('refresh_drafts', { accountId });
 }
 
-export async function listDraftAttachments(draftId: string): Promise<DraftAttachment[]> {
-  return invoke('list_draft_attachments', { draftId });
+export async function listDraftAttachments(accountId: string, draftId: string): Promise<DraftAttachment[]> {
+  return invoke('list_draft_attachments', { accountId, draftId });
 }
 
 export interface DraftAttachmentInput {
@@ -1399,16 +1405,16 @@ export async function createChatConversationWithThread(accountId: string, thread
   return invoke('create_chat_conversation_with_thread', { accountId, threadId });
 }
 
-export async function renameChatConversation(id: string, title: string): Promise<void> {
-  return invoke('rename_chat_conversation', { id, title });
+export async function renameChatConversation(accountId: string, id: string, title: string): Promise<void> {
+  return invoke('rename_chat_conversation', { accountId, id, title });
 }
 
-export async function deleteChatConversation(id: string): Promise<void> {
-  return invoke('delete_chat_conversation', { id });
+export async function deleteChatConversation(accountId: string, id: string): Promise<void> {
+  return invoke('delete_chat_conversation', { accountId, id });
 }
 
-export async function getChatMessages(conversationId: string): Promise<ChatMessage[]> {
-  return invoke('get_chat_messages', { conversationId });
+export async function getChatMessages(accountId: string, conversationId: string): Promise<ChatMessage[]> {
+  return invoke('get_chat_messages', { accountId, conversationId });
 }
 
 export async function sendChatMessage(
@@ -1539,8 +1545,8 @@ export async function createPendingTask(req: CreatePendingTaskRequest): Promise<
   return invoke('create_pending_task', { req });
 }
 
-export async function updatePendingTaskStatus(taskId: string, status: string): Promise<void> {
-  return invoke('update_pending_task_status', { taskId, status });
+export async function updatePendingTaskStatus(accountId: string, taskId: string, status: string): Promise<void> {
+  return invoke('update_pending_task_status', { accountId, taskId, status });
 }
 
 export async function listOpenThreads(
@@ -1565,20 +1571,20 @@ export async function listMemoryFacts(
   });
 }
 
-export async function promoteMemoryFact(factId: string): Promise<void> {
-  return invoke('promote_memory_fact', { factId });
+export async function promoteMemoryFact(accountId: string, factId: string): Promise<void> {
+  return invoke('promote_memory_fact', { accountId, factId });
 }
 
-export async function retireMemoryFact(factId: string): Promise<void> {
-  return invoke('retire_memory_fact', { factId });
+export async function retireMemoryFact(accountId: string, factId: string): Promise<void> {
+  return invoke('retire_memory_fact', { accountId, factId });
 }
 
-export async function updateMemoryFact(factId: string, fact: string): Promise<void> {
-  return invoke('update_memory_fact', { factId, fact });
+export async function updateMemoryFact(accountId: string, factId: string, fact: string): Promise<void> {
+  return invoke('update_memory_fact', { accountId, factId, fact });
 }
 
-export async function deleteMemoryFact(factId: string): Promise<void> {
-  return invoke('delete_memory_fact', { factId });
+export async function deleteMemoryFact(accountId: string, factId: string): Promise<void> {
+  return invoke('delete_memory_fact', { accountId, factId });
 }
 
 export async function getMemoryCounts(accountId: string): Promise<MemoryCountsSummary> {
@@ -1719,8 +1725,8 @@ export async function deleteCalendarEvent(
 
 /** The calendar invite (.ics) carried by an email, or null when the email
  *  has none. */
-export async function getCalendarInvite(emailId: string): Promise<CalendarInvite | null> {
-  return invoke('get_calendar_invite', { emailId });
+export async function getCalendarInvite(accountId: string, emailId: string): Promise<CalendarInvite | null> {
+  return invoke('get_calendar_invite', { accountId, emailId });
 }
 
 /** RSVP to a calendar invite on the provider (invite card in the email

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Draft } from '@/types';
 import {
   buildSaveDraftRequest,
   type ComposeDraftState,
   createDebouncedDraftSaver,
   createDraftAutosaver,
+  findThreadReplyDraft,
+  replySubject,
   shouldAutosaveDraft,
 } from './composeDraft';
 
@@ -58,6 +61,11 @@ describe('buildSaveDraftRequest', () => {
     expect(req.ccAddresses).toEqual(['c@b.com']);
     expect(req.body).toBe('hello');
     expect(req.bodyHtml).toBeNull();
+  });
+
+  it('links a reply draft to the email it answers', () => {
+    expect(buildSaveDraftRequest({ ...base, emailId: 'e1', plainBody: 'Hi' }).emailId).toBe('e1');
+    expect(buildSaveDraftRequest({ ...base, plainBody: 'Hi' }).emailId).toBeUndefined();
   });
 
   it('keeps non-empty html', () => {
@@ -212,5 +220,26 @@ describe('createDebouncedDraftSaver', () => {
     vi.advanceTimersByTime(1000);
     expect(save).not.toHaveBeenCalled();
     vi.useRealTimers();
+  });
+});
+
+describe('findThreadReplyDraft', () => {
+  const draft = (id: string, emailId: string | null, updatedAt: number) =>
+    ({ id, emailId, updatedAt }) as unknown as Draft;
+
+  it('picks the most recently edited draft answering an email of the thread', () => {
+    const drafts = [draft('old', 'e1', 10), draft('new', 'e2', 20), draft('elsewhere', 'x9', 30)];
+    expect(findThreadReplyDraft(drafts, ['e1', 'e2'])?.id).toBe('new');
+  });
+
+  it('ignores drafts that answer no email or another thread', () => {
+    expect(findThreadReplyDraft([draft('new-mail', null, 5), draft('other', 'x1', 6)], ['e1'])).toBeNull();
+  });
+});
+
+describe('replySubject', () => {
+  it('adds Re: once', () => {
+    expect(replySubject('Hello')).toBe('Re: Hello');
+    expect(replySubject('RE: Hello')).toBe('RE: Hello');
   });
 });

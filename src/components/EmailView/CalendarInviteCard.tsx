@@ -51,7 +51,7 @@ export function CalendarInviteCard({ email }: { email: Email }) {
     if (!hasCalendar || loaded?.emailId === email.id) return;
     let cancelled = false;
     api
-      .getCalendarInvite(email.id)
+      .getCalendarInvite(email.accountId, email.id)
       .then((invite) => {
         if (cancelled) return;
         setLoaded({ emailId: email.id, invite });

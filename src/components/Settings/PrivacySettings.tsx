@@ -8,6 +8,8 @@ import { privacyPolicyUrl } from '@/lib/privacyPolicy';
 import { useLogStore } from '@/stores/logStore';
 import { TrustedSendersSection } from './TrustedSendersSection';
 
+const MIN_MAIN_PASSWORD_CHARS = 6;
+
 // ── Small reusable toggle row ─────────────────────────────────────────────────
 
 function ToggleRow({
@@ -77,7 +79,9 @@ function PasswordDialog({
   const handleSubmit = useCallback(async () => {
     setError(null);
     if (mode !== 'remove') {
-      if (newPassword.length < 6) {
+      // Characters, not UTF-16 units, matching the backend's
+      // `MIN_MAIN_PASSWORD_CHARS` check in services/password.rs.
+      if ([...newPassword].length < MIN_MAIN_PASSWORD_CHARS) {
         setError(t('settings:privacy.passwordDialog.minLengthError'));
         return;
       }

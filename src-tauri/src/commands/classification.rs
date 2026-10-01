@@ -2,6 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
 use crate::models::ClassificationRule;
+use crate::services;
 use crate::services::classification::{self, ClassificationConfig};
 use crate::AppState;
 
@@ -55,8 +56,10 @@ pub async fn classify_previous_emails(
 #[tauri::command]
 pub async fn get_email_tags(
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
 ) -> Result<Vec<crate::models::EmailTag>, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     classification::get_email_tags(&state.db, &email_id)
 }
 

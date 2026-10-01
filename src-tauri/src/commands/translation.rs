@@ -85,8 +85,10 @@ fn emit_translation_failed(app: &AppHandle, request_id: &str, email_id: &str, er
 pub async fn detect_email_language(
     app: AppHandle,
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
 ) -> Result<String, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     ensure_translation_enabled(&state)?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -134,9 +136,11 @@ pub async fn detect_email_language(
 pub async fn translate_email(
     app: AppHandle,
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
     target_language: Option<String>,
 ) -> Result<String, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     ensure_translation_enabled(&state)?;
 
     let request_id = uuid::Uuid::new_v4().to_string();

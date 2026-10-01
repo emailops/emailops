@@ -278,8 +278,8 @@ interface EmailStore {
   sentRefreshTick: number;
   bumpSentRefresh: () => void;
   navigateToEmail: (accountId: string, emailId: string) => Promise<void>;
-  markAsRead: (emailId: string) => Promise<void>;
-  deleteEmail: (emailId: string) => Promise<void>;
+  markAsRead: (accountId: string, emailId: string) => Promise<void>;
+  deleteEmail: (accountId: string, emailId: string) => Promise<void>;
   /** Move an email to the inbox or a custom folder (IMAP accounts only).
    *  Throws on failure so callers can surface the error. */
   moveEmail: (accountId: string, emailId: string, targetMailbox: MailboxView) => Promise<void>;
@@ -329,7 +329,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
 
   openTab: async (email, focusId) => {
-    if (!email.isRead) void get().markAsRead(email.id);
+    if (!email.isRead) void get().markAsRead(email.accountId, email.id);
 
     const existing = get().tabs.find((t) => t.id === email.threadId);
     if (existing) {
@@ -603,7 +603,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       return;
     }
 
-    if (!email.isRead && opts?.markRead !== false) void get().markAsRead(email.id);
+    if (!email.isRead && opts?.markRead !== false) void get().markAsRead(email.accountId, email.id);
 
     set({ selectedEmail: email, threadEmails: [], isLoadingThread: true, focusEmailId: focusId ?? null });
 
@@ -694,7 +694,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
       if (get().currentFetchId !== fetchId) return;
 
-      if (!email.isRead) void get().markAsRead(email.id);
+      if (!email.isRead) void get().markAsRead(email.accountId, email.id);
 
       const requestId = ++threadRequestSeq;
       set({
@@ -736,9 +736,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  markAsRead: async (emailId) => {
+  markAsRead: async (accountId, emailId) => {
     try {
-      await api.markAsRead(emailId);
+      await api.markAsRead(accountId, emailId);
       set((state) => ({
         emails: state.emails.map((e) => (e.id === emailId ? { ...e, isRead: true } : e)),
         threadEmails: state.threadEmails.map((e) => (e.id === emailId ? { ...e, isRead: true } : e)),
@@ -755,8 +755,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  deleteEmail: async (emailId) => {
-    await api.deleteEmail(emailId);
+  deleteEmail: async (accountId, emailId) => {
+    await api.deleteEmail(accountId, emailId);
     set((state) => removeEmailFromSlices(state, emailId));
   },
 

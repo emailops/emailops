@@ -3,6 +3,7 @@ import { languageDisplayName } from '@/lib/language';
 import { useTranslationStore } from '@/stores/translationStore';
 
 interface TranslationControlsProps {
+  accountId: string;
   emailId: string;
 }
 
@@ -12,7 +13,7 @@ interface TranslationControlsProps {
  * translation toggle. Errors are pinned here, right next to the button that
  * caused them — never at the bottom of the scroll container.
  */
-export function TranslationControls({ emailId }: TranslationControlsProps) {
+export function TranslationControls({ accountId, emailId }: TranslationControlsProps) {
   const { t, i18n } = useTranslation(['inbox']);
   const detection = useTranslationStore((s) => s.detectedByEmail[emailId]);
   const hasTranslation = useTranslationStore((s) => emailId in s.translations);
@@ -46,7 +47,7 @@ export function TranslationControls({ emailId }: TranslationControlsProps) {
       ) : (
         <button
           type="button"
-          onClick={() => void useTranslationStore.getState().translate(emailId)}
+          onClick={() => void useTranslationStore.getState().translate(accountId, emailId)}
           disabled={isTranslating}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 disabled:opacity-60"
         >

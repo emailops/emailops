@@ -6,12 +6,21 @@ import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
-import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
+import {
+  createDebouncedDraftSaver,
+  createDraftAutosaver,
+  type DebouncedDraftSaver,
+  type DraftAutosaver,
+  replySubject,
+  shouldAutosaveDraft,
+} from '@/lib/composeDraft';
+import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
+import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
-import type { Account, Email } from '@/types';
+import type { Account, Draft, Email } from '@/types';
 import { AiInstructionBar } from './AiInstructionBar';
 import { SendWarningBanner } from './SendWarningBanner';
 
@@ -28,8 +37,15 @@ interface ReplyComposeProps {
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
     attachments?: EmailAttachment[];
+    /** The saved reply draft this send replaces; the caller deletes it. */
+    draftId?: string;
   }) => Promise<void>;
   onCancel: () => void;
+  /** A reply draft saved earlier for this thread: the panel opens with its
+   *  recipients and text, and keeps saving into the same draft. */
+  restoredDraft?: Draft | null;
+  /** Called with the draft after every successful save. */
+  onDraftSaved?: (draft: Draft) => void;
   initialBody: string;
   mode: 'reply' | 'reply-all' | 'forward';
   /** Attachments carried over from the message being forwarded. Pre-attached
@@ -127,13 +143,18 @@ export function ReplyCompose({
   isLoadingDraft = false,
   draftSources = [],
   onGenerateDraft,
+  restoredDraft = null,
+  onDraftSaved,
 }: ReplyComposeProps) {
+  const addLog = useLogStore((s) => s.addLog);
   const { t } = useTranslation(['compose']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
   // Editor holds HTML. AI drafts and the initial empty state are plain text;
   // we wrap them in <p>...</p> so Tiptap renders them as one paragraph each.
-  const [bodyHtml, setBodyHtml] = useState<string>(() => plainTextToHtml(initialBody));
+  const [bodyHtml, setBodyHtml] = useState<string>(() =>
+    restoredDraft ? (restoredDraft.bodyHtml ?? plainTextToHtml(restoredDraft.body)) : plainTextToHtml(initialBody),
+  );
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   // Thread-language detection (populated by the reading view when the email
@@ -143,7 +164,12 @@ export function ReplyCompose({
 
   // Sync body when the parent updates initialBody (e.g. AI draft generation
   // replaces the "Generating draft..." placeholder with the actual draft).
+  // Only on a change: on mount the body is already set, and a restored draft
+  // must not be replaced by the empty template.
+  const appliedInitialBody = useRef(initialBody);
   useEffect(() => {
+    if (appliedInitialBody.current === initialBody) return;
+    appliedInitialBody.current = initialBody;
     setBodyHtml(plainTextToHtml(initialBody));
   }, [initialBody]);
 
@@ -181,9 +207,87 @@ export function ReplyCompose({
     return [...all];
   })();
 
-  const [toRecipients, setToRecipients] = useState<string[]>(initialTo);
-  const [ccRecipients, setCcRecipients] = useState<string[]>([]);
-  const [showCc, setShowCc] = useState(false);
+  const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);
+  const [ccRecipients, setCcRecipients] = useState<string[]>(() => restoredDraft?.ccAddresses ?? []);
+  const [showCc, setShowCc] = useState(() => (restoredDraft?.ccAddresses.length ?? 0) > 0);
+
+  // A reply (not a forward, which is a new message) is kept as a draft tied to
+  // the email it answers, in that email's account, so reopening the thread
+  // brings it back and a later send still goes out as a reply.
+  const keepsDraft = mode !== 'forward';
+  const onDraftSavedRef = useRef(onDraftSaved);
+  onDraftSavedRef.current = onDraftSaved;
+  const autosaverRef = useRef<DraftAutosaver | null>(null);
+  if (autosaverRef.current === null) {
+    autosaverRef.current = createDraftAutosaver(
+      async (req) => {
+        const saved = await api.saveDraft(req);
+        onDraftSavedRef.current?.(saved);
+        return saved;
+      },
+      (err) => addLog('error', 'sync', `Could not save the reply draft: ${errorText(err)}`),
+      restoredDraft?.id,
+    );
+  }
+  const debouncedRef = useRef<DebouncedDraftSaver>(
+    createDebouncedDraftSaver((state) => autosaverRef.current?.save(state) ?? Promise.resolve(), 800),
+  );
+  // What the panel opened with. Opening Reply prefills the recipients (and an
+  // AI draft may fill the body), so only a change from this is the user
+  // writing something worth keeping.
+  const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: bodyHtml });
+  const sentRef = useRef(false);
+
+  useEffect(() => {
+    if (!keepsDraft || isLoadingDraft) return;
+    const opened = openedWith.current;
+    const edited =
+      bodyHtml !== opened.body || toRecipients.join() !== opened.to.join() || ccRecipients.join() !== opened.cc.join();
+    if (!edited) return;
+    const state = {
+      emailId: restoredDraft?.emailId ?? email.id,
+      accountId: restoredDraft?.accountId ?? email.accountId,
+      toAddresses: toRecipients,
+      ccAddresses: ccRecipients,
+      subject: restoredDraft?.subject ?? replySubject(email.subject),
+      plainBody: htmlToPlainText(bodyHtml),
+      bodyHtml,
+      isSending,
+      sent: sentRef.current,
+    };
+    if (!shouldAutosaveDraft(state)) {
+      // Sending / sent: a save still waiting must not resurrect the draft.
+      debouncedRef.current.cancel();
+      return;
+    }
+    debouncedRef.current.schedule(state);
+  }, [keepsDraft, isLoadingDraft, bodyHtml, toRecipients, ccRecipients, isSending, email, restoredDraft]);
+
+  // Leaving the thread must not drop the edit still inside the quiet period.
+  useEffect(() => {
+    const debounced = debouncedRef.current;
+    return () => debounced.flushPending();
+  }, []);
+
+  /** Stop autosaving and return the id of the draft saved so far, if any. */
+  const settleDraft = async (): Promise<string | undefined> => {
+    debouncedRef.current.flushPending();
+    const id = await autosaverRef.current?.flush();
+    debouncedRef.current.cancel();
+    return id;
+  };
+
+  const handleCancel = async () => {
+    sentRef.current = true;
+    const draftId = await settleDraft();
+    if (draftId) {
+      const accountId = restoredDraft?.accountId ?? email.accountId;
+      await api
+        .deleteDraft(draftId, accountId)
+        .catch((err) => addLog('error', 'sync', `Could not delete the reply draft: ${errorText(err)}`));
+    }
+    onCancel();
+  };
   const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
   // Pre-send warnings awaiting "send anyway"; any edit dismisses them.
   const [sendWarnings, setSendWarnings] = useState<SendWarning[] | null>(null);
@@ -322,6 +426,8 @@ export function ReplyCompose({
     setSendError(null);
     setIsSending(true);
     try {
+      const draftId = keepsDraft ? await settleDraft() : undefined;
+      sentRef.current = true;
       await onSend({
         fromAccountId,
         toEmails: to,
@@ -330,8 +436,10 @@ export function ReplyCompose({
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
         attachments,
+        draftId,
       });
     } catch (err) {
+      sentRef.current = false;
       // A failed send must never be silent: keep the compose open with the
       // user's text and show what went wrong (auth expired, SMTP down, ...).
       setSendError(errorText(err));
@@ -558,7 +666,7 @@ export function ReplyCompose({
         <div className="flex-1" />
         <button
           type="button"
-          onClick={onCancel}
+          onClick={() => void handleCancel()}
           disabled={isSending}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
         >

@@ -2,6 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
 use crate::models::{Draft, DraftAttachment, SaveDraftRequest};
+use crate::services;
 use crate::services::emails;
 use crate::sync::provider::provider_supports_drafts;
 use crate::AppState;
@@ -12,8 +13,17 @@ pub async fn list_drafts(state: State<'_, AppState>, account_id: String) -> Resu
 }
 
 #[tauri::command]
-pub async fn get_draft(state: State<'_, AppState>, draft_id: String) -> Result<Option<Draft>, AppError> {
-    state.db.get_draft(&draft_id)
+pub async fn get_draft(
+    state: State<'_, AppState>,
+    account_id: String,
+    draft_id: String,
+) -> Result<Option<Draft>, AppError> {
+    // A draft that no longer exists is `None`, as before; one that belongs
+    // to another account is not found.
+    if state.db.get_draft(&draft_id)?.is_none() {
+        return Ok(None);
+    }
+    services::ownership::draft_in_account(&state.db, &account_id, &draft_id).map(Some)
 }
 
 /// Pull the provider's Drafts folder on demand, so a draft edited in Gmail
@@ -62,8 +72,10 @@ pub async fn refresh_drafts(state: State<'_, AppState>, app: AppHandle, account_
 #[tauri::command]
 pub async fn list_draft_attachments(
     state: State<'_, AppState>,
+    account_id: String,
     draft_id: String,
 ) -> Result<Vec<DraftAttachment>, AppError> {
+    services::ownership::draft_in_account(&state.db, &account_id, &draft_id)?;
     state.db.list_draft_attachments(&draft_id)
 }
 
