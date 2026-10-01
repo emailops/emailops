@@ -23,6 +23,7 @@ pub mod folders;
 pub mod help_docs;
 pub mod lenses;
 pub mod memory;
+pub mod outbox;
 pub mod tags;
 pub mod trusted_senders;
 

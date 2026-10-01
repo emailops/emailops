@@ -207,6 +207,17 @@ impl SyncScheduler {
             );
         }
 
+        // Single global outbox dispatcher (undo send / scheduled send). Its
+        // first pass runs at once, after failing rows a crash left mid-send,
+        // so a message that fell due while the app was closed goes out now.
+        {
+            let flag = Arc::new(AtomicBool::new(false));
+            scheduler.push_global(
+                tauri::async_runtime::spawn(outbox_dispatch_loop(db.clone(), app.clone(), flag.clone())),
+                flag,
+            );
+        }
+
         // Single global snooze wake-up ticker. Its first tick runs at once, so
         // a snooze that fell due while the app was closed wakes at start-up.
         {
@@ -790,6 +801,69 @@ async fn snooze_wake_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<Atom
                 "system",
                 format!("Snoozed conversations could not be brought back: {e}"),
             );
+        }
+    }
+}
+
+// ── Outbox dispatch ───────────────────────────────────────────────────────────
+
+/// How often the outbox is checked for due messages when nothing woke it
+/// earlier. An undo window or "send now" wakes the loop at once.
+const OUTBOX_DISPATCH_INTERVAL: Duration = Duration::from_secs(15);
+
+/// The account's real provider, built the way an immediate send builds it.
+struct AppOutboxProviders {
+    app: AppHandle,
+}
+
+#[async_trait::async_trait]
+impl crate::services::outbox::OutboxProviders for AppOutboxProviders {
+    async fn provider_for(
+        &self,
+        account: &Account,
+    ) -> crate::models::error::Result<Box<dyn crate::sync::provider::EmailProvider>> {
+        crate::services::emails::build_provider(account, Some(self.app.clone())).await
+    }
+}
+
+/// Sends queued messages when their time comes — see
+/// `services::outbox::dispatch_due_outbox`. Runs one pass at start-up (after
+/// failing the rows a crash left mid-send), then every 15 s and whenever the
+/// outbox wakes it.
+async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<AtomicBool>) {
+    use tauri::Manager;
+
+    if let Err(e) = crate::services::outbox::recover_interrupted_outbox(&db, crate::services::clock::now_secs()) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("Messages interrupted mid-send could not be checked: {e}"),
+        );
+    }
+    let providers = AppOutboxProviders { app: app.clone() };
+    let mut ticker = tokio::time::interval(OUTBOX_DISPATCH_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            _ = crate::services::outbox::dispatcher_waker().notified() => {}
+        }
+        if stop_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        let now = crate::services::clock::now_secs();
+        match crate::services::outbox::dispatch_due_outbox(&db, now, &providers).await {
+            Ok(update) => {
+                // Pull the provider's Sent copy now rather than at the next
+                // periodic sync, as an immediate send does.
+                let accounts: HashSet<String> = update.sent.into_iter().map(|s| s.account_id).collect();
+                if let Some(state) = app.try_state::<crate::AppState>() {
+                    for account_id in accounts {
+                        crate::commands::emails::enqueue_account_sync(&app, &state, account_id).await;
+                    }
+                }
+            }
+            Err(e) => crate::services::logger::log("error", "sync", format!("Queued messages could not be sent: {e}")),
         }
     }
 }

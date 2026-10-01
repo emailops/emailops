@@ -8,6 +8,7 @@ use ts_rs::TS;
 pub mod error;
 pub mod headers;
 pub mod lens;
+pub mod outbox;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]

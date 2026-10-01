@@ -5,7 +5,7 @@ import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common
 import { TagChips } from '@/components/common/TagChips';
 import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import { useFormatters } from '@/hooks/useFormatters';
-import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
+import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { formatShortcut } from '@/lib/platform';
@@ -13,6 +13,7 @@ import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
+import { useOutboxStore } from '@/stores/outboxStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
@@ -695,43 +696,75 @@ export function EmailView({
                 bodyHtml,
                 inlineImages,
                 attachments,
+                scheduleAt,
               }) => {
                 const isForward = replyMode === 'forward';
-                addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
-                if (isForward) {
-                  // A forward is a NEW message, not a reply: it must not carry
-                  // In-Reply-To/References, or the recipient's client files it
-                  // into a conversation they were never part of.
-                  await api.sendNewEmail(
-                    fromAccountId,
-                    toEmails,
-                    ccEmails,
-                    forwardSubject(latestEmail.subject),
-                    replyText,
-                    attachments,
-                    bodyHtml,
-                    inlineImages,
-                  );
-                } else {
-                  await api.sendReply(
-                    latestEmail.id,
-                    replyText,
-                    fromAccountId,
-                    toEmails,
-                    ccEmails,
-                    bodyHtml,
-                    inlineImages,
-                    attachments,
-                  );
+                // A forward is a NEW message, not a reply: it must not carry
+                // In-Reply-To/References, or the recipient's client files it
+                // into a conversation they were never part of.
+                const message: OutgoingMessage = {
+                  accountId: fromAccountId,
+                  replyToEmailId: isForward ? null : latestEmail.id,
+                  to: toEmails,
+                  cc: ccEmails,
+                  // A reply takes its parent's subject ("Re: …") backend-side.
+                  subject: isForward ? forwardSubject(latestEmail.subject) : '',
+                  body: replyText,
+                  bodyHtml: bodyHtml ?? null,
+                  inlineImages: inlineImages ?? [],
+                  attachments: attachments ?? [],
+                };
+                const closeReply = () => {
+                  setForwardAttachments(EMPTY_ATTACHMENTS);
+                  setIsReplyOpen(false);
+                };
+                const outbox = useOutboxStore.getState();
+                if (scheduleAt) {
+                  await outbox.schedule(message, scheduleAt);
+                  closeReply();
+                  return;
                 }
-                // The backend inserted the optimistic Sent row before the send
-                // command returned (and already enqueued the follow-up account
-                // sync) — refetching the thread shows the reply instantly.
-                await refreshThread(latestEmail.accountId, latestEmail.threadId);
-                bumpSentRefresh();
-                addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen(false);
+                await outbox.send(message, {
+                  sendDirect: async () => {
+                    addLog(
+                      'info',
+                      'sync',
+                      `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`,
+                    );
+                    if (isForward) {
+                      await api.sendNewEmail(
+                        fromAccountId,
+                        toEmails,
+                        ccEmails,
+                        message.subject,
+                        replyText,
+                        attachments,
+                        bodyHtml,
+                        inlineImages,
+                      );
+                    } else {
+                      await api.sendReply(
+                        latestEmail.id,
+                        replyText,
+                        fromAccountId,
+                        toEmails,
+                        ccEmails,
+                        bodyHtml,
+                        inlineImages,
+                        attachments,
+                      );
+                    }
+                    // The backend inserted the optimistic Sent row before the send
+                    // command returned (and already enqueued the follow-up account
+                    // sync) — refetching the thread shows the reply instantly.
+                    await refreshThread(latestEmail.accountId, latestEmail.threadId);
+                    bumpSentRefresh();
+                    addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
+                  },
+                });
+                // Queued or sent, the panel closes; a queued reply refreshes the
+                // thread when the dispatcher reports it sent (App listener).
+                closeReply();
               }}
             />
           </div>

@@ -18,6 +18,7 @@ import { MemorySettings } from './MemorySettings';
 import { PrivacySettings } from './PrivacySettings';
 import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
+import { UndoSendSetting } from './UndoSendSetting';
 
 export type SettingsTab =
   | 'appearance'
@@ -311,6 +312,7 @@ function AppearancePanel({
           />
         </div>
       </section>
+      <UndoSendSetting />
     </div>
   );
 }

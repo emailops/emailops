@@ -390,6 +390,83 @@ export async function listThreadSnoozes(accountId: string | null): Promise<Threa
   return invoke('list_thread_snoozes', { accountId: accountId ?? undefined });
 }
 
+// ── Outbox: undo send and scheduled send ────────────────────────────────────
+
+/** A composed message as the outbox stores it (mirrors Rust `OutgoingMessage`).
+ *  `replyToEmailId` set = a reply (threaded on that message); unset = a new
+ *  message, forwards included. */
+export interface OutgoingMessage {
+  accountId: string;
+  replyToEmailId?: string | null;
+  to: string[];
+  cc: string[];
+  /** For a reply, empty = the parent's subject ("Re: …"). */
+  subject: string;
+  /** Plain-text body. */
+  body: string;
+  bodyHtml?: string | null;
+  inlineImages: EmailAttachment[];
+  attachments: EmailAttachment[];
+}
+
+/** When a queued message goes out: after the undo window, or at `sendAt`
+ *  (unix seconds). */
+export type OutboxSchedule = { type: 'undo'; delaySecs: number } | { type: 'at'; sendAt: number };
+
+export type OutboxStatus = 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+
+/** One outbox row (mirrors Rust `OutboxEntry`); times are unix seconds. */
+export interface OutboxEntry {
+  id: string;
+  accountId: string;
+  kind: 'new' | 'reply';
+  replyToEmailId: string | null;
+  origin: 'undo' | 'scheduled';
+  toAddresses: string[];
+  ccAddresses: string[];
+  subject: string;
+  attachmentCount: number;
+  sendAt: number;
+  status: OutboxStatus;
+  attempts: number;
+  lastError: string | null;
+  /** `interrupted`: the app stopped mid-send — it may or may not have gone out. */
+  failureKind: 'error' | 'interrupted' | null;
+  createdAt: number;
+}
+
+/** Payload of the `outbox-updated` event. */
+export interface OutboxUpdated {
+  sent: { id: string; accountId: string; threadId: string | null }[];
+  failed: { id: string; accountId: string; interrupted: boolean; message: string }[];
+}
+
+/** Queue a message for undo send or scheduled send. `draftId` is the
+ *  composer's saved draft: it leaves Drafts once the message is queued. */
+export async function queueOutgoingEmail(
+  message: OutgoingMessage,
+  schedule: OutboxSchedule,
+  draftId?: string,
+): Promise<OutboxEntry> {
+  return invoke('queue_outgoing_email', { message, schedule, draftId });
+}
+
+/** Take a waiting or failed message back (undo / edit / delete). Fails with
+ *  code `outbox_not_pending` once it is being sent. */
+export async function cancelOutboxMessage(id: string): Promise<OutgoingMessage> {
+  return invoke('cancel_outbox_message', { id });
+}
+
+/** Send a waiting message now, or retry a failed one. */
+export async function sendOutboxMessageNow(id: string): Promise<void> {
+  return invoke('send_outbox_message_now', { id });
+}
+
+/** Waiting and failed messages of one account, or every enabled one (`null`). */
+export async function listOutbox(accountId: string | null): Promise<OutboxEntry[]> {
+  return invoke('list_outbox', { accountId: accountId ?? undefined });
+}
+
 export async function sendReply(
   emailId: string,
   body: string,

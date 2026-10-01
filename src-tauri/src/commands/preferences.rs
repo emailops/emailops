@@ -94,6 +94,17 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "calendar.enabled must be true or false, got: {value}"
         )));
+    } else if key == crate::models::outbox::UNDO_SEND_DELAY_PREF {
+        // Undo-send window: 0 (off) or one of the delays the outbox accepts.
+        let valid = value
+            .parse::<i64>()
+            .is_ok_and(|secs| secs == 0 || crate::models::outbox::UNDO_SEND_DELAYS.contains(&secs));
+        if !valid {
+            return Err(AppError::InvalidInput(format!(
+                "{key} must be 0 or one of {:?} seconds, got: {value}",
+                crate::models::outbox::UNDO_SEND_DELAYS
+            )));
+        }
     }
     Ok(())
 }
@@ -158,6 +169,16 @@ pub async fn get_system_locale() -> Result<String, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_undo_send_delay_is_off_or_an_offered_window() {
+        for ok in ["0", "5", "10", "20", "30"] {
+            assert!(validate_pref("compose.undo_send_delay_secs", ok).is_ok(), "{ok}");
+        }
+        for bad in ["7", "-5", "60", "ten", ""] {
+            assert!(validate_pref("compose.undo_send_delay_secs", bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn validate_pref_accepts_supported_ui_languages() {

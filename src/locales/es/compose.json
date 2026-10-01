@@ -101,5 +101,47 @@
     "unfilledPlaceholder": "Quedan huecos por rellenar: {{items}}",
     "review": "Revisar",
     "sendAnyway": "Enviar igualmente"
+  },
+  "outbox": {
+    "sending": "Enviando…",
+    "undo": "Deshacer",
+    "tooLate": "Demasiado tarde: este mensaje ya se está enviando.",
+    "scheduledFor": "Programado para {{time}}",
+    "deleted": "Mensaje programado eliminado",
+    "sentCount_one": "{{count}} mensaje en cola enviado",
+    "sentCount_other": "{{count}} mensajes en cola enviados",
+    "interrupted": "EmailOps se cerró mientras se enviaba un mensaje. Puede que haya salido o no: revisa Enviados antes de reintentarlo.",
+    "failed": "No se pudo enviar un mensaje: {{error}}",
+    "view": "Ver"
+  },
+  "schedule": {
+    "menuLabel": "Más opciones de envío",
+    "scheduleSend": "Programar envío",
+    "tomorrowMorning": "Mañana por la mañana",
+    "tomorrowAfternoon": "Mañana por la tarde",
+    "mondayMorning": "Lunes por la mañana",
+    "custom": "Elegir fecha y hora",
+    "customLabel": "Fecha y hora",
+    "confirm": "Programar",
+    "invalid": "Elige una hora futura",
+    "appOpenNote": "EmailOps debe estar abierto a esa hora para que el mensaje salga."
+  },
+  "scheduled": {
+    "title": "Programados",
+    "empty": "No hay mensajes programados",
+    "appOpenNote": "Los mensajes programados solo salen mientras EmailOps está abierto. Si llega la hora con la aplicación cerrada, el mensaje se envía la próxima vez que la abras.",
+    "sendsAt": "Se envía {{time}}",
+    "failed": "No enviado",
+    "interrupted": "Puede que no se haya enviado: EmailOps se cerró mientras lo enviaba. Revisa Enviados antes de reintentar.",
+    "to": "Para: {{recipients}}",
+    "noSubject": "(sin asunto)",
+    "reply": "Respuesta",
+    "attachments_one": "{{count}} adjunto",
+    "attachments_other": "{{count}} adjuntos",
+    "sendNow": "Enviar ahora",
+    "retry": "Reintentar",
+    "edit": "Editar",
+    "delete": "Eliminar",
+    "sending": "Enviando…"
   }
 }

@@ -2761,3 +2761,45 @@ pin are local state. The inbox query must stay index-driven on 47k+ emails.
 - *Hiding snoozed mail at the provider (archive on snooze, move back on wake)*: provider
   writes, IMAP re-keying and failure modes for a reminder, and the conversation would be
   lost from the inbox if the app never ran again.
+
+## 2026-10-01 — Undo send and scheduled send share one local outbox; overdue mail goes out at launch, an interrupted send never resends
+
+**Decision:** A message sent with an undo window or scheduled for later waits in a local
+`outbox` table (V032) holding the composed message as JSON (recipients, subject, sanitized
+HTML, inline images and attachment bytes as base64 — files a draft referenced by path are
+read in when the message is queued) until its `send_at`. Undo send is a scheduled send
+`delay` seconds ahead (setting *Undo send*: off / 5 / 10 / 20 / 30 s, default 10, in
+`user_preferences` as `compose.undo_send_delay_secs`; off keeps the direct send). A
+dispatcher (`sync_scheduler::outbox_dispatch_loop`, every 15 s and woken when an undo
+window closes or the user picks *Send now*) sends due rows through `emails::send_outgoing`,
+i.e. the same `deliver_reply` / `deliver_new_email` path, optimistic Sent copy included.
+- **No double send:** a row is flipped `scheduled → sending` in one guarded UPDATE before
+  the provider is called; undo, edit and delete are guarded UPDATEs from `scheduled` /
+  `failed`, so the backend decides the race and a late undo answers `outbox_not_pending`.
+- **Crash mid-send:** a row still `sending` at start-up becomes `failed`
+  (`interrupted`) with "may or may not have been sent — check Sent"; it is never resent
+  automatically. A provider failure is `failed` with its error and is not retried on its
+  own either (a 5xx does not say whether the message left); *Retry* is the user's call.
+- **Overdue at launch:** a message whose time passed while the app was closed is sent
+  automatically on the next launch, as Gmail and Outlook send it — the user asked for it
+  to go out, and the Scheduled view and schedule menu say the app must be open.
+- **Drafts:** queueing a message the composer had saved as a draft deletes that draft
+  (locally and at the provider), as an immediate send does; the queued copy owns the
+  content. Undo / *Edit* reopen it in a compose tab (replies keep `replyToEmailId`, so they
+  are still sent as replies), whose auto-save creates a fresh draft.
+- The payload is emptied when a row is sent or cancelled; finished rows are deleted after
+  7 days. The payload is never logged.
+**Context:** Parity audit items (High). IMAP has no server-side scheduling and Gmail's API
+exposes none, so a local queue is the only way to offer both on every account type, and one
+queue gives both features the same send path and the same safety rules.
+**Rejected:**
+- *A frontend timer for undo send*: the message would be lost if the window closed or the
+  app quit during the delay, and a scheduled send needs persistence anyway.
+- *Asking at launch before sending overdue mail*: a prompt the user may not see for hours
+  turns "send Monday 8:00" into "send whenever I next click"; the delay is visible in Sent.
+- *Keeping the draft while a message is scheduled*: two copies of the same text, and the
+  draft sync could push or prune it while the queued copy is the one that will go out.
+- *Referencing attachment files by path*: temp files and moved files would break a send
+  hours later.
+- *Retrying a failed or interrupted send automatically*: a duplicate email is worse than a
+  visible failure with a Retry button.

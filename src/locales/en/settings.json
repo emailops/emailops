@@ -39,7 +39,11 @@
     "layoutSplitLabel": "Split view",
     "layoutSplitDesc": "Email list on the left, email content on the right",
     "layoutFullWidthLabel": "Full-width list",
-    "layoutFullWidthDesc": "Email list takes full width; open email to read it"
+    "layoutFullWidthDesc": "Email list takes full width; open email to read it",
+    "undoSend": "Undo send",
+    "undoSendHelp": "After you press Send, the message waits this long so you can take it back. EmailOps must stay open until it goes out.",
+    "undoSendOff": "Off",
+    "undoSendSeconds": "{{count}} seconds"
   },
   "dialog": {
     "closeTitle": "Close settings",

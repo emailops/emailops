@@ -29,6 +29,7 @@ import { LogPanel } from '@/components/LogPanel/LogPanel';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { OnboardingWizard } from '@/components/Onboarding/OnboardingWizard';
+import { ScheduledView } from '@/components/ScheduledView';
 import { SearchBar } from '@/components/Search/SearchBar';
 import type { ClassificationRulePrefill } from '@/components/Settings/ClassificationSettings';
 import { SettingsDialog, type SettingsTab } from '@/components/Settings/SettingsDialog';
@@ -46,6 +47,7 @@ import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
+import type { OutboxUpdated } from '@/lib/api';
 import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
@@ -57,6 +59,7 @@ import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
+import { restoredBodyHtml } from '@/lib/outbox';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import {
   baseViewToken,
@@ -91,6 +94,7 @@ import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useOutboxStore } from '@/stores/outboxStore';
 import { useReminderStore } from '@/stores/reminderStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -297,6 +301,27 @@ function AppInner() {
   const setActiveTab = useEmailStore((s) => s.setActiveTab);
   const openComposeTab = useEmailStore((s) => s.openComposeTab);
   const setPendingChatDraft = useEmailStore((s) => s.setPendingChatDraft);
+
+  // A message taken back from the outbox (Undo, or Edit in the Scheduled
+  // view) reopens in a compose tab with everything it had — recipients,
+  // subject, body with its inline images, attachments, and the message a
+  // reply answers. Failures announced by the outbox link to the Scheduled view.
+  useEffect(() => {
+    const outbox = useOutboxStore.getState();
+    outbox.setRestoreHandler((message) => {
+      setViewMode('inbox');
+      openComposeTab(message.accountId, message.to, message.subject, restoredBodyHtml(message), {
+        ccAddresses: message.cc,
+        fileAttachments: message.attachments,
+        replyToEmailId: message.replyToEmailId ?? undefined,
+      });
+    });
+    outbox.setShowScheduledHandler(() => setViewMode('scheduled'));
+    return () => {
+      outbox.setRestoreHandler(null);
+      outbox.setShowScheduledHandler(null);
+    };
+  }, [openComposeTab]);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const previousSyncStatusRef = useRef<string | null>(null);
 
@@ -788,6 +813,30 @@ function AppInner() {
           silentRefetchEmailsRef.current();
         } else {
           console.error('Ignoring malformed snoozes-woken payload', event.payload);
+        }
+      }),
+    );
+
+    // The outbox dispatcher sent or failed queued messages (undo send /
+    // scheduled send): update the Scheduled view, announce failures, show the
+    // Sent copy and refresh an open conversation a queued reply landed in.
+    unlisteners.push(
+      listen<OutboxUpdated>('outbox-updated', (event) => {
+        const update = event.payload;
+        if (!Array.isArray(update?.sent) || !Array.isArray(update?.failed)) {
+          console.error('Ignoring malformed outbox-updated payload', update);
+          return;
+        }
+        useOutboxStore.getState().applyUpdate(update);
+        if (update.sent.length === 0) return;
+        const emails = useEmailStore.getState();
+        emails.bumpSentRefresh();
+        for (const sent of update.sent) {
+          if (!sent.threadId) continue;
+          const open =
+            emails.selectedEmail?.threadId === sent.threadId ||
+            emails.tabs.some((t) => t.type === 'thread' && t.threadId === sent.threadId);
+          if (open) void emails.refreshThread(sent.accountId, sent.threadId);
         }
       }),
     );
@@ -1455,10 +1504,21 @@ function AppInner() {
                     fresh.toAddresses,
                     fresh.subject,
                     fresh.bodyHtml ?? plainTextToHtml(fresh.body),
-                    { draftId: fresh.id, ccAddresses: fresh.ccAddresses, attachments: fresh.attachments },
+                    {
+                      draftId: fresh.id,
+                      ccAddresses: fresh.ccAddresses,
+                      attachments: fresh.attachments,
+                      // A reply draft is sent as a reply, threaded on its message.
+                      replyToEmailId: fresh.emailId ?? undefined,
+                    },
                   );
                 }}
               />
+            </div>
+          ) : viewMode === 'scheduled' ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <ScheduledView accountId={queryAccountId} accounts={accounts} />
             </div>
           ) : viewMode === 'chat' ? (
             // Chat conversations are hard-scoped to one account; in unified

@@ -20,6 +20,7 @@ const CHECKED_FILES = [
   'junk.rs',
   'lenses.rs',
   'memory.rs',
+  'outbox.rs',
   'preferences.rs',
   'prompts.rs',
   'search.rs',

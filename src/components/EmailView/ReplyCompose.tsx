@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
+import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -28,6 +29,8 @@ interface ReplyComposeProps {
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
     attachments?: EmailAttachment[];
+    /** Set when the user picked "Schedule send": the message goes out then. */
+    scheduleAt: Date | null;
   }) => Promise<void>;
   onCancel: () => void;
   initialBody: string;
@@ -187,6 +190,8 @@ export function ReplyCompose({
   const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
   // Pre-send warnings awaiting "send anyway"; any edit dismisses them.
   const [sendWarnings, setSendWarnings] = useState<SendWarning[] | null>(null);
+  // The schedule time the warnings interrupted, so "send anyway" keeps it.
+  const warnedScheduleAt = useRef<Date | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every edit of the body or attachments
   useEffect(() => {
     setSendWarnings(null);
@@ -302,7 +307,9 @@ export function ReplyCompose({
     }
   };
 
-  const handleSend = async (force = false) => {
+  /** Send (through the undo window when it is on) or, with `scheduleAt`,
+   *  schedule the reply. The one send entry point of this composer. */
+  const handleSend = async (force = false, scheduleAt: Date | null = null) => {
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     // A valid address still in the input box (typed, not tokenised) is a
@@ -314,6 +321,7 @@ export function ReplyCompose({
     if (!force && mode !== 'forward') {
       const warnings = findSendWarnings(plain, attachments.length);
       if (warnings.length > 0) {
+        warnedScheduleAt.current = scheduleAt;
         setSendWarnings(warnings);
         return;
       }
@@ -330,6 +338,7 @@ export function ReplyCompose({
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
         attachments,
+        scheduleAt,
       });
     } catch (err) {
       // A failed send must never be silent: keep the compose open with the
@@ -564,29 +573,30 @@ export function ReplyCompose({
         >
           Cancel
         </button>
-        <button
-          type="button"
-          onClick={() => void handleSend()}
+        <SendSplitButton
+          testId="reply-send"
+          label={
+            isSending
+              ? t('compose:sending')
+              : mode === 'forward'
+                ? t('compose:forward')
+                : mode === 'reply-all'
+                  ? 'Reply All'
+                  : 'Send Reply'
+          }
+          onSend={() => void handleSend()}
+          onSchedule={(at) => void handleSend(false, at)}
           disabled={
             isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
           }
-          className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isSending
-            ? t('compose:sending')
-            : mode === 'forward'
-              ? t('compose:forward')
-              : mode === 'reply-all'
-                ? 'Reply All'
-                : 'Send Reply'}
-        </button>
+        />
       </div>
 
       {sendWarnings && (
         <div className="mt-3">
           <SendWarningBanner
             warnings={sendWarnings}
-            onSendAnyway={() => void handleSend(true)}
+            onSendAnyway={() => void handleSend(true, warnedScheduleAt.current)}
             onReview={() => setSendWarnings(null)}
           />
         </div>

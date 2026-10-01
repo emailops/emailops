@@ -337,47 +337,14 @@ pub async fn send_new_email(
     Ok(())
 }
 
-/// Construct an `EmailBody` from the wire payload. When `body_html` is present
-/// we sanitize it server-side via `crate::services::emails::sanitize_outgoing_html`
-/// — frontends are not trusted to produce safe HTML, even though the compose
-/// editor only emits an allowlisted subset.
-///
-/// `inline_images` entries are normalized: anything passed via this parameter
-/// is forced to `is_inline = true` and must carry a non-empty `content_id`,
-/// otherwise the `cid:` references in the HTML body would dangle.
+/// Construct an `EmailBody` from the wire payload (sanitized, inline images
+/// normalized) — see [`services::emails::outgoing_body`].
 fn build_email_body(
     body: String,
     body_html: Option<String>,
     inline_images: Option<Vec<crate::sync::provider::EmailAttachment>>,
 ) -> Result<crate::sync::provider::EmailBody, AppError> {
-    use crate::sync::provider::EmailBody;
-    let html = body_html.and_then(|h| {
-        let trimmed = h.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(crate::services::emails::sanitize_outgoing_html(trimmed))
-        }
-    });
-    let mut inline = inline_images.unwrap_or_default();
-    for att in &mut inline {
-        att.is_inline = true;
-        if att.content_id.as_deref().map(str::is_empty).unwrap_or(true) {
-            return Err(AppError::InvalidInput("Inline image is missing contentId".to_string()));
-        }
-    }
-    if html.is_none() && !inline.is_empty() {
-        return Err(AppError::InvalidInput("Inline images require an HTML body".to_string()));
-    }
-    Ok(EmailBody {
-        text: body,
-        html,
-        inline_images: inline,
-        // Footer language is resolved from the user's UI preference in the send
-        // service; default here keeps this builder free of DB access.
-        language: crate::services::i18n::Language::default(),
-        append_footer: true,
-    })
+    services::emails::outgoing_body(body, body_html, inline_images.unwrap_or_default())
 }
 
 /// Frontend-facing payload for `draft-generated`. Sent once the AI finishes
@@ -746,7 +713,7 @@ pub async fn start_resync_mailbox(
 /// (see `send_reply` / `send_new_email`), so a just-sent message — which IMAP
 /// must `APPEND` to the Sent folder itself — shows up in the Sent view without
 /// waiting for the next periodic sync.
-async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
+pub(crate) async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
     enqueue_account_sync_with_contention(app, state, account_id, services::emails::SyncContention::Skip).await;
 }
 

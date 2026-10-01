@@ -4,8 +4,15 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
+import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
-import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
+import type {
+  DraftFailedEvent,
+  DraftGeneratedEvent,
+  EmailAttachment,
+  OutgoingMessage,
+  RecipientSuggestion,
+} from '@/lib/api';
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
@@ -20,6 +27,7 @@ import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
 
 export interface ComposeMaximizeState {
@@ -341,7 +349,9 @@ export function ComposeModal({
     });
   };
 
-  const handleSend = async () => {
+  /** Send now (`scheduleAt` null: through the undo window when it is on)
+   *  or schedule the message. The one send entry point of this composer. */
+  const submit = async (scheduleAt: Date | null) => {
     // Include a valid address still sitting in the input box (typed but not
     // tokenized) so it isn't silently dropped from the outgoing message.
     const to = mergePendingRecipient(toRecipients, toInput);
@@ -352,32 +362,64 @@ export function ComposeModal({
     setSendError(null);
     setIsSending(true);
     try {
-      await api.sendNewEmail(
-        fromAccountId,
+      // Save an edit still in the quiet period and wait for every save, so
+      // the draft id is final; auto-save stops while sending.
+      debouncedRef.current.flushPending();
+      const draftId = await autosaverRef.current?.flush();
+      const message: OutgoingMessage = {
+        accountId: fromAccountId,
+        replyToEmailId: null,
         to,
         cc,
-        subject.trim(),
-        plain,
+        subject: subject.trim(),
+        body: plain,
+        bodyHtml: prepared.bodyHtml,
+        inlineImages: prepared.inlineImages,
         attachments,
-        prepared.bodyHtml,
-        prepared.inlineImages,
-      );
-      addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
-      setSent(true);
-      // Drop the auto-saved draft (local + provider copy) now that it's sent,
-      // so it doesn't linger in Drafts or get re-pulled on the next sync.
-      // flush() waits for any in-flight autosave so we delete the real row.
-      const draftId = await autosaverRef.current?.flush();
-      if (draftId) {
-        api.deleteDraft(draftId, fromAccountId).catch(() => {});
+      };
+      const outbox = useOutboxStore.getState();
+      if (scheduleAt) {
+        // The queued copy owns the content now; the draft leaves Drafts.
+        await outbox.schedule(message, scheduleAt, draftId);
+        setSent(true);
+        onClose();
+        return;
       }
-      setTimeout(onClose, 1200);
+      const outcome = await outbox.send(message, {
+        draftId,
+        sendDirect: async () => {
+          await api.sendNewEmail(
+            fromAccountId,
+            to,
+            cc,
+            subject.trim(),
+            plain,
+            attachments,
+            prepared.bodyHtml,
+            prepared.inlineImages,
+          );
+          addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
+          setSent(true);
+          // Drop the auto-saved draft (local + provider copy) now that it's
+          // sent, so it doesn't linger in Drafts or get re-pulled on the next sync.
+          if (draftId) {
+            api.deleteDraft(draftId, fromAccountId).catch(() => {});
+          }
+          setTimeout(onClose, 1200);
+        },
+      });
+      if (outcome === 'queued') {
+        setSent(true);
+        onClose();
+      }
     } catch (err) {
       setSendError(errorText(err));
     } finally {
       setIsSending(false);
     }
   };
+
+  const handleSend = () => void submit(null);
 
   // Recipients + subject are the minimum the backend needs to draft a new
   // email; the subject is always part of the brief on that side.
@@ -745,9 +787,11 @@ export function ComposeModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={handleSend}
+          <SendSplitButton
+            testId="compose-send"
+            label={isSending ? t('compose:sending') : isLoadingAttachments ? 'Loading files…' : t('compose:send')}
+            onSend={handleSend}
+            onSchedule={(at) => void submit(at)}
             disabled={
               isSending ||
               sent ||
@@ -756,10 +800,7 @@ export function ComposeModal({
               !subject.trim() ||
               !bodyHtml.trim()
             }
-            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSending ? 'Sending…' : isLoadingAttachments ? 'Loading files…' : 'Send'}
-          </button>
+          />
         </div>
       </div>
     </div>,

@@ -24,6 +24,7 @@ use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
 pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
+pub(crate) use compose::load_attachments as load_draft_attachments;
 pub use compose::{
     compose_draft, delete_draft, plan_compose, pull_provider_drafts, refresh_provider_drafts, send_draft, ComposeInput,
     ComposePlan,
@@ -37,7 +38,10 @@ pub use html_sanitizer::sanitize_outgoing_html;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
-pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
+pub(crate) use send::validate_new_email;
+pub use send::{
+    outgoing_body, send_new_email, send_new_email_with_provider, send_outgoing, send_reply, send_reply_with_provider,
+};
 pub use snooze::{
     due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
     SNOOZES_WOKEN_EVENT,

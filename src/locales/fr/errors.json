@@ -71,6 +71,7 @@
     "skill_body_too_long": "Les instructions dépassent {{max}} caractères ; raccourcissez-les pour qu'elles tiennent dans le contexte du modèle.",
     "skill_changed_on_disk": "{{name}}/SKILL.md a changé sur le disque depuis son ouverture. Rechargez-le avant d'enregistrer.",
     "skill_already_exists": "Un skill nommé {{name}} existe déjà. Choisissez un autre nom.",
-    "no_archive_folder": "Ce compte n’a pas de dossier d’archives. Créez un dossier nommé « Archive » pour archiver vos e-mails."
+    "no_archive_folder": "Ce compte n’a pas de dossier d’archives. Créez un dossier nommé « Archive » pour archiver vos e-mails.",
+    "outbox_not_pending": "Ce message est déjà en cours d’envoi et ne peut plus être modifié."
   }
 }

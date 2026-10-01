@@ -32,7 +32,7 @@ pub fn provider_supports_mailbox_writes(provider: &str) -> bool {
 /// from the HTML body via a `cid:<content_id>` URI (RFC 2392). Regular file
 /// attachments leave both at their default (None / false) so the SMTP layer
 /// renders them as `Content-Disposition: attachment`.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailAttachment {
     /// Original filename (e.g. "report.pdf")
@@ -878,6 +878,9 @@ pub struct FakeEmailProvider {
     /// message's own id under `archive` — models a provider that re-keys
     /// (Graph, IMAP) or files the message in a folder (IMAP).
     archive_location: std::sync::RwLock<Option<MessageLocation>>,
+    /// When `Some`, `send_reply` / `send_new_email` fail with this message and
+    /// record nothing — a provider refusing the send (5xx, offline).
+    send_failure: std::sync::RwLock<Option<String>>,
 }
 
 /// The change log of a [`FakeEmailProvider`] modelling Gmail.
@@ -1012,6 +1015,7 @@ impl FakeEmailProvider {
             history: std::sync::RwLock::new(None),
             label_fetch_failure: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
+            send_failure: std::sync::RwLock::new(None),
         }
     }
 
@@ -1080,6 +1084,18 @@ impl FakeEmailProvider {
     /// Make `list_history` fail (`Some`) or answer again (`None`).
     pub fn fail_history_listing(&self, failure: Option<&str>) {
         self.with_history(|h| h.failure = failure.map(str::to_string));
+    }
+
+    /// Make every send fail with `message` (`Some`), or succeed again (`None`).
+    pub fn fail_sends(&self, message: Option<&str>) {
+        *self.send_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
+    }
+
+    fn send_refusal(&self) -> Result<()> {
+        match self.send_failure.read().unwrap_or_else(PoisonError::into_inner).clone() {
+            Some(message) => Err(crate::models::error::AppError::SyncError(message)),
+            None => Ok(()),
+        }
     }
 
     /// Make `fetch_message_labels` fail.
@@ -1482,6 +1498,7 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<SentMessageMeta> {
+        self.send_refusal()?;
         self.sent
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1511,6 +1528,7 @@ impl EmailProvider for FakeEmailProvider {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<SentMessageMeta> {
+        self.send_refusal()?;
         self.sent
             .write()
             .unwrap_or_else(PoisonError::into_inner)

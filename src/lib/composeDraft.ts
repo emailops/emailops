@@ -7,6 +7,8 @@ import type { DraftAttachmentInput, SaveDraftRequest } from '@/lib/api';
 export interface ComposeDraftState {
   /** Existing draft id being edited, or undefined for a not-yet-saved draft. */
   draftId?: string;
+  /** The message a reply draft answers; undefined for a new message. */
+  emailId?: string;
   accountId: string;
   toAddresses: string[];
   ccAddresses: string[];
@@ -40,6 +42,7 @@ export function shouldAutosaveDraft(s: ComposeDraftState): boolean {
 export function buildSaveDraftRequest(s: ComposeDraftState): SaveDraftRequest {
   return {
     id: s.draftId,
+    ...(s.emailId !== undefined ? { emailId: s.emailId } : {}),
     accountId: s.accountId,
     toAddresses: s.toAddresses,
     ccAddresses: s.ccAddresses,

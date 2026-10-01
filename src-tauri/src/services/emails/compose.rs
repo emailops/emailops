@@ -139,7 +139,7 @@ fn load_attachment(att: &DraftAttachment) -> Result<EmailAttachment> {
     })
 }
 
-fn load_attachments(drafts: &[DraftAttachment]) -> Result<Vec<EmailAttachment>> {
+pub(crate) fn load_attachments(drafts: &[DraftAttachment]) -> Result<Vec<EmailAttachment>> {
     drafts.iter().map(load_attachment).collect()
 }
 

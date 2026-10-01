@@ -39,7 +39,11 @@
     "layoutSplitLabel": "Geteilte Ansicht",
     "layoutSplitDesc": "E-Mail-Liste links, E-Mail-Inhalt rechts",
     "layoutFullWidthLabel": "Liste in voller Breite",
-    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen"
+    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen",
+    "undoSend": "Senden rückgängig machen",
+    "undoSendHelp": "Nach dem Klick auf Senden wartet die Nachricht so lange, damit Sie sie zurückholen können. EmailOps muss geöffnet bleiben, bis sie gesendet ist.",
+    "undoSendOff": "Aus",
+    "undoSendSeconds": "{{count}} Sekunden"
   },
   "dialog": {
     "closeTitle": "Einstellungen schließen",

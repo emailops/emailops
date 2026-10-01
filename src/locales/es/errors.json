@@ -71,6 +71,7 @@
     "skill_body_too_long": "Las instrucciones tienen más de {{max}} caracteres; acórtalas para que quepan en el contexto del modelo.",
     "skill_changed_on_disk": "{{name}}/SKILL.md ha cambiado en disco desde que lo abriste. Recárgalo antes de guardar.",
     "skill_already_exists": "Ya existe una skill llamada {{name}}. Elige otro nombre.",
-    "no_archive_folder": "Esta cuenta no tiene carpeta de archivo. Crea una carpeta llamada «Archive» para archivar correo."
+    "no_archive_folder": "Esta cuenta no tiene carpeta de archivo. Crea una carpeta llamada «Archive» para archivar correo.",
+    "outbox_not_pending": "Este mensaje ya se está enviando y no se puede cambiar."
   }
 }

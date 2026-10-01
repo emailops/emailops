@@ -27,6 +27,7 @@ pub mod keychain;
 pub mod lenses;
 pub mod logger;
 pub mod memory;
+pub mod outbox;
 pub mod password;
 pub mod prompts;
 pub mod retrieval;

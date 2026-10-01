@@ -101,5 +101,47 @@
     "unfilledPlaceholder": "Es gibt noch nicht ausgefüllte Platzhalter: {{items}}",
     "review": "Überprüfen",
     "sendAnyway": "Trotzdem senden"
+  },
+  "outbox": {
+    "sending": "Wird gesendet…",
+    "undo": "Rückgängig",
+    "tooLate": "Zu spät: Diese Nachricht wird bereits gesendet.",
+    "scheduledFor": "Geplant für {{time}}",
+    "deleted": "Geplante Nachricht gelöscht",
+    "sentCount_one": "{{count}} wartende Nachricht gesendet",
+    "sentCount_other": "{{count}} wartende Nachrichten gesendet",
+    "interrupted": "EmailOps wurde beendet, während eine Nachricht gesendet wurde. Sie ist möglicherweise nicht verschickt worden: Prüfen Sie „Gesendet“, bevor Sie es erneut versuchen.",
+    "failed": "Eine Nachricht konnte nicht gesendet werden: {{error}}",
+    "view": "Anzeigen"
+  },
+  "schedule": {
+    "menuLabel": "Weitere Sendeoptionen",
+    "scheduleSend": "Senden planen",
+    "tomorrowMorning": "Morgen früh",
+    "tomorrowAfternoon": "Morgen Nachmittag",
+    "mondayMorning": "Montag früh",
+    "custom": "Datum und Uhrzeit wählen",
+    "customLabel": "Datum und Uhrzeit",
+    "confirm": "Planen",
+    "invalid": "Wählen Sie einen Zeitpunkt in der Zukunft",
+    "appOpenNote": "EmailOps muss zu diesem Zeitpunkt geöffnet sein, damit die Nachricht gesendet wird."
+  },
+  "scheduled": {
+    "title": "Geplant",
+    "empty": "Keine geplanten Nachrichten",
+    "appOpenNote": "Geplante Nachrichten werden nur gesendet, solange EmailOps geöffnet ist. Verstreicht der Zeitpunkt bei geschlossener App, wird die Nachricht beim nächsten Öffnen gesendet.",
+    "sendsAt": "Wird {{time}} gesendet",
+    "failed": "Nicht gesendet",
+    "interrupted": "Möglicherweise nicht gesendet: EmailOps wurde beim Senden beendet. Prüfen Sie „Gesendet“, bevor Sie es erneut versuchen.",
+    "to": "An: {{recipients}}",
+    "noSubject": "(kein Betreff)",
+    "reply": "Antwort",
+    "attachments_one": "{{count}} Anhang",
+    "attachments_other": "{{count}} Anhänge",
+    "sendNow": "Jetzt senden",
+    "retry": "Erneut versuchen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "sending": "Wird gesendet…"
   }
 }

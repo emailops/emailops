@@ -399,6 +399,9 @@ export interface ComposeTab {
   /** Files attached in the compose modal before it was opened in a tab
    *  (base64, not yet on any draft row). */
   fileAttachments?: EmailAttachment[];
+  /** The message this tab replies to (a reply draft, or a reply taken back
+   *  from the outbox): it is sent as a reply, threaded on that message. */
+  replyToEmailId?: string;
 }
 
 export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
@@ -460,6 +463,7 @@ interface EmailStore {
       ccAddresses?: string[];
       attachments?: DraftAttachment[];
       fileAttachments?: EmailAttachment[];
+      replyToEmailId?: string;
     },
   ) => void;
   closeTab: (tabId: string) => void;
@@ -694,6 +698,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       draftId: opts?.draftId,
       attachments: opts?.attachments,
       fileAttachments: opts?.fileAttachments,
+      replyToEmailId: opts?.replyToEmailId,
     };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: id }));
   },

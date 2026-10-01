@@ -60,6 +60,11 @@ describe('buildSaveDraftRequest', () => {
     expect(req.bodyHtml).toBeNull();
   });
 
+  it('keeps a reply draft attached to the message it answers', () => {
+    expect(buildSaveDraftRequest({ ...base, subject: 'Re: Hi', emailId: 'e1' }).emailId).toBe('e1');
+    expect('emailId' in buildSaveDraftRequest({ ...base, subject: 'Hi' })).toBe(false);
+  });
+
   it('keeps non-empty html', () => {
     const req = buildSaveDraftRequest({ ...base, subject: 'Hi', bodyHtml: '<p>hi</p>' });
     expect(req.bodyHtml).toBe('<p>hi</p>');

@@ -1,7 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ClockIcon } from '@/components/common/MailIcons';
+import { ClockIcon, ScheduledSendIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
@@ -48,6 +48,7 @@ export type ViewMode =
   | 'deleted'
   | 'starred'
   | 'snoozed'
+  | 'scheduled'
   | 'archive'
   | 'calendar'
   | 'chat'
@@ -513,6 +514,18 @@ export function Sidebar({
                     />
                   </svg>
                   {t('sidebar:drafts')}
+                </button>
+              </li>
+              <li>
+                <button
+                  data-testid="sidebar-scheduled"
+                  onClick={() => onSetViewMode('scheduled')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'scheduled' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <ScheduledSendIcon className="w-4 h-4" />
+                  {t('sidebar:scheduled')}
                 </button>
               </li>
               <li>

@@ -39,7 +39,11 @@
     "layoutSplitLabel": "Vista dividida",
     "layoutSplitDesc": "Lista de correos a la izquierda, contenido del correo a la derecha",
     "layoutFullWidthLabel": "Lista a pantalla completa",
-    "layoutFullWidthDesc": "La lista ocupa todo el ancho; abre un correo para leerlo"
+    "layoutFullWidthDesc": "La lista ocupa todo el ancho; abre un correo para leerlo",
+    "undoSend": "Deshacer envío",
+    "undoSendHelp": "Tras pulsar Enviar, el mensaje espera este tiempo para que puedas recuperarlo. EmailOps debe seguir abierto hasta que salga.",
+    "undoSendOff": "Desactivado",
+    "undoSendSeconds": "{{count}} segundos"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",
