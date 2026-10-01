@@ -1,7 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ClockIcon, ScheduledSendIcon } from '@/components/common/MailIcons';
+import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
@@ -535,14 +535,7 @@ export function Sidebar({
                     viewMode === 'sent' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
                   }`}
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                    />
-                  </svg>
+                  <SentIcon className="w-4 h-4" />
                   {t('sidebar:sent')}
                 </button>
               </li>

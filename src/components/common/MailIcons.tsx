@@ -60,11 +60,28 @@ export function ClockIcon({ className }: { className?: string }) {
   );
 }
 
-/** A paper plane: mail waiting to be sent (the Scheduled view). */
-export function ScheduledSendIcon({ className }: { className?: string }) {
+/** A paper plane: mail that went out (the Sent view). */
+export function SentIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+    </svg>
+  );
+}
+
+/** A calendar with a clock: mail waiting for its time to be sent (the
+ *  Scheduled view). Distinct from Sent's plane and Snoozed's bare clock. */
+export function ScheduledSendIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M10 21H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v3M8 3v4m8-4v4M3 10h18"
+      />
+      <circle cx="17" cy="17" r="4" strokeWidth={2} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 15.5V17l1 1" />
     </svg>
   );
 }
