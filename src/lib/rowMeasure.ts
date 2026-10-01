@@ -27,3 +27,23 @@ export function measuredRowHeight({ measured, cached, estimate }: RowMeasurement
   if (cached !== undefined && cached > 0) return cached;
   return estimate;
 }
+
+export interface ScrollRect {
+  width: number;
+  height: number;
+}
+
+/**
+ * The scroll container's viewport as the virtualizer should see it.
+ *
+ * The same `display: none` hide collapses the container to 0x0, and virtual-core
+ * treats a zero-height viewport as "render no rows". Any re-render while
+ * hidden (a flag change, a silent refetch) then drops every row, and on the
+ * way back the list shows its footer with nothing above it until the
+ * ResizeObserver reports the real size. A zero box is the container being
+ * hidden, not shrinking to nothing: keep the last real one.
+ */
+export function visibleScrollRect(next: ScrollRect, last: ScrollRect | null): ScrollRect {
+  if (next.height > 0 || last === null) return next;
+  return last;
+}

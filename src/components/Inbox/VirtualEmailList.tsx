@@ -1,7 +1,7 @@
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { observeElementRect, type Rect, useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { measuredRowHeight } from '@/lib/rowMeasure';
+import { measuredRowHeight, visibleScrollRect } from '@/lib/rowMeasure';
 import {
   INITIAL_SCROLL_RESTORE,
   planOffsetResync,
@@ -92,8 +92,19 @@ export function VirtualEmailList({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [selectionActive, clearSelection]);
 
+  // Last real viewport of the scroll container — see `visibleScrollRect`.
+  const lastRectRef = useRef<Rect | null>(null);
+
   const virtualizer = useVirtualizer({
     count: emails.length,
+    // A hidden list (0x0) keeps its last real viewport, so a re-render while
+    // hidden does not drop every row — see src/lib/rowMeasure.ts.
+    observeElementRect: (instance, cb) =>
+      observeElementRect(instance, (rect) => {
+        const shown = visibleScrollRect(rect, lastRectRef.current);
+        if (shown.height > 0) lastRectRef.current = shown;
+        cb(shown);
+      }),
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => (compact ? ESTIMATED_COMPACT_ROW_HEIGHT : ESTIMATED_ROW_HEIGHT),
     // Key by email ID so the measurement cache survives list updates

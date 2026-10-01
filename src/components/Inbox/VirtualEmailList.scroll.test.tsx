@@ -309,6 +309,27 @@ describe('VirtualEmailList scroll position across a display:none hide', () => {
     expect(spacer()?.style.height, 'the list height must survive being hidden').toBe(before);
   });
 
+  // A re-render while hidden (a flag change on the open conversation, a silent
+  // refetch after a send) used to compute the row window against the 0x0 box:
+  // virtual-core renders no rows for a zero viewport, so on the way back the
+  // list showed only its "No more emails" footer until the ResizeObserver
+  // reported the real size — 2-3 s in the demo recording.
+  it('keeps its rows through a re-render while hidden, before any resize arrives', () => {
+    renderWith(manyEmails);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    showAndSettle(el);
+    browserHides(el);
+    fireResize();
+    // "Mark as unread" from the open conversation patches the list while hidden.
+    renderWith(manyEmails.map((e, i) => (i === 0 ? { ...e, isRead: false } : e)));
+
+    // Shown again; the ResizeObserver has not reported yet.
+    setVisible(el, true);
+    expectNoBlankBand(el);
+  });
+
   // Supporting invariant: the scroll container is a single stable DOM node, so
   // the effect attached on mount keeps observing the right element even as the
   // list flips between its empty and populated branches.
