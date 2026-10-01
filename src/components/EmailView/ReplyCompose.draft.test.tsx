@@ -19,6 +19,8 @@ vi.mock('@/components/shared/Select', () => ({ Select: () => null }));
 
 const api = vi.hoisted(() => ({
   autocompleteRecipients: vi.fn(async () => []),
+  getPref: vi.fn(async () => null),
+  getFullSignature: vi.fn(async () => ({ text: '', image: null })),
   saveDraft: vi.fn(),
   deleteDraft: vi.fn(),
 }));
@@ -95,6 +97,15 @@ function button(label: string): HTMLButtonElement {
 describe('ReplyCompose drafts', () => {
   it('saves nothing when the reply is left untouched', async () => {
     render();
+    await leave();
+    expect(api.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('saves nothing when only the signature was added to an untouched reply', async () => {
+    api.getFullSignature.mockResolvedValueOnce({ text: 'Me\nExample Inc.', image: null });
+    render();
+    await act(async () => {});
+    expect(container.querySelector<HTMLTextAreaElement>('[data-testid="body"]')?.value).toContain('Example Inc.');
     await leave();
     expect(api.saveDraft).not.toHaveBeenCalled();
   });

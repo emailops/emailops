@@ -431,7 +431,19 @@
     "resetToDefault": "Auf Standard zurücksetzen",
     "promptHelpStart": "Vollständige Vorlage, die die KI erhält. Platzhalter:",
     "promptHelpEnd": ". Alles andere wird als wörtlicher Text durchgereicht.",
-    "saved": "Gespeichert."
+    "saved": "Gespeichert.",
+    "signoff": "Abschluss von KI-Entwürfen",
+    "signoffHelp": "Gilt für KI-Antworten und neue KI-E-Mails.",
+    "signoffOptions": {
+      "signature": "Grußformel + meine eigene Signatur",
+      "signatureDesc": "Die KI schreibt „Viele Grüße,“ ohne Namen; die Signatur Ihres Kontos (Text und Bild) wird darunter eingefügt.",
+      "name": "Grußformel + ein Name",
+      "nameDesc": "Die KI unterschreibt mit dem unten eingegebenen Namen.",
+      "none": "Nichts",
+      "noneDesc": "Keine Grußformel und kein Name."
+    },
+    "signoffName": "Name für die Unterschrift",
+    "signoffNamePlaceholder": "z. B. Maxime"
   },
   "aiSearch": {
     "title": "KI-Suche",

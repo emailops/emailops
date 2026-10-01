@@ -13,6 +13,9 @@ const api = vi.hoisted(() => ({
   setAccountSettings: vi.fn(),
   updateAccountName: vi.fn(),
   updateAccountSyncFrom: vi.fn(),
+  getFullSignature: vi.fn(async () => ({ text: '', image: null })),
+  setSignature: vi.fn(),
+  setSignatureImage: vi.fn(),
 }));
 vi.mock('@/lib/api', () => api);
 

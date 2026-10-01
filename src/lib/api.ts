@@ -2,6 +2,14 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { arch as osArch, platform as osPlatform, version as osVersion } from '@tauri-apps/plugin-os';
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
+import {
+  parseSignatureImage,
+  type Signature,
+  type SignatureImage,
+  serializeSignatureImage,
+  signatureImagePrefKey,
+  signaturePrefKey,
+} from '@/lib/signature';
 import type {
   Account,
   AccountDashboard,
@@ -1201,6 +1209,32 @@ export async function getPref(key: string): Promise<string | null> {
 
 export async function setPref(key: string, value: string): Promise<void> {
   return invoke('set_pref', { key, value });
+}
+
+/** The plain-text email signature of one account ('' when none). */
+export async function getSignature(accountId: string): Promise<string> {
+  return (await getPref(signaturePrefKey(accountId))) ?? '';
+}
+
+/** Save one account's email signature. An empty string removes it. */
+export async function setSignature(accountId: string, signature: string): Promise<void> {
+  return setPref(signaturePrefKey(accountId), signature);
+}
+
+/** The signature image of one account, or null when it has none. */
+export async function getSignatureImage(accountId: string): Promise<SignatureImage | null> {
+  return parseSignatureImage(await getPref(signatureImagePrefKey(accountId)));
+}
+
+/** Save (or, with null, remove) one account's signature image. */
+export async function setSignatureImage(accountId: string, image: SignatureImage | null): Promise<void> {
+  return setPref(signatureImagePrefKey(accountId), serializeSignatureImage(image));
+}
+
+/** Text and image of one account's signature, loaded together. */
+export async function getFullSignature(accountId: string): Promise<Signature> {
+  const [text, image] = await Promise.all([getSignature(accountId), getSignatureImage(accountId)]);
+  return { text, image };
 }
 
 /**

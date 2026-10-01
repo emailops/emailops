@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposeSignature } from '@/hooks/useComposeSignature';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
@@ -22,6 +23,7 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
+import { bodyWithoutSignature } from '@/lib/signature';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
@@ -50,6 +52,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [fromAccountId, setFromAccountId] = useState(tab.accountId);
   const [subject, setSubject] = useState(tab.subject);
   const [bodyHtml, setBodyHtml] = useState(tab.bodyHtml);
+  // The From account's signature. A body carried over from the compose modal
+  // or a saved draft already holds one; it is replaced, never duplicated.
+  const { withDraftSignature } = useComposeSignature(fromAccountId, setBodyHtml);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -138,7 +143,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) return;
+    // A body holding only the signature is not a draft worth saving.
+    if (!shouldAutosaveDraft({ ...state, plainBody: bodyWithoutSignature(bodyHtml) })) return;
     const handle = window.setTimeout(() => void autosaverRef.current?.save(state), 800);
     return () => window.clearTimeout(handle);
   }, [
@@ -226,7 +232,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
       return;
     }
-    setBodyHtml(plainTextToHtml(outcome.event.body));
+    // The draft replaced the whole body: re-attach the signature.
+    setBodyHtml(withDraftSignature(plainTextToHtml(outcome.event.body)));
     addLog('success', 'ai', 'AI draft ready');
   };
 
@@ -257,7 +264,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const to = mergePendingRecipient(toRecipients, toInput);
     if (to.length === 0 || !subject.trim()) return;
     // Whatever is already typed becomes the freeform brief for the model.
-    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    // The signature is not part of the brief.
+    const brief = bodyWithoutSignature(bodyHtml);
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
     draftTrackerRef.current.begin();
@@ -278,7 +286,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain) return;
+    // A signature alone is not a message.
+    if (to.length === 0 || !subject.trim() || !bodyWithoutSignature(bodyHtml)) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -591,7 +600,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             sent ||
             mergePendingRecipient(toRecipients, toInput).length === 0 ||
             !subject.trim() ||
-            !bodyHtml.trim()
+            !bodyWithoutSignature(bodyHtml)
           }
           className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
         >

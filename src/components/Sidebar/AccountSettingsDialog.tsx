@@ -1,8 +1,18 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import {
+  clampSignatureWidth,
+  isSignatureImageSrc,
+  SIGNATURE_IMAGE_DEFAULT_WIDTH,
+  SIGNATURE_IMAGE_MAX_WIDTH,
+  SIGNATURE_IMAGE_MIN_WIDTH,
+  SIGNATURE_MAX_LENGTH,
+  type SignatureImage,
+  serializeSignatureImage,
+} from '@/lib/signature';
 import type { Account } from '@/types';
 
 // Microsoft has no per-app revocation, so removing an Outlook account cannot
@@ -10,6 +20,20 @@ import type { Account } from '@/types';
 // where the user removes it (mirrored in the backend's removal log message).
 const MICROSOFT_PERSONAL_CONSENT_URL = 'https://account.live.com/consent/Manage';
 const MICROSOFT_WORK_APPS_URL = 'https://myapps.microsoft.com';
+
+/** Image types accepted for the signature (no SVG: it can carry scripts). */
+const SIGNATURE_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+/** File size limit; as base64 it stays under the 1 MB stored data URL limit. */
+const SIGNATURE_IMAGE_MAX_FILE_BYTES = 700_000;
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 type SyncPreset = '7d' | '30d' | '90d' | '365d' | 'all' | 'custom';
 
@@ -104,6 +128,55 @@ export function AccountSettingsDialog({
   // without a display name stores its address there, which means "no name".
   const initialSenderName = account.name.trim().toLowerCase() === account.email.toLowerCase() ? '' : account.name;
   const [senderName, setSenderName] = useState(initialSenderName);
+
+  // Plain-text signature added by the composers (see src/lib/signature.ts).
+  // `null` until loaded, so a slow load can never be saved back as "empty".
+  const [initialSignature, setInitialSignature] = useState<string | null>(null);
+  const [signature, setSignature] = useState('');
+  const [initialSignatureImage, setInitialSignatureImage] = useState<SignatureImage | null>(null);
+  const [signatureImage, setSignatureImage] = useState<SignatureImage | null>(null);
+  const [signatureImageError, setSignatureImageError] = useState<string | null>(null);
+  const signatureFileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getFullSignature(account.id)
+      .then(({ text, image }) => {
+        if (cancelled) return;
+        setInitialSignature(text);
+        setSignature(text);
+        setInitialSignatureImage(image);
+        setSignatureImage(image);
+      })
+      .catch(() => {
+        // Leave the field disabled rather than risk overwriting a signature we could not read.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account.id]);
+
+  const handleSignatureFile = useCallback(
+    async (file: File | undefined) => {
+      setSignatureImageError(null);
+      if (!file) return;
+      if (!SIGNATURE_IMAGE_TYPES.includes(file.type)) {
+        setSignatureImageError(t('modal:accountSettings.signatureImageBadType'));
+        return;
+      }
+      if (file.size > SIGNATURE_IMAGE_MAX_FILE_BYTES) {
+        setSignatureImageError(t('modal:accountSettings.signatureImageTooBig'));
+        return;
+      }
+      const src = await readAsDataUrl(file);
+      if (!isSignatureImageSrc(src)) {
+        setSignatureImageError(t('modal:accountSettings.signatureImageTooBig'));
+        return;
+      }
+      setSignatureImage((prev) => ({ src, width: prev?.width ?? SIGNATURE_IMAGE_DEFAULT_WIDTH }));
+    },
+    [t],
+  );
 
   const [syncEnabled, setSyncEnabled] = useState(account.enabled);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
@@ -286,6 +359,17 @@ export function AccountSettingsDialog({
       if (senderName.trim() !== initialSenderName.trim()) {
         await api.updateAccountName(account.id, senderName);
       }
+      if (initialSignature !== null && signature !== initialSignature) {
+        await api.setSignature(account.id, signature);
+        setInitialSignature(signature);
+      }
+      if (
+        initialSignature !== null &&
+        serializeSignatureImage(signatureImage) !== serializeSignatureImage(initialSignatureImage)
+      ) {
+        await api.setSignatureImage(account.id, signatureImage);
+        setInitialSignatureImage(signatureImage);
+      }
       await api.updateAccountSyncFrom(account.id, syncFromTimestamp);
       onSaved();
     } catch (e) {
@@ -308,6 +392,10 @@ export function AccountSettingsDialog({
     smtpPort,
     senderName,
     initialSenderName,
+    signature,
+    initialSignature,
+    signatureImage,
+    initialSignatureImage,
     syncFromTimestamp,
     onSaved,
   ]);
@@ -349,6 +437,105 @@ export function AccountSettingsDialog({
                   placeholder={t('modal:accountSettings.senderNamePlaceholder')}
                   className="w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
                 />
+              </section>
+
+              <section>
+                <label className="block text-sm font-semibold text-gray-100 mb-1" htmlFor="account-signature">
+                  {t('modal:accountSettings.signatureHeading')}
+                </label>
+                <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.signatureHint')}</p>
+                <textarea
+                  id="account-signature"
+                  value={signature}
+                  onChange={(e) => setSignature(e.target.value)}
+                  disabled={initialSignature === null}
+                  maxLength={SIGNATURE_MAX_LENGTH}
+                  rows={5}
+                  placeholder={t('modal:accountSettings.signaturePlaceholder')}
+                  className="w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40 disabled:opacity-50"
+                />
+
+                <div className="mt-4">
+                  <span className="block text-xs font-medium text-gray-300 mb-1">
+                    {t('modal:accountSettings.signatureImage')}
+                  </span>
+                  <p className="text-xs text-gray-500 mb-2">{t('modal:accountSettings.signatureImageHint')}</p>
+                  <input
+                    ref={signatureFileRef}
+                    id="account-signature-image"
+                    type="file"
+                    accept={SIGNATURE_IMAGE_TYPES.join(',')}
+                    className="hidden"
+                    onChange={(e) => {
+                      void handleSignatureFile(e.target.files?.[0]);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={initialSignature === null}
+                      onClick={() => signatureFileRef.current?.click()}
+                      className="px-3 py-1.5 text-xs rounded border border-gray-600 text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+                    >
+                      {signatureImage
+                        ? t('modal:accountSettings.signatureImageReplace')
+                        : t('modal:accountSettings.signatureImageAdd')}
+                    </button>
+                    {signatureImage && (
+                      <button
+                        type="button"
+                        onClick={() => setSignatureImage(null)}
+                        className="px-3 py-1.5 text-xs rounded text-red-300 hover:bg-red-900/30"
+                      >
+                        {t('modal:accountSettings.signatureImageRemove')}
+                      </button>
+                    )}
+                  </div>
+                  {signatureImageError && <p className="mt-2 text-xs text-red-300">{signatureImageError}</p>}
+                  {signatureImage && (
+                    <div className="mt-3">
+                      <label className="block text-xs text-gray-400 mb-1" htmlFor="account-signature-image-width">
+                        {t('modal:accountSettings.signatureImageWidth')}: {signatureImage.width} px
+                      </label>
+                      <input
+                        id="account-signature-image-width"
+                        type="range"
+                        min={SIGNATURE_IMAGE_MIN_WIDTH}
+                        max={SIGNATURE_IMAGE_MAX_WIDTH}
+                        step={10}
+                        value={signatureImage.width}
+                        onChange={(e) =>
+                          setSignatureImage((img) =>
+                            img ? { ...img, width: clampSignatureWidth(Number(e.target.value)) } : img,
+                          )
+                        }
+                        className="w-full"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {(signature.trim() || signatureImage) && (
+                  <div className="mt-4">
+                    <span className="block text-xs text-gray-400 mb-1">
+                      {t('modal:accountSettings.signaturePreview')}
+                    </span>
+                    {/* White card: most recipients read mail on a light background. */}
+                    <div className="rounded border border-gray-700 bg-white text-gray-900 p-3 text-sm overflow-x-auto">
+                      <div className="text-gray-500">--</div>
+                      {signature.trim() && <div className="whitespace-pre-line">{signature.trim()}</div>}
+                      {signatureImage && (
+                        <img
+                          src={signatureImage.src}
+                          alt={t('modal:accountSettings.signatureImage')}
+                          width={signatureImage.width}
+                          className="mt-1 h-auto"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section>

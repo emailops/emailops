@@ -431,7 +431,19 @@
     "resetToDefault": "Restaurer le défaut",
     "promptHelpStart": "Modèle complet que reçoit l'IA. Marqueurs :",
     "promptHelpEnd": ". Tout le reste est passé tel quel.",
-    "saved": "Enregistré."
+    "saved": "Enregistré.",
+    "signoff": "Fin des brouillons IA",
+    "signoffHelp": "S'applique aux réponses et aux nouveaux courriels rédigés par l'IA.",
+    "signoffOptions": {
+      "signature": "Formule de politesse + ma signature personnalisée",
+      "signatureDesc": "L'IA écrit « Cordialement, » sans nom; la signature de votre compte (texte et image) est ajoutée en dessous.",
+      "name": "Formule de politesse + un nom",
+      "nameDesc": "L'IA signe avec le nom indiqué ci-dessous.",
+      "none": "Rien",
+      "noneDesc": "Ni formule de politesse ni nom."
+    },
+    "signoffName": "Nom à utiliser",
+    "signoffNamePlaceholder": "ex. Maxime"
   },
   "aiSearch": {
     "title": "Recherche IA",

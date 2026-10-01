@@ -431,7 +431,19 @@
     "resetToDefault": "Restaurar valores por defecto",
     "promptHelpStart": "Plantilla completa que recibe la IA. Marcadores:",
     "promptHelpEnd": ". Cualquier otra cosa se pasa como texto literal.",
-    "saved": "Guardado."
+    "saved": "Guardado.",
+    "signoff": "Final de los borradores con IA",
+    "signoffHelp": "Se aplica a las respuestas y a los correos nuevos redactados por la IA.",
+    "signoffOptions": {
+      "signature": "Despedida + mi firma personalizada",
+      "signatureDesc": "La IA escribe \"Saludos,\" sin nombre; la firma de tu cuenta (texto e imagen) se añade debajo.",
+      "name": "Despedida + un nombre",
+      "nameDesc": "La IA firma con el nombre que escribas abajo.",
+      "none": "Nada",
+      "noneDesc": "Sin despedida ni nombre."
+    },
+    "signoffName": "Nombre para firmar",
+    "signoffNamePlaceholder": "p. ej. Maxime"
   },
   "aiSearch": {
     "title": "Búsqueda con IA",

@@ -18,6 +18,7 @@ vi.mock('@/components/shared/TranslateComposeControl', () => ({ TranslateCompose
 vi.mock('@/components/shared/Select', () => ({ Select: () => null }));
 vi.mock('@/lib/api', () => ({
   getPref: vi.fn(async () => null),
+  getFullSignature: vi.fn(async () => ({ text: '', image: null })),
   autocompleteRecipients: vi.fn(async () => []),
   saveDraft: vi.fn(async () => ({ id: 'd1' })),
   deleteDraft: vi.fn(async () => {}),

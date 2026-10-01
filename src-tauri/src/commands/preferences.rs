@@ -29,6 +29,62 @@ pub(crate) fn ensure_pref_key_exposed(key: &str) -> Result<(), AppError> {
 /// one of `en`/`es`/`fr`/`de`; `ai_output_language_v2` accepts the same set
 /// plus the empty string as the "Same as UI" sentinel resolved at read time).
 /// Add more rules here as new typed preferences land.
+/// Preference key prefix for the per-account email signature.
+const SIGNATURE_PREF_PREFIX: &str = "signature:";
+/// Longest signature accepted, in characters.
+const SIGNATURE_MAX_CHARS: usize = 4000;
+/// Preference key prefix for the per-account signature image (JSON
+/// `{"src": "data:image/…;base64,…", "width": 160}`, or empty for none).
+const SIGNATURE_IMAGE_PREF_PREFIX: &str = "signature_image:";
+/// Largest signature image accepted (its data URL), in bytes.
+const SIGNATURE_IMAGE_MAX_BYTES: usize = 1_000_000;
+/// Allowed display width of the signature image, in pixels.
+const SIGNATURE_IMAGE_WIDTH: std::ops::RangeInclusive<u64> = 40..=600;
+
+/// Validate a `signature_image:<id>` value. Mirrors `parseSignatureImage` in
+/// src/lib/signature.ts: an image data URL (png/jpeg/gif/webp, base64) of
+/// bounded size and a whole-pixel width in range.
+fn validate_signature_image(value: &str) -> Result<(), AppError> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.len() > SIGNATURE_IMAGE_MAX_BYTES + 100 {
+        return Err(AppError::InvalidInput(format!(
+            "signature image must be at most {} KB",
+            SIGNATURE_IMAGE_MAX_BYTES / 1000
+        )));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(value)
+        .map_err(|_| AppError::InvalidInput("signature image must be JSON {src, width}".to_string()))?;
+    let src = parsed.get("src").and_then(|v| v.as_str()).unwrap_or_default();
+    let (header, data) = src.split_once(',').unwrap_or_default();
+    let allowed_header = [
+        "data:image/png;base64",
+        "data:image/jpeg;base64",
+        "data:image/jpg;base64",
+        "data:image/gif;base64",
+        "data:image/webp;base64",
+    ]
+    .contains(&header);
+    let is_base64 = !data.is_empty()
+        && data
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+    if !allowed_header || !is_base64 || src.len() > SIGNATURE_IMAGE_MAX_BYTES {
+        return Err(AppError::InvalidInput(
+            "signature image must be a PNG, JPEG, GIF or WebP data URL".to_string(),
+        ));
+    }
+    match parsed.get("width").and_then(|v| v.as_u64()) {
+        Some(w) if SIGNATURE_IMAGE_WIDTH.contains(&w) => Ok(()),
+        _ => Err(AppError::InvalidInput(format!(
+            "signature image width must be between {} and {} pixels",
+            SIGNATURE_IMAGE_WIDTH.start(),
+            SIGNATURE_IMAGE_WIDTH.end()
+        ))),
+    }
+}
+
 pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
     use crate::services::i18n::{Language, PREF_AI_OUTPUT_LANGUAGE_V2, PREF_UI_LANGUAGE};
 
@@ -94,6 +150,25 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "calendar.enabled must be true or false, got: {value}"
         )));
+    } else if key.starts_with(SIGNATURE_IMAGE_PREF_PREFIX) {
+        if key.len() == SIGNATURE_IMAGE_PREF_PREFIX.len() {
+            return Err(AppError::InvalidInput(
+                "signature image key needs an account id".to_string(),
+            ));
+        }
+        validate_signature_image(value)?;
+    } else if key.starts_with(SIGNATURE_PREF_PREFIX) {
+        // Per-account email signature (signature:<account_id>), plain text.
+        // Mirrors SIGNATURE_MAX_LENGTH in src/lib/signature.ts.
+        if key.len() == SIGNATURE_PREF_PREFIX.len() {
+            return Err(AppError::InvalidInput("signature key needs an account id".to_string()));
+        }
+        let chars = value.chars().count();
+        if chars > SIGNATURE_MAX_CHARS {
+            return Err(AppError::InvalidInput(format!(
+                "signature must be at most {SIGNATURE_MAX_CHARS} characters, got: {chars}"
+            )));
+        }
     }
     Ok(())
 }
@@ -197,6 +272,66 @@ mod tests {
             let err = validate_pref("chat.remote_n_ctx_budget", v).unwrap_err();
             assert!(matches!(err, AppError::InvalidInput(_)), "should reject {v}");
         }
+    }
+
+    #[test]
+    fn validate_pref_accepts_signatures_up_to_the_limit() {
+        assert!(validate_pref("signature:acc-1", "").is_ok());
+        assert!(validate_pref("signature:acc-1", "Maxime\nFou d’la bouffe\n418 555-0100").is_ok());
+        // Counted in characters, not bytes: accented text is not penalised.
+        assert!(validate_pref("signature:acc-1", &"é".repeat(SIGNATURE_MAX_CHARS)).is_ok());
+    }
+
+    #[test]
+    fn validate_pref_rejects_oversized_signature() {
+        let err = validate_pref("signature:acc-1", &"x".repeat(SIGNATURE_MAX_CHARS + 1)).unwrap_err();
+        match err {
+            AppError::InvalidInput(msg) => assert!(msg.contains("signature")),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_pref_rejects_signature_without_account() {
+        assert!(matches!(
+            validate_pref("signature:", "x"),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn validate_pref_accepts_a_signature_image_or_none() {
+        assert!(validate_pref("signature_image:acc-1", "").is_ok());
+        let ok = r#"{"src":"data:image/png;base64,iVBORw0KGgo=","width":160}"#;
+        assert!(validate_pref("signature_image:acc-1", ok).is_ok());
+    }
+
+    #[test]
+    fn validate_pref_rejects_bad_signature_images() {
+        for bad in [
+            "not json",
+            r#"{"src":"https://tracker.example/p.png","width":160}"#,
+            r#"{"src":"data:text/html;base64,PHNjcmlwdD4=","width":160}"#,
+            r#"{"src":"data:image/svg+xml;base64,PHN2Zz4=","width":160}"#,
+            r#"{"src":"data:image/png;base64,<script>","width":160}"#,
+            r#"{"src":"data:image/png;base64,AAAA","width":5}"#,
+            r#"{"src":"data:image/png;base64,AAAA","width":5000}"#,
+            r#"{"src":"data:image/png;base64,AAAA"}"#,
+        ] {
+            assert!(
+                matches!(
+                    validate_pref("signature_image:acc-1", bad),
+                    Err(AppError::InvalidInput(_))
+                ),
+                "should reject {bad}"
+            );
+        }
+        let huge = format!(
+            r#"{{"src":"data:image/png;base64,{}","width":160}}"#,
+            "A".repeat(SIGNATURE_IMAGE_MAX_BYTES)
+        );
+        assert!(validate_pref("signature_image:acc-1", &huge).is_err());
+        assert!(validate_pref("signature_image:", "").is_err());
     }
 
     #[test]

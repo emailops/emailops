@@ -14,7 +14,11 @@ vi.mock('@/components/shared/RichTextEditor', () => ({
 }));
 vi.mock('@/components/shared/TranslateComposeControl', () => ({ TranslateComposeControl: () => null }));
 vi.mock('@/components/shared/Select', () => ({ Select: () => null }));
-vi.mock('@/lib/api', () => ({ autocompleteRecipients: vi.fn(async () => []) }));
+vi.mock('@/lib/api', () => ({
+  autocompleteRecipients: vi.fn(async () => []),
+  getPref: vi.fn(async () => null),
+  getFullSignature: vi.fn(async () => ({ text: '', image: null })),
+}));
 
 import type { Account, Email } from '@/types';
 import { ReplyCompose } from './ReplyCompose';
