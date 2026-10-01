@@ -2964,3 +2964,25 @@ A dock/taskbar unread badge was skipped: there is no unread-inbox count query to
 it yet, and it is optional for parity. Deciding in the frontend on `sync-progress`
 events was rejected: the webview may be hidden or locked, and it cannot see junk
 verdicts or the blocked-sender filing reliably.
+
+## 2026-10-01 — Dialogs keep the dark chrome; the app does not follow the OS theme
+
+**Decision:** The app keeps one fixed two-tone look: dark chrome — sidebar, Output bar,
+Settings and every dialog built on `Modal` (sender dialogs, shortcut help, account and
+lens dialogs, onboarding) — around light content — the list, the reading pane and the
+composers. Editors that show what a recipient will see (the composer, the signature
+editor in Settings) stay white inside dark chrome, as a page preview. No surface follows
+the OS appearance: Tailwind's `dark:` variant, which v4 drives from
+`prefers-color-scheme`, is not used anywhere (`src/lib/theme/noOsDarkMode.test.ts`).
+**Context:** The competitor-parity demo recording read the dark Settings, Block sender and
+shortcut-help dialogs next to the light list and composer as a theme mismatch. It is not
+an OS-media-query leak: there are no `dark:` classes in `src/`, and the dark dialogs come
+from `Modal`'s deliberate dark scaffold (on `main` long before this branch), which every
+dialog shares. Turning every dialog light means restyling `Modal` plus every form inside
+it (Settings alone spans some twenty tab components with dark-surface classes), which is
+the "cross-cutting restyle" that `docs/COMPETITOR-PARITY.md` scopes as its own branch
+together with a real dark mode.
+**Rejected:** Restyling only `Modal` light — the dark-surface form controls inside it
+(`Select` variant `dark`, gray-100 text, `#333` inputs) would sit unreadable on white.
+`darkMode: 'class'` / an `@custom-variant dark` — a no-op today, since nothing uses the
+variant; the guard test states the invariant more directly.
