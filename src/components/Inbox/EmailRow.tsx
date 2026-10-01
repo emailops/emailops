@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TagChips } from '@/components/common/TagChips';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
-import { writeEmailDragPayload } from '@/lib/emailDrag';
+import { setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
 import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
 import { useTagStore } from '@/stores/tagStore';
@@ -85,6 +85,17 @@ export function EmailRow({
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const { canMove } = useMoveTargets(email);
 
+  // Drag to a sidebar folder: the payload says which email moves; the preview
+  // card follows the pointer so the user sees what is being dragged.
+  const handleDragStart = (e: React.DragEvent) => {
+    writeEmailDragPayload(e.dataTransfer, {
+      emailId: email.id,
+      accountId: email.accountId,
+      mailbox: email.mailbox,
+    });
+    setEmailDragImage(e, { sender: senderName(email), subject: email.subject });
+  };
+
   useEffect(() => {
     if (!copyMessage) return;
     const timeoutId = window.setTimeout(() => setCopyMessage(null), 2000);
@@ -130,13 +141,7 @@ export function EmailRow({
           }
         }}
         draggable={canMove}
-        onDragStart={(e) =>
-          writeEmailDragPayload(e.dataTransfer, {
-            emailId: email.id,
-            accountId: email.accountId,
-            mailbox: email.mailbox,
-          })
-        }
+        onDragStart={handleDragStart}
       >
         {accountBar}
         {/* Reserve a stable min-height so async tag/triage loading doesn't grow
@@ -226,13 +231,7 @@ export function EmailRow({
         }
       }}
       draggable={canMove}
-      onDragStart={(e) =>
-        writeEmailDragPayload(e.dataTransfer, {
-          emailId: email.id,
-          accountId: email.accountId,
-          mailbox: email.mailbox,
-        })
-      }
+      onDragStart={handleDragStart}
     >
       {accountBar}
       <div className="flex items-start gap-3">
