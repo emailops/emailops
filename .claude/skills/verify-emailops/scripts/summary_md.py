@@ -86,10 +86,12 @@ def summarize(data, prev):
     else:
         before = {_key(r): r["status"] for r in prev["records"]}
         now_passing = [r for r in records if r["status"] == "ok" and before.get(_key(r)) == "fail"]
-        now_failing = [r for r in records if r["status"] == "fail" and before.get(_key(r)) != "fail"]
+        now_failing = [r for r in records if r["status"] == "fail" and before.get(_key(r)) not in (None, "fail")]
+        # Absent from the previous run (a case added since): it never passed there, so it is not a regression.
+        new_failing = [r for r in records if r["status"] == "fail" and _key(r) not in before]
         prev_meta = prev["meta"]
         out += [f"## Since `{pathlib.Path(prev_meta['run_dir']).name}` (`{short_commit(prev)}`)", ""]
-        for title, rs in (("Now passing", now_passing), ("Now failing", now_failing)):
+        for title, rs in (("Now passing", now_passing), ("Now failing", now_failing), ("New, failing", new_failing)):
             out += [f"### {title} ({len(rs)})", ""] + ([_line(r) for r in rs] or ["- none"]) + [""]
     failing = [r for r in records if r["status"] == "fail"]
     out += [f"## Failing ({len(failing)})", ""] + ([_line(r) for r in failing] or ["- none"]) + [""]

@@ -49,6 +49,15 @@ class SummaryTest(unittest.TestCase):
         self.assertNotIn("broken", now_passing)
         self.assertIn("broken", rest)
 
+    def test_a_failing_test_the_previous_run_lacked_is_new_not_a_regression(self):
+        # A case added after the baseline never passed there; calling it "now failing" sends the
+        # reader looking for a regression that does not exist.
+        prev = run([rec("old", "ok")], run_dir="/repo/src-tauri/reports/verify/20260914-232040-full")
+        md = summary_md.summarize(run([rec("old", "ok"), rec("added", "fail")]), prev)
+        now_failing, new_failing = md.split("### Now failing")[1].split("## Failing")[0].split("### New, failing")
+        self.assertNotIn("added", now_failing)
+        self.assertIn("added", new_failing)
+
     def test_without_a_previous_run_the_delta_says_so(self):
         md = summary_md.summarize(run([rec("a", "ok")]), None)
         self.assertIn("No previous full run", md)
