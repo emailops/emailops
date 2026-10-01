@@ -69,7 +69,7 @@
     from_email: wordpress@studio.example
     subject: Example Studio "Question about availability"
     body: |
-      From: Sam Lee <sam.lee.home@gmail.com>
+      From: Sam Lee <sam.lee@example.test>
       Subject: Question about availability
 
       Message Body:
@@ -79,7 +79,7 @@
       This e-mail was sent from a contact form on Example Studio (https://studio.example)
   expect_in_scope: true
   expect:
-    contact_email: sam.lee.home@gmail.com
+    contact_email: sam.lee@example.test
     contact_name: Sam Lee
     company: null
     request_type: question
