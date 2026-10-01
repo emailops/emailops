@@ -232,6 +232,21 @@ describe('archive and delete wait out the undo window', () => {
     expect(useToastStore.getState().toasts).toEqual([]);
   });
 
+  it('a delete right after a sticky toast is closed still offers Undo for the whole window', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+    const sticky = useToastStore.getState().addToast({ message: 'Message could not be sent', sticky: true });
+    useToastStore.getState().dismissToast(sticky);
+
+    const done = useEmailStore.getState().deleteThreads([t1, t2]);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS - 1);
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts.map((t) => t.message)).toEqual(['Deleted 2 conversations']);
+    expect(api.applyThreadAction).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+  });
+
   it('undo puts the conversations back and never calls the provider', async () => {
     useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
 

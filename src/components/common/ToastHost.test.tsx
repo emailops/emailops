@@ -71,4 +71,40 @@ describe('ToastHost', () => {
     });
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
+
+  // Reported once in a demo recording: right after closing a sticky "could
+  // not be sent" toast, a bulk delete's "Deleted … · Undo" toast never showed.
+  // Dismissing A and adding B in the same tick must leave B up for its full
+  // duration — no id reuse, no timer of A's reaching B.
+  it('shows a toast added right after a sticky one is dismissed, for its whole duration', () => {
+    act(() => {
+      const sticky = useToastStore.getState().addToast({ message: 'Message could not be sent', sticky: true });
+      useToastStore.getState().dismissToast(sticky);
+      useToastStore.getState().addToast({ message: 'Deleted 3 conversations', actionLabel: 'Undo', durationMs: 6000 });
+    });
+    expect(container.textContent).toContain('Deleted 3 conversations');
+
+    act(() => {
+      vi.advanceTimersByTime(5_999);
+    });
+    expect(container.textContent).toContain('Deleted 3 conversations');
+
+    act(() => {
+      vi.advanceTimersByTime(2);
+    });
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('the timer of a dismissed toast does not remove a later one', () => {
+    act(() => {
+      const first = useToastStore.getState().addToast({ message: 'First' });
+      vi.advanceTimersByTime(7_000);
+      useToastStore.getState().dismissToast(first);
+      useToastStore.getState().addToast({ message: 'Second', durationMs: 6000 });
+    });
+    act(() => {
+      vi.advanceTimersByTime(1_500);
+    });
+    expect(container.textContent).toContain('Second');
+  });
 });
