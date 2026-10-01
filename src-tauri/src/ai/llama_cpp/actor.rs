@@ -63,10 +63,9 @@ use std::sync::{Arc, Mutex};
 use llama_cpp_2::{
     context::{params::LlamaContextParams, LlamaContext},
     llama_batch::LlamaBatch,
-    model::{AddBos, LlamaModel},
+    model::LlamaModel,
     sampling::LlamaSampler,
     token::LlamaToken,
-    TokenToStringError,
 };
 
 use super::planner::{
@@ -480,19 +479,10 @@ fn copy_aux_into_generation(ctx: &mut LlamaContext) -> std::result::Result<(), S
 
 /// The raw bytes of `token`'s text, special tokens rendered. A piece can be
 /// part of a multi-byte character, so it is decoded by the caller's
-/// [`Utf8Stream`], never on its own.
-pub(crate) fn token_bytes(model: &LlamaModel, token: LlamaToken) -> std::result::Result<Vec<u8>, String> {
-    match model.token_to_piece_bytes(token, 8, true, None) {
-        Ok(bytes) => Ok(bytes),
-        // The piece is longer than the first buffer: llama.cpp reports the
-        // size it needs as a negative number.
-        Err(TokenToStringError::InsufficientBufferSpace(needed)) => model
-            .token_to_piece_bytes(token, needed.unsigned_abs() as usize, true, None)
-            .map_err(|e| format!("Token decode failed: {e}")),
-        // llama.cpp writes nothing for this token (size 0): an empty piece.
-        Err(TokenToStringError::UnknownTokenType) => Ok(Vec::new()),
-        Err(e) => Err(format!("Token decode failed: {e}")),
-    }
+/// [`Utf8Stream`], never on its own. `token_to_piece` grows its buffer to the
+/// piece's size, and a token llama.cpp writes nothing for is an empty piece.
+pub(crate) fn token_bytes(model: &LlamaModel, token: LlamaToken) -> Vec<u8> {
+    model.vocab().token_to_piece(token, true, None)
 }
 
 /// One generation pass against the persistent context.
@@ -528,9 +518,7 @@ fn generate_with_cache(
     // log line can show an explicit BEFORE/AFTER transition (the visualizer
     // in `tools/kv_viz/` reads these to render the per-call cache strip).
     let prev_sys_cached = cached_system.len();
-    let mut tokens = model
-        .str_to_token(prompt, AddBos::Always)
-        .map_err(|e| format!("Tokenisation failed: {}", e))?;
+    let mut tokens = model.vocab().tokenize(prompt.as_bytes(), true, true);
 
     if tokens.is_empty() {
         return Ok(GenOutcome {
@@ -659,9 +647,7 @@ fn generate_with_cache(
         // sacrificing cache warmth; just decode the whole thing on seq 0.
         stable_tok = match stable_prompt_bytes {
             Some(b) if budget.drop_front == 0 && b < prompt.len() && prompt.is_char_boundary(b) => {
-                let stable_tokens = model
-                    .str_to_token(&prompt[..b], AddBos::Always)
-                    .map_err(|e| format!("Stable-prefix tokenisation failed: {}", e))?;
+                let stable_tokens = model.vocab().tokenize(&prompt.as_bytes()[..b], true, true);
                 plan_stable_boundary(&tokens, &stable_tokens, lcp)
             }
             _ => tokens.len(),
@@ -718,9 +704,7 @@ fn generate_with_cache(
         // never past the stable region we actually decode on seq 0.
         sys_tok = match system_prefix_bytes {
             Some(b) if budget.drop_front == 0 && b <= prompt.len() && prompt.is_char_boundary(b) => {
-                let sys_tokens = model
-                    .str_to_token(&prompt[..b], AddBos::Always)
-                    .map_err(|e| format!("System-prefix tokenisation failed: {}", e))?;
+                let sys_tokens = model.vocab().tokenize(&prompt.as_bytes()[..b], true, true);
                 plan_stable_boundary(&tokens, &sys_tokens, 0).min(stable_tok)
             }
             _ => 0,
@@ -796,9 +780,7 @@ fn generate_with_cache(
         // absorb the merge at the seam.
         let aux_tok = match aux_prefix_bytes {
             Some(b) if dropped_front == 0 && b < prompt.len() && prompt.is_char_boundary(b) => {
-                let prefix_tokens = model
-                    .str_to_token(&prompt[..b], AddBos::Always)
-                    .map_err(|e| format!("Aux-prefix tokenisation failed: {}", e))?;
+                let prefix_tokens = model.vocab().tokenize(&prompt.as_bytes()[..b], true, true);
                 plan_stable_boundary(&tokens, &prefix_tokens, 0)
             }
             _ => 0,
@@ -934,12 +916,12 @@ fn generate_with_cache(
         // twice, which corrupts it and makes llama.cpp throw.
         let token = sampler.sample(ctx, -1);
 
-        if model.is_eog_token(token) {
+        if model.vocab().is_eog(token) {
             ended = true;
             break;
         }
 
-        let piece = utf8.push(&token_bytes(model, token)?);
+        let piece = utf8.push(&token_bytes(model, token));
 
         n_gen += 1;
         output.push_str(&piece);
