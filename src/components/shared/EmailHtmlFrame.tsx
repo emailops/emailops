@@ -113,6 +113,27 @@ export const BRIDGE_SCRIPT = String.raw`
       e.preventDefault();
       applyZoom(zoomLevel * Math.exp(-e.deltaY * 0.01));
     }, { passive: false });
+    // Vertical wheel scrolling belongs to the reading pane around the frame:
+    // the frame is as tall as its content, so it has nothing to scroll. But
+    // a wide email (fixed-width table, narrow column) makes the frame
+    // scrollable sideways, and the webview then gives every wheel turn over
+    // it to the frame — the pane only scrolled with the pointer off the
+    // email. Hand vertical turns to the parent, unless an element inside the
+    // email can scroll that way itself.
+    window.addEventListener('wheel', function(e){
+      if (e.ctrlKey || e.defaultPrevented) return;
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
+      for (var n = e.target; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement; n = n.parentNode){
+        var oy = getComputedStyle(n).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight){
+          var atEnd = e.deltaY > 0 ? n.scrollTop + n.clientHeight >= n.scrollHeight - 1 : n.scrollTop <= 0;
+          if (!atEnd) return;
+        }
+      }
+      e.preventDefault();
+      var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+      send({ type: 'wheel', deltaY: e.deltaY * unit });
+    }, { passive: false });
     window.addEventListener('gesturestart', function(e){
       e.preventDefault();
       gestureBaseZoom = zoomLevel;
@@ -313,6 +334,7 @@ export function EmailHtmlFrame({
         __emailFrame?: boolean;
         type?: string;
         height?: number;
+        deltaY?: number;
         href?: string;
         count?: number;
         activeTop?: number | null;
@@ -324,6 +346,9 @@ export function EmailHtmlFrame({
         // 50k px tall are pathological and almost always tracking artefacts.
         const clamped = Math.min(Math.max(data.height, 40), 50000);
         setHeight((prev) => (Math.abs(prev - clamped) > 1 ? clamped : prev));
+      } else if (data.type === 'wheel' && typeof data.deltaY === 'number' && frameRef.current) {
+        // A wheel turn over the email, handed over by the frame (see the bridge).
+        findScrollParent(frameRef.current)?.scrollBy({ top: data.deltaY });
       } else if (data.type === 'matches') {
         if (typeof data.count === 'number') onMatchesReported?.(data.count);
         // The bridge only reports a position when this body holds the active
