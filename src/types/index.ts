@@ -2,7 +2,7 @@ export type InboxLayout = 'split' | 'full-width';
 
 export interface Account {
   id: string;
-  provider: 'gmail' | 'imap';
+  provider: 'gmail' | 'outlook' | 'imap';
   email: string;
   name: string;
   createdAt: number;

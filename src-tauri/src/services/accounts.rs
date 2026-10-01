@@ -282,6 +282,24 @@ pub async fn revoke_removed_account_grant(token: &str) {
     }
 }
 
+/// What to tell the user after removing an account whose grant EmailOps
+/// cannot revoke itself. Microsoft has no per-application revocation: its only
+/// API, `revokeSignInSessions`, signs the user out of every app and device,
+/// which is far more than removing one account here should do. So for Outlook
+/// the user is pointed at the pages where they remove EmailOps' access.
+/// `None` for Gmail (revoked through Google's endpoint) and IMAP (no grant).
+pub fn manual_revocation_notice(provider: &str) -> Option<String> {
+    match provider {
+        "outlook" => Some(
+            "Account removed from EmailOps. Microsoft does not let an app revoke its own access, so remove \
+             EmailOps from your Microsoft account yourself: https://account.live.com/consent/Manage \
+             (personal accounts) or https://myapps.microsoft.com (work or school accounts)."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 /// Re-authenticate an existing account by triggering OAuth flow and updating tokens.
 /// Only valid for OAuth providers (gmail, outlook). IMAP accounts must update
 /// credentials via `update_imap_credentials` instead — this function rejects
@@ -1036,6 +1054,20 @@ mod tests {
     #[test]
     fn revocable_token_falls_back_to_the_gmail_access_token() {
         assert_eq!(revocable_token("gmail", &tokens(None)), Some("access-1".to_string()));
+    }
+
+    #[test]
+    fn an_outlook_account_gets_manual_revocation_links() {
+        let notice = manual_revocation_notice("outlook").expect("outlook has a notice");
+        assert!(notice.contains("https://account.live.com/consent/Manage"), "{notice}");
+        assert!(notice.contains("https://myapps.microsoft.com"), "{notice}");
+    }
+
+    #[test]
+    fn providers_without_a_grant_to_remove_by_hand_get_no_notice() {
+        // Gmail is revoked through Google's endpoint; IMAP has no OAuth grant.
+        assert_eq!(manual_revocation_notice("gmail"), None);
+        assert_eq!(manual_revocation_notice("imap"), None);
     }
 
     #[test]
