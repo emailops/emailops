@@ -148,6 +148,26 @@ pub async fn move_email(
     services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target_mailbox).await
 }
 
+/// Move several messages of one account to the inbox or a custom folder
+/// (IMAP accounts only) — the bulk-selection variant of [`move_email`]. Never
+/// fails for one message: the report lists the ones that could not be moved.
+#[tauri::command]
+pub async fn move_emails(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    email_ids: Vec<String>,
+    target_mailbox: String,
+) -> Result<services::emails::MoveReport, AppError> {
+    if email_ids.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} messages per move"
+        )));
+    }
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    Ok(services::emails::move_emails(&state.db, &account, provider.as_ref(), &email_ids, &target_mailbox).await)
+}
+
 #[tauri::command]
 pub async fn get_thread(
     state: State<'_, AppState>,
@@ -178,7 +198,7 @@ pub async fn mark_as_read(state: State<'_, AppState>, app: AppHandle, email_id: 
 /// loaded list, so this only guards against a malformed call.
 const MAX_THREADS_PER_ACTION: usize = 1_000;
 
-/// Mark read/unread, star/unstar, archive or move back to the inbox — for one
+/// Mark read/unread, star/unstar, archive, move back to the inbox or delete — for one
 /// thread or many. Never fails as a whole: the report lists the threads that
 /// could not be changed, so the UI rolls back exactly those.
 #[tauri::command]

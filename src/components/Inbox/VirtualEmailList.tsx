@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { measuredRowHeight } from '@/lib/rowMeasure';
 import {
@@ -8,6 +8,7 @@ import {
   planScrollRestore,
   type ScrollRestoreState,
 } from '@/lib/scrollRestore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import type { Email } from '@/types';
 import type { RulePrefill } from './EmailRow';
 import { EmailRow } from './EmailRow';
@@ -64,6 +65,27 @@ export function VirtualEmailList({
   getAccountBadge,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox']);
+
+  // Multi-select. The selection lives in a store (the bulk toolbar and
+  // keyboard shortcuts act on it too); rows that leave the list leave it.
+  const selectedIds = useSelectionStore((s) => s.ids);
+  const toggleSelected = useSelectionStore((s) => s.toggle);
+  const selectRange = useSelectionStore((s) => s.selectRange);
+  const pruneSelection = useSelectionStore((s) => s.prune);
+  const clearSelection = useSelectionStore((s) => s.clear);
+  const order = useMemo(() => emails.map((e) => e.id), [emails]);
+  const selectionActive = selectedIds.size > 0;
+  useEffect(() => pruneSelection(order), [order, pruneSelection]);
+  useEffect(() => {
+    if (!selectionActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      clearSelection();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectionActive, clearSelection]);
+
   const virtualizer = useVirtualizer({
     count: emails.length,
     getScrollElement: () => scrollContainerRef.current,
@@ -246,6 +268,9 @@ export function VirtualEmailList({
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
                 accountBadge={getAccountBadge?.(email)}
+                isChecked={selectedIds.has(email.id)}
+                selectionActive={selectionActive}
+                onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}
               />
             </div>
           );

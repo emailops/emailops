@@ -111,7 +111,7 @@ export function EmailView({
   const [lightboxMeta, setLightboxMeta] = useState<EmailAttachmentMeta | null>(null);
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
   const searchQuery = useEmailStore((s) => s.searchQuery);
-  const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const deleteThreads = useEmailStore((s) => s.deleteThreads);
   const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const archiveThreads = useEmailStore((s) => s.archiveThreads);
@@ -137,7 +137,6 @@ export function EmailView({
   // — a forward that drops the boarding pass is worse than useless.
   const [forwardAttachments, setForwardAttachments] = useState<EmailAttachment[]>(EMPTY_ATTACHMENTS);
   const [replyBody, setReplyBody] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) can match incoming events without re-binding
@@ -614,23 +613,13 @@ export function EmailView({
               onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
             />
             <button
-              onClick={async () => {
+              onClick={() => {
                 if (!latestEmail) return;
-                setIsDeleting(true);
-                addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
-                try {
-                  for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.id);
-                  }
-                  addLog('success', 'sync', 'Thread deleted');
-                  onClose();
-                } catch (err) {
-                  addLog('error', 'sync', `Delete failed: ${err}`);
-                } finally {
-                  setIsDeleting(false);
-                }
+                // Leaves at once; the provider call waits out the undo window
+                // and a refusal brings the thread back (emailStore.deleteThreads).
+                void deleteThreads([threadRefOf(latestEmail)]);
+                onClose();
               }}
-              disabled={isDeleting}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
               title={t('inbox:emailView.deleteThread')}
             >

@@ -1,5 +1,5 @@
-//! Thread-level mailbox actions — mark read/unread, star/unstar, archive and
-//! move back to the inbox — with their provider write-back.
+//! Thread-level mailbox actions — mark read/unread, star/unstar, archive,
+//! move back to the inbox and delete — with their provider write-back.
 //!
 //! Every action takes a list of threads, so one call serves the reading pane
 //! (one thread) and bulk selection (many). Each thread is planned on its own
@@ -14,7 +14,7 @@
 //!   is marked pending until the provider has it; the sync retries what is
 //!   pending. An account whose provider cannot be reached still changes
 //!   locally (the push waits for the next sync).
-//! - **archive and move to inbox** are provider-first, like delete and folder
+//! - **archive, move to inbox and delete** are provider-first, like folder
 //!   moves: on IMAP and Graph they re-key the message, so a local-only change
 //!   would leave a row the provider no longer knows under that id. A failure
 //!   leaves the thread where it was and is reported.
@@ -34,7 +34,7 @@ use crate::services::logger;
 use crate::sync::provider::{provider_supports_mailbox_writes, EmailProvider, MessageLocation, MoveTarget};
 
 use super::folders::refile_moved_row;
-use super::mailbox_state::{set_flag, PushVia, PushedFlag};
+use super::mailbox_state::{delete_email_with_provider, set_flag, PushVia, PushedFlag};
 use super::optimistic::LOCAL_SENT_ID_PREFIX;
 
 /// One conversation of one account — thread ids are only unique per account.
@@ -57,6 +57,8 @@ pub enum ThreadAction {
     Unstar,
     Archive,
     MoveToInbox,
+    /// Move every message of the conversation to the provider's Trash.
+    Delete,
 }
 
 /// A thread an action could not be applied to, with the error in the same
@@ -115,6 +117,7 @@ pub enum ProviderAccess<'a> {
 ///   Trash and folder copies stay where they are.
 /// - **Move to inbox** brings back every archived message, and on IMAP every
 ///   message filed in a folder (the archive folder is one).
+/// - **Delete** trashes every message, as deleting a conversation always has.
 pub fn plan_thread_action(action: ThreadAction, messages: &[Email]) -> Vec<String> {
     let ids = |pred: &dyn Fn(&Email) -> bool| -> Vec<String> {
         messages.iter().filter(|m| pred(m)).map(|m| m.id.clone()).collect()
@@ -140,6 +143,7 @@ pub fn plan_thread_action(action: ThreadAction, messages: &[Email]) -> Vec<Strin
         ThreadAction::Unstar => ids(&|m| m.is_starred),
         ThreadAction::Archive => ids(&|m| m.mailbox == "inbox"),
         ThreadAction::MoveToInbox => ids(&|m| m.mailbox == "archive" || m.mailbox.starts_with("folder:")),
+        ThreadAction::Delete => ids(&|_| true),
     }
 }
 
@@ -281,6 +285,7 @@ fn verb(action: ThreadAction) -> &'static str {
         ThreadAction::Unstar => "unstar",
         ThreadAction::Archive => "archive",
         ThreadAction::MoveToInbox => "move to the inbox",
+        ThreadAction::Delete => "delete",
     }
 }
 
@@ -292,6 +297,7 @@ fn past_tense(action: ThreadAction) -> &'static str {
         ThreadAction::Unstar => "Unstarred",
         ThreadAction::Archive => "Archived",
         ThreadAction::MoveToInbox => "Moved to the inbox",
+        ThreadAction::Delete => "Deleted",
     }
 }
 
@@ -330,6 +336,7 @@ pub async fn apply_to_thread(
             }
             ThreadAction::Archive => archive_message(db, email, writable(access)?).await?,
             ThreadAction::MoveToInbox => move_message_to_inbox(db, email, writable(access)?).await?,
+            ThreadAction::Delete => delete_email_with_provider(db, id, writable(access)?).await?,
         }
     }
     // The same interaction signals the single-message read and delete
@@ -343,6 +350,13 @@ pub async fn apply_to_thread(
         ThreadAction::Archive if !targets.is_empty() => {
             if let Some(latest) = db.get_thread(account_id, thread_id)?.last() {
                 crate::services::tasks::on_archived(db, &latest.id);
+            }
+        }
+        // A soft delete keeps the rows, so `on_archived` still resolves them
+        // (as the single-message `delete_email` command relies on).
+        ThreadAction::Delete => {
+            if let Some(latest) = targets.last() {
+                crate::services::tasks::on_archived(db, latest);
             }
         }
         _ => {}
@@ -554,6 +568,19 @@ mod tests {
         assert_eq!(
             plan_thread_action(ThreadAction::MoveToInbox, &thread),
             ids(&["arch", "filed"])
+        );
+    }
+
+    #[test]
+    fn delete_takes_every_message_of_the_thread() {
+        let thread = [
+            message("in", 1, "inbox"),
+            message("sent", 2, "sent"),
+            message("arch", 3, "archive"),
+        ];
+        assert_eq!(
+            plan_thread_action(ThreadAction::Delete, &thread),
+            ids(&["in", "sent", "arch"])
         );
     }
 
@@ -858,5 +885,101 @@ mod tests {
 
         assert!(rows[0].is_starred, "the thread has a starred message");
         assert!(!rows[1].is_starred);
+    }
+
+    // ── delete ────────────────────────────────────────────────────────────
+
+    fn live_thread(db: &Database) -> Vec<String> {
+        db.get_thread("acc-1", "t-1")
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn delete_trashes_every_message_at_the_provider_then_locally() {
+        let db = test_db(&[message("a", 1, "inbox"), message("reply", 2, "sent")]);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .unwrap();
+
+        assert!(live_thread(&db).is_empty(), "the thread is gone");
+        let trashed: Vec<String> = provider
+            .mailbox_ops()
+            .into_iter()
+            .filter_map(|op| match op {
+                FakeMailboxOp::Trash { message_id, .. } => Some(message_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(trashed, ids(&["a", "reply"]));
+    }
+
+    #[tokio::test]
+    async fn a_refused_delete_keeps_the_thread() {
+        let db = test_db(&[message("a", 1, "inbox")]);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("503");
+
+        assert!(run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .is_err());
+        assert_eq!(live_thread(&db), ids(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn delete_with_an_unreachable_provider_is_refused_not_queued() {
+        let db = test_db(&[message("a", 1, "inbox")]);
+        let offline = AppError::SyncError("offline".to_string());
+
+        assert!(run(&db, ThreadAction::Delete, ProviderAccess::Unreachable(&offline))
+            .await
+            .is_err());
+        assert_eq!(live_thread(&db), ids(&["a"]));
+    }
+
+    #[tokio::test]
+    async fn local_only_accounts_delete_without_provider_calls() {
+        let db = test_db(&[message("a", 1, "inbox")]);
+
+        run(&db, ThreadAction::Delete, ProviderAccess::LocalOnly).await.unwrap();
+
+        assert!(live_thread(&db).is_empty());
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_reports_only_the_threads_that_failed() {
+        let db = Database::new_for_testing().unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acc-1', 'exchange-ews', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+        let mut other = message("b", 2, "inbox");
+        other.thread_id = "t-2".to_string();
+        db.insert_emails_batch(&[message("a", 1, "inbox"), other]).unwrap();
+        let db = Arc::new(db);
+        let thread = |id: &str| ThreadRef {
+            account_id: "acc-1".to_string(),
+            thread_id: id.to_string(),
+        };
+
+        let report = apply_thread_action(
+            &db,
+            &[thread("t-1"), thread("t-2"), thread("t-missing")],
+            ThreadAction::Delete,
+            None,
+        )
+        .await;
+
+        let failed: Vec<&str> = report.failed.iter().map(|f| f.thread_id.as_str()).collect();
+        assert_eq!(failed, vec!["t-missing"]);
+        assert!(live_thread(&db).is_empty());
+        assert!(db.get_thread("acc-1", "t-2").unwrap().is_empty());
     }
 }

@@ -5,8 +5,10 @@ import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountS
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { isHiddenFromInbox, isFlagged as isJunkFlagged, useJunkStore } from '@/stores/junkStore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
+import { BulkToolbar } from './BulkToolbar';
 import type { RulePrefill } from './EmailRow';
 import { InboxSearchBox } from './InboxSearchBox';
 import { VirtualEmailList } from './VirtualEmailList';
@@ -245,6 +247,15 @@ export function Inbox({
     });
   }, [isUnified, allAccounts, showAccountChip]);
 
+  // A selection belongs to the list it was made in: switching account,
+  // mailbox, filter or search clears it.
+  const listScope = useEmailStore((s) => s.listScope);
+  const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  const clearSelection = useSelectionStore((s) => s.clear);
+  const hasSelection = useSelectionStore((s) => s.ids.size > 0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the triggers, not values read by the effect
+  useEffect(() => clearSelection(), [activeAccountId, listScope, activeFilter, searchQuery, clearSelection]);
+
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
   const navigationMode = useEmailStore((s) => s.navigationMode);
@@ -435,81 +446,89 @@ export function Inbox({
   return (
     <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
-        <div className="flex items-center gap-2">
-          {/* Title */}
-          <div className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] min-w-0">
-            <h2 className="text-lg font-semibold text-gray-900 truncate">
-              {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
-            </h2>
-            {isSyncing && (
-              <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
-            )}
+        {/* While rows are selected the bulk toolbar takes the header row's
+            place (count, select-all, actions); the tabs stay below it. */}
+        {hasSelection ? (
+          <div className="min-h-9 flex items-center">
+            <BulkToolbar emails={visibleEmails} />
           </div>
-
-          {/* Inline search — centered, ~50ch wide.
-              Only shown in full-width layout. In split layout the lateral
-              search bar is used instead, so we hide this to avoid duplication. */}
-          {fullWidth && (
-            <div className="flex-1 flex justify-center min-w-0">
-              <InboxSearchBox
-                accountId={isUnified ? autocompleteAccountId : accountId}
-                externalQuery={searchQuery ?? ''}
-                onSubmit={(q) => onSearch?.(q)}
-                onClear={clearSearchQuery}
-              />
+        ) : (
+          <div className="flex items-center gap-2">
+            {/* Title */}
+            <div className="flex items-center gap-1.5 flex-shrink-0 max-w-[45%] min-w-0">
+              <h2 className="text-lg font-semibold text-gray-900 truncate">
+                {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
+              </h2>
+              {isSyncing && (
+                <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
+              )}
             </div>
-          )}
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {hasMore && !isLoadingMore && (
-              <button
-                onClick={onLoadMore}
-                className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
-              >
-                {t('inbox:loadMore')}
-              </button>
-            )}
-            {isLoadingMore && (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-                {t('common:state.loading')}
+            {/* Inline search — centered, ~50ch wide.
+                Only shown in full-width layout. In split layout the lateral
+                search bar is used instead, so we hide this to avoid duplication. */}
+            {fullWidth && (
+              <div className="flex-1 flex justify-center min-w-0">
+                <InboxSearchBox
+                  accountId={isUnified ? autocompleteAccountId : accountId}
+                  externalQuery={searchQuery ?? ''}
+                  onSubmit={(q) => onSearch?.(q)}
+                  onClear={clearSearchQuery}
+                />
               </div>
             )}
-            {/* Always-visible new-chat affordance. Sits in the list toolbar
-                rather than the AI FEATURES sidebar section so starting a chat
-                never depends on that section being expanded or scrolled into
-                view. Starts a fresh conversation and docks the panel. */}
-            {onNewChat && (
-              <button
-                onClick={onNewChat}
-                title={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
-                aria-label={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
-                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                  />
-                </svg>
-              </button>
-            )}
-            {onCollapse && (
-              <button
-                onClick={onCollapse}
-                title={t('inbox:collapse')}
-                className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-            )}
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {hasMore && !isLoadingMore && (
+                <button
+                  onClick={onLoadMore}
+                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+                >
+                  {t('inbox:loadMore')}
+                </button>
+              )}
+              {isLoadingMore && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
+                  {t('common:state.loading')}
+                </div>
+              )}
+              {/* Always-visible new-chat affordance. Sits in the list toolbar
+                  rather than the AI FEATURES sidebar section so starting a chat
+                  never depends on that section being expanded or scrolled into
+                  view. Starts a fresh conversation and docks the panel. */}
+              {onNewChat && (
+                <button
+                  onClick={onNewChat}
+                  title={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
+                  aria-label={isChatPanelOpen ? t('chat:panel.newChat') : t('chat:panel.open')}
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                    />
+                  </svg>
+                </button>
+              )}
+              {onCollapse && (
+                <button
+                  onClick={onCollapse}
+                  title={t('inbox:collapse')}
+                  className="p-1.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Category tabs — Gmail only. Single-select (clicking a tab replaces
             the active filter rather than toggling). When more than one category

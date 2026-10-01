@@ -199,7 +199,41 @@
       "archive_one": "No se pudo archivar {{count}} conversación: {{detail}}",
       "archive_other": "No se pudieron archivar {{count}} conversaciones: {{detail}}",
       "moveToInbox_one": "No se pudo mover {{count}} conversación a Recibidos: {{detail}}",
-      "moveToInbox_other": "No se pudieron mover {{count}} conversaciones a Recibidos: {{detail}}"
+      "moveToInbox_other": "No se pudieron mover {{count}} conversaciones a Recibidos: {{detail}}",
+      "delete_one": "No se pudo eliminar {{count}} conversación: {{detail}}",
+      "delete_other": "No se pudieron eliminar {{count}} conversaciones: {{detail}}"
     }
+  },
+  "undo": {
+    "action": "Deshacer",
+    "done": {
+      "archive_one": "{{count}} conversación archivada",
+      "archive_other": "{{count}} conversaciones archivadas",
+      "delete_one": "{{count}} conversación eliminada",
+      "delete_other": "{{count}} conversaciones eliminadas"
+    },
+    "undone": {
+      "archive_one": "Se deshizo el archivado de {{count}} conversación",
+      "archive_other": "Se deshizo el archivado de {{count}} conversaciones",
+      "delete_one": "Se deshizo la eliminación de {{count}} conversación",
+      "delete_other": "Se deshizo la eliminación de {{count}} conversaciones"
+    }
+  },
+  "bulk": {
+    "toolbarAria": "Acciones para las conversaciones seleccionadas",
+    "selected_one": "{{count}} seleccionada",
+    "selected_other": "{{count}} seleccionadas",
+    "selectAll": "Seleccionar todas las conversaciones cargadas",
+    "select": "Seleccionar",
+    "archive": "Archivar",
+    "delete": "Eliminar",
+    "markRead": "Marcar como leído",
+    "markUnread": "Marcar como no leído",
+    "star": "Destacar",
+    "unstar": "Quitar destacado",
+    "moveToFolder": "Mover a carpeta",
+    "clear": "Borrar selección",
+    "moveFailed_one": "No se pudo mover {{count}} mensaje: {{detail}}",
+    "moveFailed_other": "No se pudieron mover {{count}} mensajes: {{detail}}"
   }
 }

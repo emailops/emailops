@@ -76,7 +76,7 @@ import { useAiStore } from '@/stores/aiStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { pendingThreadActions, useEmailStore } from '@/stores/emailStore';
 import {
   useHelpDocsEnabledStore,
   useLensesEnabledStore,
@@ -135,6 +135,15 @@ function isLogSource(value: string): value is LogSource {
 function App() {
   const [isLocked, setIsLocked] = useState(false);
   const [lockChecked, setLockChecked] = useState(false);
+
+  // An archive/delete still inside its undo window is sent before the page
+  // goes away (reload, window close where the webview fires it). A quit that
+  // skips the event drops the action: it simply never happened.
+  useEffect(() => {
+    const flush = () => void pendingThreadActions.flushAll();
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   useEffect(() => {
     api.hasMainPassword().then((has) => {

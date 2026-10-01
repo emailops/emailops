@@ -2,25 +2,30 @@
 // reducers behind the optimistic update and its rollback, and the store
 // actions that call them around the backend.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Email } from '@/types';
 
 vi.mock('@/lib/api', () => ({
   applyThreadAction: vi.fn(),
+  getEmails: vi.fn(async () => []),
+  getEmailCount: vi.fn(async () => 0),
   getThread: vi.fn(),
   getEmailBody: vi.fn(async () => 'body'),
   markAsRead: vi.fn(async () => undefined),
 }));
 
+import { initI18n } from '@/i18n';
 import * as api from '@/lib/api';
 import {
   applyThreadFlag,
   isThreadStarred,
   leavesList,
+  pendingThreadActions,
   removeThreads,
   restoreThreads,
   threadKey,
+  UNDO_WINDOW_MS,
   useEmailStore,
 } from './emailStore';
 import { useToastStore } from './toastStore';
@@ -132,6 +137,9 @@ describe('leavesList', () => {
     ['unstar', 'inbox', false],
     ['markUnread', 'inbox', false],
     ['star', 'inbox', false],
+    ['delete', 'inbox', true],
+    ['delete', 'starred', true],
+    ['delete', 'search', true],
   ] as const)('%s in the %s list → %s', (action, list, expected) => {
     expect(leavesList(action, list)).toBe(expected);
   });
@@ -142,35 +150,6 @@ describe('thread action store actions', () => {
     useEmailStore.getState().reset();
     useToastStore.setState({ toasts: [] });
     vi.clearAllMocks();
-  });
-
-  it('archives optimistically and keeps the result when the backend applies it', async () => {
-    const a = email('a', 't1');
-    useEmailStore.setState({ emails: [a, email('b', 't2')], totalCount: 2, listScope: 'inbox' });
-    vi.mocked(api.applyThreadAction).mockResolvedValue({ failed: [] });
-
-    const pending = useEmailStore.getState().archiveThreads([{ accountId: 'acc', threadId: 't1' }]);
-    expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['b']);
-    await pending;
-
-    expect(api.applyThreadAction).toHaveBeenCalledWith([{ accountId: 'acc', threadId: 't1' }], 'archive');
-    expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['b']);
-    expect(useToastStore.getState().toasts).toEqual([]);
-  });
-
-  it('rolls back the threads the backend could not change and says so', async () => {
-    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
-    vi.mocked(api.applyThreadAction).mockResolvedValue({
-      failed: [{ accountId: 'acc', threadId: 't2', code: 'no_archive_folder', params: {}, message: 'no folder' }],
-    });
-
-    await useEmailStore.getState().archiveThreads([
-      { accountId: 'acc', threadId: 't1' },
-      { accountId: 'acc', threadId: 't2' },
-    ]);
-
-    expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['b']);
-    expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 
   it('rolls everything back when the call itself fails', async () => {
@@ -211,5 +190,129 @@ describe('thread action store actions', () => {
   it('an empty selection does nothing', async () => {
     await useEmailStore.getState().archiveThreads([]);
     expect(api.applyThreadAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('archive and delete wait out the undo window', () => {
+  const t1 = { accountId: 'acc', threadId: 't1' };
+  const t2 = { accountId: 'acc', threadId: 't2' };
+
+  beforeAll(async () => {
+    await initI18n('en');
+  });
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    await pendingThreadActions.flushAll();
+    useEmailStore.getState().reset();
+    useToastStore.setState({ toasts: [] });
+    vi.clearAllMocks();
+    vi.mocked(api.applyThreadAction).mockResolvedValue({ failed: [] });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const ids = () => useEmailStore.getState().emails.map((e) => e.id);
+
+  it('archive leaves the list at once but reaches the provider only when the window closes', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().archiveThreads([t1]);
+    expect(ids()).toEqual(['b']);
+    expect(api.applyThreadAction).not.toHaveBeenCalled();
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.message).toBe('Archived 1 conversation');
+    expect(toast.actionLabel).toBe('Undo');
+    expect(toast.durationMs).toBe(UNDO_WINDOW_MS);
+
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
+    await done;
+
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1], 'archive');
+    expect(ids()).toEqual(['b']);
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it('undo puts the conversations back and never calls the provider', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().deleteThreads([t1, t2]);
+    expect(ids()).toEqual([]);
+    useToastStore.getState().toasts[0].onAction?.();
+    await done;
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS * 2);
+
+    expect(ids()).toEqual(['a', 'b']);
+    expect(useEmailStore.getState().totalCount).toBe(2);
+    expect(api.applyThreadAction).not.toHaveBeenCalled();
+  });
+
+  it('delete sends one call for every conversation', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'starred' });
+
+    const done = useEmailStore.getState().deleteThreads([t1, t2]);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
+    await done;
+
+    expect(api.applyThreadAction).toHaveBeenCalledTimes(1);
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1, t2], 'delete');
+    expect(ids()).toEqual([]);
+  });
+
+  it('a second action commits the first at once', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+
+    const first = useEmailStore.getState().archiveThreads([t1]);
+    const second = useEmailStore.getState().deleteThreads([t2]);
+    await first;
+
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1], 'archive');
+    expect(api.applyThreadAction).not.toHaveBeenCalledWith([t2], 'delete');
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
+    await second;
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t2], 'delete');
+  });
+
+  it('a refetch inside the window does not bring the rows back', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+    vi.mocked(api.getEmails).mockResolvedValue([email('a', 't1'), email('b', 't2')]);
+    vi.mocked(api.getEmailCount).mockResolvedValue(2);
+
+    const done = useEmailStore.getState().archiveThreads([t1]);
+    await useEmailStore.getState().fetchEmails('acc', null, [], true, 'inbox');
+    expect(ids()).toEqual(['b']);
+
+    useToastStore.getState().toasts[0].onAction?.();
+    await done;
+    expect(ids()).toEqual(['a', 'b']);
+  });
+
+  it('opening another view commits what is pending first', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1')], totalCount: 1, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().archiveThreads([t1]);
+    await useEmailStore.getState().fetchEmails('acc', null, [], false, 'archive');
+    await done;
+
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1], 'archive');
+    expect(vi.mocked(api.applyThreadAction).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.getEmails).mock.invocationCallOrder[0],
+    );
+  });
+
+  it('a failed commit puts back exactly the refused conversations with one toast', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+    vi.mocked(api.applyThreadAction).mockResolvedValue({
+      failed: [{ accountId: 'acc', threadId: 't2', code: 'no_archive_folder', params: {}, message: 'no folder' }],
+    });
+
+    const done = useEmailStore.getState().archiveThreads([t1, t2]);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
+    await done;
+
+    expect(ids()).toEqual(['b']);
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].actionLabel).toBeUndefined();
   });
 });

@@ -199,7 +199,41 @@
       "archive_one": "Impossible d’archiver {{count}} conversation : {{detail}}",
       "archive_other": "Impossible d’archiver {{count}} conversations : {{detail}}",
       "moveToInbox_one": "Impossible de déplacer {{count}} conversation vers la boîte de réception : {{detail}}",
-      "moveToInbox_other": "Impossible de déplacer {{count}} conversations vers la boîte de réception : {{detail}}"
+      "moveToInbox_other": "Impossible de déplacer {{count}} conversations vers la boîte de réception : {{detail}}",
+      "delete_one": "Impossible de supprimer {{count}} conversation : {{detail}}",
+      "delete_other": "Impossible de supprimer {{count}} conversations : {{detail}}"
     }
+  },
+  "undo": {
+    "action": "Annuler",
+    "done": {
+      "archive_one": "{{count}} conversation archivée",
+      "archive_other": "{{count}} conversations archivées",
+      "delete_one": "{{count}} conversation supprimée",
+      "delete_other": "{{count}} conversations supprimées"
+    },
+    "undone": {
+      "archive_one": "Archivage de {{count}} conversation annulé",
+      "archive_other": "Archivage de {{count}} conversations annulé",
+      "delete_one": "Suppression de {{count}} conversation annulée",
+      "delete_other": "Suppression de {{count}} conversations annulée"
+    }
+  },
+  "bulk": {
+    "toolbarAria": "Actions pour les conversations sélectionnées",
+    "selected_one": "{{count}} sélectionnée",
+    "selected_other": "{{count}} sélectionnées",
+    "selectAll": "Sélectionner toutes les conversations chargées",
+    "select": "Sélectionner",
+    "archive": "Archiver",
+    "delete": "Supprimer",
+    "markRead": "Marquer comme lu",
+    "markUnread": "Marquer comme non lu",
+    "star": "Ajouter aux favoris",
+    "unstar": "Retirer des favoris",
+    "moveToFolder": "Déplacer vers un dossier",
+    "clear": "Effacer la sélection",
+    "moveFailed_one": "Impossible de déplacer {{count}} message : {{detail}}",
+    "moveFailed_other": "Impossible de déplacer {{count}} messages : {{detail}}"
   }
 }

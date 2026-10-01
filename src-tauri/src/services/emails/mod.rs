@@ -30,7 +30,7 @@ pub use compose::{
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
-pub use folders::{create_folder, delete_folder, move_email, rename_folder};
+pub use folders::{create_folder, delete_folder, move_email, move_emails, rename_folder, MoveFailure, MoveReport};
 pub(crate) use history_refresh::history_cursor_key;
 pub use html_sanitizer::sanitize_outgoing_html;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};

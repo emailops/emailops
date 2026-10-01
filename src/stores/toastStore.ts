@@ -9,7 +9,12 @@ export interface Toast {
   /** Sticky toasts never auto-dismiss — only the user can close them
    *  (e.g. the app-update notification). */
   sticky?: boolean;
+  /** How long the toast stays up (default `DEFAULT_TOAST_MS`) — an undo
+   *  toast lasts exactly as long as its undo window. */
+  durationMs?: number;
 }
+
+export const DEFAULT_TOAST_MS = 8000;
 
 interface ToastStore {
   toasts: Toast[];

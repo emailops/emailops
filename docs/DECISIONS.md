@@ -2686,3 +2686,35 @@ update and rollback instead of each looping over single-message commands.
 **Rejected:** *One command per action*: four copies of the same grouping, provider
 resolution and reporting. *Failing the whole call on the first error*: a bulk archive with
 one refused thread would roll back the ninety-nine that went through.
+
+## 2026-10-01 — Archive and delete wait out a six-second undo window before reaching the provider
+
+**Decision:** Archive and delete (one conversation or a bulk selection, from the list menu,
+the reading pane or the bulk toolbar) take the rows out of the list at once and show a
+"Archived 3 conversations · Undo" toast for six seconds (`UNDO_WINDOW_MS`), but the
+provider call (`apply_thread_action`, which now has a `delete` action taking any number of
+threads) is **deferred until the window closes**. Undo restores the rows locally; the
+provider never hears of the action, so no provider needs an un-trash or un-archive path.
+The pending action commits early when another archive/delete starts (one undo at a time,
+as Gmail does), when a non-background list fetch opens another view (the Archive view must
+show what was just archived), and on `beforeunload`. Until it commits, a background refetch
+filters the pending conversations out (`pendingRemovals`) so a sync does not bring them
+back. **If the app quits inside the window the action simply never happened**: the mail
+is still where it was at the provider and reappears on the next launch. The queue is the
+pure `createPendingActionQueue` (`src/lib/pendingActions.ts`). A commit that fails rolls
+back exactly the refused conversations with one toast, as every thread action does.
+**Context:** The parity audit made Undo for archive/delete a High item, and every
+destructive action needs a reachable inverse. Delete and archive were provider-first and
+immediate; undoing them afterwards would have needed per-provider restore paths (Gmail
+untrash, Graph move back from Deleted Items/Archive, IMAP move back with a re-keyed UID),
+each racing the state refresh.
+**Rejected:**
+- *Commit immediately and undo with a second provider call*: three new restore paths,
+  each re-keying rows on IMAP/Graph, for a feature whose whole point is that nothing
+  should have happened.
+- *Persisting the pending action so it survives a quit*: a durable outbox for a six-second
+  window; losing an archive the user just made (it stays in the inbox) is harmless and
+  visible, unlike losing a send.
+- *Keeping the old per-message delete loop in the frontend*: N invokes with no error
+  aggregation; bulk delete is one `apply_thread_action(threads, delete)` call with a
+  per-thread report.

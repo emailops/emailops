@@ -199,7 +199,41 @@
       "archive_one": "Could not archive {{count}} conversation: {{detail}}",
       "archive_other": "Could not archive {{count}} conversations: {{detail}}",
       "moveToInbox_one": "Could not move {{count}} conversation to the inbox: {{detail}}",
-      "moveToInbox_other": "Could not move {{count}} conversations to the inbox: {{detail}}"
+      "moveToInbox_other": "Could not move {{count}} conversations to the inbox: {{detail}}",
+      "delete_one": "Could not delete {{count}} conversation: {{detail}}",
+      "delete_other": "Could not delete {{count}} conversations: {{detail}}"
     }
+  },
+  "undo": {
+    "action": "Undo",
+    "done": {
+      "archive_one": "Archived {{count}} conversation",
+      "archive_other": "Archived {{count}} conversations",
+      "delete_one": "Deleted {{count}} conversation",
+      "delete_other": "Deleted {{count}} conversations"
+    },
+    "undone": {
+      "archive_one": "Archive of {{count}} conversation undone",
+      "archive_other": "Archive of {{count}} conversations undone",
+      "delete_one": "Delete of {{count}} conversation undone",
+      "delete_other": "Delete of {{count}} conversations undone"
+    }
+  },
+  "bulk": {
+    "toolbarAria": "Actions for the selected conversations",
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "selectAll": "Select all loaded conversations",
+    "select": "Select",
+    "archive": "Archive",
+    "delete": "Delete",
+    "markRead": "Mark as read",
+    "markUnread": "Mark as unread",
+    "star": "Star",
+    "unstar": "Remove star",
+    "moveToFolder": "Move to folder",
+    "clear": "Clear selection",
+    "moveFailed_one": "Could not move {{count}} message: {{detail}}",
+    "moveFailed_other": "Could not move {{count}} messages: {{detail}}"
   }
 }

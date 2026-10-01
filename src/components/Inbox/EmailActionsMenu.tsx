@@ -9,7 +9,6 @@ import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
-import { useLogStore } from '@/stores/logStore';
 import type { Email } from '@/types';
 
 export interface RulePrefill {
@@ -85,15 +84,13 @@ export function EmailActionsMenu({
 }: EmailActionsMenuProps) {
   const { t } = useTranslation(['inbox']);
   const updateEmail = useEmailStore((s) => s.updateEmail);
-  const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const deleteThreads = useEmailStore((s) => s.deleteThreads);
   const moveEmailFromStore = useEmailStore((s) => s.moveEmail);
   const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const archiveThreads = useEmailStore((s) => s.archiveThreads);
   const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
-  const addLog = useLogStore((s) => s.addLog);
   const { moveTargets } = useMoveTargets(email);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   /** 'move' shows the folder-picker page of the menu. */
   const [menuView, setMenuView] = useState<'main' | 'move'>('main');
@@ -439,24 +436,14 @@ export function EmailActionsMenu({
                 )}
                 <div className="border-t border-gray-100 my-1" />
                 <button
-                  onClick={async (e) => {
+                  onClick={(e) => {
                     e.stopPropagation();
                     setMenuOpen(false);
-                    setIsDeleting(true);
-                    try {
-                      const thread = await api.getThread(email.accountId, email.threadId);
-                      for (const t of thread) {
-                        await deleteEmailFromStore(t.id);
-                      }
-                    } catch (err) {
-                      // Deleting now also removes the message at the provider,
-                      // so this can fail (offline, expired credentials) with
-                      // nothing removed — say so instead of silently resetting.
-                      addLog('error', 'sync', `Delete failed: ${err}`);
-                      setIsDeleting(false);
-                    }
+                    // The row leaves at once; the provider call waits out the
+                    // undo window, and a refusal brings the row back with a
+                    // toast (emailStore.deleteThreads).
+                    void deleteThreads([threadRefOf(email)]);
                   }}
-                  disabled={isDeleting}
                   className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
                 >
                   <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

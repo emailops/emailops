@@ -4,6 +4,7 @@ import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef } from '@/li
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { normalizeMimeType } from '@/lib/mimeType';
+import { createPendingActionQueue } from '@/lib/pendingActions';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import { useLogStore } from '@/stores/logStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -264,6 +265,8 @@ export function leavesList(action: ThreadAction, list: ListScope): boolean {
       return list === 'archive' || list.startsWith('folder:');
     case 'unstar':
       return list === 'starred';
+    case 'delete':
+      return true;
     default:
       return false;
   }
@@ -436,8 +439,25 @@ interface EmailStore {
    */
   setThreadsRead: (threads: ThreadRef[], read: boolean) => Promise<void>;
   setThreadsStarred: (threads: ThreadRef[], starred: boolean) => Promise<void>;
+  /**
+   * Archive and delete wait out the undo window (`UNDO_WINDOW_MS`): the rows
+   * change at once, a toast offers Undo, and the provider is only called when
+   * the window closes — or earlier, when another archive/delete starts, a new
+   * view is opened, or the app unloads. Undo restores the rows without any
+   * provider call. Resolve once the action committed or was undone.
+   */
   archiveThreads: (threads: ThreadRef[]) => Promise<void>;
+  deleteThreads: (threads: ThreadRef[]) => Promise<void>;
   moveThreadsToInbox: (threads: ThreadRef[]) => Promise<void>;
+  /**
+   * Move the given messages (bulk selection) to the inbox or an IMAP folder of
+   * `accountId`, in one backend call. Rows leave the list at once; those the
+   * backend refuses come back, with one toast.
+   */
+  moveEmailsToMailbox: (accountId: string, emailIds: string[], target: MailboxView) => Promise<void>;
+  /** Conversations taken out of the list by an archive/delete still inside
+   *  its undo window: a refetch must not bring them back meanwhile. */
+  pendingRemovals: ReadonlySet<string>;
   deleteEmail: (emailId: string) => Promise<void>;
   /** Move an email to the inbox or a custom folder (IMAP accounts only).
    *  Throws on failure so callers can surface the error. */
@@ -484,6 +504,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   pendingChatDraft: null,
   resetAccountKey: null,
   listScope: 'inbox',
+  pendingRemovals: new Set<string>(),
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
@@ -616,6 +637,12 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({ skipNextFetch: false });
       return;
     }
+    // Opening a list (another mailbox, a filter, a search) may depend on an
+    // archive/delete still in its undo window — e.g. the Archive view must
+    // show what was just archived — so it commits first.
+    if (!silent && pendingThreadActions.pendingCount() > 0) {
+      await pendingThreadActions.flushAll();
+    }
     // Increment fetch ID to track this operation and cancel stale ones
     const fetchId = get().currentFetchId + 1;
     const { searchQuery } = get();
@@ -685,7 +712,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       // Only update state if this is still the current fetch operation
       if (get().currentFetchId === fetchId) {
         set({
-          emails,
+          emails: withoutPendingRemovals(emails, get().pendingRemovals),
           totalCount,
           isLoading: false,
           hasMore: computeHasMore(emails.length, totalCount),
@@ -747,7 +774,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const newTotal = emails.length + moreEmails.length;
 
       set((state) => ({
-        emails: appendUniqueEmails(state.emails, moreEmails),
+        emails: appendUniqueEmails(state.emails, withoutPendingRemovals(moreEmails, state.pendingRemovals)),
         isLoadingMore: false,
         loadMoreLock: false,
         hasMore: computeHasMoreAfterPage(newTotal, moreEmails.length, totalCount),
@@ -932,10 +959,44 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     ),
 
   archiveThreads: (threads) =>
-    runThreadAction(threads, 'archive', (state, keys) => ({
+    runDeferredThreadAction(threads, 'archive', (state, keys) => ({
       ...state,
       emails: state.emails.map((e) => (keys.has(keyOf(e)) && e.mailbox === 'inbox' ? { ...e, mailbox: 'archive' } : e)),
     })),
+
+  deleteThreads: (threads) => runDeferredThreadAction(threads, 'delete', (state) => state),
+
+  moveEmailsToMailbox: async (accountId, emailIds, target) => {
+    if (emailIds.length === 0) return;
+    const ids = new Set(emailIds);
+    const before = get();
+    set((state) => {
+      const emails = state.emails.filter((e) => !ids.has(e.id));
+      const deselect = state.selectedEmail !== null && ids.has(state.selectedEmail.id);
+      return {
+        emails,
+        totalCount: Math.max(0, state.totalCount - (state.emails.length - emails.length)),
+        selectedEmail: deselect ? null : state.selectedEmail,
+        threadEmails: deselect ? [] : state.threadEmails,
+      };
+    });
+    let failed: string[];
+    let detail = '';
+    try {
+      const report = await api.moveEmails(accountId, emailIds, target);
+      failed = report.failed.map((f) => f.emailId);
+      if (report.failed.length > 0) detail = errorText(report.failed[0]);
+    } catch (error) {
+      failed = emailIds;
+      detail = errorText(error);
+    }
+    if (failed.length === 0) return;
+    const back = new Set(failed);
+    set((current) => restoreEmails(current, before, back));
+    const message = i18n.t('inbox:bulk.moveFailed', { count: back.size, detail });
+    useLogStore.getState().addLog('error', 'sync', message);
+    useToastStore.getState().addToast({ message });
+  },
 
   moveThreadsToInbox: (threads) =>
     runThreadAction(threads, 'moveToInbox', (state, keys) => ({
@@ -1034,6 +1095,36 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 }));
 
+/** How long archive and delete wait for an Undo before reaching the provider. */
+export const UNDO_WINDOW_MS = 6000;
+
+/** The archive/delete actions inside their undo window (see `archiveThreads`). */
+export const pendingThreadActions = createPendingActionQueue({
+  windowMs: UNDO_WINDOW_MS,
+  onError: (error) => useLogStore.getState().addLog('error', 'sync', errorText(error)),
+});
+
+/** Pure: drop the rows of conversations waiting out an undo window. */
+export function withoutPendingRemovals(emails: Email[], pending: ReadonlySet<string>): Email[] {
+  return pending.size === 0 ? emails : emails.filter((e) => !pending.has(keyOf(e)));
+}
+
+/** Pure: put back the rows with ids in `ids` from `before`, in their old place
+ *  (the per-message counterpart of `restoreThreads`). */
+export function restoreEmails<S extends ThreadSlices>(current: S, before: S, ids: ReadonlySet<string>): S {
+  const keys = new Set(before.emails.filter((e) => ids.has(e.id)).map(keyOf));
+  const restored = restoreThreads(current, before, keys);
+  // restoreThreads works per conversation; keep only the requested messages
+  // of those conversations, plus whatever of them was still in the list.
+  const now = new Set(current.emails.map((e) => e.id));
+  const emails = restored.emails.filter((e) => ids.has(e.id) || now.has(e.id));
+  return {
+    ...restored,
+    emails,
+    totalCount: Math.max(0, current.totalCount + (emails.length - current.emails.length)),
+  };
+}
+
 /**
  * Shared body of the thread actions: optimistic `patch` (plus removal from a
  * list the threads no longer belong to), the backend call, then rollback of
@@ -1045,11 +1136,25 @@ async function runThreadAction(
   patch: (state: EmailStore, keys: ReadonlySet<string>) => EmailStore,
 ): Promise<void> {
   if (threads.length === 0) return;
+  const { before } = applyOptimistic(threads, action, patch);
+  await commitThreadAction(threads, action, before);
+}
+
+function applyOptimistic(
+  threads: ThreadRef[],
+  action: ThreadAction,
+  patch: (state: EmailStore, keys: ReadonlySet<string>) => EmailStore,
+): { keys: ReadonlySet<string>; before: EmailStore; leaves: boolean } {
   const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
   const before = useEmailStore.getState();
   const patched = patch(before, keys);
-  useEmailStore.setState(leavesList(action, before.listScope) ? removeThreads(patched, keys) : patched);
+  const leaves = leavesList(action, before.listScope);
+  useEmailStore.setState(leaves ? removeThreads(patched, keys) : patched);
+  return { keys, before, leaves };
+}
 
+async function commitThreadAction(threads: ThreadRef[], action: ThreadAction, before: EmailStore): Promise<void> {
+  const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
   let failed: ReadonlySet<string>;
   let detail: string;
   try {
@@ -1066,4 +1171,56 @@ async function runThreadAction(
   const message = i18n.t(`inbox:threadActions.failed.${action}`, { count: failed.size, detail });
   useLogStore.getState().addLog('error', 'sync', message);
   useToastStore.getState().addToast({ message });
+}
+
+function setPendingRemovals(keys: ReadonlySet<string>, pending: boolean): void {
+  useEmailStore.setState((state) => {
+    const next = new Set(state.pendingRemovals);
+    for (const k of keys) {
+      if (pending) next.add(k);
+      else next.delete(k);
+    }
+    return { pendingRemovals: next };
+  });
+}
+
+/**
+ * Archive/delete: the optimistic change now, the backend call when the undo
+ * window closes, and a toast whose Undo restores the rows without a provider
+ * round trip. Resolves once the action committed or was undone.
+ */
+async function runDeferredThreadAction(
+  threads: ThreadRef[],
+  action: 'archive' | 'delete',
+  patch: (state: EmailStore, keys: ReadonlySet<string>) => EmailStore,
+): Promise<void> {
+  if (threads.length === 0) return;
+  // Scheduling commits whatever was pending (one undo at a time). Snapshots
+  // stay independent: a rollback or undo only restores its own threads.
+  const { keys, before, leaves } = applyOptimistic(threads, action, patch);
+  if (leaves) setPendingRemovals(keys, true);
+  const toasts = useToastStore.getState();
+  let toastId: number | null = null;
+  const id = pendingThreadActions.schedule({
+    commit: async () => {
+      if (toastId !== null) toasts.dismissToast(toastId);
+      try {
+        await commitThreadAction(threads, action, before);
+      } finally {
+        if (leaves) setPendingRemovals(keys, false);
+      }
+    },
+    undo: () => {
+      if (leaves) setPendingRemovals(keys, false);
+      useEmailStore.setState((current) => restoreThreads(current, before, keys));
+      useLogStore.getState().addLog('info', 'sync', i18n.t(`inbox:undo.undone.${action}`, { count: threads.length }));
+    },
+  });
+  toastId = toasts.addToast({
+    message: i18n.t(`inbox:undo.done.${action}`, { count: threads.length }),
+    actionLabel: i18n.t('inbox:undo.action'),
+    onAction: () => pendingThreadActions.undo(id),
+    durationMs: UNDO_WINDOW_MS,
+  });
+  await pendingThreadActions.settled(id);
 }

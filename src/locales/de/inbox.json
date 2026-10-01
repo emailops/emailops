@@ -199,7 +199,41 @@
       "archive_one": "{{count}} Unterhaltung konnte nicht archiviert werden: {{detail}}",
       "archive_other": "{{count}} Unterhaltungen konnten nicht archiviert werden: {{detail}}",
       "moveToInbox_one": "{{count}} Unterhaltung konnte nicht in den Posteingang verschoben werden: {{detail}}",
-      "moveToInbox_other": "{{count}} Unterhaltungen konnten nicht in den Posteingang verschoben werden: {{detail}}"
+      "moveToInbox_other": "{{count}} Unterhaltungen konnten nicht in den Posteingang verschoben werden: {{detail}}",
+      "delete_one": "{{count}} Unterhaltung konnte nicht gelöscht werden: {{detail}}",
+      "delete_other": "{{count}} Unterhaltungen konnten nicht gelöscht werden: {{detail}}"
     }
+  },
+  "undo": {
+    "action": "Rückgängig",
+    "done": {
+      "archive_one": "{{count}} Unterhaltung archiviert",
+      "archive_other": "{{count}} Unterhaltungen archiviert",
+      "delete_one": "{{count}} Unterhaltung gelöscht",
+      "delete_other": "{{count}} Unterhaltungen gelöscht"
+    },
+    "undone": {
+      "archive_one": "Archivieren von {{count}} Unterhaltung rückgängig gemacht",
+      "archive_other": "Archivieren von {{count}} Unterhaltungen rückgängig gemacht",
+      "delete_one": "Löschen von {{count}} Unterhaltung rückgängig gemacht",
+      "delete_other": "Löschen von {{count}} Unterhaltungen rückgängig gemacht"
+    }
+  },
+  "bulk": {
+    "toolbarAria": "Aktionen für die ausgewählten Unterhaltungen",
+    "selected_one": "{{count}} ausgewählt",
+    "selected_other": "{{count}} ausgewählt",
+    "selectAll": "Alle geladenen Unterhaltungen auswählen",
+    "select": "Auswählen",
+    "archive": "Archivieren",
+    "delete": "Löschen",
+    "markRead": "Als gelesen markieren",
+    "markUnread": "Als ungelesen markieren",
+    "star": "Markieren",
+    "unstar": "Markierung entfernen",
+    "moveToFolder": "In Ordner verschieben",
+    "clear": "Auswahl aufheben",
+    "moveFailed_one": "{{count}} Nachricht konnte nicht verschoben werden: {{detail}}",
+    "moveFailed_other": "{{count}} Nachrichten konnten nicht verschoben werden: {{detail}}"
   }
 }

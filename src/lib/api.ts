@@ -285,6 +285,30 @@ export async function moveEmail(accountId: string, emailId: string, targetMailbo
   return invoke('move_email', { accountId, emailId, targetMailbox });
 }
 
+/** A message a bulk move could not move (`AppError` wire shape). Mirrors the
+ *  Rust `MoveFailure` in `services/emails/folders.rs`. */
+export interface MoveFailure {
+  emailId: string;
+  code: string;
+  params: Record<string, string>;
+  message: string;
+}
+
+/** Every id not listed in `failed` was moved. */
+export interface MoveReport {
+  failed: MoveFailure[];
+}
+
+/** Move several messages of one IMAP account to the inbox or a custom folder
+ *  in one call. Never rejects for a per-message failure. */
+export async function moveEmails(
+  accountId: string,
+  emailIds: string[],
+  targetMailbox: MailboxView,
+): Promise<MoveReport> {
+  return invoke('move_emails', { accountId, emailIds, targetMailbox });
+}
+
 export async function getThread(accountId: string, threadId: string): Promise<Email[]> {
   return invoke('get_thread', { accountId, threadId });
 }
@@ -306,7 +330,7 @@ export interface ThreadRef {
 
 /** Thread-level mailbox actions, pushed to the provider (Gmail labels, Graph,
  *  IMAP flags/moves). Mirrors the Rust `ThreadAction`. */
-export type ThreadAction = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'archive' | 'moveToInbox';
+export type ThreadAction = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'archive' | 'moveToInbox' | 'delete';
 
 /** A thread an action could not be applied to; `code`/`params`/`message` are
  *  the `AppError` wire shape, so `errorText(failure)` renders it. */
