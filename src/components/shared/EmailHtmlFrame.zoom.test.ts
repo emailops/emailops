@@ -72,10 +72,53 @@ describe('EmailHtmlFrame bridge pinch-zoom', () => {
     expect(currentZoom()).toBeLessThan(1);
   });
 
-  it('a plain scroll wheel without ctrl does not zoom or consume the event', () => {
-    const ev = pinch(-100, false);
+  it('a plain scroll wheel without ctrl does not zoom', () => {
+    pinch(-100, false);
     expect(currentZoom()).toBe(1);
+  });
+
+  // A wide email makes the frame scrollable sideways, and the webview then
+  // keeps every wheel turn over it: the reading pane only scrolled with the
+  // pointer off the email. Vertical turns are handed to the parent.
+  it('hands a vertical wheel turn to the reading pane', () => {
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = pinch(120, false);
+    expect(ev.defaultPrevented).toBe(true);
+    const wheel = spy.mock.calls.map((c) => c[0] as { type?: string; deltaY?: number }).find((m) => m.type === 'wheel');
+    expect(wheel?.deltaY).toBe(120);
+  });
+
+  it('converts line-based wheel deltas to pixels', () => {
+    const spy = vi.spyOn(window, 'postMessage');
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: 3, deltaMode: 1, cancelable: true, bubbles: true }));
+    const wheel = spy.mock.calls.map((c) => c[0] as { type?: string; deltaY?: number }).find((m) => m.type === 'wheel');
+    expect(wheel?.deltaY).toBe(48);
+  });
+
+  it('leaves a sideways turn to the email, which may scroll horizontally', () => {
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = new WheelEvent('wheel', { deltaX: 120, deltaY: 10, cancelable: true, bubbles: true });
+    window.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(false);
+    expect(spy.mock.calls.some((c) => (c[0] as { type?: string }).type === 'wheel')).toBe(false);
+  });
+
+  it('lets a scrollable block inside the email scroll itself', () => {
+    const box = document.createElement('div');
+    box.style.overflowY = 'auto';
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, value: 500 });
+    Object.defineProperty(box, 'clientHeight', { configurable: true, value: 100 });
+    box.scrollTop = 0;
+    const inner = document.createElement('p');
+    box.appendChild(inner);
+    document.body.appendChild(box);
+    try {
+      const ev = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true });
+      inner.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(false);
+    } finally {
+      box.remove();
+    }
   });
 
   it('clamps zoom to at most 3x', () => {
