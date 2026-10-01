@@ -167,7 +167,7 @@ export function EmailActionsMenu({
         createPortal(
           <div
             ref={menuDropdownRef}
-            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
+            className="fixed w-max min-w-56 max-w-[min(24rem,calc(100vw-16px))] bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
             {menuView === 'snooze' ? (
@@ -177,7 +177,7 @@ export function EmailActionsMenu({
                     e.stopPropagation();
                     setMenuView('main');
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-500 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -199,7 +199,7 @@ export function EmailActionsMenu({
                     e.stopPropagation();
                     setMenuView('main');
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-500 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -220,7 +220,7 @@ export function EmailActionsMenu({
                       }
                     }}
                     title={target.label}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg
                       className="w-4 h-4 text-gray-400 shrink-0"
@@ -257,7 +257,7 @@ export function EmailActionsMenu({
                       onChatAboutThread(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -277,7 +277,7 @@ export function EmailActionsMenu({
                       onOpenInTab(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -306,13 +306,22 @@ export function EmailActionsMenu({
                   onUnsnooze={() => unsnoozeThreads([threadRefOf(email)])}
                 />
                 <div className="border-t border-gray-100 my-1" />
+                {/* The sender items act on this address: shown once here rather
+                    than beside each label, where it squeezed them onto two lines. */}
+                <div
+                  data-testid="menu-sender"
+                  title={email.senderEmail}
+                  className="px-3 pt-1 pb-0.5 text-xs text-gray-400 truncate"
+                >
+                  {email.senderEmail}
+                </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     onAddSenderFilter?.(email.senderEmail);
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -323,7 +332,6 @@ export function EmailActionsMenu({
                     />
                   </svg>
                   {t('inbox:emailRow.addSenderFilter')}
-                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px]">{email.senderEmail}</span>
                 </button>
                 {onHideSenderFromFilters && (
                   <button
@@ -332,7 +340,7 @@ export function EmailActionsMenu({
                       onHideSenderFromFilters(email.senderEmail);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -353,7 +361,7 @@ export function EmailActionsMenu({
                       openSenderDialog({ type: 'block', accountId: email.accountId, address: email.senderEmail });
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-red-600 hover:bg-red-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -364,7 +372,6 @@ export function EmailActionsMenu({
                       />
                     </svg>
                     {t('inbox:emailRow.blockSender')}
-                    <span className="ml-auto text-xs text-red-400 truncate max-w-[120px]">{email.senderEmail}</span>
                   </button>
                 )}
                 <button
@@ -377,7 +384,7 @@ export function EmailActionsMenu({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -399,7 +406,7 @@ export function EmailActionsMenu({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -422,7 +429,7 @@ export function EmailActionsMenu({
                     }
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -450,7 +457,7 @@ export function EmailActionsMenu({
                       onStatus('Download failed');
                     }
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -468,7 +475,7 @@ export function EmailActionsMenu({
                       e.stopPropagation();
                       setMenuView('move');
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -499,7 +506,7 @@ export function EmailActionsMenu({
                     // toast (emailStore.deleteThreads).
                     void deleteThreads([threadRefOf(email)]);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
                 >
                   <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -550,7 +557,8 @@ function ThreadActionItems({
   onUnsnooze,
 }: ThreadActionItemsProps) {
   const { t } = useTranslation(['inbox']);
-  const itemClass = 'w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2';
+  const itemClass =
+    'w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2';
   return (
     <>
       <button
