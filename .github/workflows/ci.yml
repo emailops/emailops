@@ -193,6 +193,8 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -216,11 +218,14 @@ jobs:
           mkdir -p src-tauri/resources/models
           touch src-tauri/resources/models/nomic-embed-text-v1.5-q4_k_m.gguf
 
-      # `cargo check` still runs llama-cpp-sys-2's build script, so the CMake /
+      # `cargo clippy` still runs llama-cpp-sys-2's build script, so the CMake /
       # C++ compile is genuinely exercised; only the final Rust codegen and
       # link are skipped. That is the expensive part we can afford to omit.
-      - name: Check with default features (llamacpp)
-        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+      # Clippy rather than check: the lint jobs build without default
+      # features, so this is the only place the llamacpp code and the
+      # examples are linted.
+      - name: Clippy with default features (llamacpp)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
   # Validates the per-platform bundle configuration (tauri.linux.conf.json /
   # tauri.windows.conf.json) and the packaging step itself. Built WITHOUT

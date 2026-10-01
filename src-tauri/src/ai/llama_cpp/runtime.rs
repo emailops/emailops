@@ -1887,7 +1887,6 @@ mod tests {
             true
         };
         assert!(forward_answer_piece(&mut gate, &mut cb, "Hello"));
-        drop(cb);
         assert_eq!(seen.concat(), "Hello");
     }
 

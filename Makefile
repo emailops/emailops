@@ -52,8 +52,9 @@ dev-trace: fetch-bundled-models
 EMAILOPS_DEMO_DIR ?= $(CURDIR)/.emailops-demo-data
 
 # Generate a fresh synthetic demo DB. Idempotent: overwrites any existing demo DB.
+# The schema comes from this checkout's migrations, not the installed app's DB.
 demo-db:
-	uv run scripts/generate_demo_db.py --demo-db "$(EMAILOPS_DEMO_DIR)/emailops.db"
+	bash scripts/demo_db.sh "$(EMAILOPS_DEMO_DIR)/emailops.db"
 
 # Generate embeddings for every email in the demo DB so chat retrieval works.
 # Calls the app's own services::embeddings::generate_embeddings via a small
@@ -74,7 +75,7 @@ demo:
 EMAILOPS_DEMO_DIR_ES ?= $(CURDIR)/.emailops-demo-data-es
 
 demo-db-es:
-	uv run scripts/generate_demo_db.py --lang es --demo-db "$(EMAILOPS_DEMO_DIR_ES)/emailops.db"
+	bash scripts/demo_db.sh "$(EMAILOPS_DEMO_DIR_ES)/emailops.db" --lang es
 
 demo-embed-es:
 	cargo run --release --manifest-path src-tauri/Cargo.toml --example embed_demo_db -- \
