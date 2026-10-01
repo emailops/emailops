@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { parseCustomSnooze, snoozePresets, toDatetimeLocalValue } from './snooze';
+import { parseCustomSnooze, shortSnoozeTime, snoozePresets, toDatetimeLocalValue } from './snooze';
 
 // Wall-clock rules ("tomorrow at 8:00") depend on the zone: pin one with a
 // daylight-saving change so the DST cases are real.
@@ -89,5 +89,20 @@ describe('parseCustomSnooze', () => {
     expect(toDatetimeLocalValue(at)).toBe('2026-01-05T07:05');
     expect(parseCustomSnooze(toDatetimeLocalValue(at), now)).toBeNull();
     expect(parseCustomSnooze(toDatetimeLocalValue(local(2027, 1, 5, 7, 5)), now)).toEqual(local(2027, 1, 5, 7, 5));
+  });
+});
+
+describe('shortSnoozeTime', () => {
+  // Local-time dates, like every other helper here.
+  const now = new Date(2026, 9, 1, 9, 30);
+  // ICU puts a narrow no-break space before AM/PM.
+  const spaces = (s: string) => s.replace(/\s/g, ' ');
+
+  it('shows only the time for a wake-up later today', () => {
+    expect(spaces(shortSnoozeTime(new Date(2026, 9, 1, 17, 0), now, 'en-US'))).toBe('05:00 PM');
+  });
+
+  it('shows the date and time for a later day, without the weekday', () => {
+    expect(spaces(shortSnoozeTime(new Date(2026, 9, 2, 8, 0), now, 'en-US'))).toBe('Oct 2, 08:00 AM');
   });
 });

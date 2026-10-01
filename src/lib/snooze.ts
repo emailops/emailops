@@ -84,3 +84,16 @@ export function toDatetimeLocalValue(date: Date): string {
 export function toUnixSeconds(date: Date): number {
   return Math.floor(date.getTime() / 1000);
 }
+
+/**
+ * The wake time as a list row shows it in the Snoozed view: just the time
+ * when it is later today, otherwise day and time — no weekday and no
+ * "Snoozed until", which the view already says, so the chip stays narrow and
+ * the subject keeps its room.
+ */
+export function shortSnoozeTime(at: Date, now: Date, locale: string): string {
+  const sameDay =
+    at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  const time = { hour: '2-digit', minute: '2-digit' } as const;
+  return new Intl.DateTimeFormat(locale, sameDay ? time : { month: 'short', day: 'numeric', ...time }).format(at);
+}

@@ -46,8 +46,22 @@ function render(email: Email, records: ThreadSnooze[], listScope: 'inbox' | 'sno
 }
 
 describe('SnoozeBadge', () => {
-  it('shows the wake time in the Snoozed view', () => {
-    expect(render(row(), [record()], 'snoozed')?.textContent).toMatch(/^Snoozed until /);
+  it('shows the wake time in the Snoozed view, with the full wording as its tooltip', () => {
+    const badge = render(row(), [record()], 'snoozed');
+    // The view already says "snoozed": the chip carries only the time, so it
+    // does not squeeze the subject down to a few characters.
+    const visible = badge?.querySelector('span[aria-hidden="true"]')?.textContent;
+    expect(visible).not.toMatch(/Snoozed/);
+    expect(visible).toMatch(/\d{2}:\d{2}/);
+    expect(badge?.title).toMatch(/^Snoozed until /);
+    // Screen readers still hear the full wording.
+    expect(badge?.querySelector('.sr-only')?.textContent).toBe(badge?.title);
+  });
+
+  it('lets the Snoozed-view chip shrink instead of the subject', () => {
+    const badge = render(row(), [record()], 'snoozed');
+    expect(badge?.className).not.toContain('flex-shrink-0');
+    expect(badge?.className).toContain('min-w-0');
   });
 
   it('marks a conversation back from snooze while it is unread', () => {
