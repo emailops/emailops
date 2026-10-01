@@ -173,5 +173,27 @@
     "notJunkFailed": "Could not record that this message is not junk",
     "hideFlagged": "Hide junk messages"
   },
-  "emailUnavailable": "Email no longer available."
+  "emailUnavailable": "Email no longer available.",
+  "multiSelect": {
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "selected_many": "{{count}} selected",
+    "delete": "Delete",
+    "move": "Move to…",
+    "clear": "Exit selection",
+    "selectAll": "Select all",
+    "deleting": "Deleting…",
+    "moving": "Moving…",
+    "deleted_one": "{{count}} email moved to the Trash",
+    "deleted_other": "{{count}} emails moved to the Trash",
+    "deleted_many": "{{count}} emails moved to the Trash",
+    "moved_one": "{{count}} email moved to {{name}}",
+    "moved_other": "{{count}} emails moved to {{name}}",
+    "moved_many": "{{count}} emails moved to {{name}}",
+    "failed": "{{count}} could not be processed: {{error}}",
+    "moveUnavailable": "Moving is only available for emails of one IMAP account, from the inbox or a folder.",
+    "hint": "Click emails to select them · ✕ or Esc to exit",
+    "deselectAll": "Deselect all",
+    "noneSelected": "None selected"
+  }
 }

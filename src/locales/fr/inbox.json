@@ -173,5 +173,27 @@
     "notJunkFailed": "Impossible d'enregistrer que ce message n'est pas indésirable",
     "hideFlagged": "Masquer les indésirables"
   },
-  "emailUnavailable": "Cet e-mail n’est plus disponible."
+  "emailUnavailable": "Cet e-mail n’est plus disponible.",
+  "multiSelect": {
+    "selected_one": "{{count}} sélectionné",
+    "selected_other": "{{count}} sélectionnés",
+    "selected_many": "{{count}} sélectionnés",
+    "delete": "Supprimer",
+    "move": "Déplacer vers…",
+    "clear": "Quitter la sélection",
+    "selectAll": "Tout sélectionner",
+    "deleting": "Suppression…",
+    "moving": "Déplacement…",
+    "deleted_one": "{{count}} e-mail envoyé à la corbeille",
+    "deleted_other": "{{count}} e-mails envoyés à la corbeille",
+    "deleted_many": "{{count}} e-mails envoyés à la corbeille",
+    "moved_one": "{{count}} e-mail déplacé vers {{name}}",
+    "moved_other": "{{count}} e-mails déplacés vers {{name}}",
+    "moved_many": "{{count}} e-mails déplacés vers {{name}}",
+    "failed": "{{count}} n'ont pas pu être traités : {{error}}",
+    "moveUnavailable": "Le déplacement n'est possible que pour les e-mails d'un seul compte IMAP, depuis la boîte de réception ou un dossier.",
+    "hint": "Cliquez sur les e-mails pour les sélectionner · ✕ ou Échap pour quitter",
+    "deselectAll": "Tout désélectionner",
+    "noneSelected": "Aucun sélectionné"
+  }
 }

@@ -33,7 +33,10 @@
     "rename": "Ordner umbenennen",
     "deleteTitle": "Ordner löschen",
     "deleteConfirm": "Ordner '{{name}}' löschen? Die enthaltenen E-Mails werden auch auf dem Mailserver gelöscht.",
-    "movedTo": "E-Mail nach {{name}} verschoben"
+    "movedTo": "E-Mail nach {{name}} verschoben",
+    "movedManyTo_one": "{{count}} E-Mail nach {{name}} verschoben",
+    "movedManyTo_other": "{{count}} E-Mails nach {{name}} verschoben",
+    "movedManyTo_many": "{{count}} E-Mails nach {{name}} verschoben"
   },
   "attachments": "Anhänge",
   "deleted": "Gelöscht",

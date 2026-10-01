@@ -33,7 +33,10 @@
     "rename": "Renombrar carpeta",
     "deleteTitle": "Eliminar carpeta",
     "deleteConfirm": "¿Eliminar la carpeta '{{name}}'? Sus correos también se eliminarán del servidor de correo.",
-    "movedTo": "Correo movido a {{name}}"
+    "movedTo": "Correo movido a {{name}}",
+    "movedManyTo_one": "{{count}} correo movido a {{name}}",
+    "movedManyTo_other": "{{count}} correos movidos a {{name}}",
+    "movedManyTo_many": "{{count}} correos movidos a {{name}}"
   },
   "attachments": "Adjuntos",
   "deleted": "Eliminados",
