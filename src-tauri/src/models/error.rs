@@ -174,11 +174,46 @@ impl serde::Serialize for AppError {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
+        let mut params = self.params();
+        let message = match self.internal_summary() {
+            Some(summary) => {
+                // The detail stays on this machine, in the output panel; the
+                // webview only gets the generic summary.
+                crate::services::logger::log("error", "system", format!("{}: {self}", self.code()));
+                params.remove("detail");
+                summary.to_string()
+            }
+            None => self.to_string(),
+        };
         let mut s = serializer.serialize_struct("AppError", 3)?;
         s.serialize_field("code", self.code())?;
-        s.serialize_field("params", &self.params())?;
-        s.serialize_field("message", &self.to_string())?;
+        s.serialize_field("params", &params)?;
+        s.serialize_field("message", &message)?;
         s.end()
+    }
+}
+
+impl AppError {
+    /// Generic user-facing summary for variants whose detail is raw text from a
+    /// library or the OS — SQLite messages, file paths, HTTP client internals,
+    /// keychain backend errors. That text must not reach the UI
+    /// (CASA/DASA 1.8.1); `None` for variants whose detail is written for the
+    /// user.
+    fn internal_summary(&self) -> Option<&'static str> {
+        match self {
+            AppError::DbError(_) => Some("Local database error"),
+            AppError::HttpError(_) => Some("Network request failed"),
+            AppError::JsonError(_) => Some("Could not read the server response"),
+            AppError::IoError(_) => Some("File error"),
+            AppError::KeyringError(_) => Some("Keychain error"),
+            _ => None,
+        }
+    }
+
+    /// Full, unredacted `{code, params, message}` for developer surfaces (the
+    /// CLI's `--json` envelope), where the raw detail is what an agent needs.
+    pub fn diagnostic_json(&self) -> serde_json::Value {
+        serde_json::json!({ "code": self.code(), "params": self.params(), "message": self.to_string() })
     }
 }
 
@@ -254,5 +289,45 @@ mod tests {
         let v: serde_json::Value = serde_json::to_value(&err).expect("serialize");
         assert_eq!(v["code"], "invalid_input");
         assert_eq!(v["params"]["detail"], "bad value");
+    }
+
+    #[test]
+    fn database_error_reaches_the_webview_without_its_detail() {
+        let err = AppError::DbError(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(1),
+            Some("no such column: emails.secret_col".into()),
+        ));
+        let v: serde_json::Value = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(v["code"], "database");
+        assert!(v["params"].get("detail").is_none(), "params: {}", v["params"]);
+        assert!(!v.to_string().contains("secret_col"), "leaked: {v}");
+    }
+
+    #[test]
+    fn io_error_reaches_the_webview_without_the_file_path() {
+        let err = AppError::IoError("Failed to read attachment /Users/someone/private/report.pdf: denied".into());
+        let v: serde_json::Value = serde_json::to_value(&err).expect("serialize");
+        assert_eq!(v["code"], "io");
+        assert!(!v.to_string().contains("/Users/someone"), "leaked: {v}");
+    }
+
+    #[test]
+    fn keyring_and_json_errors_drop_their_detail_too() {
+        for err in [
+            AppError::KeyringError("backend said: item at /tmp/x locked".into()),
+            AppError::JsonError(serde_json::from_str::<u8>("\"nope\"").expect_err("bad json")),
+        ] {
+            let v: serde_json::Value = serde_json::to_value(&err).expect("serialize");
+            assert!(v["params"].get("detail").is_none(), "{}: {v}", err.code());
+        }
+    }
+
+    #[test]
+    fn diagnostic_json_keeps_the_detail_for_the_cli() {
+        let err = AppError::IoError("Failed to read attachment /tmp/report.pdf".into());
+        let v = err.diagnostic_json();
+        assert_eq!(v["code"], "io");
+        assert_eq!(v["params"]["detail"], "Failed to read attachment /tmp/report.pdf");
+        assert!(v["message"].as_str().unwrap().contains("/tmp/report.pdf"));
     }
 }

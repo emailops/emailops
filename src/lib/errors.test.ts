@@ -78,3 +78,18 @@ describe('errorText', () => {
     expect(msg).not.toContain('[object Object]');
   });
 });
+
+describe('errorText for errors whose detail stays in the backend', () => {
+  // The backend drops raw library/OS detail (SQL text, file paths, HTTP
+  // internals) from these codes before they reach the webview (CASA/DASA
+  // 1.8.1), so no locale may leave an empty `{{detail}}` slot in their text.
+  const INTERNAL_CODES = ['database', 'http', 'json', 'io', 'keyring'];
+
+  it.each(['en', 'es', 'fr', 'de'])('no %s template for an internal code interpolates detail', async (lng) => {
+    const codes = (await import(`../locales/${lng}/errors.json`)).default.codes as Record<string, string>;
+    for (const code of INTERNAL_CODES) {
+      expect(codes[code], `${lng}:${code}`).toBeTruthy();
+      expect(codes[code], `${lng}:${code}`).not.toContain('{{detail}}');
+    }
+  });
+});

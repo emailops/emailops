@@ -488,29 +488,11 @@ build-mac: fetch-bundled-models
 	if [ -z "$$APPLE_TEAM_ID" ]; then echo "ERROR: APPLE_TEAM_ID not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE" ]; then echo "ERROR: APPLE_CERTIFICATE not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE_PASSWORD" ]; then echo "ERROR: APPLE_CERTIFICATE_PASSWORD not set in .env.signing"; exit 1; fi; \
-	npm run tauri -- build --target universal-apple-darwin
+	npm run tauri -- build --target universal-apple-darwin && \
+	bash scripts/notarize_mac_dmg.sh
 
 verify-mac:
-	@APP=$$(ls -d src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app 2>/dev/null | head -1); \
-	if [ -z "$$APP" ]; then echo "ERROR: no .app found. Run 'make build-mac' first."; exit 1; fi; \
-	echo "Verifying $$APP"; \
-	echo "── codesign ──"; codesign -dv --verbose=4 "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── architectures ──"; file "$$APP/Contents/MacOS/"* 2>&1 | sed 's/^/  /'; \
-	echo "── spctl ──"; spctl -a -t exec -vv "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── universal-slice guard ──"; \
-	SLICES=$$(file "$$APP/Contents/MacOS/"* 2>/dev/null); \
-	MISSING=""; \
-	echo "$$SLICES" | grep -q "arm64"  || MISSING="$$MISSING arm64"; \
-	echo "$$SLICES" | grep -q "x86_64" || MISSING="$$MISSING x86_64"; \
-	if [ -n "$$MISSING" ]; then \
-		echo "  ❌ FAIL: this is not a universal bundle — missing:$$MISSING"; \
-		echo "  One macOS DMG has to launch on every Mac; a dropped slice silently strands"; \
-		echo "  that half of users on a download that will not open."; \
-		exit 1; \
-	else \
-		echo "  ✅ universal (arm64 + x86_64); embedded AI is gated off Intel at runtime"; \
-	fi
+	bash scripts/verify_mac.sh
 
 # Copy the freshly built universal DMG to a stable, versionless name under
 # release/. Tauri always embeds the version in the bundle filename

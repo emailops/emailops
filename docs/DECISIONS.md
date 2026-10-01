@@ -2662,3 +2662,36 @@ through an RFC 7009 endpoint; Microsoft has no per-application revocation.
   return only tags and verdicts, so they stay keyed by email id.
 - *Lens commands*: lenses can span every account (`account_id` NULL), so there is no single
   account to check against.
+
+## 2026-10-01 — The macOS app ships with no Hardened Runtime entitlements
+
+**Decision:** `src-tauri/entitlements.plist` is empty: the Developer ID build carries no
+`com.apple.security.cs.*` exceptions, and `make verify-mac` (`scripts/verify_mac.sh`) fails
+when one comes back. `make build-mac` also notarizes and staples the DMG, not only the app.
+**Context:** The CASA desktop checklist (DASA 3.3.2) asks for a justification of every
+entitlement that weakens the Hardened Runtime. `cs.allow-jit` and
+`cs.allow-unsigned-executable-memory` had been added defensively with llama.cpp. A release
+build signed with `--options runtime` and no entitlements completed an embedded-model chat
+turn: Metal compiles shaders in the GPU driver's process, and llama.cpp maps no JIT or
+writable-executable pages in ours. The DMG was signed but not notarized, so Gatekeeper
+rejected the download itself (DASA 3.2.1).
+**Rejected:**
+- *Keep `cs.allow-jit` "just in case"*: it is an exception assessors ask to justify, with
+  nothing to justify it today. If a llama.cpp upgrade ever needs it, the verify guard
+  surfaces that as a deliberate decision.
+
+## 2026-10-01 — Raw library and OS error text stays out of the webview
+
+**Decision:** `AppError`'s `Serialize` (the Tauri boundary) sends `database`, `http`,
+`json`, `io` and `keyring` errors with a generic message and no `detail` param; the full
+error goes to the output panel through the logger. The CLI `--json` envelope uses
+`AppError::diagnostic_json()` and keeps the detail. Codes whose detail is written for the
+user (`invalid_input`, `auth`, `sync`, `ai`, …) are unchanged.
+**Context:** The CASA desktop checklist (DASA 1.8.1) forbids user-visible errors that show
+file paths, SQL, stack traces or other internals. Those five variants carry rusqlite,
+reqwest, serde and keyring messages, or `format!`ed text with absolute paths.
+**Rejected:**
+- *Stripping detail in the frontend only*: the raw text would still cross IPC and be shown
+  by any component that renders `message` directly.
+- *Redacting the CLI too*: the CLI is a developer surface; agents debugging a failure need
+  the raw cause.

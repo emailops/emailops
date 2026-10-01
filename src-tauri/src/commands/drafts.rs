@@ -91,6 +91,18 @@ pub async fn save_draft(state: State<'_, AppState>, app: AppHandle, req: SaveDra
         .get_account(&req.account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", req.account_id)))?;
 
+    if let Some(requested) = &req.attachments {
+        // A draft id the DB does not know yet is a new draft: it has no files.
+        let existing = match &req.id {
+            Some(draft_id) if state.db.get_draft(draft_id)?.is_some() => {
+                services::ownership::draft_in_account(&state.db, &req.account_id, draft_id)?;
+                state.db.list_draft_attachments(draft_id)?
+            }
+            _ => Vec::new(),
+        };
+        emails::check_webview_draft_attachments(requested, &existing)?;
+    }
+
     let input = emails::ComposeInput {
         draft_id: req.id,
         account_id: req.account_id,
