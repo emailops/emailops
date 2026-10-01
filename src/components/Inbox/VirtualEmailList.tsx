@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { allowEmailDragOver, ignoreEmailDrop } from '@/lib/emailDrag';
 import { measuredRowHeight } from '@/lib/rowMeasure';
 import {
   INITIAL_SCROLL_RESTORE,
@@ -203,7 +204,14 @@ export function VirtualEmailList({
   }
 
   return (
-    <div ref={scrollContainerRef as React.LegacyRef<HTMLDivElement>} className="flex-1 overflow-y-auto">
+    <div
+      ref={scrollContainerRef as React.LegacyRef<HTMLDivElement>}
+      className="flex-1 overflow-y-auto"
+      // An email dragged across the list on its way to a folder: keep the
+      // normal drag cursor instead of "no drop" (see allowEmailDragOver).
+      onDragOver={allowEmailDragOver}
+      onDrop={ignoreEmailDrop}
+    >
       <div
         style={{
           height: `${virtualizer.getTotalSize()}px`,
