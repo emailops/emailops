@@ -185,6 +185,17 @@ async fn push_draft(
     let body = draft_body(&draft.body, draft.body_html.as_deref());
     let from = account.email.as_str();
     let (to, cc, subject) = (&draft.to_addresses, &draft.cc_addresses, draft.subject.as_str());
+    // A reply draft goes up as a reply, so the provider copy keeps its thread.
+    let parent = match draft.email_id.as_deref() {
+        Some(email_id) => db.get_email(email_id)?,
+        None => None,
+    };
+    let reply = parent.as_ref().map(|email| crate::sync::provider::ReplyTarget {
+        provider_message_id: &email.id,
+        thread_id: &email.thread_id,
+        message_id: email.message_id.as_deref(),
+        references: email.references.as_deref(),
+    });
 
     let linked = draft
         .provider_draft_id
@@ -192,7 +203,7 @@ async fn push_draft(
         .filter(|id| Some(*id) != gone_upstream);
     let updated = match linked {
         Some(existing) => match provider
-            .update_draft(existing, from, to, cc, subject, &body, &attachments)
+            .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
             .await
         {
             Ok(id) => Some(id),
@@ -205,7 +216,7 @@ async fn push_draft(
         Some(id) => id,
         None => {
             provider
-                .create_draft(from, to, cc, subject, &body, &attachments)
+                .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
                 .await?
         }
     };
@@ -800,6 +811,62 @@ mod tests {
         assert_eq!(other_provider.provider_drafts().len(), 1, "provider copy kept");
     }
 
+    fn seed_parent_email(db: &Database) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, message_id, subject, sender, sender_email, \
+                 recipients_json, snippet, timestamp, created_at) \
+                 VALUES ('parent', 'a1', 'th-1', '<parent@example.com>', 's', 'S', 's@example.com', '[]', '', 0, 0)",
+                [],
+            )
+            .expect("seed parent email");
+    }
+
+    fn reply_input() -> ComposeInput {
+        let mut reply = input("a1", "Re: s", "hola");
+        reply.email_id = Some("parent".to_string());
+        reply
+    }
+
+    /// The provider copy of a reply draft is itself a reply, so it knows which
+    /// email it answers even if the local row is lost.
+    #[tokio::test]
+    async fn a_reply_draft_is_pushed_as_a_reply() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        seed_parent_email(&db);
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+
+        compose_draft(&db, &account, reply_input(), Some(&provider))
+            .await
+            .expect("compose");
+
+        let pushed = provider.provider_drafts();
+        assert_eq!(pushed.len(), 1);
+        assert_eq!(pushed[0].in_reply_to.as_deref(), Some("<parent@example.com>"));
+    }
+
+    /// Regression: a reply draft whose local row was replaced by its provider
+    /// copy came back unlinked, so the thread no longer showed it.
+    #[tokio::test]
+    async fn a_re_imported_reply_draft_is_linked_to_its_email_again() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        seed_parent_email(&db);
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, reply_input(), Some(&provider))
+            .await
+            .expect("compose");
+
+        // Lose the local row (a prune, a reinstall), keeping the provider copy.
+        db.delete_draft(&draft.id, "a1").expect("drop local row");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].email_id.as_deref(), Some("parent"));
+    }
+
     #[tokio::test]
     async fn pull_provider_drafts_upserts_and_prunes() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
@@ -814,6 +881,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         let pulled = pull_provider_drafts(&db, &account, &provider).await.expect("pull");
@@ -850,6 +918,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(
@@ -907,6 +976,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(
@@ -926,6 +996,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_100),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
         assert_eq!(
             refresh_provider_drafts(&db, &account, &provider, 1_001)
@@ -961,6 +1032,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         refresh_provider_drafts(&db, &account_a, &provider, 2_000)
@@ -1004,6 +1076,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
@@ -1029,6 +1102,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
         pull_provider_drafts(&db, &account, &provider).await.expect("first");
 
@@ -1042,6 +1116,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(

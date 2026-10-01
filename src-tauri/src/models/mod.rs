@@ -659,6 +659,12 @@ pub struct ProviderDraft {
     /// `None` for providers that don't report one.
     #[serde(default)]
     pub provider_message_id: Option<String>,
+    /// RFC 5322 `Message-ID` of the email this draft replies to, as the
+    /// provider copy records it. Lets a draft that comes back from the
+    /// provider (a re-import, another device) find its thread again. `None`
+    /// for a new message, or a provider that does not report it.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
 }
 
 // AI config and usage types
