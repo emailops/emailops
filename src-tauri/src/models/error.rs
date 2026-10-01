@@ -73,6 +73,12 @@ pub enum AppError {
     #[error("Cancelled by user")]
     Cancelled,
 
+    /// Archiving on an IMAP account that has neither a `\Archive`
+    /// special-use folder nor one named like an archive. Refused rather than
+    /// archived locally only, which would silently diverge from the server.
+    #[error("This account has no Archive folder — create a folder named Archive to archive mail")]
+    NoArchiveFolder,
+
     /// Opening `filename` with the default app needs the user's explicit
     /// confirmation: its type (`kind`, a `DangerKind` identifier) runs code or
     /// opens another location. The frontend asks and repeats the call with
@@ -110,6 +116,7 @@ impl AppError {
             AppError::IoError(_) => "io",
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
+            AppError::NoArchiveFolder => "no_archive_folder",
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::Skill(problem) => problem.code(),
         }
@@ -148,7 +155,7 @@ impl AppError {
             AppError::AiDataPolicy { model } => {
                 p.insert("model", model.clone());
             }
-            AppError::AiDisabled | AppError::Cancelled => {}
+            AppError::AiDisabled | AppError::Cancelled | AppError::NoArchiveFolder => {}
             AppError::AttachmentConfirmationRequired { filename, kind } => {
                 p.insert("filename", filename.clone());
                 p.insert("kind", (*kind).to_string());
@@ -202,6 +209,7 @@ mod tests {
         assert_eq!(AppError::AuthError("x".into()).code(), "auth");
         assert_eq!(AppError::AiDisabled.code(), "ai_disabled");
         assert_eq!(AppError::Cancelled.code(), "cancelled");
+        assert_eq!(AppError::NoArchiveFolder.code(), "no_archive_folder");
         assert_eq!(AppError::NeedsReauth { account_id: "a".into() }.code(), "needs_reauth");
         assert_eq!(
             AppError::CalendarPermissionDenied { account_id: "a".into() }.code(),

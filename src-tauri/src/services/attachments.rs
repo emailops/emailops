@@ -1712,6 +1712,7 @@ mod tests {
             category: "primary".into(),
             mailbox: "inbox".into(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }

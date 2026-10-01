@@ -174,6 +174,28 @@ pub async fn mark_as_read(state: State<'_, AppState>, app: AppHandle, email_id: 
     Ok(())
 }
 
+/// Most threads one action call takes — a bulk selection is bounded by the
+/// loaded list, so this only guards against a malformed call.
+const MAX_THREADS_PER_ACTION: usize = 1_000;
+
+/// Mark read/unread, star/unstar, archive or move back to the inbox — for one
+/// thread or many. Never fails as a whole: the report lists the threads that
+/// could not be changed, so the UI rolls back exactly those.
+#[tauri::command]
+pub async fn apply_thread_action(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    threads: Vec<services::emails::ThreadRef>,
+    action: services::emails::ThreadAction,
+) -> Result<services::emails::ThreadActionReport, AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    Ok(services::emails::apply_thread_action(&state.db, &threads, action, Some(app)).await)
+}
+
 #[tauri::command]
 pub async fn delete_email(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
     // Memory is logged only once the delete actually succeeded (including at

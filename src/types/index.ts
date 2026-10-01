@@ -45,12 +45,15 @@ export interface Email {
   isRead: boolean;
   triageStatus: TriageStatus | null;
   category: EmailCategory;
-  /** 'inbox' | 'sent' | 'spam' | 'trash' | `folder:<serverPath>` — which
+  /** 'inbox' | 'sent' | 'spam' | 'trash' | 'archive' | `folder:<serverPath>` — which
    *  mailbox this email lives in (drives move-to-folder eligibility). */
   mailbox: string;
   /** The provider filed this under Sent. Independent of `mailbox`: Gmail
    *  labels self-sent mail INBOX *and* SENT, so `mailbox` reads 'inbox'. */
   isSent: boolean;
+  /** Starred (Gmail STARRED, Outlook flag, IMAP \Flagged). Per message; in
+   *  the thread-deduped inbox list it means "any message of the thread". */
+  isStarred: boolean;
 }
 
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';

@@ -4,7 +4,7 @@
  */
 export function mailboxTitle(viewMode: string, accountName: string | undefined, t: (key: string) => string): string {
   let label: string;
-  if (viewMode === 'sent' || viewMode === 'spam' || viewMode === 'deleted') label = t(`sidebar:${viewMode}`);
+  if (['sent', 'spam', 'deleted', 'starred', 'archive'].includes(viewMode)) label = t(`sidebar:${viewMode}`);
   else if (viewMode.startsWith('folder:')) label = viewMode.slice('folder:'.length);
   else label = t('sidebar:inbox');
   return accountName ? `${label} — ${accountName}` : label;

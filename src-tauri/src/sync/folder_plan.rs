@@ -102,6 +102,25 @@ pub const TRASH_FOLDER_CANDIDATES: &[&str] = &[
     "Éléments supprimés",
 ];
 
+/// Archive folder candidates when no folder carries `\Archive`, tried in
+/// order: English first, then German / Spanish (French "Archives" is covered).
+const ARCHIVE_FOLDER_CANDIDATES: &[&str] = &["Archive", "Archives", "INBOX.Archive", "Archiv", "Archivo"];
+
+/// The folder the Archive action files mail into: the RFC 6154 `\Archive`
+/// special-use folder, else one named like an archive. `None` when the server
+/// has neither — the caller refuses the archive rather than keep it local.
+pub fn resolve_archive_folder(entries: &[ListedFolder]) -> Option<String> {
+    if let Some(entry) = entries.iter().find(|e| !is_unselectable(e) && has_attr(e, "\\Archive")) {
+        return Some(entry.raw_name.clone());
+    }
+    ARCHIVE_FOLDER_CANDIDATES.iter().find_map(|candidate| {
+        entries
+            .iter()
+            .find(|e| !is_unselectable(e) && name_matches(e, candidate))
+            .map(|e| e.raw_name.clone())
+    })
+}
+
 /// Drafts folders are excluded from sync entirely (drafts are handled by the
 /// dedicated provider-drafts pipeline, not the mail sync).
 const DRAFTS_FOLDER_CANDIDATES: &[&str] = &[
@@ -492,6 +511,36 @@ mod tests {
             },
             attributes: attrs.iter().map(|a| a.to_string()).collect(),
         }
+    }
+
+    // --- archive folder ---
+
+    #[test]
+    fn the_special_use_archive_folder_wins_over_a_folder_named_archive() {
+        let entries = vec![
+            entry("INBOX", ".", &[]),
+            entry("Archive", ".", &[]),
+            entry("Ablage", ".", &["\\Archive"]),
+        ];
+        assert_eq!(resolve_archive_folder(&entries), Some("Ablage".to_string()));
+    }
+
+    #[test]
+    fn a_folder_named_archive_or_archives_is_the_fallback() {
+        for name in ["Archive", "archives", "INBOX.Archive", "Archiv", "Archivo"] {
+            let entries = vec![entry("INBOX", ".", &[]), entry(name, ".", &[])];
+            assert_eq!(resolve_archive_folder(&entries), Some(name.to_string()), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_archive_folder_and_unselectable_ones_resolve_to_none() {
+        let entries = vec![
+            entry("INBOX", ".", &[]),
+            entry("Archive", ".", &["\\Noselect"]),
+            entry("Projects", ".", &[]),
+        ];
+        assert_eq!(resolve_archive_folder(&entries), None);
     }
 
     // --- role detection ladder ---

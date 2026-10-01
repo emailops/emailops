@@ -46,7 +46,6 @@ import { useEmails } from '@/hooks/useEmails';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
-import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
@@ -59,7 +58,13 @@ import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
-import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
+import {
+  baseViewToken,
+  isEmailListView,
+  planAccountSwitchView,
+  planViewChange,
+  viewModeToMailbox,
+} from '@/lib/viewNavigation';
 import {
   isUnifiedMode,
   planChatAccountChange,
@@ -118,12 +123,6 @@ const LOG_SOURCES: LogSource[] = [
   'chat',
   'lens',
 ];
-
-function viewModeToMailbox(mode: ViewMode): MailboxView {
-  if (mode === 'sent' || mode === 'spam' || mode === 'deleted') return mode;
-  if (mode.startsWith('folder:')) return mode as MailboxView;
-  return 'inbox';
-}
 
 function isLogLevel(value: string): value is LogLevel {
   return LOG_LEVELS.includes(value as LogLevel);

@@ -1,9 +1,12 @@
 import { create } from 'zustand';
-import type { EmailAttachment, MailboxView } from '@/lib/api';
+import { i18n } from '@/i18n';
+import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { normalizeMimeType } from '@/lib/mimeType';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
+import { useLogStore } from '@/stores/logStore';
+import { useToastStore } from '@/stores/toastStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
 const PAGE_SIZE = 50;
@@ -125,6 +128,145 @@ export function removeEmailFromSlices(
       t.type === 'thread' ? { ...t, threadEmails: t.threadEmails.filter((e) => e.id !== emailId) } : t,
     ),
   };
+}
+
+// ── Thread actions: pure reducers ───────────────────────────────────────────
+
+/** Map key for one conversation — thread ids are only unique per account. */
+export function threadKey(accountId: string, threadId: string): string {
+  return `${accountId}\u0000${threadId}`;
+}
+
+const keyOf = (e: Pick<Email, 'accountId' | 'threadId'>) => threadKey(e.accountId, e.threadId);
+
+/** The conversation an email belongs to, as the thread actions take it. */
+export function threadRefOf(email: Pick<Email, 'accountId' | 'threadId'>): ThreadRef {
+  return { accountId: email.accountId, threadId: email.threadId };
+}
+
+/** What the list on screen shows: a mailbox view, or search results. */
+export type ListScope = MailboxView | 'search';
+
+type ThreadSlices = Pick<EmailStore, 'emails' | 'threadEmails' | 'selectedEmail' | 'totalCount' | 'tabs'>;
+
+/** A conversation is starred when any of its messages is. */
+export function isThreadStarred(threadEmails: readonly Email[]): boolean {
+  return threadEmails.some((e) => e.isStarred);
+}
+
+/** A conversation is unread when any of its messages is. */
+export function isThreadUnread(threadEmails: readonly Email[]): boolean {
+  return threadEmails.some((e) => !e.isRead);
+}
+
+/**
+ * Mirror of the backend planner on an open thread's messages: setting read or
+ * clearing the star touches every message, marking unread or starring touches
+ * the latest one (the thread then reads unread / starred).
+ */
+function patchThreadMessages(messages: Email[], flag: 'isRead' | 'isStarred', value: boolean): Email[] {
+  const wholeThread = flag === 'isRead' ? value : !value;
+  if (wholeThread) return messages.map((e) => (e[flag] === value ? e : { ...e, [flag]: value }));
+  if (messages.length === 0) return messages;
+  let latest = 0;
+  messages.forEach((e, i) => {
+    const l = messages[latest];
+    if (e.timestamp > l.timestamp || (e.timestamp === l.timestamp && e.id > l.id)) latest = i;
+  });
+  return messages.map((e, i) => (i === latest ? { ...e, [flag]: value } : e));
+}
+
+/**
+ * Pure: the optimistic read/star change for the conversations in `keys` — the
+ * list rows (which stand for their thread), the selection and any open copy
+ * of the thread.
+ */
+export function applyThreadFlag<S extends ThreadSlices>(
+  state: S,
+  keys: ReadonlySet<string>,
+  flag: 'isRead' | 'isStarred',
+  value: boolean,
+): S {
+  const row = (e: Email) => (keys.has(keyOf(e)) && e[flag] !== value ? { ...e, [flag]: value } : e);
+  const openThread = state.threadEmails[0] ?? state.selectedEmail;
+  const threadEmails =
+    openThread && keys.has(keyOf(openThread))
+      ? patchThreadMessages(state.threadEmails, flag, value)
+      : state.threadEmails;
+  const selectedEmail = state.selectedEmail
+    ? (threadEmails.find((e) => e.id === state.selectedEmail?.id) ?? row(state.selectedEmail))
+    : null;
+  return {
+    ...state,
+    emails: state.emails.map(row),
+    threadEmails,
+    selectedEmail,
+    tabs: state.tabs.map((t) =>
+      t.type === 'thread' && keys.has(threadKey(t.accountId, t.threadId))
+        ? { ...t, threadEmails: patchThreadMessages(t.threadEmails, flag, value) }
+        : t,
+    ),
+  };
+}
+
+/** Pure: the conversations in `keys` leave the list (and the selection). */
+export function removeThreads<S extends ThreadSlices>(state: S, keys: ReadonlySet<string>): S {
+  const emails = state.emails.filter((e) => !keys.has(keyOf(e)));
+  const deselect = state.selectedEmail !== null && keys.has(keyOf(state.selectedEmail));
+  return {
+    ...state,
+    emails,
+    totalCount: Math.max(0, state.totalCount - (state.emails.length - emails.length)),
+    selectedEmail: deselect ? null : state.selectedEmail,
+    threadEmails: deselect ? [] : state.threadEmails,
+  };
+}
+
+/**
+ * Pure: undo an optimistic change for the conversations in `failed` only. Their
+ * rows come back from `before`, in their old place; every other row keeps what
+ * happened to it since (other threads' changes, a refetch).
+ */
+export function restoreThreads<S extends ThreadSlices>(current: S, before: S, failed: ReadonlySet<string>): S {
+  if (failed.size === 0) return current;
+  const now = new Map(current.emails.map((e) => [e.id, e]));
+  const emails: Email[] = [];
+  for (const e of before.emails) {
+    if (failed.has(keyOf(e))) emails.push(e);
+    else {
+      const kept = now.get(e.id);
+      if (kept) emails.push(kept);
+    }
+  }
+  const known = new Set(before.emails.map((e) => e.id));
+  for (const e of current.emails) if (!known.has(e.id) && !failed.has(keyOf(e))) emails.push(e);
+  const restoreSelection = before.selectedEmail !== null && failed.has(keyOf(before.selectedEmail));
+  return {
+    ...current,
+    emails,
+    totalCount: Math.max(0, current.totalCount + (emails.length - current.emails.length)),
+    selectedEmail: restoreSelection ? before.selectedEmail : current.selectedEmail,
+    threadEmails: restoreSelection ? before.threadEmails : current.threadEmails,
+    tabs: current.tabs.map((t) => {
+      if (t.type !== 'thread' || !failed.has(threadKey(t.accountId, t.threadId))) return t;
+      const old = before.tabs.find((b) => b.id === t.id);
+      return old ?? t;
+    }),
+  };
+}
+
+/** Pure: whether `action` takes a conversation out of the list on screen. */
+export function leavesList(action: ThreadAction, list: ListScope): boolean {
+  switch (action) {
+    case 'archive':
+      return list === 'inbox';
+    case 'moveToInbox':
+      return list === 'archive' || list.startsWith('folder:');
+    case 'unstar':
+      return list === 'starred';
+    default:
+      return false;
+  }
 }
 
 /**
@@ -279,6 +421,23 @@ interface EmailStore {
   bumpSentRefresh: () => void;
   navigateToEmail: (accountId: string, emailId: string) => Promise<void>;
   markAsRead: (emailId: string) => Promise<void>;
+  /** What the list on screen shows, recorded by `fetchEmails` — decides
+   *  whether a thread action takes rows out of it. */
+  listScope: ListScope;
+  /**
+   * Thread actions, for one conversation or many (bulk selection). Each
+   * updates the UI optimistically, sends the change to the account, and rolls
+   * back — with an error toast — exactly the conversations the backend could
+   * not change. Resolve once the backend answered; they never reject.
+   *
+   * Marking unread leaves the open thread, so it is not marked read again the
+   * moment it is looked at. Archive and move-to-inbox drop the conversation
+   * from a list it no longer belongs to.
+   */
+  setThreadsRead: (threads: ThreadRef[], read: boolean) => Promise<void>;
+  setThreadsStarred: (threads: ThreadRef[], starred: boolean) => Promise<void>;
+  archiveThreads: (threads: ThreadRef[]) => Promise<void>;
+  moveThreadsToInbox: (threads: ThreadRef[]) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
   /** Move an email to the inbox or a custom folder (IMAP accounts only).
    *  Throws on failure so callers can surface the error. */
@@ -324,6 +483,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   activeTabId: null,
   pendingChatDraft: null,
   resetAccountKey: null,
+  listScope: 'inbox',
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
@@ -478,6 +638,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     } else {
       set({ error: null, currentFetchId: fetchId, navigationMode: false, focusEmailId: null });
     }
+
+    set({ listScope: searchQuery ? 'search' : filter ? 'inbox' : (mailbox ?? 'inbox') });
 
     // A background refresh is meant to be transparent, so it has to come back
     // with everything the user had already paged in — see refetchLimit.
@@ -755,6 +917,36 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
+  setThreadsRead: (threads, read) =>
+    runThreadAction(threads, read ? 'markRead' : 'markUnread', (state, keys) => {
+      const patched = applyThreadFlag(state, keys, 'isRead', read);
+      if (read || !patched.selectedEmail || !keys.has(keyOf(patched.selectedEmail))) return patched;
+      // Leave the thread (as Gmail returns to the list): looking at it again
+      // right away would mark it read.
+      return { ...patched, selectedEmail: null, threadEmails: [] };
+    }),
+
+  setThreadsStarred: (threads, starred) =>
+    runThreadAction(threads, starred ? 'star' : 'unstar', (state, keys) =>
+      applyThreadFlag(state, keys, 'isStarred', starred),
+    ),
+
+  archiveThreads: (threads) =>
+    runThreadAction(threads, 'archive', (state, keys) => ({
+      ...state,
+      emails: state.emails.map((e) => (keys.has(keyOf(e)) && e.mailbox === 'inbox' ? { ...e, mailbox: 'archive' } : e)),
+    })),
+
+  moveThreadsToInbox: (threads) =>
+    runThreadAction(threads, 'moveToInbox', (state, keys) => ({
+      ...state,
+      emails: state.emails.map((e) =>
+        keys.has(keyOf(e)) && (e.mailbox === 'archive' || e.mailbox.startsWith('folder:'))
+          ? { ...e, mailbox: 'inbox' }
+          : e,
+      ),
+    })),
+
   deleteEmail: async (emailId) => {
     await api.deleteEmail(emailId);
     set((state) => removeEmailFromSlices(state, emailId));
@@ -837,6 +1029,41 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       activeTabId: null,
       pendingChatDraft: null,
       sentRefreshTick: 0,
+      listScope: 'inbox',
     });
   },
 }));
+
+/**
+ * Shared body of the thread actions: optimistic `patch` (plus removal from a
+ * list the threads no longer belong to), the backend call, then rollback of
+ * whatever failed, with a log line and one toast.
+ */
+async function runThreadAction(
+  threads: ThreadRef[],
+  action: ThreadAction,
+  patch: (state: EmailStore, keys: ReadonlySet<string>) => EmailStore,
+): Promise<void> {
+  if (threads.length === 0) return;
+  const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
+  const before = useEmailStore.getState();
+  const patched = patch(before, keys);
+  useEmailStore.setState(leavesList(action, before.listScope) ? removeThreads(patched, keys) : patched);
+
+  let failed: ReadonlySet<string>;
+  let detail: string;
+  try {
+    const report = await api.applyThreadAction(threads, action);
+    failed = new Set(report.failed.map((f) => threadKey(f.accountId, f.threadId)));
+    detail = report.failed.length > 0 ? errorText(report.failed[0]) : '';
+  } catch (error) {
+    failed = keys;
+    detail = errorText(error);
+  }
+  if (failed.size === 0) return;
+
+  useEmailStore.setState((current) => restoreThreads(current, before, failed));
+  const message = i18n.t(`inbox:threadActions.failed.${action}`, { count: failed.size, detail });
+  useLogStore.getState().addLog('error', 'sync', message);
+  useToastStore.getState().addToast({ message });
+}

@@ -15,11 +15,13 @@ pub fn provider_supports_drafts(provider: &str) -> bool {
 }
 
 /// Whether a provider supports server-side mailbox-state writes — pushing
-/// read/unread and delete back to the account so the change is visible in the
-/// provider's own clients. Gmail implements them via `messages.modify` /
-/// `messages.trash`, IMAP via `UID STORE` on `\Seen` and a move to the Trash
-/// folder, Outlook via Graph `isRead` and a move to `deleteditems`. An unknown
-/// provider keeps its mailbox state local to EmailOps.
+/// read/unread, star, archive and delete back to the account so the change is
+/// visible in the provider's own clients. Gmail implements them via
+/// `messages.modify` (`UNREAD`, `STARRED`, `INBOX` labels) / `messages.trash`,
+/// IMAP via `UID STORE` on `\Seen` / `\Flagged` and moves to the Archive and
+/// Trash folders, Outlook via Graph `isRead` / `flag` and moves to `archive` /
+/// `deleteditems`. An unknown provider keeps its mailbox state local to
+/// EmailOps.
 pub fn provider_supports_mailbox_writes(provider: &str) -> bool {
     matches!(provider, "gmail" | "imap" | "outlook")
 }
@@ -301,8 +303,9 @@ pub struct MessageLocation {
 /// What the provider reports, right now, for a message the app already stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteMessageState {
-    /// Still addressable under the stored id.
-    Present { is_read: bool },
+    /// Still addressable under the stored id. `is_starred` is `None` when the
+    /// provider's answer did not say (the message keeps its stored star).
+    Present { is_read: bool, is_starred: Option<bool> },
     /// Nothing answers to the stored id any more: the message was deleted, or
     /// moved — which re-keys it on IMAP and Graph. [`EmailProvider::locate_message`]
     /// tells the two apart.
@@ -616,6 +619,33 @@ pub trait EmailProvider: Send + Sync {
         ))
     }
 
+    /// Star or unstar one message at the provider (Gmail `STARRED`, Graph
+    /// `flag.flagStatus`, IMAP `\Flagged`).
+    async fn set_starred(&self, _message_id: &str, _starred: bool) -> Result<()> {
+        Err(AppError::InvalidInput(
+            "mailbox state writes are not supported by this provider".to_string(),
+        ))
+    }
+
+    /// Take one message out of the inbox while keeping it in the account:
+    /// Gmail removes the `INBOX` label (id unchanged), Graph moves it to the
+    /// well-known `archive` folder and IMAP to the folder flagged
+    /// `\Archive` (or named Archive/Archives) — both re-key it, so the
+    /// answer is the id and `emails.mailbox` value the message has now.
+    ///
+    /// `message_id_header` is the RFC 5322 Message-ID when known; IMAP uses it
+    /// to find the moved message's new UID. `AppError::NotFound` means the
+    /// provider no longer has the message under this id. An IMAP account
+    /// without an archive folder is refused with `AppError::InvalidInput`
+    /// rather than archived locally only.
+    ///
+    /// The inverse is [`Self::move_message`] with [`MoveTarget::Inbox`].
+    async fn archive_message(&self, _message_id: &str, _message_id_header: Option<&str>) -> Result<MessageLocation> {
+        Err(AppError::InvalidInput(
+            "mailbox state writes are not supported by this provider".to_string(),
+        ))
+    }
+
     /// Move one message to the provider's Trash. Recoverable by the user from
     /// the provider's own UI — this is not a permanent delete.
     ///
@@ -844,6 +874,10 @@ pub struct FakeEmailProvider {
     history: std::sync::RwLock<Option<FakeHistory>>,
     /// When `Some`, `fetch_message_labels` fails with this message.
     label_fetch_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, what `archive_message` answers instead of the archived
+    /// message's own id under `archive` — models a provider that re-keys
+    /// (Graph, IMAP) or files the message in a folder (IMAP).
+    archive_location: std::sync::RwLock<Option<MessageLocation>>,
 }
 
 /// The change log of a [`FakeEmailProvider`] modelling Gmail.
@@ -863,15 +897,22 @@ struct FakeHistory {
 
 /// The Gmail labels a fake message stands for.
 fn fake_labels(email: &Email) -> Vec<String> {
-    let mut labels = vec![match email.mailbox.as_str() {
-        "trash" => "TRASH",
-        "spam" => "SPAM",
-        "sent" => "SENT",
-        _ => "INBOX",
+    let mut labels: Vec<String> = match email.mailbox.as_str() {
+        "trash" => Some("TRASH"),
+        "spam" => Some("SPAM"),
+        "sent" => Some("SENT"),
+        // Archived Gmail mail is mail without the INBOX label.
+        "archive" => None,
+        _ => Some("INBOX"),
     }
-    .to_string()];
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     if !email.is_read {
         labels.push("UNREAD".to_string());
+    }
+    if email.is_starred {
+        labels.push("STARRED".to_string());
     }
     labels
 }
@@ -896,6 +937,13 @@ pub enum FakeMailboxOp {
         message_id: String,
         /// The Message-ID header the caller vouched for the message with.
         message_id_header: Option<String>,
+    },
+    SetStarred {
+        message_id: String,
+        starred: bool,
+    },
+    Archive {
+        message_id: String,
     },
 }
 
@@ -963,7 +1011,13 @@ impl FakeEmailProvider {
             identity_listing_failure: std::sync::RwLock::new(None),
             history: std::sync::RwLock::new(None),
             label_fetch_failure: std::sync::RwLock::new(None),
+            archive_location: std::sync::RwLock::new(None),
         }
+    }
+
+    /// Make `archive_message` answer `location` from now on.
+    pub fn set_archive_location(&self, location: MessageLocation) {
+        *self.archive_location.write().unwrap_or_else(PoisonError::into_inner) = Some(location);
     }
 
     /// Report `uid_validity` for `mailbox` from now on, replacing any earlier
@@ -1597,6 +1651,59 @@ impl EmailProvider for FakeEmailProvider {
         Ok(())
     }
 
+    async fn set_starred(&self, message_id: &str, starred: bool) -> Result<()> {
+        self.record_call("set_starred");
+        self.mailbox_write_gate()?;
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.is_starred = starred;
+        }
+        self.mailbox_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeMailboxOp::SetStarred {
+                message_id: message_id.to_string(),
+                starred,
+            });
+        Ok(())
+    }
+
+    async fn archive_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<MessageLocation> {
+        self.record_call("archive_message");
+        self.mailbox_write_gate()?;
+        let location = self
+            .archive_location
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .unwrap_or_else(|| MessageLocation {
+                id: message_id.to_string(),
+                mailbox: "archive".to_string(),
+            });
+        if let Some(stored) = self
+            .messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter_mut()
+            .find(|m| m.email.id == message_id)
+        {
+            stored.email.id = location.id.clone();
+            stored.email.mailbox = location.mailbox.clone();
+        }
+        self.mailbox_ops
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(FakeMailboxOp::Archive {
+                message_id: message_id.to_string(),
+            });
+        Ok(location)
+    }
+
     async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
         self.mailbox_write_gate()?;
         self.messages
@@ -1753,6 +1860,7 @@ impl EmailProvider for FakeEmailProvider {
                     let state = match guard.iter().find(|m| &m.email.id == id) {
                         Some(m) => RemoteMessageState::Present {
                             is_read: m.email.is_read,
+                            is_starred: Some(m.email.is_starred),
                         },
                         None => RemoteMessageState::Missing,
                     };
@@ -1889,6 +1997,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }
@@ -2351,10 +2460,19 @@ mod tests {
             .collect();
         let states = p.fetch_message_states(&ids).await.unwrap().unwrap();
 
-        assert_eq!(states.get("read"), Some(&RemoteMessageState::Present { is_read: true }));
+        assert_eq!(
+            states.get("read"),
+            Some(&RemoteMessageState::Present {
+                is_read: true,
+                is_starred: Some(false)
+            })
+        );
         assert_eq!(
             states.get("unread"),
-            Some(&RemoteMessageState::Present { is_read: false })
+            Some(&RemoteMessageState::Present {
+                is_read: false,
+                is_starred: Some(false)
+            })
         );
         assert_eq!(states.get("moved"), Some(&RemoteMessageState::Missing));
         assert_eq!(states.get("deleted"), Some(&RemoteMessageState::Missing));

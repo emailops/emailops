@@ -64,7 +64,7 @@ const GRAPH_BATCH_LIMIT: usize = 20;
 
 const MESSAGE_SELECT_FIELDS: &str = "id,conversationId,internetMessageId,subject,bodyPreview,\
     body,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,inferenceClassification,\
-    internetMessageHeaders";
+    internetMessageHeaders,flag";
 
 // ── Deserialization types ─────────────────────────────────────────────────────
 
@@ -128,6 +128,20 @@ struct GraphMessage {
     /// then some tenants withhold it.
     #[serde(rename = "internetMessageHeaders")]
     internet_message_headers: Option<Vec<GraphHeader>>,
+    /// The follow-up flag — Outlook's star.
+    flag: Option<GraphFlag>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphFlag {
+    #[serde(rename = "flagStatus")]
+    flag_status: Option<String>,
+}
+
+/// Outlook's "flagged" is the star; `complete` (a finished follow-up) and
+/// `notFlagged` are not.
+fn graph_flag_is_starred(flag_status: Option<&str>) -> bool {
+    flag_status == Some("flagged")
 }
 
 #[derive(Debug, Deserialize)]
@@ -1049,6 +1063,20 @@ impl OutlookClient {
 
     /// POST for sends and creates: a 5xx or a dropped connection may have
     /// been carried out, so it is not re-sent (see [`RetryPolicy`]).
+    /// `POST /me/messages/{id}/move` to a well-known folder. Not resent after
+    /// a 5xx: the move may have happened, and the message would then answer
+    /// 404 under its old id. Graph answers with the moved message, re-keyed.
+    async fn move_to_well_known_folder(&self, message_id: &str, folder: &str, operation: &str) -> Result<MessageRef> {
+        let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
+        let payload = serde_json::json!({ "destinationId": folder });
+        let response = self.send_post_json_no_resend(&url, &payload, operation).await?;
+        let moved: GraphMessageRef = response.json().await?;
+        Ok(MessageRef {
+            thread_id: moved.conversation_id.unwrap_or_else(|| moved.id.clone()),
+            id: moved.id,
+        })
+    }
+
     async fn send_post_json_no_resend(
         &self,
         url: &str,
@@ -1398,12 +1426,10 @@ impl EmailProvider for OutlookClient {
         };
         // OData escapes a single quote inside a string literal by doubling it.
         let escaped = header.replace('\'', "''");
-        // `archive` maps to inbox: EmailOps has no archive mailbox, and Gmail's
-        // archived mail already lands there.
         for (folder, mailbox) in [
             ("inbox", "inbox"),
             ("deleteditems", "trash"),
-            ("archive", "inbox"),
+            ("archive", "archive"),
             ("junkemail", "spam"),
         ] {
             let filter = format!("internetMessageId eq '{escaped}'");
@@ -1431,7 +1457,7 @@ impl EmailProvider for OutlookClient {
         Ok(None)
     }
 
-    /// One `$batch` of `GET /me/messages/{id}?$select=id,isRead` per
+    /// One `$batch` of `GET /me/messages/{id}?$select=id,isRead,flag` per
     /// [`GRAPH_BATCH_LIMIT`] ids. Asking by id rather than listing folders
     /// needs no "was the listing complete?" reasoning: every answer is about
     /// exactly one stored message.
@@ -1443,7 +1469,7 @@ impl EmailProvider for OutlookClient {
         let url = format!("{}/$batch", self.base_url);
         for chunk in message_ids.chunks(GRAPH_BATCH_LIMIT) {
             let ids: Vec<&str> = chunk.iter().map(String::as_str).collect();
-            let payload = build_batch_payload(&ids, "id,isRead");
+            let payload = build_batch_payload(&ids, "id,isRead,flag");
             let response = self
                 .send_post_json_with_retry(&url, &payload, "refresh message states")
                 .await?;
@@ -1463,6 +1489,54 @@ impl EmailProvider for OutlookClient {
         })
         .await?;
         Ok(())
+    }
+
+    /// `PATCH /me/messages/{id}` with the follow-up flag — Outlook's star.
+    /// Idempotent, so safe to retry.
+    async fn set_starred(&self, message_id: &str, starred: bool) -> Result<()> {
+        let url = format!("{}/me/messages/{}", self.base_url, urlencoding::encode(message_id));
+        let status = if starred { "flagged" } else { "notFlagged" };
+        let payload = serde_json::json!({ "flag": { "flagStatus": status } });
+        self.send_request_with_retry("set star", |client, token| {
+            client.patch(&url).bearer_auth(token).json(&payload)
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Move the message to the well-known `archive` folder (`Mail.ReadWrite`).
+    /// Graph re-keys a moved message; the answer is its new id.
+    async fn archive_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        let moved = self
+            .move_to_well_known_folder(message_id, "archive", "archive message")
+            .await?;
+        Ok(provider::MessageLocation {
+            id: moved.id,
+            mailbox: "archive".to_string(),
+        })
+    }
+
+    /// Only the inbox is a move target on Outlook: the app syncs no custom
+    /// Graph folders. Used to bring archived mail back.
+    async fn move_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+        target: &provider::MoveTarget,
+    ) -> Result<Option<MessageRef>> {
+        match target {
+            provider::MoveTarget::Inbox => self
+                .move_to_well_known_folder(message_id, "inbox", "move message to inbox")
+                .await
+                .map(Some),
+            provider::MoveTarget::Folder(_) => Err(AppError::InvalidInput(
+                "moving to a folder is not supported for Outlook accounts".to_string(),
+            )),
+        }
     }
 
     /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
@@ -1705,6 +1779,7 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         // message is sent iff it came from the Sent folder, which the insert
         // derives from the caller's `mailbox` value.
         is_sent: false,
+        is_starred: graph_flag_is_starred(msg.flag.as_ref().and_then(|f| f.flag_status.as_deref())),
         headers,
     };
 
@@ -1866,9 +1941,17 @@ fn states_from_batch(chunk: &[String], envelope: &serde_json::Value) -> Vec<(Str
         .filter_map(|sub| {
             let id = chunk.get(sub.index)?;
             let state = match sub.status {
-                200 => provider::RemoteMessageState::Present {
-                    is_read: sub.body.as_ref()?.get("isRead")?.as_bool()?,
-                },
+                200 => {
+                    let body = sub.body.as_ref()?;
+                    provider::RemoteMessageState::Present {
+                        is_read: body.get("isRead")?.as_bool()?,
+                        is_starred: body
+                            .get("flag")
+                            .and_then(|flag| flag.get("flagStatus"))
+                            .and_then(|status| status.as_str())
+                            .map(|status| graph_flag_is_starred(Some(status))),
+                    }
+                }
                 404 => provider::RemoteMessageState::Missing,
                 _ => return None,
             };
@@ -2504,12 +2587,30 @@ mod tests {
             has_attachments: Some(false),
             inference_classification: Some("focused".to_string()),
             internet_message_headers: None,
+            flag: None,
         };
         let (email, cat) = parse_message(msg);
         assert_eq!(cat, EmailCategory::Primary);
         assert_eq!(email.category, "primary");
         assert_eq!(email.thread_id, "c1");
         assert!(email.is_read);
+    }
+
+    #[test]
+    fn only_a_flagged_follow_up_reads_as_starred() {
+        for (status, starred) in [
+            (Some("flagged"), true),
+            (Some("notFlagged"), false),
+            (Some("complete"), false),
+            (None, false),
+        ] {
+            assert_eq!(graph_flag_is_starred(status), starred, "{status:?}");
+        }
+        let msg: GraphMessage = serde_json::from_value(serde_json::json!({
+            "id": "m1", "isRead": true, "flag": { "flagStatus": "flagged" }
+        }))
+        .expect("message");
+        assert!(parse_message(msg).0.is_starred);
     }
 
     #[test]
@@ -2537,6 +2638,7 @@ mod tests {
             has_attachments: None,
             inference_classification: Some("other".to_string()),
             internet_message_headers: None,
+            flag: None,
         };
         let (email, cat) = parse_message(msg);
         assert_eq!(cat, EmailCategory::Updates);
@@ -2589,9 +2691,9 @@ mod tests {
         // Out of order on purpose: Graph does not answer in request order.
         let envelope = serde_json::json!({ "responses": [
             { "id": "2", "status": 404, "body": { "error": { "code": "ErrorItemNotFound" } } },
-            { "id": "0", "status": 200, "body": { "id": "read", "isRead": true } },
+            { "id": "0", "status": 200, "body": { "id": "read", "isRead": true, "flag": { "flagStatus": "flagged" } } },
             { "id": "3", "status": 429, "body": {} },
-            { "id": "1", "status": 200, "body": { "id": "unread", "isRead": false } },
+            { "id": "1", "status": 200, "body": { "id": "unread", "isRead": false, "flag": { "flagStatus": "notFlagged" } } },
             { "id": "5", "status": 200, "body": { "id": "malformed" } },
             { "id": "9", "status": 404 },
         ]});
@@ -2605,11 +2707,17 @@ mod tests {
                 ("gone".to_string(), provider::RemoteMessageState::Missing),
                 (
                     "read".to_string(),
-                    provider::RemoteMessageState::Present { is_read: true }
+                    provider::RemoteMessageState::Present {
+                        is_read: true,
+                        is_starred: Some(true)
+                    }
                 ),
                 (
                     "unread".to_string(),
-                    provider::RemoteMessageState::Present { is_read: false }
+                    provider::RemoteMessageState::Present {
+                        is_read: false,
+                        is_starred: Some(false)
+                    }
                 ),
             ],
             "a throttled, unanswered or malformed slot says nothing about its message"
@@ -2642,12 +2750,16 @@ mod tests {
         assert_eq!(requests.len(), 2, "25 ids = one batch of 20 and one of 5");
         let first: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
         assert_eq!(first["requests"].as_array().map(Vec::len), Some(20));
-        assert_eq!(first["requests"][0]["url"], "/me/messages/m-0?$select=id,isRead");
+        assert_eq!(first["requests"][0]["url"], "/me/messages/m-0?$select=id,isRead,flag");
         // Slot 0 and 1 of each batch were answered; the rest are unknown.
         assert_eq!(states.len(), 4);
         assert_eq!(
             states.get("m-0"),
-            Some(&provider::RemoteMessageState::Present { is_read: true })
+            Some(&provider::RemoteMessageState::Present {
+                is_read: true,
+                is_starred: None
+            }),
+            "an answer without a flag says nothing about the star"
         );
         assert_eq!(states.get("m-21"), Some(&provider::RemoteMessageState::Missing));
         assert_eq!(states.get("m-5"), None);
@@ -2684,6 +2796,102 @@ mod tests {
                 serde_json::json!({ "isRead": true }),
                 serde_json::json!({ "isRead": false })
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn starring_patches_the_follow_up_flag() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/messages/m-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m-1"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::set_starred(&client, "m-1", true).await.expect("star");
+        EmailProvider::set_starred(&client, "m-1", false).await.expect("unstar");
+
+        let requests = server.received_requests().await.expect("requests");
+        let bodies: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).expect("json body"))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                serde_json::json!({ "flag": { "flagStatus": "flagged" } }),
+                serde_json::json!({ "flag": { "flagStatus": "notFlagged" } })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn archiving_moves_to_the_archive_folder_and_reports_the_new_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-3/move"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_raw(r#"{"id":"m-3-archived","conversationId":"c-1"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let location = EmailProvider::archive_message(&client, "m-3", None)
+            .await
+            .expect("archive");
+
+        assert_eq!(
+            location,
+            provider::MessageLocation {
+                id: "m-3-archived".to_string(),
+                mailbox: "archive".to_string(),
+            }
+        );
+        let requests = server.received_requests().await.expect("requests");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "archive" }));
+    }
+
+    #[tokio::test]
+    async fn moving_to_the_inbox_moves_to_the_inbox_folder_and_reports_the_new_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-4/move"))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .set_body_raw(r#"{"id":"m-4-back","conversationId":"c-2"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let moved = EmailProvider::move_message(&client, "m-4", None, &provider::MoveTarget::Inbox)
+            .await
+            .expect("move")
+            .expect("new id reported");
+
+        assert_eq!(moved.id, "m-4-back");
+        assert_eq!(moved.thread_id, "c-2");
+        let requests = server.received_requests().await.expect("requests");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body, serde_json::json!({ "destinationId": "inbox" }));
+        assert!(
+            EmailProvider::move_message(&client, "m-4", None, &provider::MoveTarget::Folder("x".into()))
+                .await
+                .is_err(),
+            "Outlook has no custom-folder moves here"
         );
     }
 
@@ -2803,9 +3011,8 @@ mod tests {
 
     #[tokio::test]
     async fn locate_message_finds_a_message_moved_to_the_archive_folder() {
-        // Graph's `archive` well-known folder. EmailOps has no archive mailbox
-        // of its own, so an archived message is filed under inbox — the same
-        // place Gmail's archived mail already lands.
+        // Graph's `archive` well-known folder, filed under EmailOps' own
+        // `archive` mailbox — the place the app's Archive action puts it.
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -2836,7 +3043,7 @@ mod tests {
             .expect("found");
 
         assert_eq!(located.id, "archived-id");
-        assert_eq!(located.mailbox, "inbox");
+        assert_eq!(located.mailbox, "archive");
     }
 
     // ── Attachments that do not fit in one request ────────────────────────

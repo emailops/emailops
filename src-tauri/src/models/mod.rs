@@ -70,6 +70,11 @@ pub struct Email {
     /// in the Sent view.
     #[serde(default)]
     pub is_sent: bool,
+    /// Starred (Gmail `STARRED`, Outlook flag, IMAP `\Flagged`). Per message,
+    /// like the providers keep it; in the thread-deduped inbox list it is
+    /// widened to "any message of the thread is starred".
+    #[serde(default)]
+    pub is_starred: bool,
     /// Captured RFC 5322 headers, when the provider supplied them.
     ///
     /// Transport only: carried from the provider parse to `insert_emails_batch`,

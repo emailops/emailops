@@ -61,7 +61,13 @@
     "moveToInbox": "Bandeja de entrada",
     "moveFailed": "No se pudo mover",
     "deleteThread": "Eliminar hilo",
-    "accountTooltip": "Cuenta: {{email}}"
+    "accountTooltip": "Cuenta: {{email}}",
+    "markAsRead": "Marcar como leído",
+    "markAsUnread": "Marcar como no leído",
+    "star": "Destacar",
+    "unstar": "Quitar destacado",
+    "archive": "Archivar",
+    "moveArchivedToInbox": "Mover a Recibidos"
   },
   "header": {
     "totalCount": "{{count}} correos",
@@ -103,7 +109,13 @@
     "searchMatchCount": "{{current}} de {{total}}",
     "searchNoMatches": "Sin coincidencias",
     "searchPrevMatch": "Coincidencia anterior",
-    "searchNextMatch": "Siguiente coincidencia"
+    "searchNextMatch": "Siguiente coincidencia",
+    "markAsUnread": "Marcar como no leído",
+    "markAsRead": "Marcar como leído",
+    "star": "Destacar esta conversación",
+    "unstar": "Quitar destacado",
+    "archive": "Archivar",
+    "moveToInbox": "Mover a Recibidos"
   },
   "compose": {
     "open": "Redactar",
@@ -173,5 +185,21 @@
     "notJunkFailed": "No se pudo registrar que este mensaje no es basura",
     "hideFlagged": "Ocultar mensajes de basura"
   },
-  "emailUnavailable": "El correo ya no está disponible."
+  "emailUnavailable": "El correo ya no está disponible.",
+  "threadActions": {
+    "failed": {
+      "markRead_one": "No se pudo marcar {{count}} conversación como leída: {{detail}}",
+      "markRead_other": "No se pudieron marcar {{count}} conversaciones como leídas: {{detail}}",
+      "markUnread_one": "No se pudo marcar {{count}} conversación como no leída: {{detail}}",
+      "markUnread_other": "No se pudieron marcar {{count}} conversaciones como no leídas: {{detail}}",
+      "star_one": "No se pudo destacar {{count}} conversación: {{detail}}",
+      "star_other": "No se pudieron destacar {{count}} conversaciones: {{detail}}",
+      "unstar_one": "No se pudo quitar el destacado de {{count}} conversación: {{detail}}",
+      "unstar_other": "No se pudo quitar el destacado de {{count}} conversaciones: {{detail}}",
+      "archive_one": "No se pudo archivar {{count}} conversación: {{detail}}",
+      "archive_other": "No se pudieron archivar {{count}} conversaciones: {{detail}}",
+      "moveToInbox_one": "No se pudo mover {{count}} conversación a Recibidos: {{detail}}",
+      "moveToInbox_other": "No se pudieron mover {{count}} conversaciones a Recibidos: {{detail}}"
+    }
+  }
 }

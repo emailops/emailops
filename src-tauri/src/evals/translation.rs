@@ -100,6 +100,7 @@ fn seed_email(db: &Database, id: &str, body: &str) -> EvalResult<()> {
         timestamp: 1_700_000_000,
         is_read: true,
         is_sent: false,
+        is_starred: false,
         headers: None,
         triage_status: None,
         category: "primary".to_string(),

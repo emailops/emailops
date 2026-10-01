@@ -61,7 +61,13 @@
     "moveToInbox": "Inbox",
     "moveFailed": "Move failed",
     "deleteThread": "Delete thread",
-    "accountTooltip": "Account: {{email}}"
+    "accountTooltip": "Account: {{email}}",
+    "markAsRead": "Mark as read",
+    "markAsUnread": "Mark as unread",
+    "star": "Star",
+    "unstar": "Remove star",
+    "archive": "Archive",
+    "moveArchivedToInbox": "Move to Inbox"
   },
   "header": {
     "totalCount": "{{count}} emails",
@@ -103,7 +109,13 @@
     "searchMatchCount": "{{current}} of {{total}}",
     "searchNoMatches": "No matches",
     "searchPrevMatch": "Previous match",
-    "searchNextMatch": "Next match"
+    "searchNextMatch": "Next match",
+    "markAsUnread": "Mark as unread",
+    "markAsRead": "Mark as read",
+    "star": "Star this conversation",
+    "unstar": "Remove star",
+    "archive": "Archive",
+    "moveToInbox": "Move to Inbox"
   },
   "compose": {
     "open": "Compose",
@@ -173,5 +185,21 @@
     "notJunkFailed": "Could not record that this message is not junk",
     "hideFlagged": "Hide junk messages"
   },
-  "emailUnavailable": "Email no longer available."
+  "emailUnavailable": "Email no longer available.",
+  "threadActions": {
+    "failed": {
+      "markRead_one": "Could not mark {{count}} conversation as read: {{detail}}",
+      "markRead_other": "Could not mark {{count}} conversations as read: {{detail}}",
+      "markUnread_one": "Could not mark {{count}} conversation as unread: {{detail}}",
+      "markUnread_other": "Could not mark {{count}} conversations as unread: {{detail}}",
+      "star_one": "Could not star {{count}} conversation: {{detail}}",
+      "star_other": "Could not star {{count}} conversations: {{detail}}",
+      "unstar_one": "Could not remove the star from {{count}} conversation: {{detail}}",
+      "unstar_other": "Could not remove the star from {{count}} conversations: {{detail}}",
+      "archive_one": "Could not archive {{count}} conversation: {{detail}}",
+      "archive_other": "Could not archive {{count}} conversations: {{detail}}",
+      "moveToInbox_one": "Could not move {{count}} conversation to the inbox: {{detail}}",
+      "moveToInbox_other": "Could not move {{count}} conversations to the inbox: {{detail}}"
+    }
+  }
 }

@@ -45,6 +45,8 @@ export type ViewMode =
   | 'sent'
   | 'spam'
   | 'deleted'
+  | 'starred'
+  | 'archive'
   | 'calendar'
   | 'chat'
   | 'tasks'
@@ -529,6 +531,46 @@ export function Sidebar({
                   {t('sidebar:sent')}
                 </button>
               </li>
+              <li>
+                <button
+                  onClick={() => onSetViewMode('starred')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'starred' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M11.48 3.5a.56.56 0 011.04 0l2.13 5.11a.56.56 0 00.47.35l5.52.44c.5.04.7.66.32.99l-4.2 3.6a.56.56 0 00-.18.56l1.28 5.38a.56.56 0 01-.84.61l-4.73-2.89a.56.56 0 00-.58 0l-4.73 2.89a.56.56 0 01-.84-.61l1.28-5.38a.56.56 0 00-.18-.56l-4.2-3.6a.56.56 0 01.32-.99l5.52-.44a.56.56 0 00.47-.35l2.13-5.11z"
+                    />
+                  </svg>
+                  {t('sidebar:starred')}
+                </button>
+              </li>
+              {/* An IMAP account archives into its Archive folder, listed
+                  under Folders; Gmail and Outlook archive here. */}
+              {(isUnifiedActive || activeAccount?.provider !== 'imap') && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('archive')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'archive' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+                      />
+                    </svg>
+                    {t('sidebar:archive')}
+                  </button>
+                </li>
+              )}
               {calendarEnabled && (
                 <li>
                   <button

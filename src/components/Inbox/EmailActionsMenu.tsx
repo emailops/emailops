@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { ArchiveIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { computeDropdownTop } from '@/lib/dropdownPosition';
 import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Email } from '@/types';
@@ -86,6 +87,10 @@ export function EmailActionsMenu({
   const updateEmail = useEmailStore((s) => s.updateEmail);
   const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
   const moveEmailFromStore = useEmailStore((s) => s.moveEmail);
+  const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const archiveThreads = useEmailStore((s) => s.archiveThreads);
+  const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
   const addLog = useLogStore((s) => s.addLog);
   const { moveTargets } = useMoveTargets(email);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -260,6 +265,18 @@ export function EmailActionsMenu({
                   </button>
                 )}
                 {(onChatAboutThread || onOpenInTab) && <div className="border-t border-gray-100 my-1" />}
+                <ThreadActionItems
+                  email={email}
+                  onPick={(run) => {
+                    setMenuOpen(false);
+                    void run();
+                  }}
+                  onRead={(read) => setThreadsRead([threadRefOf(email)], read)}
+                  onStar={(starred) => setThreadsStarred([threadRefOf(email)], starred)}
+                  onArchive={() => archiveThreads([threadRefOf(email)])}
+                  onMoveToInbox={() => moveThreadsToInbox([threadRefOf(email)])}
+                />
+                <div className="border-t border-gray-100 my-1" />
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -458,5 +475,77 @@ export function EmailActionsMenu({
           document.body,
         )}
     </div>
+  );
+}
+
+interface ThreadActionItemsProps {
+  email: Email;
+  /** Close the menu and run the chosen action. */
+  onPick: (run: () => Promise<void>) => void;
+  onRead: (read: boolean) => Promise<void>;
+  onStar: (starred: boolean) => Promise<void>;
+  onArchive: () => Promise<void>;
+  onMoveToInbox: () => Promise<void>;
+}
+
+/** Read/unread, star and archive (or its inverse, move to inbox) for the
+ *  row's conversation. Errors are reported by the store (toast + log). */
+function ThreadActionItems({ email, onPick, onRead, onStar, onArchive, onMoveToInbox }: ThreadActionItemsProps) {
+  const { t } = useTranslation(['inbox']);
+  const itemClass = 'w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2';
+  return (
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(() => onRead(!email.isRead));
+        }}
+        className={itemClass}
+      >
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          />
+        </svg>
+        {email.isRead ? t('inbox:emailRow.markAsUnread') : t('inbox:emailRow.markAsRead')}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(() => onStar(!email.isStarred));
+        }}
+        className={itemClass}
+      >
+        <StarIcon filled={email.isStarred} className="w-4 h-4 text-gray-400" />
+        {email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star')}
+      </button>
+      {email.mailbox === 'inbox' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onArchive);
+          }}
+          className={itemClass}
+        >
+          <ArchiveIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:emailRow.archive')}
+        </button>
+      )}
+      {email.mailbox === 'archive' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onMoveToInbox);
+          }}
+          className={itemClass}
+        >
+          <InboxIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:emailRow.moveArchivedToInbox')}
+        </button>
+      )}
+    </>
   );
 }

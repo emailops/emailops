@@ -21,6 +21,7 @@ function makeEmail(id: string): Email {
     category: 'primary',
     mailbox: 'inbox',
     isSent: false,
+    isStarred: false,
   };
 }
 

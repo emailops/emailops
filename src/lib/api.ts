@@ -227,8 +227,10 @@ export async function getAvailableCategories(accountId: string): Promise<string[
 }
 
 // Email commands
-/** `folder:<serverPath>` addresses one custom IMAP folder. */
-export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted' | `folder:${string}`;
+/** `folder:<serverPath>` addresses one custom IMAP folder. `archive` is mail
+ *  taken out of the inbox (Gmail/Outlook; IMAP files it in its archive
+ *  folder, a `folder:` view); `starred` lists starred mail wherever it is. */
+export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted' | 'archive' | 'starred' | `folder:${string}`;
 
 /** A custom IMAP folder discovered on the server, as stored by sync. */
 export interface Folder {
@@ -293,6 +295,39 @@ export async function getEmailBody(accountId: string, emailId: string): Promise<
 
 export async function markAsRead(emailId: string): Promise<void> {
   return invoke('mark_as_read', { emailId });
+}
+
+/** One conversation of one account — thread ids are only unique per account.
+ *  Mirrors `ThreadRef` in `src-tauri/src/services/emails/thread_actions.rs`. */
+export interface ThreadRef {
+  accountId: string;
+  threadId: string;
+}
+
+/** Thread-level mailbox actions, pushed to the provider (Gmail labels, Graph,
+ *  IMAP flags/moves). Mirrors the Rust `ThreadAction`. */
+export type ThreadAction = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'archive' | 'moveToInbox';
+
+/** A thread an action could not be applied to; `code`/`params`/`message` are
+ *  the `AppError` wire shape, so `errorText(failure)` renders it. */
+export interface ThreadActionFailure {
+  accountId: string;
+  threadId: string;
+  code: string;
+  params: Record<string, string>;
+  message: string;
+}
+
+/** Every thread not listed in `failed` was applied. */
+export interface ThreadActionReport {
+  failed: ThreadActionFailure[];
+}
+
+/** Apply `action` to one or many threads. Never rejects for a per-thread
+ *  failure — those come back in the report so the caller can roll back
+ *  exactly the threads that failed. */
+export async function applyThreadAction(threads: ThreadRef[], action: ThreadAction): Promise<ThreadActionReport> {
+  return invoke('apply_thread_action', { threads, action });
 }
 
 export async function sendReply(

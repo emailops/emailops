@@ -20,6 +20,7 @@ function mkEmail(overrides: Partial<Email> & { id: string }): Email {
     category: 'primary' as Email['category'],
     mailbox: 'inbox',
     isSent: false,
+    isStarred: false,
     ...overrides,
   };
 }

@@ -355,9 +355,16 @@ pub async fn sync_account_with_provider(
     // whose UID matches a stale id. Fatal on purpose — see the function docs.
     super::uid_validity::reconcile_uid_validity(db, account, email_provider.as_ref()).await?;
 
-    // Read-state changes a previous push could not deliver (offline, a 5xx)
-    // go out before anything is read back from the provider.
+    // Read-state and star changes a previous push could not deliver
+    // (offline, a 5xx) go out before anything is read back from the provider.
     super::mailbox_state::retry_pending_read_pushes(
+        db,
+        account,
+        email_provider.as_ref(),
+        crate::services::clock::now_secs(),
+    )
+    .await;
+    super::mailbox_state::retry_pending_star_pushes(
         db,
         account,
         email_provider.as_ref(),
@@ -3289,6 +3296,7 @@ mod extra_mailbox_window_tests {
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            is_starred: false,
             headers: None,
         }
     }
@@ -3952,6 +3960,7 @@ mod sync_anchor_tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }
@@ -4083,6 +4092,7 @@ mod backfill_watermark_persistence_tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         };
         db.insert_email(&existing).expect("seed inbox email");
@@ -4224,6 +4234,7 @@ mod spam_reconcile_tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }

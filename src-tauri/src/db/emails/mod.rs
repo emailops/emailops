@@ -31,7 +31,7 @@ pub(super) use crate::util::html::strip_html_for_fts;
 // Body lives in email_bodies — all queries on the emails table use this column list.
 pub(super) const EMAIL_COLUMNS: &str = "id, account_id, thread_id, message_id, subject, sender, sender_email, \
      recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, \
-     references_header";
+     references_header, is_starred";
 
 pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
     let recipients_json: String = row.get(7)?;
@@ -60,6 +60,8 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         // NULL for everything ingested before V023 — the header was parsed for
         // the thread hash and then dropped.
         references: row.get(16).unwrap_or(None),
+        // Absent from queries that list their own columns: not starred.
+        is_starred: row.get::<_, i32>(17).unwrap_or(0) != 0,
         // Write-only transport field. Headers live in their own table and are
         // read via `get_email_headers_batch`, not hydrated onto every Email —
         // the vast majority of reads (list views, search) never need them.
@@ -215,7 +217,7 @@ pub(super) fn relationship_score(a: &ContactAccum, now_secs: i64) -> f64 {
 /// poison the DB.
 pub(crate) fn normalize_mailbox(raw: &str) -> &str {
     match raw {
-        "inbox" | "sent" | "spam" | "trash" => raw,
+        "inbox" | "sent" | "spam" | "trash" | "archive" => raw,
         s if s.len() > "folder:".len() && s.starts_with("folder:") => raw,
         _ => "inbox",
     }
@@ -238,6 +240,7 @@ mod normalize_mailbox_tests {
         assert_eq!(normalize_mailbox("sent"), "sent");
         assert_eq!(normalize_mailbox("spam"), "spam");
         assert_eq!(normalize_mailbox("trash"), "trash");
+        assert_eq!(normalize_mailbox("archive"), "archive");
     }
 
     #[test]

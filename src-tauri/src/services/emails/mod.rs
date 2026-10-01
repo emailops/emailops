@@ -13,6 +13,7 @@ mod redownload;
 mod send;
 mod state_refresh;
 mod sync;
+mod thread_actions;
 mod uid_validity;
 
 use std::sync::Arc;
@@ -41,6 +42,10 @@ pub use sync::{
     request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
     sync_account_with_contention, sync_account_with_provider, SyncContention,
 };
+pub use thread_actions::{
+    apply_thread_action, plan_thread_action, widen_stars_to_threads, ThreadAction, ThreadActionFailure,
+    ThreadActionReport, ThreadRef,
+};
 
 /// List emails for one account, or — when `account_id` is `None` — merged
 /// across all enabled accounts (the unified "All accounts" inbox).
@@ -56,7 +61,12 @@ pub fn get_emails(
         Some(id) => crate::db::AccountScope::Account(id),
         None => crate::db::AccountScope::AllEnabled,
     };
-    db.get_emails(scope, limit, offset, None, mailbox, category)
+    let mut emails = db.get_emails(scope, limit, offset, None, mailbox, category)?;
+    // The inbox lists one row per conversation: its star is the thread's.
+    if matches!(mailbox, None | Some("inbox")) {
+        widen_stars_to_threads(db, &mut emails)?;
+    }
+    Ok(emails)
 }
 
 /// List an account's custom folders for the sidebar. Well-known role folders

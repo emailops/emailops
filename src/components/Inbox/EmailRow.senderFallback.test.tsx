@@ -26,6 +26,7 @@ const email: Email = {
   category: 'primary',
   mailbox: 'sent',
   isSent: true,
+  isStarred: false,
 };
 
 let container: HTMLDivElement;

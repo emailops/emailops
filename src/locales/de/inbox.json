@@ -61,7 +61,13 @@
     "moveToInbox": "Posteingang",
     "moveFailed": "Verschieben fehlgeschlagen",
     "deleteThread": "Thread löschen",
-    "accountTooltip": "Konto: {{email}}"
+    "accountTooltip": "Konto: {{email}}",
+    "markAsRead": "Als gelesen markieren",
+    "markAsUnread": "Als ungelesen markieren",
+    "star": "Mit Stern markieren",
+    "unstar": "Stern entfernen",
+    "archive": "Archivieren",
+    "moveArchivedToInbox": "In den Posteingang verschieben"
   },
   "header": {
     "totalCount": "{{count}} E-Mails",
@@ -103,7 +109,13 @@
     "searchMatchCount": "{{current}} von {{total}}",
     "searchNoMatches": "Keine Treffer",
     "searchPrevMatch": "Vorheriger Treffer",
-    "searchNextMatch": "Nächster Treffer"
+    "searchNextMatch": "Nächster Treffer",
+    "markAsUnread": "Als ungelesen markieren",
+    "markAsRead": "Als gelesen markieren",
+    "star": "Diese Unterhaltung mit Stern markieren",
+    "unstar": "Stern entfernen",
+    "archive": "Archivieren",
+    "moveToInbox": "In den Posteingang verschieben"
   },
   "compose": {
     "open": "Verfassen",
@@ -173,5 +185,21 @@
     "notJunkFailed": "Es konnte nicht gespeichert werden, dass diese Nachricht kein Spam ist",
     "hideFlagged": "Spam-Nachrichten ausblenden"
   },
-  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar."
+  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar.",
+  "threadActions": {
+    "failed": {
+      "markRead_one": "{{count}} Unterhaltung konnte nicht als gelesen markiert werden: {{detail}}",
+      "markRead_other": "{{count}} Unterhaltungen konnten nicht als gelesen markiert werden: {{detail}}",
+      "markUnread_one": "{{count}} Unterhaltung konnte nicht als ungelesen markiert werden: {{detail}}",
+      "markUnread_other": "{{count}} Unterhaltungen konnten nicht als ungelesen markiert werden: {{detail}}",
+      "star_one": "{{count}} Unterhaltung konnte nicht mit Stern markiert werden: {{detail}}",
+      "star_other": "{{count}} Unterhaltungen konnten nicht mit Stern markiert werden: {{detail}}",
+      "unstar_one": "Der Stern von {{count}} Unterhaltung konnte nicht entfernt werden: {{detail}}",
+      "unstar_other": "Der Stern von {{count}} Unterhaltungen konnte nicht entfernt werden: {{detail}}",
+      "archive_one": "{{count}} Unterhaltung konnte nicht archiviert werden: {{detail}}",
+      "archive_other": "{{count}} Unterhaltungen konnten nicht archiviert werden: {{detail}}",
+      "moveToInbox_one": "{{count}} Unterhaltung konnte nicht in den Posteingang verschoben werden: {{detail}}",
+      "moveToInbox_other": "{{count}} Unterhaltungen konnten nicht in den Posteingang verschoben werden: {{detail}}"
+    }
+  }
 }

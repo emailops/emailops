@@ -61,7 +61,13 @@
     "moveToInbox": "Boîte de réception",
     "moveFailed": "Échec du déplacement",
     "deleteThread": "Supprimer le fil",
-    "accountTooltip": "Compte : {{email}}"
+    "accountTooltip": "Compte : {{email}}",
+    "markAsRead": "Marquer comme lu",
+    "markAsUnread": "Marquer comme non lu",
+    "star": "Ajouter aux favoris",
+    "unstar": "Retirer des favoris",
+    "archive": "Archiver",
+    "moveArchivedToInbox": "Déplacer vers la boîte de réception"
   },
   "header": {
     "totalCount": "{{count}} courriels",
@@ -103,7 +109,13 @@
     "searchMatchCount": "{{current}} sur {{total}}",
     "searchNoMatches": "Aucune correspondance",
     "searchPrevMatch": "Correspondance précédente",
-    "searchNextMatch": "Correspondance suivante"
+    "searchNextMatch": "Correspondance suivante",
+    "markAsUnread": "Marquer comme non lu",
+    "markAsRead": "Marquer comme lu",
+    "star": "Ajouter cette conversation aux favoris",
+    "unstar": "Retirer des favoris",
+    "archive": "Archiver",
+    "moveToInbox": "Déplacer vers la boîte de réception"
   },
   "compose": {
     "open": "Nouveau message",
@@ -173,5 +185,21 @@
     "notJunkFailed": "Impossible d'enregistrer que ce message n'est pas indésirable",
     "hideFlagged": "Masquer les indésirables"
   },
-  "emailUnavailable": "Cet e-mail n’est plus disponible."
+  "emailUnavailable": "Cet e-mail n’est plus disponible.",
+  "threadActions": {
+    "failed": {
+      "markRead_one": "Impossible de marquer {{count}} conversation comme lue : {{detail}}",
+      "markRead_other": "Impossible de marquer {{count}} conversations comme lues : {{detail}}",
+      "markUnread_one": "Impossible de marquer {{count}} conversation comme non lue : {{detail}}",
+      "markUnread_other": "Impossible de marquer {{count}} conversations comme non lues : {{detail}}",
+      "star_one": "Impossible d’ajouter {{count}} conversation aux favoris : {{detail}}",
+      "star_other": "Impossible d’ajouter {{count}} conversations aux favoris : {{detail}}",
+      "unstar_one": "Impossible de retirer {{count}} conversation des favoris : {{detail}}",
+      "unstar_other": "Impossible de retirer {{count}} conversations des favoris : {{detail}}",
+      "archive_one": "Impossible d’archiver {{count}} conversation : {{detail}}",
+      "archive_other": "Impossible d’archiver {{count}} conversations : {{detail}}",
+      "moveToInbox_one": "Impossible de déplacer {{count}} conversation vers la boîte de réception : {{detail}}",
+      "moveToInbox_other": "Impossible de déplacer {{count}} conversations vers la boîte de réception : {{detail}}"
+    }
+  }
 }

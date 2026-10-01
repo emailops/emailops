@@ -50,8 +50,8 @@ impl Database {
                 r#"INSERT INTO emails
                    (id, account_id, thread_id, message_id, subject, sender, sender_email,
                     sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
-                    references_header)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                    references_header, is_starred)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
                    ON CONFLICT(id) DO UPDATE SET
                      account_id = excluded.account_id,
                      thread_id = excluded.thread_id,
@@ -69,7 +69,11 @@ impl Database {
                      category = excluded.category,
                      mailbox = excluded.mailbox,
                      is_sent = excluded.is_sent,
-                     references_header = excluded.references_header"#,
+                     references_header = excluded.references_header,
+                     -- A star change still owed to the provider wins over
+                     -- the provider's older copy (V030).
+                     is_starred = CASE WHEN star_push_pending_since IS NULL
+                                       THEN excluded.is_starred ELSE is_starred END"#,
                 params![
                     email.id,
                     email.account_id,
@@ -90,6 +94,7 @@ impl Database {
                     is_sent_flag(email, mailbox) as i32,
                     now,
                     email.references,
+                    email.is_starred as i32,
                 ],
             )?;
             tx.execute(

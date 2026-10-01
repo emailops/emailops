@@ -2616,3 +2616,73 @@ smaller file), ranges under 4 MB, and a request limit of about 4 MB.
   content size to compare with.
 **Limit:** a draft with large attachments is uploaded again on every push of that draft; the
 base64 text itself is still built in memory by the compose layer.
+
+## 2026-10-01 — Archive is a mailbox of its own; IMAP archives into its Archive folder, or refuses
+
+**Decision:** Archiving takes a conversation's inbox messages out of the inbox at the
+provider and files them locally where the provider put them: Gmail removes the `INBOX`
+label and Graph moves to the well-known `archive` folder, both stored under a new
+`emails.mailbox = 'archive'` (an "Archive" view in the sidebar); IMAP moves to the folder
+flagged `\Archive` (RFC 6154), else one named Archive/Archives/Archiv/Archivo, stored as
+that `folder:` view like any other synced folder. An IMAP account with no such folder is
+refused with `AppError::NoArchiveFolder` ("create a folder named Archive"); the app does
+not create one. Archive and its inverse, *Move to Inbox* (Gmail adds `INBOX`, Graph and
+IMAP move to the inbox), are **provider-first** like delete and folder moves — a failure
+leaves the conversation where it was and is reported — while read state and the star stay
+local-first. Gmail mail without `INBOX` (and not in Sent/Spam/Trash) now maps to `archive`
+everywhere (`mailbox_from_labels`), so archiving in Gmail's own clients is followed by the
+History API refresh, and Graph's `archive` folder maps to `archive` when a moved message is
+located.
+**Context:** Archive was the most-reached-for missing action (docs/COMPETITOR-PARITY.md).
+Until now archived Gmail mail was deliberately filed under `inbox` ("the app has no archive
+mailbox"), so an archive could not leave the inbox view. IMAP and Graph re-key a moved
+message, so a local-first archive with a retry marker would leave a row the provider no
+longer knows under its id between the change and the retry, racing the state refresh and
+the UIDVALIDITY re-key; provider-first has nothing half-done.
+**Rejected:**
+- *A local `archived` flag on rows that stay in `inbox`*: every inbox query would need a
+  second predicate, and Gmail's own archive (no `INBOX`) has no place to land.
+- *Storing IMAP archives under `archive` too*: the Archive folder is already synced as a
+  `folder:` mailbox with its own id prefix and UIDVALIDITY; two names for one folder
+  would make the sync re-file the rows on every pass.
+- *Creating an Archive folder on IMAP servers that lack one*: a folder appearing on the
+  user's server unasked; the user can create it in one click with the existing folder
+  management, and the error says so.
+- *Archiving locally when the IMAP server has no archive folder*: the silent divergence the
+  2026-09-30 entries removed for delete.
+
+## 2026-10-01 — The star is per message, local-first with a retried push; a thread is starred when any message is
+
+**Decision:** `emails.is_starred` (V030) mirrors Gmail `STARRED`, Graph `flag.flagStatus =
+flagged` and IMAP `\Flagged`. Starring a conversation stars its latest message (spam and
+trash copies aside); unstarring clears every starred message; lists that show one row per
+conversation (inbox, tag/sender filters) widen the row's star to the thread's. The write
+follows read state exactly: `star_push_pending_since` is set in the same statement as the
+star, cleared once the provider has it, retried by every sync (same caps and one-week
+give-up as V029), and a pending star is never overwritten by the server-to-local refresh.
+Stars set in other clients are ingested where it is cheap: on download (Gmail labels,
+Graph `flag` in `$select`, IMAP `FLAGS`), from Gmail's History API, and in the IMAP/Graph
+state refresh (`FLAGS` / `$select=id,isRead,flag`). Outlook's `complete` flag is not a star.
+**Context:** "Flagged" already meant junk in the UI; the parity audit asked for Gmail-style
+stars with write-back. Gmail itself stars a message, not a conversation, and shows the
+conversation starred when any message is — per-message storage keeps the sync a plain
+mapping, and the thread view is derived.
+**Rejected:** *A thread-level `starred_threads` table*: it has no provider counterpart, so
+every sync would have to reconcile it against per-message state anyway.
+
+## 2026-10-01 — Thread actions go through one command that reports failures per thread
+
+**Decision:** Mark read/unread, star/unstar, archive and move-to-inbox are one command,
+`apply_thread_action(threads, action)`, taking any number of `(account_id, thread_id)`
+pairs. Each thread is planned on its own (`plan_thread_action`, pure) and the command never
+fails as a whole: it returns the threads it could not change with the `AppError` code and
+message, and the frontend (`emailStore` `setThreadsRead` / `setThreadsStarred` /
+`archiveThreads` / `moveThreadsToInbox`) updates optimistically and rolls back exactly those
+threads with one toast. Marking unread marks the latest received message, as Gmail does,
+and leaves the open conversation, so it is not read again the moment it is looked at.
+**Context:** Bulk selection, keyboard shortcuts and rules all need the same actions over
+many threads; one entry point with per-thread outcomes lets them share the optimistic
+update and rollback instead of each looping over single-message commands.
+**Rejected:** *One command per action*: four copies of the same grouping, provider
+resolution and reporting. *Failing the whole call on the first error*: a bulk archive with
+one refused thread would roll back the ninety-nine that went through.

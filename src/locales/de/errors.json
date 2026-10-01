@@ -70,6 +70,7 @@
     "skill_no_body": "Der Skill hat nach dem Frontmatter keine Anweisungen.",
     "skill_body_too_long": "Die Anweisungen sind länger als {{max}} Zeichen; kürze sie, damit sie in den Kontext des Modells passen.",
     "skill_changed_on_disk": "{{name}}/SKILL.md wurde seit dem Öffnen auf der Festplatte geändert. Lade die Datei neu, bevor du speicherst.",
-    "skill_already_exists": "Ein Skill namens {{name}} existiert bereits. Wähle einen anderen Namen."
+    "skill_already_exists": "Ein Skill namens {{name}} existiert bereits. Wähle einen anderen Namen.",
+    "no_archive_folder": "Dieses Konto hat keinen Archivordner. Legen Sie einen Ordner namens „Archive“ an, um E-Mails zu archivieren."
   }
 }

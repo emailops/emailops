@@ -311,6 +311,7 @@ mod tests {
             timestamp: 1_700_000_000,
             is_read: false,
             is_sent,
+            is_starred: false,
             triage_status: None,
             category: "primary".into(),
             mailbox: mailbox.into(),

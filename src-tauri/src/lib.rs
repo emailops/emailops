@@ -170,6 +170,7 @@ macro_rules! app_commands {
             commands::emails::get_email_body,
             commands::emails::mark_as_read,
             commands::emails::delete_email,
+            commands::emails::apply_thread_action,
             commands::emails::send_reply,
             commands::emails::send_new_email,
             commands::emails::generate_draft,

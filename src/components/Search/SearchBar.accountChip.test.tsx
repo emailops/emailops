@@ -53,6 +53,7 @@ function hit(id: string, accountId: string) {
     category: 'primary',
     mailbox: 'inbox',
     isSent: false,
+    isStarred: false,
     relevanceScore: null,
     matchReason: null,
   } as Email & { relevanceScore: null; matchReason: null };

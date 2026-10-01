@@ -50,10 +50,20 @@ pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &s
                  AND LOWER(a.email) = LOWER({prefix}sender_email)))"
             ));
         }
-        "spam" => {
+        "spam" | "archive" => {
             // Flat per-email list scoped to the mailbox, ordered by timestamp.
+            // `archive` is mail taken out of the inbox (Gmail without the
+            // INBOX label, Outlook's Archive folder); an IMAP account files it
+            // in its archive folder instead, which is a `folder:` view.
             conditions.push(format!("{prefix}is_deleted = 0"));
-            conditions.push(format!("{prefix}mailbox = 'spam'"));
+            conditions.push(format!("{prefix}mailbox = '{view}'"));
+        }
+        "starred" => {
+            // Flat per-email list of starred mail wherever it is filed, except
+            // Spam and Trash. Served by idx_emails_starred.
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            conditions.push(format!("{prefix}is_starred = 1"));
+            conditions.push(format!("{prefix}mailbox NOT IN ('spam', 'trash')"));
         }
         v if v.starts_with("folder:") => {
             // Custom IMAP folder view: flat per-email list (no thread dedup,
@@ -1375,6 +1385,79 @@ mod tests {
         );
     }
 
+    fn set_mailbox(db: &Database, id: &str, mailbox: &str) {
+        db.connection()
+            .execute(
+                "UPDATE emails SET mailbox = ?2 WHERE id = ?1",
+                rusqlite::params![id, mailbox],
+            )
+            .unwrap();
+    }
+
+    fn listed_ids(db: &Database, view: &str) -> Vec<String> {
+        db.get_emails(AccountScope::Account("acc1"), 50, 0, None, Some(view), None)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect()
+    }
+
+    #[test]
+    fn archived_mail_leaves_the_inbox_and_has_its_own_view() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        insert_email(&db, "kept", "acc1", "t1", 100);
+        insert_email(&db, "archived", "acc1", "t2", 200);
+        insert_email(&db, "archived-deleted", "acc1", "t3", 300);
+        set_mailbox(&db, "archived", "archive");
+        set_mailbox(&db, "archived-deleted", "archive");
+        db.delete_email("archived-deleted").unwrap();
+
+        assert_eq!(listed_ids(&db, "inbox"), vec!["kept".to_string()]);
+        assert_eq!(listed_ids(&db, "archive"), vec!["archived".to_string()]);
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1"), Some("archive")).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_starred_view_lists_live_starred_mail_outside_spam_and_trash() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "a1@example.com");
+        for (id, ts) in [
+            ("plain", 100),
+            ("starred", 200),
+            ("archived", 300),
+            ("spam", 400),
+            ("gone", 500),
+        ] {
+            insert_email(&db, id, "acc1", &format!("t-{id}"), ts);
+        }
+        db.connection()
+            .execute(
+                "UPDATE emails SET is_starred = 1 WHERE id IN ('starred', 'archived', 'spam', 'gone')",
+                [],
+            )
+            .unwrap();
+        set_mailbox(&db, "archived", "archive");
+        set_mailbox(&db, "spam", "spam");
+        db.delete_email("gone").unwrap();
+
+        assert_eq!(
+            listed_ids(&db, "starred"),
+            vec!["archived".to_string(), "starred".to_string()]
+        );
+        assert_eq!(
+            db.count_emails(AccountScope::Account("acc1"), Some("starred")).unwrap(),
+            2
+        );
+        let listed = db
+            .get_emails(AccountScope::Account("acc1"), 50, 0, None, Some("starred"), None)
+            .unwrap();
+        assert!(listed.iter().all(|e| e.is_starred), "rows carry their star");
+    }
+
     #[test]
     fn count_emails_matches_the_number_of_rows_the_sent_view_lists() {
         // The count and the list must describe the same set — that identity is
@@ -1514,6 +1597,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            is_starred: false,
             headers: None,
         }
     }

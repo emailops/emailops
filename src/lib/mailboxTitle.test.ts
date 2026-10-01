@@ -2,8 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { mailboxTitle } from './mailboxTitle';
 
 const t = (key: string) =>
-  ({ 'sidebar:inbox': 'Inbox', 'sidebar:sent': 'Sent', 'sidebar:spam': 'Spam', 'sidebar:deleted': 'Deleted' })[key] ??
-  key;
+  (
+    ({
+      'sidebar:inbox': 'Inbox',
+      'sidebar:sent': 'Sent',
+      'sidebar:spam': 'Spam',
+      'sidebar:deleted': 'Deleted',
+      'sidebar:starred': 'Starred',
+      'sidebar:archive': 'Archive',
+    }) as Record<string, string>
+  )[key] ?? key;
 
 describe('mailboxTitle', () => {
   it('names the mailbox the user opened, not always Inbox', () => {
@@ -11,6 +19,8 @@ describe('mailboxTitle', () => {
     expect(mailboxTitle('spam', 'Ulises', t)).toBe('Spam — Ulises');
     expect(mailboxTitle('deleted', 'Ulises', t)).toBe('Deleted — Ulises');
     expect(mailboxTitle('inbox', 'Ulises', t)).toBe('Inbox — Ulises');
+    expect(mailboxTitle('starred', 'Ulises', t)).toBe('Starred — Ulises');
+    expect(mailboxTitle('archive', 'Ulises', t)).toBe('Archive — Ulises');
   });
 
   it('uses the folder name for a custom IMAP folder', () => {

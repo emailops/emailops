@@ -1,5 +1,15 @@
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
+import type { MailboxView } from '@/lib/api';
 import type { InboxLayout } from '@/types';
+
+/** Views that list one mailbox (or, for `starred`, one flag) other than the inbox. */
+const MAILBOX_VIEWS: readonly ViewMode[] = ['sent', 'spam', 'deleted', 'starred', 'archive'];
+
+/** The mailbox a list view shows; anything that is not a mailbox view is the inbox. */
+export function viewModeToMailbox(mode: ViewMode): MailboxView {
+  if (MAILBOX_VIEWS.includes(mode) || mode.startsWith('folder:')) return mode as MailboxView;
+  return 'inbox';
+}
 
 export interface ViewChangePlan {
   /** Clear search query, active smart filter, and reset categories to primary. */
@@ -13,7 +23,7 @@ export interface ViewChangePlan {
  * scoped to inbox/sent/spam/deleted/a custom folder.
  */
 export function isEmailListView(mode: ViewMode): boolean {
-  return mode === 'inbox' || mode === 'sent' || mode === 'spam' || mode === 'deleted' || mode.startsWith('folder:');
+  return mode === 'inbox' || MAILBOX_VIEWS.includes(mode) || mode.startsWith('folder:');
 }
 
 /**

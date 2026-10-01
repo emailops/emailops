@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { writeEmailDragPayload } from '@/lib/emailDrag';
 import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
+import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
@@ -153,6 +155,7 @@ export function EmailRow({
             }`}
             aria-hidden="true"
           />
+          <StarToggle email={email} />
           <Avatar name={email.sender} email={email.senderEmail} size="sm" />
           <span
             className={`text-sm truncate w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
@@ -245,6 +248,7 @@ export function EmailRow({
             {accountChip}
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
             <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
+            <StarToggle email={email} />
             <EmailActionsMenu
               email={email}
               onAddSenderFilter={onAddSenderFilter}
@@ -281,6 +285,32 @@ export function EmailRow({
       </div>
       {copyMessage && <div className="mt-2 text-xs text-gray-500 pl-12">{copyMessage}</div>}
     </div>
+  );
+}
+
+/** The row's star: toggles the conversation's star without opening it. */
+function StarToggle({ email }: { email: Email }) {
+  const { t } = useTranslation(['inbox']);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const label = email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star');
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        void setThreadsStarred([threadRefOf(email)], !email.isStarred);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={`flex-shrink-0 p-0.5 rounded transition-colors ${
+        email.isStarred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-300 hover:text-gray-500'
+      }`}
+      title={label}
+      aria-label={label}
+      aria-pressed={email.isStarred}
+      data-testid="star-toggle"
+    >
+      <StarIcon filled={email.isStarred} className="w-4 h-4" />
+    </button>
   );
 }
 

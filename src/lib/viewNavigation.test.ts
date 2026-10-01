@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from './viewNavigation';
+import {
+  baseViewToken,
+  isEmailListView,
+  planAccountSwitchView,
+  planViewChange,
+  viewModeToMailbox,
+} from './viewNavigation';
+
+describe('viewModeToMailbox', () => {
+  it('maps every mailbox-backed view to its mailbox and anything else to the inbox', () => {
+    for (const mode of ['sent', 'spam', 'deleted', 'starred', 'archive', 'folder:Projects'] as const) {
+      expect(viewModeToMailbox(mode)).toBe(mode);
+    }
+    expect(viewModeToMailbox('inbox')).toBe('inbox');
+    expect(viewModeToMailbox('contacts')).toBe('inbox');
+  });
+});
 
 describe('isEmailListView', () => {
   it('recognises every mailbox-backed view', () => {
@@ -7,6 +23,8 @@ describe('isEmailListView', () => {
     expect(isEmailListView('sent')).toBe(true);
     expect(isEmailListView('spam')).toBe(true);
     expect(isEmailListView('deleted')).toBe(true);
+    expect(isEmailListView('starred')).toBe(true);
+    expect(isEmailListView('archive')).toBe(true);
     expect(isEmailListView('folder:Projects/2026')).toBe(true);
   });
 

@@ -162,7 +162,7 @@ pub fn get_filtered_emails(
     limit: i32,
     offset: i32,
 ) -> Result<FilteredEmailsResult> {
-    db.get_filtered_emails(
+    let mut result = db.get_filtered_emails(
         scope_of(account_id),
         domain,
         sender_email,
@@ -172,7 +172,10 @@ pub fn get_filtered_emails(
         window,
         limit,
         offset,
-    )
+    )?;
+    // One row per conversation: its star is the thread's.
+    crate::services::emails::widen_stars_to_threads(db, &mut result.emails)?;
+    Ok(result)
 }
 
 /// Tag types the classifier emits, and the only values `get_tag_stats` accepts.

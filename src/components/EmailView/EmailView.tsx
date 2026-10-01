@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ArchiveIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
@@ -9,7 +10,7 @@ import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest
 import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
-import { useEmailStore } from '@/stores/emailStore';
+import { isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
@@ -111,6 +112,10 @@ export function EmailView({
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const archiveThreads = useEmailStore((s) => s.archiveThreads);
+  const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
   const openAttachmentTab = useEmailStore((s) => s.openAttachmentTab);
   // Chat-generated reply draft waiting for its thread to mount. The chat
   // dispatcher seeds this before navigating; consuming it here is what
@@ -589,6 +594,25 @@ export function EmailView({
                 </svg>
               </button>
             )}
+            <ThreadToolbarActions
+              threadEmails={threadEmails}
+              onArchive={() => {
+                void archiveThreads([threadRefOf(latestEmail)]);
+                onClose();
+              }}
+              onMoveToInbox={() => {
+                void moveThreadsToInbox([threadRefOf(latestEmail)]);
+                onClose();
+              }}
+              onMarkUnread={() => {
+                // Back to the list, like Gmail: staying on the thread would
+                // read it again at once.
+                void setThreadsRead([threadRefOf(latestEmail)], false);
+                onClose();
+              }}
+              onMarkRead={() => void setThreadsRead([threadRefOf(latestEmail)], true)}
+              onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
+            />
             <button
               onClick={async () => {
                 if (!latestEmail) return;
@@ -848,5 +872,70 @@ export function EmailView({
         </div>
       </div>
     </div>
+  );
+}
+
+interface ThreadToolbarActionsProps {
+  threadEmails: Email[];
+  onArchive: () => void;
+  onMoveToInbox: () => void;
+  onMarkUnread: () => void;
+  onMarkRead: () => void;
+  onToggleStar: (starred: boolean) => void;
+}
+
+/** Archive (or move back to the inbox), read/unread and star for the open
+ *  conversation. Failures are reported by the store (toast + log). */
+function ThreadToolbarActions({
+  threadEmails,
+  onArchive,
+  onMoveToInbox,
+  onMarkUnread,
+  onMarkRead,
+  onToggleStar,
+}: ThreadToolbarActionsProps) {
+  const { t } = useTranslation(['inbox']);
+  const starred = isThreadStarred(threadEmails);
+  const unread = isThreadUnread(threadEmails);
+  const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
+  const archived = !inInbox && threadEmails.some((e) => e.mailbox === 'archive');
+  const buttonClass = 'p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors';
+  return (
+    <>
+      {inInbox && (
+        <button onClick={onArchive} className={buttonClass} title={t('inbox:emailView.archive')}>
+          <ArchiveIcon className="w-4 h-4" />
+        </button>
+      )}
+      {archived && (
+        <button onClick={onMoveToInbox} className={buttonClass} title={t('inbox:emailView.moveToInbox')}>
+          <InboxIcon className="w-4 h-4" />
+        </button>
+      )}
+      <button
+        onClick={unread ? onMarkRead : onMarkUnread}
+        className={buttonClass}
+        title={unread ? t('inbox:emailView.markAsRead') : t('inbox:emailView.markAsUnread')}
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          />
+        </svg>
+      </button>
+      <button
+        onClick={() => onToggleStar(!starred)}
+        className={`p-1.5 rounded transition-colors hover:bg-gray-100 ${
+          starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-400 hover:text-gray-600'
+        }`}
+        title={starred ? t('inbox:emailView.unstar') : t('inbox:emailView.star')}
+        aria-pressed={starred}
+      >
+        <StarIcon filled={starred} className="w-4 h-4" />
+      </button>
+    </>
   );
 }

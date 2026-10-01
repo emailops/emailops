@@ -257,13 +257,7 @@ pub async fn move_email(
             email.id.clone()
         }
     };
-    // If a concurrent sync already ingested the moved message under its new
-    // id, re-keying would collide — drop our stale source row instead.
-    if new_id != email.id && db.get_email(&new_id)?.is_some() {
-        db.hard_delete_email(&email.id)?;
-    } else {
-        db.migrate_email_id(&email.id, &new_id, &new_mailbox)?;
-    }
+    refile_moved_row(db, &email.id, &new_id, &new_mailbox)?;
 
     logger::log(
         "info",
@@ -271,6 +265,18 @@ pub async fn move_email(
         format!("[{}] Moved email to {}", account.email, new_mailbox),
     );
     Ok(())
+}
+
+/// File a row the provider just moved under its new id and mailbox. If a
+/// concurrent sync already ingested the moved message under its new id,
+/// re-keying would collide — the stale source row is dropped instead. Shared
+/// by folder moves, archive and move-to-inbox.
+pub(super) fn refile_moved_row(db: &Database, old_id: &str, new_id: &str, new_mailbox: &str) -> Result<()> {
+    if new_id != old_id && db.get_email(new_id)?.is_some() {
+        db.hard_delete_email(old_id)
+    } else {
+        db.migrate_email_id(old_id, new_id, new_mailbox)
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +353,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }
