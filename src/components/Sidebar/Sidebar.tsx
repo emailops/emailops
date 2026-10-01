@@ -96,6 +96,8 @@ interface SidebarProps {
    *  (Settings → Calendar) — the Calendar entry is hidden otherwise. */
   calendarEnabled: boolean;
   onSelectLens: (lensId: string) => void;
+  /** Width in pixels (resizable layout). Omitted: the original fixed 256px. */
+  width?: number;
 }
 
 export function Sidebar({
@@ -133,6 +135,7 @@ export function Sidebar({
   skillsEnabled,
   calendarEnabled,
   onSelectLens,
+  width,
 }: SidebarProps) {
   const { counts } = useMemoryStore();
   const tasksBadge = counts.totalOpen + counts.awaitingThem;
@@ -271,7 +274,10 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col">
+    <aside
+      className={`${width === undefined ? 'w-64' : ''} flex-shrink-0 bg-gray-900 text-white flex flex-col`}
+      style={width === undefined ? undefined : { width }}
+    >
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
           <div>
