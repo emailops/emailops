@@ -434,7 +434,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             onBlur={() => setTimeout(() => setActiveField(null), 200)}
             onKeyDown={(e) => handleKeyDown(field, e, input)}
             className="w-full text-sm outline-none bg-transparent py-0.5"
-            placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
+            placeholder={recipients.length === 0 ? t('compose:recipientsPlaceholder') : ''}
           />
           {activeField === field && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">

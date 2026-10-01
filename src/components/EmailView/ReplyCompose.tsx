@@ -393,7 +393,7 @@ export function ReplyCompose({
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                 isUnusual ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-gray-100 text-gray-700'
               }`}
-              title={isUnusual ? 'Different domain than other recipients' : r}
+              title={isUnusual ? t('compose:unusualDomain') : r}
             >
               {r}
               <button
@@ -423,7 +423,7 @@ export function ReplyCompose({
             onBlur={() => setTimeout(() => setActiveField(null), 200)}
             onKeyDown={(e) => handleKeyDown(field, e, input)}
             className="w-full text-sm outline-none bg-transparent py-0.5"
-            placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
+            placeholder={recipients.length === 0 ? t('compose:recipientsPlaceholder') : ''}
           />
           {activeField === field && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
@@ -524,7 +524,7 @@ export function ReplyCompose({
           value={bodyHtml}
           onChange={setBodyHtml}
           disabled={isLoadingDraft}
-          placeholder={isLoadingDraft ? 'Generating draft…' : 'Write your reply...'}
+          placeholder={isLoadingDraft ? t('compose:generatingDraft') : t('compose:replyPlaceholder')}
           contentClassName="min-h-[180px] max-h-[40vh] overflow-y-auto"
         />
         {isLoadingDraft && (
