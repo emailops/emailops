@@ -2021,6 +2021,17 @@ You already have all the information you need in the tool results above. Do NOT 
 <tool_call> markup. Answer the user's question NOW using only that information; if something is missing, \
 answer with what you have.";
 
+/// [`SYNTHESIS_CLOSING_INSTRUCTION`] when the context budget cut a tool result
+/// of the turn: the model has not seen everything, so claiming it has makes it
+/// present a partial result as whole and call what was cut absent.
+const SYNTHESIS_CLOSING_INSTRUCTION_AFTER_CUT: &str =
+    "Algún resultado de las tools anteriores se cortó para caber en la ventana de contexto. \
+NO llames a ninguna tool más ni escribas etiquetas <tool_call>. Responde AHORA a la pregunta del usuario \
+con lo que se ve; si la respuesta podría estar en la parte cortada, dile al usuario que se cortó, nunca que no aparece.\n\n\
+Some tool results above were cut to fit the context window. Do NOT call any more tools or emit \
+<tool_call> markup. Answer the user's question NOW from what is shown; if the answer may be in the cut part, \
+tell the user it was cut, never that it is absent.";
+
 /// Corrective instruction for the ONE retry after the synthesis stream came
 /// back empty — the model answered the tools-free synthesis pass with nothing
 /// but tool-call markup that the gate/strip removed, so
@@ -2282,9 +2293,17 @@ fn plan_answer(mut final_messages: Vec<AiMessage>) -> AnswerPlan {
     } else {
         // Force a prose answer from the gathered results instead of another
         // `<tool_call>` (which the synthesis gate would strip to empty).
+        let any_cut = final_messages
+            .iter()
+            .any(|m| m.role == "tool" && super::budget::is_cut_tool_result(&m.content));
+        let closing = if any_cut {
+            SYNTHESIS_CLOSING_INSTRUCTION_AFTER_CUT
+        } else {
+            SYNTHESIS_CLOSING_INSTRUCTION
+        };
         final_messages.push(AiMessage {
             role: "user".to_string(),
-            content: SYNTHESIS_CLOSING_INSTRUCTION.to_string(),
+            content: closing.to_string(),
             tool_calls: None,
         });
         AnswerPlan::StreamSynthesis(final_messages)
@@ -6211,6 +6230,25 @@ mod tests {
                 assert_eq!(last.role, "user");
                 assert!(last.content.to_lowercase().contains("tool"));
                 assert!(last.tool_calls.is_none());
+            }
+            AnswerPlan::DirectText(_) => panic!("a run that ended on a tool result needs synthesis"),
+        }
+    }
+
+    #[test]
+    fn plan_answer_never_claims_complete_information_after_a_cut_result() {
+        // A tool result the context budget cut: telling the model it has "all
+        // the information" right after the cut note made it list a partial
+        // body as complete and call a fact in the cut part absent.
+        let mut assistant = ai_msg("assistant", "");
+        assistant.tool_calls = Some(vec![ai_tool_call("get_email_body")]);
+        let cut = super::super::budget::cut_tool_result(&"x".repeat(5_000), 2_000);
+        let messages = vec![ai_msg("user", "list the sections"), assistant, ai_msg("tool", &cut)];
+        match plan_answer(messages) {
+            AnswerPlan::StreamSynthesis(out) => {
+                let closing = &out.last().expect("closing instruction").content;
+                assert!(!closing.contains("all the information"), "{closing}");
+                assert!(closing.contains("cut"), "{closing}");
             }
             AnswerPlan::DirectText(_) => panic!("a run that ended on a tool result needs synthesis"),
         }

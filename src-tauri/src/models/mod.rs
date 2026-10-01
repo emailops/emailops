@@ -1228,9 +1228,16 @@ pub enum BudgetCut {
     /// Retrieved emails left out of this turn's prompt.
     #[serde(rename_all = "camelCase")]
     SourcesDropped { emails: u32 },
-    /// Tool results of this turn, shortened.
+    /// Tool results of this turn, shortened. `kept_chars` is the shortest
+    /// length a result was cut to (before its note); `None` on traces written
+    /// before it was recorded.
     #[serde(rename_all = "camelCase")]
-    ToolResults { results: u32, chars_dropped: u32 },
+    ToolResults {
+        results: u32,
+        chars_dropped: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kept_chars: Option<u32>,
+    },
 }
 
 impl BudgetCut {

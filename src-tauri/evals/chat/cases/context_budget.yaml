@@ -10,14 +10,17 @@
 - id: budget_long_digest_fact_8k
   # One long email at the 8k tier a machine under 16 GB gets: the full system
   # prompt alone does not fit that window, so this exercises the compact
-  # prefix and, when the model reads the body, a cut tool result.
+  # prefix and, when the model reads the body, a cut tool result. The fact
+  # sits in a late section, which the cut can drop: then the answer says the
+  # email was cut, never that the fact is not there.
   question: "What does Indie Infra Weekly #87 say about max_wal_size?"
   account: "ulises@emailopslabs.dev"
   category: context_budget
   tier: full
   n_ctx: 8192
-  expected_answer_contains_any: ["8GB", "8 GB"]
-  expected_output: "Issue #87 of Indie Infra Weekly says to raise max_wal_size to 8GB before a bulk import on Postgres 18 and put it back afterwards, because the default forces a checkpoint every few seconds. The answer links the email."
+  expected_answer_contains_any: ["8GB", "8 GB", "cut"]
+  expected_answer_not_contains: ["does not mention", "doesn't mention", "not mentioned", "no menciona"]
+  expected_output: "Issue #87 of Indie Infra Weekly says to raise max_wal_size to 8GB before a bulk import on Postgres 18 and put it back afterwards, because the default forces a checkpoint every few seconds. When the email was cut to fit the context window before that section, the answer says the part it could read does not cover max_wal_size and that the rest was cut, without claiming the email never mentions it. The answer links the email."
   metrics:
     - answer_relevancy
     - faithfulness
