@@ -2986,3 +2986,19 @@ together with a real dark mode.
 (`Select` variant `dark`, gray-100 text, `#333` inputs) would sit unreadable on white.
 `darkMode: 'class'` / an `@custom-variant dark` — a no-op today, since nothing uses the
 variant; the guard test states the invariant more directly.
+
+## 2026-10-01 — The demo DB's schema comes from the checkout's own migrations
+
+**Decision:** `scripts/generate_demo_db.py` builds the demo DB schema by running the app's
+migration runner on a scratch data dir (the `init_db` cargo example, `Database::new`)
+and copying the result in with SQLite's backup API. The developer's production DB is read
+for schema only when `--prod-db PATH` asks for it. `scripts/ensure_demo_db.sh` rebuilds
+the demo DB when a migration file is newer than it or its schema version is behind the
+newest `V*.sql`.
+**Context:** The generator used to copy `sqlite_master` and `refinery_schema_history`
+from the production DB, which lags behind any branch that adds a migration; every
+verification run on such a branch needed the schema patched by hand.
+**Rejected:** Applying `src-tauri/migrations/*.sql` from Python — V001 creates vec0 tables
+(needs sqlite-vec loaded in Python), and refinery verifies a checksum of every applied
+migration on open, so Python would have to re-implement refinery's hashing. The CLI's
+`doctor` — read-only by design, and its bootstrap touches the keychain.
