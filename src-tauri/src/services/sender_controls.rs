@@ -188,6 +188,15 @@ pub async fn unblock_sender(
         };
         tally(&mut report, outcome, account, "bring a message back from spam");
     }
+    // Mail a refused block left in place (provider offline, no Junk folder)
+    // carries only the local junk mark: forget it, no provider needed.
+    let left_in_place = db.email_ids_from_sender_in(&account.id, &address, BLOCK_SWEEPS, MAX_EXISTING_MOVES)?;
+    let marked = db.get_junk_verdicts_batch(&left_in_place)?;
+    for id in &left_in_place {
+        if marked.get(id).and_then(|v| v.user_override.as_deref()) == Some("junk") {
+            junk::clear_feedback(db, &account.id, id)?;
+        }
+    }
     log_report(account, &address, "Moved back to the inbox", &report);
     Ok(report)
 }
@@ -502,6 +511,69 @@ mod tests {
         assert_eq!(caught, 1);
         assert_eq!(db.get_email("new").unwrap().unwrap().mailbox, "inbox");
         assert_eq!(override_of(&db, "new").as_deref(), Some("junk"));
+    }
+
+    // A block the provider refused (offline, or no Junk folder) leaves the
+    // sender's mail in the inbox, marked junk here only. Unblocking with
+    // "bring their mail back" must forget that mark too, or the messages stay
+    // junk with no block left to explain it.
+    #[tokio::test]
+    async fn unblocking_forgets_the_junk_mark_on_mail_a_failed_block_left_in_place() {
+        let (db, _provider) = setup(&[message("m1", "deals@shop.example", "inbox")]);
+        let offline = AppError::SyncError("offline".into());
+        block_sender(
+            &db,
+            &account(),
+            "deals@shop.example",
+            true,
+            ProviderAccess::Unreachable(&offline),
+            100,
+        )
+        .await
+        .unwrap();
+        assert_eq!(override_of(&db, "m1").as_deref(), Some("junk"));
+
+        let report = unblock_sender(
+            &db,
+            &account(),
+            "deals@shop.example",
+            true,
+            ProviderAccess::Unreachable(&offline),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.failed, 0, "nothing needed the provider");
+        assert_eq!(override_of(&db, "m1"), None, "the block's junk mark is forgotten");
+        assert_eq!(db.get_email("m1").unwrap().unwrap().mailbox, "inbox");
+    }
+
+    #[tokio::test]
+    async fn unblocking_without_restore_keeps_the_junk_mark_in_place() {
+        let (db, _provider) = setup(&[message("m1", "deals@shop.example", "inbox")]);
+        let offline = AppError::SyncError("offline".into());
+        block_sender(
+            &db,
+            &account(),
+            "deals@shop.example",
+            true,
+            ProviderAccess::Unreachable(&offline),
+            100,
+        )
+        .await
+        .unwrap();
+
+        unblock_sender(
+            &db,
+            &account(),
+            "deals@shop.example",
+            false,
+            ProviderAccess::Unreachable(&offline),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(override_of(&db, "m1").as_deref(), Some("junk"));
     }
 
     #[tokio::test]
