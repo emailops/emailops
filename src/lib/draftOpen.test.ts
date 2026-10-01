@@ -6,11 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Draft } from '@/types';
 
 const refreshDrafts = vi.fn((_accountId: string) => Promise.resolve(0));
-const getDraft = vi.fn((_draftId: string) => Promise.resolve(null as Draft | null));
+const getDraft = vi.fn((_accountId: string, _draftId: string) => Promise.resolve(null as Draft | null));
 
 vi.mock('@/lib/api', () => ({
   refreshDrafts: (accountId: string) => refreshDrafts(accountId),
-  getDraft: (draftId: string) => getDraft(draftId),
+  getDraft: (accountId: string, draftId: string) => getDraft(accountId, draftId),
 }));
 
 const { freshDraftToOpen } = await import('./draftOpen');
@@ -41,7 +41,7 @@ describe('freshDraftToOpen', () => {
     const opened = await freshDraftToOpen(draft('Stale'));
 
     expect(refreshDrafts).toHaveBeenCalledWith('acc-1');
-    expect(getDraft).toHaveBeenCalledWith('d-1');
+    expect(getDraft).toHaveBeenCalledWith('acc-1', 'd-1');
     expect(opened.subject).toBe('Edited in Gmail');
   });
 

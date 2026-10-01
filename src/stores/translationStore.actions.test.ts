@@ -50,7 +50,7 @@ describe('translationStore.detect', () => {
   it('records the request id of a started detection', async () => {
     api.detectEmailLanguage.mockResolvedValue('req-1');
 
-    await useTranslationStore.getState().detect('e1');
+    await useTranslationStore.getState().detect('acct-1', 'e1');
 
     expect(useTranslationStore.getState().pendingDetect).toEqual({ e1: 'req-1' });
   });
@@ -61,8 +61,8 @@ describe('translationStore.detect', () => {
       pendingDetect: { e2: '' },
     });
 
-    await useTranslationStore.getState().detect('e1');
-    await useTranslationStore.getState().detect('e2');
+    await useTranslationStore.getState().detect('acct-1', 'e1');
+    await useTranslationStore.getState().detect('acct-1', 'e2');
 
     expect(api.detectEmailLanguage).not.toHaveBeenCalled();
   });
@@ -70,7 +70,7 @@ describe('translationStore.detect', () => {
   it('releases the slot and logs at debug level when detection is unavailable', async () => {
     api.detectEmailLanguage.mockRejectedValue(new Error('AI disabled'));
 
-    await useTranslationStore.getState().detect('e1');
+    await useTranslationStore.getState().detect('acct-1', 'e1');
 
     expect(useTranslationStore.getState().pendingDetect).toEqual({});
     expect(addLog).toHaveBeenCalledWith('debug', 'ai', expect.stringContaining('AI disabled'));
@@ -82,7 +82,7 @@ describe('translationStore.translate', () => {
     useTranslationStore.setState({ errorByEmail: { e1: 'old failure' } });
     api.translateEmail.mockResolvedValue('req-7');
 
-    await useTranslationStore.getState().translate('e1');
+    await useTranslationStore.getState().translate('acct-1', 'e1');
 
     const s = useTranslationStore.getState();
     expect(s.pendingTranslate).toEqual({ e1: 'req-7' });
@@ -94,7 +94,7 @@ describe('translationStore.translate', () => {
       translations: { e1: { text: 'Hola', targetLanguage: 'Spanish', truncated: false } },
     });
 
-    await useTranslationStore.getState().translate('e1');
+    await useTranslationStore.getState().translate('acct-1', 'e1');
 
     expect(api.translateEmail).not.toHaveBeenCalled();
     expect(useTranslationStore.getState().showTranslated.e1).toBe(true);
@@ -103,7 +103,7 @@ describe('translationStore.translate', () => {
   it('ignores a second request while one is in flight', async () => {
     useTranslationStore.setState({ pendingTranslate: { e1: '' } });
 
-    await useTranslationStore.getState().translate('e1');
+    await useTranslationStore.getState().translate('acct-1', 'e1');
 
     expect(api.translateEmail).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe('translationStore.translate', () => {
   it('keeps the failure on the email and logs it when the translation cannot start', async () => {
     api.translateEmail.mockRejectedValue(new Error('model not loaded'));
 
-    await useTranslationStore.getState().translate('e1');
+    await useTranslationStore.getState().translate('acct-1', 'e1');
 
     const s = useTranslationStore.getState();
     expect(s.pendingTranslate).toEqual({});

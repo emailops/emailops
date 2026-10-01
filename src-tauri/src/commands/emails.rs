@@ -158,14 +158,26 @@ pub async fn get_email_body(
 }
 
 #[tauri::command]
-pub async fn mark_as_read(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+pub async fn mark_as_read(
+    state: State<'_, AppState>,
+    account_id: String,
+    app: AppHandle,
+    email_id: String,
+) -> Result<(), AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     services::emails::mark_as_read(&state.db, &email_id, Some(app)).await?;
     services::tasks::on_email_read(&state.db, &email_id);
     Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_email(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
+pub async fn delete_email(
+    state: State<'_, AppState>,
+    account_id: String,
+    app: AppHandle,
+    email_id: String,
+) -> Result<(), AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     // Memory is logged only once the delete actually succeeded (including at
     // the provider). `on_archived` reads the row by id, which a soft delete
     // leaves in place, so running it afterwards still resolves thread/account.
@@ -315,9 +327,11 @@ struct DraftFailedEvent {
 pub async fn generate_draft(
     app: AppHandle,
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
     instructions: Option<String>,
 ) -> Result<String, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     // Hard gate: respect both the master AI switch and the per-feature
     // `ai_drafts_enabled` preference so a user who disabled drafts in
     // Settings cannot still trigger a generation via the keyboard.
@@ -461,7 +475,13 @@ pub async fn generate_new_draft(
 }
 
 #[tauri::command]
-pub async fn redownload_email(app: AppHandle, state: State<'_, AppState>, email_id: String) -> Result<Email, AppError> {
+pub async fn redownload_email(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+) -> Result<Email, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     services::emails::redownload_email(&state.db, &email_id, &state.app_data_dir, app).await
 }
 

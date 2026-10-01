@@ -62,7 +62,7 @@ export function ThreadEmailItem({
   useEffect(() => {
     if (!isExpanded || !body) return;
     if (!aiEnabled || !translationEnabled) return;
-    void useTranslationStore.getState().detect(email.id);
+    void useTranslationStore.getState().detect(email.accountId, email.id);
   }, [isExpanded, body, aiEnabled, translationEnabled, email.id]);
 
   const translation = useTranslationStore((s) => s.translations[email.id]);
@@ -158,7 +158,7 @@ export function ThreadEmailItem({
             {/* Above everything else in the message: a warning about what the
                 message IS has to be read before the message itself. */}
             <JunkBanner emailId={email.id} accountId={email.accountId} />
-            {translationEnabled && aiEnabled && <TranslationControls emailId={email.id} />}
+            {translationEnabled && aiEnabled && <TranslationControls accountId={email.accountId} emailId={email.id} />}
             {showTranslated && translation ? (
               <TranslatedEmailBody
                 text={translation.text}

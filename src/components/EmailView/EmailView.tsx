@@ -201,7 +201,7 @@ export function EmailView({
     addLog('info', 'ai', instructions ? 'Requesting AI draft with instructions…' : 'Requesting AI draft…');
     draftTrackerRef.current.begin();
     try {
-      const requestId = await api.generateDraft(target.id, instructions || null);
+      const requestId = await api.generateDraft(target.accountId, target.id, instructions || null);
       const early = draftTrackerRef.current.resolve(requestId);
       if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
@@ -596,7 +596,7 @@ export function EmailView({
                 addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
                 try {
                   for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.id);
+                    await deleteEmailFromStore(email.accountId, email.id);
                   }
                   addLog('success', 'sync', 'Thread deleted');
                   onClose();

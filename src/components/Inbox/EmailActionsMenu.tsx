@@ -374,7 +374,7 @@ export function EmailActionsMenu({
                     setMenuOpen(false);
                     onStatus('Downloading...');
                     try {
-                      const updated = await api.redownloadEmail(email.id);
+                      const updated = await api.redownloadEmail(email.accountId, email.id);
                       updateEmail(updated);
                       onStatus('Downloaded');
                     } catch {
@@ -429,7 +429,7 @@ export function EmailActionsMenu({
                     try {
                       const thread = await api.getThread(email.accountId, email.threadId);
                       for (const t of thread) {
-                        await deleteEmailFromStore(t.id);
+                        await deleteEmailFromStore(t.accountId, t.id);
                       }
                     } catch (err) {
                       // Deleting now also removes the message at the provider,
