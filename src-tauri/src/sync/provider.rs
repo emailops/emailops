@@ -561,6 +561,14 @@ pub trait EmailProvider: Send + Sync {
         Ok(None)
     }
 
+    /// The signature the provider's own web client inserts when sending from
+    /// `email` (Gmail's "Send mail as" signature), as HTML. `None` when the
+    /// provider keeps none in its API (Graph does not expose Outlook's, IMAP
+    /// has none) or none is set.
+    async fn get_signature(&self, _email: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     // ── Folder management ─────────────────────────────────────────────────
     //
     // IMAP-only in v1: only the IMAP adapter overrides these; callers gate
@@ -881,6 +889,8 @@ pub struct FakeEmailProvider {
     /// When `Some`, `send_reply` / `send_new_email` fail with this message and
     /// record nothing — a provider refusing the send (5xx, offline).
     send_failure: std::sync::RwLock<Option<String>>,
+    /// What `get_signature` answers for the profile address.
+    signature: std::sync::RwLock<Option<String>>,
 }
 
 /// The change log of a [`FakeEmailProvider`] modelling Gmail.
@@ -1016,6 +1026,7 @@ impl FakeEmailProvider {
             label_fetch_failure: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
             send_failure: std::sync::RwLock::new(None),
+            signature: std::sync::RwLock::new(None),
         }
     }
 
@@ -1087,6 +1098,11 @@ impl FakeEmailProvider {
     }
 
     /// Make every send fail with `message` (`Some`), or succeed again (`None`).
+    /// Set the provider-side signature `get_signature` reports.
+    pub fn set_signature(&self, html: Option<&str>) {
+        *self.signature.write().unwrap_or_else(PoisonError::into_inner) = html.map(str::to_string);
+    }
+
     pub fn fail_sends(&self, message: Option<&str>) {
         *self.send_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
     }
@@ -1333,6 +1349,13 @@ use std::sync::PoisonError;
 impl EmailProvider for FakeEmailProvider {
     async fn get_profile(&self) -> Result<(String, String)> {
         Ok((self.profile_email.clone(), self.profile_name.clone()))
+    }
+
+    async fn get_signature(&self, email: &str) -> Result<Option<String>> {
+        if !email.eq_ignore_ascii_case(&self.profile_email) {
+            return Ok(None);
+        }
+        Ok(self.signature.read().unwrap_or_else(PoisonError::into_inner).clone())
     }
 
     /// Paginated, like every real provider: `page_token` is the offset into the

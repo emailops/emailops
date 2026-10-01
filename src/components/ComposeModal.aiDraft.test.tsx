@@ -28,9 +28,17 @@ vi.mock('@/lib/api', () => ({
   deleteDraft: vi.fn(async () => {}),
   sendNewEmail: vi.fn(async () => {}),
   generateNewDraft: vi.fn(),
+  getAccountSignature: vi.fn(async (accountId: string) => ({
+    accountId,
+    html: '',
+    useForNew: true,
+    useForReplies: true,
+    updatedAt: null,
+  })),
 }));
 
 import * as api from '@/lib/api';
+import { useSignatureStore } from '@/stores/signatureStore';
 import type { Account } from '@/types';
 import { ComposeModal } from './ComposeModal';
 
@@ -50,6 +58,7 @@ afterEach(() => {
   container.remove();
   vi.clearAllMocks();
   handlers.clear();
+  useSignatureStore.setState({ byAccount: {} });
 });
 
 async function typeInto(input: HTMLInputElement, value: string) {
@@ -88,5 +97,62 @@ describe('ComposeModal AI draft', () => {
 
     // Not generating any more: the button is usable again.
     expect(draftButton()?.disabled).toBe(false);
+  });
+
+  it('inserts the signature and lands the AI draft above it, out of the brief', async () => {
+    vi.mocked(api.getAccountSignature).mockResolvedValueOnce({
+      accountId: 'a1',
+      html: '<p>Ana Lopez</p>',
+      useForNew: true,
+      useForReplies: true,
+      updatedAt: 1,
+    });
+    vi.mocked(api.generateNewDraft).mockResolvedValue('r2');
+    await act(async () => {
+      root.render(
+        <ComposeModal
+          accounts={[account]}
+          defaultAccountId="a1"
+          defaultToRecipients={['bob@example.com']}
+          onClose={() => {}}
+        />,
+      );
+    });
+    const body = () => document.querySelector('[data-testid="body"]')?.textContent ?? '';
+    expect(body()).toContain('<div data-emailops-signature=""><p>Ana Lopez</p></div>');
+
+    const subject = document.querySelector<HTMLInputElement>('input[placeholder="compose:subjectPlaceholderLong"]');
+    if (!subject) throw new Error('subject not rendered');
+    await typeInto(subject, 'Quarterly numbers');
+    await act(async () => {
+      draftButton()?.click();
+    });
+    // The signature is not part of the brief the model drafts from.
+    expect(vi.mocked(api.generateNewDraft).mock.calls[0]?.[3]).toBeNull();
+
+    await act(async () => {
+      handlers.get('draft-generated')?.({ payload: { requestId: 'r2', emailId: '', body: 'Dear Bob,', sources: [] } });
+    });
+    const html = body();
+    expect(html.indexOf('Dear Bob,')).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf('Dear Bob,')).toBeLessThan(html.indexOf('Ana Lopez'));
+    expect(html.match(/data-emailops-signature/g)).toHaveLength(1);
+  });
+
+  it('does not save a draft for a composer holding only its signature', async () => {
+    vi.mocked(api.getAccountSignature).mockResolvedValueOnce({
+      accountId: 'a1',
+      html: '<p>Ana Lopez</p>',
+      useForNew: true,
+      useForReplies: true,
+      updatedAt: 1,
+    });
+    await act(async () => {
+      root.render(<ComposeModal accounts={[account]} defaultAccountId="a1" onClose={() => {}} />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+    expect(api.saveDraft).not.toHaveBeenCalled();
   });
 });

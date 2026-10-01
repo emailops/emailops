@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Apparence",
     "appearanceDesc": "Disposition de la boîte de réception",
+    "signatures": "Signatures",
+    "signaturesDesc": "Signature de chaque compte",
     "calendar": "Calendrier",
     "calendarDesc": "Comptes et notifications de réunion",
     "ai": "IA : backend et modèles",
@@ -579,5 +581,25 @@
       "deleteYes": "Supprimer",
       "deleteNo": "Annuler"
     }
+  },
+  "signatures": {
+    "title": "Signatures",
+    "help": "Ajoutée aux messages que vous écrivez depuis chaque compte. Vous pouvez toujours la modifier ou la supprimer dans un message.",
+    "account": "Compte",
+    "editorPlaceholder": "Votre nom, fonction, téléphone…",
+    "useForNew": "Insérer dans les nouveaux messages",
+    "useForReplies": "Insérer dans les réponses et transferts",
+    "placementHelp": "Dans une réponse, la signature se place sous votre texte ; dans un transfert, au-dessus du message transféré.",
+    "imagesHelp": "Les images collées voyagent dans chaque message. Gardez-les légères : 512 Ko au maximum au total.",
+    "save": "Enregistrer la signature",
+    "saving": "Enregistrement…",
+    "saved": "Signature enregistrée",
+    "discard": "Annuler les modifications",
+    "importGmail": "Importer depuis Gmail",
+    "importing": "Importation…",
+    "imported": "La signature Gmail est dans l’éditeur. Enregistrez-la pour l’utiliser ici.",
+    "importNone": "Cette adresse n’a pas de signature dans Gmail.",
+    "noAccounts": "Connectez un compte pour définir sa signature.",
+    "loadFailed": "Impossible de charger la signature. Les détails sont dans le panneau de sortie."
   }
 }

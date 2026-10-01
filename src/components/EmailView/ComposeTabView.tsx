@@ -5,6 +5,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
@@ -24,6 +25,7 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
+import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
@@ -53,6 +55,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [fromAccountId, setFromAccountId] = useState(tab.accountId);
   const [subject, setSubject] = useState(tab.subject);
   const [bodyHtml, setBodyHtml] = useState(tab.bodyHtml);
+  // A tab opened on a new message gets the From account's signature; one
+  // carrying an existing body (a draft, the outbox, a maximized composer)
+  // already has it and only swaps it when the account changes.
+  useComposerSignature({
+    accountId: fromAccountId,
+    kind: 'new',
+    insertOnOpen: tab.insertSignature === true,
+    setBodyHtml,
+  });
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -143,7 +154,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) return;
+    // A body holding only the inserted signature is not something to save.
+    const typed = { ...state, plainBody: prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText };
+    if (!shouldAutosaveDraft(typed)) return;
     const handle = window.setTimeout(() => void autosaverRef.current?.save(state), 800);
     return () => window.clearTimeout(handle);
   }, [
@@ -232,7 +245,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
       return;
     }
-    setBodyHtml(plainTextToHtml(outcome.event.body));
+    const draft = plainTextToHtml(outcome.event.body);
+    setBodyHtml((current) => replaceBodyKeepingSignature(current, draft, 'new'));
     addLog('success', 'ai', 'AI draft ready');
   };
 
@@ -263,7 +277,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const to = mergePendingRecipient(toRecipients, toInput);
     if (to.length === 0 || !subject.trim()) return;
     // Whatever is already typed becomes the freeform brief for the model.
-    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    const brief = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim();
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
     draftTrackerRef.current.begin();

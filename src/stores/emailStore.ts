@@ -402,6 +402,9 @@ export interface ComposeTab {
   /** The message this tab replies to (a reply draft, or a reply taken back
    *  from the outbox): it is sent as a reply, threaded on that message. */
   replyToEmailId?: string;
+  /** A new message opened straight in a tab (mailto link, chat): insert the
+   *  From account's signature. Unset for a body that already exists. */
+  insertSignature?: boolean;
 }
 
 export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
@@ -464,6 +467,7 @@ interface EmailStore {
       attachments?: DraftAttachment[];
       fileAttachments?: EmailAttachment[];
       replyToEmailId?: string;
+      insertSignature?: boolean;
     },
   ) => void;
   closeTab: (tabId: string) => void;
@@ -699,6 +703,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       attachments: opts?.attachments,
       fileAttachments: opts?.fileAttachments,
       replyToEmailId: opts?.replyToEmailId,
+      insertSignature: opts?.insertSignature,
     };
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: id }));
   },

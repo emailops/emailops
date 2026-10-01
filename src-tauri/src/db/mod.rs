@@ -24,6 +24,7 @@ pub mod help_docs;
 pub mod lenses;
 pub mod memory;
 pub mod outbox;
+pub mod signatures;
 pub mod tags;
 pub mod trusted_senders;
 
@@ -1238,6 +1239,7 @@ mod schema_parity_tests {
             "attachment_rule_suggestions",
             "folder_uid_validity",
             "thread_snoozes",
+            "account_signatures",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

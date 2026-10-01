@@ -6,6 +6,7 @@ import type {
   Account,
   AccountDashboard,
   AccountSettings,
+  AccountSignature,
   AiConfig,
   AiModelInfo,
   AiProviderActivity,
@@ -68,6 +69,7 @@ import type {
   RefreshServerTotalResponse,
   ResearchEstimate,
   SendChatResponse,
+  SignatureInput,
   SmartFilterPref,
   SmartFilterSuggestion,
   StorageStats,
@@ -217,6 +219,22 @@ export async function getAccountSettings(accountId: string): Promise<AccountSett
 
 export async function setAccountSettings(accountId: string, settings: AccountSettings): Promise<void> {
   return invoke('set_account_settings', { accountId, settings });
+}
+
+/** The account's email signature (defaults when it never saved one). */
+export async function getAccountSignature(accountId: string): Promise<AccountSignature> {
+  return invoke('get_account_signature', { accountId });
+}
+
+/** Save the account's signature; the backend sanitizes the HTML and returns what it stored. */
+export async function saveAccountSignature(accountId: string, signature: SignatureInput): Promise<AccountSignature> {
+  return invoke('save_account_signature', { accountId, signature });
+}
+
+/** The signature Gmail's own client uses for this account, sanitized and not
+ *  saved. `null` when the provider keeps none (Outlook, IMAP) or none is set. */
+export async function importProviderSignature(accountId: string): Promise<string | null> {
+  return invoke('import_provider_signature', { accountId });
 }
 
 /** Inbox category tabs to show for the given account. Provider-aware:

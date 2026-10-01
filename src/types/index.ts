@@ -17,6 +17,25 @@ export interface AccountSettings {
   autoDownloadAttachmentCategories: string[];
 }
 
+/** An account's email signature (Rust `AccountSignature`). `html` is the
+ *  sanitized signature; empty means none. `updatedAt` is null until saved. */
+export interface AccountSignature {
+  accountId: string;
+  html: string;
+  /** Insert it when composing a new message. */
+  useForNew: boolean;
+  /** Insert it when replying to or forwarding a message. */
+  useForReplies: boolean;
+  updatedAt: number | null;
+}
+
+/** What the signature editor saves (Rust `SignatureInput`). */
+export interface SignatureInput {
+  html: string;
+  useForNew: boolean;
+  useForReplies: boolean;
+}
+
 export interface EmailAttachmentMeta {
   id: string;
   emailId: string;

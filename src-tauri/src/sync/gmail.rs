@@ -156,6 +156,20 @@ struct GmailSendAs {
     display_name: String,
     #[serde(rename = "isPrimary", default)]
     is_primary: bool,
+    /// HTML signature Gmail's web client inserts for this address.
+    #[serde(default)]
+    signature: String,
+}
+
+/// The signature set on the send-as entry of `email`. `None` when that
+/// address has none (Gmail keeps one per address; there is no fallback).
+fn pick_send_as_signature(entries: &[GmailSendAs], email: &str) -> Option<String> {
+    entries
+        .iter()
+        .find(|e| e.send_as_email.eq_ignore_ascii_case(email))
+        .map(|e| e.signature.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Display name Gmail uses for `email`: its own send-as name, else the primary
@@ -443,6 +457,16 @@ impl GmailClient {
     /// Display name Gmail uses when sending from `email` (readable with the
     /// `gmail.modify` scope the app already holds). Empty when none is set.
     async fn get_send_as_display_name(&self, email: &str) -> Result<String> {
+        Ok(pick_send_as_display_name(&self.list_send_as().await?, email))
+    }
+
+    /// Gmail's own signature for `email`, from the same "Send mail as" list.
+    async fn get_send_as_signature(&self, email: &str) -> Result<Option<String>> {
+        Ok(pick_send_as_signature(&self.list_send_as().await?, email))
+    }
+
+    /// The account's "Send mail as" addresses (`users.settings.sendAs.list`).
+    async fn list_send_as(&self) -> Result<Vec<GmailSendAs>> {
         let url = format!("{}/users/me/settings/sendAs", self.base_url);
         let response = self.send_get_with_retry(&url, "list send-as addresses").await?;
 
@@ -455,7 +479,7 @@ impl GmailClient {
         }
 
         let list: GmailSendAsList = response.json().await?;
-        Ok(pick_send_as_display_name(&list.send_as, email))
+        Ok(list.send_as)
     }
 
     /// The mailbox's current history id (`users.getProfile`), where following
@@ -1719,6 +1743,10 @@ impl EmailProvider for GmailClient {
         self.get_profile().await
     }
 
+    async fn get_signature(&self, email: &str) -> Result<Option<String>> {
+        self.get_send_as_signature(email).await
+    }
+
     async fn list_messages(
         &self,
         max_results: u32,
@@ -2906,6 +2934,7 @@ mod tests {
             send_as_email: email.to_string(),
             display_name: name.to_string(),
             is_primary: primary,
+            signature: String::new(),
         }
     }
 
@@ -3008,6 +3037,36 @@ mod tests {
         let (email, name) = client.get_profile().await.expect("profile");
         assert_eq!(email, "ada@example.com");
         assert_eq!(name, "Ada Example");
+    }
+
+    #[tokio::test]
+    async fn get_signature_reads_the_send_as_signature_of_the_account_address() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/settings/sendAs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sendAs": [
+                    { "sendAsEmail": "alias@example.com", "signature": "<div>Alias</div>" },
+                    { "sendAsEmail": "ada@example.com", "isPrimary": true, "signature": "<div>Ada <b>Example</b></div>" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-send-as-sig".into())).with_base_url(server.uri());
+
+        let sig = EmailProvider::get_signature(&client, "ADA@example.com")
+            .await
+            .expect("signature");
+        assert_eq!(sig.as_deref(), Some("<div>Ada <b>Example</b></div>"));
+        let none = EmailProvider::get_signature(&client, "other@example.com")
+            .await
+            .expect("signature");
+        assert_eq!(none, None);
     }
 
     #[tokio::test]

@@ -5,12 +5,14 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
+import { hasSignature, insertSignature, replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Email } from '@/types';
 import { AiInstructionBar } from './AiInstructionBar';
@@ -144,11 +146,27 @@ export function ReplyCompose({
   // preferred one, offer to translate the drafted reply into it.
   const threadDetection = useTranslationStore((s) => s.detectedByEmail[email.id]);
 
+  // The From account's signature: below the reply, above a forwarded message;
+  // swapped when the account changes.
+  const signatureKind = mode === 'forward' ? 'forward' : 'reply';
+  const currentSignature = useComposerSignature({
+    accountId: fromAccountId,
+    kind: signatureKind,
+    insertOnOpen: true,
+    setBodyHtml,
+  });
+
   // Sync body when the parent updates initialBody (e.g. AI draft generation
-  // replaces the "Generating draft..." placeholder with the actual draft).
+  // replaces the "Generating draft..." placeholder with the actual draft, a
+  // forward brings the forwarded message). The signature stays, edits included.
   useEffect(() => {
-    setBodyHtml(plainTextToHtml(initialBody));
-  }, [initialBody]);
+    const next = plainTextToHtml(initialBody);
+    setBodyHtml((current) =>
+      hasSignature(current)
+        ? replaceBodyKeepingSignature(current, next, signatureKind)
+        : insertSignature(next, currentSignature(), signatureKind),
+    );
+  }, [initialBody, signatureKind, currentSignature]);
 
   // Compute initial recipients
   const initialTo = (() => {
@@ -319,7 +337,9 @@ export function ReplyCompose({
     if (to.length === 0 || !plain) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
-      const warnings = findSendWarnings(plain, attachments.length);
+      // The signature is not the user's text: "attached" in it is no promise.
+      const typed = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText;
+      const warnings = findSendWarnings(typed, attachments.length);
       if (warnings.length > 0) {
         warnedScheduleAt.current = scheduleAt;
         setSendWarnings(warnings);
@@ -487,7 +507,11 @@ export function ReplyCompose({
         <AiInstructionBar
           onGenerate={onGenerateDraft}
           isGenerating={isLoadingDraft}
-          hasDraft={bodyHtml.replace(/<[^>]*>/g, '').trim().length > 0}
+          hasDraft={
+            withoutSignature(bodyHtml)
+              .replace(/<[^>]*>/g, '')
+              .trim().length > 0
+          }
         />
       )}
 

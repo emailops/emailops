@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Appearance",
     "appearanceDesc": "Inbox layout",
+    "signatures": "Signatures",
+    "signaturesDesc": "Per-account email signatures",
     "calendar": "Calendar",
     "calendarDesc": "Accounts & meeting notifications",
     "ai": "AI Backend & Models",
@@ -579,5 +581,25 @@
       "deleteYes": "Delete",
       "deleteNo": "Cancel"
     }
+  },
+  "signatures": {
+    "title": "Signatures",
+    "help": "Added to the messages you write from each account. You can still change or delete it in any message.",
+    "account": "Account",
+    "editorPlaceholder": "Your name, role, phone…",
+    "useForNew": "Insert in new messages",
+    "useForReplies": "Insert in replies and forwards",
+    "placementHelp": "In a reply the signature goes below your text; in a forward, above the forwarded message.",
+    "imagesHelp": "Pasted images travel inside each message. Keep them small: 512 KB at most in total.",
+    "save": "Save signature",
+    "saving": "Saving…",
+    "saved": "Signature saved",
+    "discard": "Discard changes",
+    "importGmail": "Import from Gmail",
+    "importing": "Importing…",
+    "imported": "Gmail's signature is in the editor. Save to use it here.",
+    "importNone": "This address has no signature in Gmail.",
+    "noAccounts": "Connect an account to set its signature.",
+    "loadFailed": "The signature could not be loaded. Details are in the output panel."
   }
 }

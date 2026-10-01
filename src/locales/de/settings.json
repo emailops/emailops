@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Erscheinungsbild",
     "appearanceDesc": "Layout des Posteingangs",
+    "signatures": "Signaturen",
+    "signaturesDesc": "E-Mail-Signatur je Konto",
     "calendar": "Kalender",
     "calendarDesc": "Konten & Meeting-Benachrichtigungen",
     "ai": "KI: Backend & Modelle",
@@ -579,5 +581,25 @@
       "deleteYes": "Löschen",
       "deleteNo": "Abbrechen"
     }
+  },
+  "signatures": {
+    "title": "Signaturen",
+    "help": "Wird an die Nachrichten angefügt, die Sie von jedem Konto schreiben. Sie können sie in jeder Nachricht noch ändern oder löschen.",
+    "account": "Konto",
+    "editorPlaceholder": "Ihr Name, Ihre Funktion, Telefon…",
+    "useForNew": "In neue Nachrichten einfügen",
+    "useForReplies": "In Antworten und Weiterleitungen einfügen",
+    "placementHelp": "In einer Antwort steht die Signatur unter Ihrem Text, in einer Weiterleitung über der weitergeleiteten Nachricht.",
+    "imagesHelp": "Eingefügte Bilder werden in jeder Nachricht mitgesendet. Halten Sie sie klein: insgesamt höchstens 512 KB.",
+    "save": "Signatur speichern",
+    "saving": "Wird gespeichert…",
+    "saved": "Signatur gespeichert",
+    "discard": "Änderungen verwerfen",
+    "importGmail": "Aus Gmail importieren",
+    "importing": "Wird importiert…",
+    "imported": "Die Gmail-Signatur steht im Editor. Speichern Sie sie, um sie hier zu verwenden.",
+    "importNone": "Diese Adresse hat in Gmail keine Signatur.",
+    "noAccounts": "Verbinden Sie ein Konto, um seine Signatur festzulegen.",
+    "loadFailed": "Die Signatur konnte nicht geladen werden. Details stehen im Ausgabebereich."
   }
 }

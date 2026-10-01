@@ -2803,3 +2803,38 @@ queue gives both features the same send path and the same safety rules.
   hours later.
 - *Retrying a failed or interrupted send automatically*: a duplicate email is worse than a
   visible failure with a Retry button.
+
+## 2026-10-01 — One signature per account, kept in a marked block of the composer body
+
+**Decision:** Each account has one rich-HTML signature (V033 `account_signatures`, a row
+per account, cascading with it) with two options, "insert in new messages" and "insert in
+replies and forwards". It is edited in Settings → Signatures with the compose editor and
+sanitized on save with the send allowlist (`sanitize_outgoing_html`), so pasted images are
+kept as data URLs (the send path already turns them into inline `cid:` parts) under a
+512 KB cap. Composers insert it inside `<div data-emailops-signature>`, a node the compose
+editor schema keeps:
+- **Placement:** below the text in a new message or a reply, above the forwarded message
+  in a forward (Gmail's default). No option to put it "below the quote": replies carry no
+  quoted original in the editor or at send time, and a forward's quote is part of the
+  body, where only "above" makes sense. No `-- ` separator is forced; the user can type
+  one into the signature.
+- **Swap / no double insert:** changing the From account swaps the block's content (or
+  removes it when the new account has none). A body that already exists — a reopened
+  draft, a message taken back from the outbox, a maximized composer — is never given a
+  second signature; it is only swapped if it still has the block. A fresh compose tab
+  (mailto link) inserts it.
+- **AI drafts:** a generated draft replaces the text above the block, keeping the
+  signature as the user left it; the block is left out of the brief sent to the model, of
+  the send-time "did you mean to attach?" check and of the autosave trigger (a composer
+  holding only its signature is not saved as a draft).
+- **Gmail import:** Settings offers "Import from Gmail" for Gmail accounts, reading the
+  `signature` of the account's "Send mail as" entry (the endpoint already used for the
+  sender name). It fills the editor; the user saves. Graph exposes no Outlook signature
+  and IMAP has none, so there is no import for them.
+**Context:** Parity audit item (High). The composers own their body as one HTML string,
+so the signature has to be findable inside it to be swapped or kept.
+**Rejected:** Appending the signature at send time — the user could not see or edit it
+before sending, and a draft opened in Gmail would lack it. Storing it in the
+`account_settings:` preference blob — that blob is saved whole by the account dialog, and
+a signature needs its own sanitizing save and should go with its account. Several named
+signatures per account — beyond the parity gap; one per account covers Gmail's default.

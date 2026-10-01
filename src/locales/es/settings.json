@@ -3,6 +3,8 @@
   "tabs": {
     "appearance": "Apariencia",
     "appearanceDesc": "Diseño de la bandeja de entrada",
+    "signatures": "Firmas",
+    "signaturesDesc": "Firma de correo de cada cuenta",
     "calendar": "Calendario",
     "calendarDesc": "Cuentas y notificaciones de reuniones",
     "ai": "IA: backend y modelos",
@@ -579,5 +581,25 @@
       "deleteYes": "Borrar",
       "deleteNo": "Cancelar"
     }
+  },
+  "signatures": {
+    "title": "Firmas",
+    "help": "Se añade a los mensajes que escribes desde cada cuenta. Puedes cambiarla o borrarla en cualquier mensaje.",
+    "account": "Cuenta",
+    "editorPlaceholder": "Tu nombre, cargo, teléfono…",
+    "useForNew": "Insertar en mensajes nuevos",
+    "useForReplies": "Insertar en respuestas y reenvíos",
+    "placementHelp": "En una respuesta la firma va debajo de tu texto; en un reenvío, encima del mensaje reenviado.",
+    "imagesHelp": "Las imágenes pegadas viajan dentro de cada mensaje. Que sean pequeñas: 512 KB como máximo en total.",
+    "save": "Guardar firma",
+    "saving": "Guardando…",
+    "saved": "Firma guardada",
+    "discard": "Descartar cambios",
+    "importGmail": "Importar de Gmail",
+    "importing": "Importando…",
+    "imported": "La firma de Gmail está en el editor. Guárdala para usarla aquí.",
+    "importNone": "Esta dirección no tiene firma en Gmail.",
+    "noAccounts": "Conecta una cuenta para configurar su firma.",
+    "loadFailed": "No se pudo cargar la firma. Los detalles están en el panel de salida."
   }
 }

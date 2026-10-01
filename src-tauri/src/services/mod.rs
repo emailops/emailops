@@ -33,6 +33,7 @@ pub mod prompts;
 pub mod retrieval;
 pub mod search;
 pub mod secrets_vault;
+pub mod signatures;
 pub mod skills;
 pub mod storage_stats;
 pub mod sync_error_dedup;

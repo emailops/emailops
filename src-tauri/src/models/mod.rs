@@ -110,6 +110,31 @@ pub struct ThreadSnooze {
     pub woke_at: Option<i64>,
 }
 
+/// An account's email signature (V033 `account_signatures`). `html` is
+/// sanitized with the outgoing-mail allowlist on save; empty means none.
+/// `updated_at` is `None` until the user saves one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSignature {
+    pub account_id: String,
+    pub html: String,
+    /// Insert it when composing a new message.
+    pub use_for_new: bool,
+    /// Insert it when replying to or forwarding a message.
+    pub use_for_replies: bool,
+    pub updated_at: Option<i64>,
+}
+
+/// What the signature editor saves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignatureInput {
+    pub html: String,
+    pub use_for_new: bool,
+    pub use_for_replies: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
