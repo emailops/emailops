@@ -116,6 +116,8 @@ interface SnoozeMenuButtonProps extends SnoozeOptionsProps {
   className?: string;
   /** Where the panel opens relative to the button. */
   align?: 'left' | 'right';
+  /** Opens the panel each time it changes after mount (keyboard `b`). */
+  openSignal?: number;
 }
 
 /** A clock button opening the snooze choices in a dropdown. */
@@ -124,10 +126,17 @@ export function SnoozeMenuButton({
   testId,
   className = 'p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors',
   align = 'left',
+  openSignal = 0,
 }: SnoozeMenuButtonProps) {
   const { t } = useTranslation(['inbox']);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const seenSignal = useRef(openSignal);
+  useEffect(() => {
+    if (openSignal === seenSignal.current) return;
+    seenSignal.current = openSignal;
+    setOpen(true);
+  }, [openSignal]);
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {

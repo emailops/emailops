@@ -45,7 +45,10 @@
     "undoSend": "Undo send",
     "undoSendHelp": "After you press Send, the message waits this long so you can take it back. EmailOps must stay open until it goes out.",
     "undoSendOff": "Off",
-    "undoSendSeconds": "{{count}} seconds"
+    "undoSendSeconds": "{{count}} seconds",
+    "keyboardShortcuts": "Keyboard shortcuts",
+    "keyboardShortcutsHelp": "Navigate, act on conversations and compose from the keyboard. Press ? to see every shortcut.",
+    "keyboardShortcutsShowList": "Show the list"
   },
   "dialog": {
     "closeTitle": "Close settings",

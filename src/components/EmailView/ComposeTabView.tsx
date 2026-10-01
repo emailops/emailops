@@ -5,6 +5,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type {
   DraftAttachmentInput,
@@ -386,6 +387,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   };
 
   const handleSend = () => void submit(null);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
 
   const renderTokenInput = (
     field: 'to' | 'cc',
@@ -465,7 +467,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden">
+    <div className="flex-1 bg-white flex flex-col overflow-hidden" onKeyDownCapture={handleSendKey}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>

@@ -6,6 +6,7 @@ import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { isHiddenFromInbox, isFlagged as isJunkFlagged, useJunkStore } from '@/stores/junkStore';
 import { useSelectionStore } from '@/stores/selectionStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import { BulkToolbar } from './BulkToolbar';
@@ -303,6 +304,22 @@ export function Inbox({
   );
   const setJunkFlaggedAction = useJunkStore((s) => s.setFlaggedAction);
 
+  // Keyboard shortcuts walk the rows the user sees (useGlobalShortcuts):
+  // publish them, and forget them when the list goes away.
+  const setListEmails = useShortcutStore((s) => s.setListEmails);
+  const setCursor = useShortcutStore((s) => s.setCursor);
+  const cursorId = useShortcutStore((s) => s.cursorId);
+  useEffect(() => setListEmails(visibleEmails), [visibleEmails, setListEmails]);
+  useEffect(() => () => setListEmails([]), [setListEmails]);
+  // A click moves the keyboard cursor too, so j/k continue from there.
+  const handleSelectEmail = useCallback(
+    (email: Email, opts?: { auto?: boolean }) => {
+      setCursor(email.id);
+      onSelectEmail(email, opts);
+    },
+    [setCursor, onSelectEmail],
+  );
+
   // Auto-expand the category selection to "All" when the active filter would
   // show an empty list despite emails being available in other categories.
   // Common after the first sync of a new account: the default selection is
@@ -586,12 +603,14 @@ export function Inbox({
         emails={visibleEmails}
         selectedEmailId={selectedEmailId}
         focusEmailId={focusEmailId}
+        cursorEmailId={cursorId}
+        showCursor={fullWidth}
         scrollContainerRef={scrollContainerRef}
         isLoadingMore={isLoadingMore}
         hasMore={hasMore}
         isSyncing={isSyncing}
         emptyStateMessage={emptyStateMessage}
-        onSelectEmail={onSelectEmail}
+        onSelectEmail={handleSelectEmail}
         onLoadMore={onLoadMore}
         onAddSenderFilter={onAddSenderFilter}
         onBlockSender={onBlockSender}

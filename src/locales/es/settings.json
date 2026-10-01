@@ -45,7 +45,10 @@
     "undoSend": "Deshacer envío",
     "undoSendHelp": "Tras pulsar Enviar, el mensaje espera este tiempo para que puedas recuperarlo. EmailOps debe seguir abierto hasta que salga.",
     "undoSendOff": "Desactivado",
-    "undoSendSeconds": "{{count}} segundos"
+    "undoSendSeconds": "{{count}} segundos",
+    "keyboardShortcuts": "Atajos de teclado",
+    "keyboardShortcutsHelp": "Navega, actúa sobre las conversaciones y redacta desde el teclado. Pulsa ? para ver todos los atajos.",
+    "keyboardShortcutsShowList": "Ver la lista"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",

@@ -2838,3 +2838,38 @@ before sending, and a draft opened in Gmail would lack it. Storing it in the
 `account_settings:` preference blob — that blob is saved whole by the account dialog, and
 a signature needs its own sanitizing save and should go with its account. Several named
 signatures per account — beyond the parity gap; one per account covers Gmail's default.
+
+## 2026-10-01 — Keyboard shortcuts come from one registry, Gmail's bindings, one root handler
+
+**Decision:** Every keyboard shortcut is a row of `SHORTCUTS` (`src/lib/shortcuts.ts`:
+id, bindings, scope, help group, i18n label). A pure matcher turns a key press into an id
+(platform modifier: Cmd on macOS, Ctrl elsewhere, strictly; two-key sequences such as
+`g i` with a 1 s timeout on an injected clock), a pure planner (`src/lib/shortcutPlan.ts`)
+turns the id into an effect for the current screen, and one hook mounted in `App`
+(`useGlobalShortcuts`) executes it. The `?` overlay is rendered from the same table, so
+the help cannot drift from the keys.
+- **Bindings follow Gmail** where Gmail has one: `j/k`, `Enter`/`o`, `u`, `x`, `* a`,
+  `* n`, `e`, `#` (plus `Delete`), `s`, `Shift+U`, `Shift+I`, `b`, `c`, `r`, `a`, `f`,
+  `/`, `?`, and `g i/s/t/d/b/a/c` (inbox, starred, sent, drafts, snoozed, archive,
+  contacts). Scheduled, which Gmail lacks a key for, is `g l` ("later"). Cmd/Ctrl+K keeps
+  opening the search overlay.
+- **Targets:** a conversation action applies to the multi-selection when there is one,
+  else to the open conversation (sent to `EmailView` as a pane command, so the toolbar's
+  own handlers — including "go back to the list" after archive/delete/mark unread — run),
+  else to the keyboard-cursor row of the full-width list. `b` opens the existing snooze
+  picker (`SnoozeMenuButton.openSignal`) rather than a second picker.
+- **When keys are not shortcuts:** in a text field, select or contenteditable (the TipTap
+  composer, the chat input) only modifier combinations fire; nothing global fires while a
+  modal is open (modals keep their own Escape/Enter), while an IME is composing, or when a
+  focused button/link would take Enter. Composers bind Cmd/Ctrl+Enter themselves, in the
+  capture phase, to their single send function (so undo send applies).
+- **Setting:** Settings → Appearance → Keyboard shortcuts, on by default, SQLite pref
+  `ui.keyboard_shortcuts_enabled`. Off means off for every binding, Cmd/Ctrl+K and the
+  composer send key included.
+**Context:** Parity audit item (High): only Cmd/Ctrl+K existed, as an ad-hoc effect.
+**Rejected:** Per-component `keydown` listeners for each shortcut — the conflicts between
+list, reading pane and composers would be resolved by mount order, and the help list would
+be a second, hand-maintained copy. A keyboard library (react-hotkeys-hook, tinykeys) —
+sequences, platform modifiers and the editable/modal rules are a few dozen lines that are
+easier to test as pure functions. User-rebindable keys and a command palette — out of the
+parity gap.

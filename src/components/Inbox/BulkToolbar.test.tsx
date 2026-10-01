@@ -15,6 +15,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { snoozeMap, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { useSelectionStore } from '@/stores/selectionStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { BulkToolbar } from './BulkToolbar';
 
 const row = (id: string, extra: Partial<Email> = {}) =>
@@ -177,5 +178,13 @@ describe('BulkToolbar', () => {
   it('renders nothing without a selection', () => {
     render([row('a')]);
     expect(q('bulk-toolbar')).toBeNull();
+  });
+
+  it('opens its snooze picker when the b shortcut asks for it', async () => {
+    useSelectionStore.getState().toggle('a');
+    useShortcutStore.setState({ bulkSnoozeRequested: true });
+    render([row('a')]);
+    expect(q('snooze-preset-tomorrow')).not.toBeNull();
+    expect(useShortcutStore.getState().bulkSnoozeRequested).toBe(false);
   });
 });

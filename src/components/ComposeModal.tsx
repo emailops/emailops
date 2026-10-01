@@ -6,6 +6,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type {
   DraftFailedEvent,
@@ -427,6 +428,7 @@ export function ComposeModal({
   };
 
   const handleSend = () => void submit(null);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent || isLoadingAttachments);
 
   // Recipients + subject are the minimum the backend needs to draft a new
   // email; the subject is always part of the brief on that side.
@@ -541,7 +543,10 @@ export function ComposeModal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
+      <div
+        className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]"
+        onKeyDownCapture={handleSendKey}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>

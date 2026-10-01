@@ -16,6 +16,7 @@ import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
+import { ShortcutHelpModal } from '@/components/common/ShortcutHelpModal';
 import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
 import { DraftsView } from '@/components/DraftsView';
@@ -44,6 +45,7 @@ import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
 import { useEmails } from '@/hooks/useEmails';
+import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
@@ -96,6 +98,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import { useReminderStore } from '@/stores/reminderStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
@@ -725,17 +728,60 @@ function AppInner() {
     }
   }, [effectiveAccountId]);
 
-  // Keyboard shortcut to open search (Cmd/Ctrl + K)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setIsSearchOpen(true);
+  // Sidebar view switch, also used by the `g` go-to shortcuts.
+  const handleSetViewMode = useCallback(
+    (mode: ViewMode) => {
+      const plan = planViewChange(mode, inboxLayout);
+      if (plan.resetInboxFilters) {
+        clearSearchQuery();
+        clearActiveFilter();
+        setSelectedCategories(new Set<EmailCategory>(['primary']));
       }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+      if (plan.closeOpenEmail) {
+        setActiveTab(null);
+        void selectEmail(null);
+      }
+      setViewMode(mode);
+    },
+    [inboxLayout, clearSearchQuery, clearActiveFilter, setSelectedCategories, setActiveTab, selectEmail],
+  );
+
+  // Keyboard shortcuts (src/lib/shortcuts.ts; `?` lists them). One handler
+  // for the whole app, honouring the Settings → Appearance switch.
+  useEffect(() => {
+    void useShortcutStore.getState().loadEnabled();
   }, []);
+  const listView = isEmailListView(viewMode);
+  const conversationShown =
+    (listView || viewMode === 'tagboard') && (activeTab ? activeTab.type === 'thread' : selectedEmail !== null);
+  useGlobalShortcuts({
+    listView,
+    layout: inboxLayout,
+    openConversation: conversationShown,
+    openEmailId: activeTab ? null : (selectedEmail?.id ?? null),
+    openEmail: (email) => {
+      setActiveTab(null);
+      void selectEmail(email, undefined, { markRead: true });
+    },
+    closeConversation: () => {
+      if (activeTab) closeTab(activeTab.id);
+      void selectEmail(null);
+    },
+    compose: () => {
+      if (effectiveAccountId) setIsComposeOpen(true);
+    },
+    focusSearch: () => {
+      // Full-width list: the inline search box; elsewhere the search overlay.
+      const inline =
+        listView && inboxLayout === 'full-width' && !conversationShown
+          ? document.querySelector<HTMLInputElement>('input[data-shortcut-search]')
+          : null;
+      if (inline) inline.focus();
+      else setIsSearchOpen(true);
+    },
+    openSearchPalette: () => setIsSearchOpen(true),
+    goTo: handleSetViewMode,
+  });
 
   // Route translation events (language-detected / email-translated /
   // translation-failed) into the translation store. Idempotent.
@@ -1424,19 +1470,7 @@ function AppInner() {
           isSyncing={isSyncing}
           viewMode={viewMode}
           onOpenChatView={() => setViewMode('chat')}
-          onSetViewMode={(mode) => {
-            const plan = planViewChange(mode, inboxLayout);
-            if (plan.resetInboxFilters) {
-              clearSearchQuery();
-              clearActiveFilter();
-              setSelectedCategories(new Set<EmailCategory>(['primary']));
-            }
-            if (plan.closeOpenEmail) {
-              setActiveTab(null);
-              void selectEmail(null);
-            }
-            setViewMode(mode);
-          }}
+          onSetViewMode={handleSetViewMode}
           smartFilters={smartFilters}
           activeFilter={activeFilter}
           isLoadingFilters={isLoadingFilters}
@@ -1796,6 +1830,7 @@ function AppInner() {
 
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
       <ToastHost />
+      <ShortcutHelpModal />
 
       {isSearchOpen && (
         <SearchBar

@@ -20,6 +20,10 @@ interface VirtualEmailListProps {
   emails: Email[];
   selectedEmailId: string | null;
   focusEmailId: string | null;
+  /** The keyboard cursor row (j/k): kept in view, and marked when `showCursor`. */
+  cursorEmailId?: string | null;
+  /** Mark the cursor row — the full-width list, where no row is "open". */
+  showCursor?: boolean;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   isLoadingMore: boolean;
   hasMore: boolean;
@@ -48,6 +52,8 @@ export function VirtualEmailList({
   emails,
   selectedEmailId,
   focusEmailId,
+  cursorEmailId = null,
+  showCursor = false,
   scrollContainerRef,
   isLoadingMore,
   hasMore,
@@ -195,6 +201,15 @@ export function VirtualEmailList({
     return () => cancelAnimationFrame(raf);
   }, [focusEmailId, emails, virtualizer]);
 
+  // Keep the keyboard cursor row in view as j/k move it. `auto` scrolls only
+  // when the row is off screen, so walking a visible page does not jump.
+  useEffect(() => {
+    if (!cursorEmailId) return;
+    const index = emails.findIndex((e) => e.id === cursorEmailId);
+    if (index === -1) return;
+    virtualizer.scrollToIndex(index, { align: 'auto' });
+  }, [cursorEmailId, emails, virtualizer]);
+
   // Infinite scroll: load more when near bottom
   const virtualItems = virtualizer.getVirtualItems();
   const lastVirtualItem = virtualItems[virtualItems.length - 1];
@@ -255,7 +270,14 @@ export function VirtualEmailList({
                 overflow: 'hidden',
                 transform: `translateY(${virtualRow.start}px)`,
               }}
+              data-cursor={showCursor && email.id === cursorEmailId ? 'true' : undefined}
             >
+              {showCursor && email.id === cursorEmailId && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-primary-400"
+                />
+              )}
               <EmailRow
                 email={email}
                 isSelected={email.id === selectedEmailId}

@@ -5,6 +5,7 @@ import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -369,6 +370,8 @@ export function ReplyCompose({
     }
   };
 
+  const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft);
+
   const renderTokenInput = (
     field: 'to' | 'cc',
     label: string,
@@ -455,7 +458,7 @@ export function ReplyCompose({
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4" onKeyDownCapture={handleSendKey}>
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>

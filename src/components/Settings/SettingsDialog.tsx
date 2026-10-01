@@ -13,6 +13,7 @@ import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
 import { JunkSettings } from './JunkSettings';
+import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
 import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
 import { PrivacySettings } from './PrivacySettings';
@@ -317,6 +318,7 @@ function AppearancePanel({
         </div>
       </section>
       <UndoSendSetting />
+      <KeyboardShortcutsSetting />
     </div>
   );
 }

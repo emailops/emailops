@@ -9,11 +9,13 @@ import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachmen
 import * as api from '@/lib/api';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { formatShortcut } from '@/lib/platform';
+import type { PaneCommand } from '@/lib/shortcutPlan';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
@@ -357,6 +359,21 @@ export function EmailView({
     consumePendingChatDraft();
   }, [pendingChatDraft, threadEmails, consumePendingChatDraft]);
 
+  // Keyboard shortcuts (r, a, f, e, #, s, Shift+U/I, b) arrive as pane
+  // commands and run through the same handlers as the toolbar buttons.
+  // Only commands issued while this view is shown count: one from before it
+  // mounted must not be replayed onto a different conversation.
+  const [snoozeSignal, setSnoozeSignal] = useState(0);
+  const paneCommand = useShortcutStore((s) => s.paneCommand);
+  const seenPaneCommandRef = useRef(paneCommand?.nonce ?? 0);
+  const runPaneCommandRef = useRef<(command: PaneCommand) => void>(() => {});
+  runPaneCommandRef.current = () => {};
+  useEffect(() => {
+    if (!paneCommand || paneCommand.nonce <= seenPaneCommandRef.current) return;
+    seenPaneCommandRef.current = paneCommand.nonce;
+    runPaneCommandRef.current(paneCommand.command);
+  }, [paneCommand]);
+
   if (threadEmails.length === 0 && !isLoading) {
     return (
       <div className="flex-1 bg-white flex items-center justify-center">
@@ -388,6 +405,87 @@ export function EmailView({
   }
 
   const latestEmail = latestEmailForEffect!;
+
+  const openReply = (mode: 'reply' | 'reply-all', toggle: boolean) => {
+    setReplyMode(mode);
+    setReplyBody('');
+    setForwardAttachments(EMPTY_ATTACHMENTS);
+    setIsReplyOpen((value) => (toggle ? !value : true));
+  };
+  const openForward = async () => {
+    const body = await loadForwardBody(
+      latestEmail,
+      () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
+      (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
+    );
+    setReplyMode('forward');
+    setReplyBody(
+      forwardQuote(
+        { ...latestEmail, body },
+        {
+          header: t('compose:forwarded.header'),
+          from: t('compose:forwarded.from'),
+          date: t('compose:forwarded.date'),
+          subject: t('compose:forwarded.subject'),
+          to: t('compose:forwarded.to'),
+          cc: t('compose:forwarded.cc'),
+        },
+        (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
+      ),
+    );
+    setForwardAttachments(EMPTY_ATTACHMENTS);
+    setIsReplyOpen(true);
+    void loadForwardAttachments();
+  };
+  const thread = [threadRefOf(latestEmail)];
+  const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
+  const archive = () => {
+    void archiveThreads(thread);
+    onClose();
+  };
+  const markUnread = () => {
+    // Back to the list, like Gmail: staying on the thread would read it again
+    // at once.
+    void setThreadsRead(thread, false);
+    onClose();
+  };
+  const deleteThread = () => {
+    // Leaves at once; the provider call waits out the undo window and a
+    // refusal brings the thread back (emailStore.deleteThreads).
+    void deleteThreads(thread);
+    onClose();
+  };
+  runPaneCommandRef.current = (command) => {
+    switch (command) {
+      case 'reply':
+        openReply('reply', false);
+        return;
+      case 'replyAll':
+        openReply('reply-all', false);
+        return;
+      case 'forward':
+        void openForward();
+        return;
+      case 'archive':
+        if (inInbox) archive();
+        return;
+      case 'delete':
+        deleteThread();
+        return;
+      case 'star':
+        void setThreadsStarred(thread, !isThreadStarred(threadEmails));
+        return;
+      case 'markRead':
+        void setThreadsRead(thread, true);
+        return;
+      case 'markUnread':
+        markUnread();
+        return;
+      case 'snooze':
+        if (inInbox && !threadSnoozed) setSnoozeSignal((n) => n + 1);
+        return;
+    }
+  };
 
   /** Pull the message's own attachments in so the forward carries them.
    *
@@ -470,53 +568,19 @@ export function EmailView({
           {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <button
-              onClick={() => {
-                setReplyMode('reply');
-                setReplyBody('');
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen((value) => !value);
-              }}
+              onClick={() => openReply('reply', true)}
               className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
             >
               Reply
             </button>
             <button
-              onClick={() => {
-                setReplyMode('reply-all');
-                setReplyBody('');
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen((value) => !value);
-              }}
+              onClick={() => openReply('reply-all', true)}
               className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
             >
               {t('inbox:emailView.replyAll')}
             </button>
             <button
-              onClick={async () => {
-                const body = await loadForwardBody(
-                  latestEmail,
-                  () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
-                  (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
-                );
-                setReplyMode('forward');
-                setReplyBody(
-                  forwardQuote(
-                    { ...latestEmail, body },
-                    {
-                      header: t('compose:forwarded.header'),
-                      from: t('compose:forwarded.from'),
-                      date: t('compose:forwarded.date'),
-                      subject: t('compose:forwarded.subject'),
-                      to: t('compose:forwarded.to'),
-                      cc: t('compose:forwarded.cc'),
-                    },
-                    (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
-                  ),
-                );
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen(true);
-                void loadForwardAttachments();
-              }}
+              onClick={() => void openForward()}
               className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 text-gray-700 text-sm font-medium rounded border border-gray-300 hover:bg-gray-200 transition-colors"
               title={t('compose:forwardTitle')}
             >
@@ -600,20 +664,12 @@ export function EmailView({
             )}
             <ThreadToolbarActions
               threadEmails={threadEmails}
-              onArchive={() => {
-                void archiveThreads([threadRefOf(latestEmail)]);
-                onClose();
-              }}
+              onArchive={archive}
               onMoveToInbox={() => {
                 void moveThreadsToInbox([threadRefOf(latestEmail)]);
                 onClose();
               }}
-              onMarkUnread={() => {
-                // Back to the list, like Gmail: staying on the thread would
-                // read it again at once.
-                void setThreadsRead([threadRefOf(latestEmail)], false);
-                onClose();
-              }}
+              onMarkUnread={markUnread}
               onMarkRead={() => void setThreadsRead([threadRefOf(latestEmail)], true)}
               onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
               snoozed={threadSnoozed}
@@ -623,15 +679,10 @@ export function EmailView({
                 onClose();
               }}
               onUnsnooze={() => void unsnoozeThreads([threadRefOf(latestEmail)])}
+              snoozeSignal={snoozeSignal}
             />
             <button
-              onClick={() => {
-                if (!latestEmail) return;
-                // Leaves at once; the provider call waits out the undo window
-                // and a refusal brings the thread back (emailStore.deleteThreads).
-                void deleteThreads([threadRefOf(latestEmail)]);
-                onClose();
-              }}
+              onClick={deleteThread}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
               title={t('inbox:emailView.deleteThread')}
             >
@@ -919,6 +970,8 @@ interface ThreadToolbarActionsProps {
   snoozed: boolean;
   onSnooze: (until: number) => void;
   onUnsnooze: () => void;
+  /** Opens the snooze picker when it changes (keyboard `b`). */
+  snoozeSignal: number;
 }
 
 /** Archive (or move back to the inbox), snooze (or unsnooze), read/unread and
@@ -934,6 +987,7 @@ function ThreadToolbarActions({
   snoozed,
   onSnooze,
   onUnsnooze,
+  snoozeSignal,
 }: ThreadToolbarActionsProps) {
   const { t } = useTranslation(['inbox']);
   const starred = isThreadStarred(threadEmails);
@@ -964,7 +1018,15 @@ function ThreadToolbarActions({
           <ClockIcon className="w-4 h-4 text-primary-600" />
         </button>
       ) : (
-        inInbox && <SnoozeMenuButton testId="thread-snooze" onPick={onSnooze} className={buttonClass} align="right" />
+        inInbox && (
+          <SnoozeMenuButton
+            testId="thread-snooze"
+            onPick={onSnooze}
+            className={buttonClass}
+            align="right"
+            openSignal={snoozeSignal}
+          />
+        )
       )}
       <button
         onClick={unread ? onMarkRead : onMarkUnread}

@@ -76,4 +76,11 @@ describe('SnoozeMenuButton', () => {
     expect(onPick).toHaveBeenCalledWith(unix(new Date(2026, 9, 12, 8, 0)));
     expect(q('snooze-preset-nextWeek')).toBeNull();
   });
+
+  it('opens when its open signal changes (the b shortcut), not on mount', () => {
+    act(() => root.render(<SnoozeMenuButton testId="snooze" onPick={onPick} openSignal={3} />));
+    expect(q('snooze-preset-tomorrow')).toBeNull();
+    act(() => root.render(<SnoozeMenuButton testId="snooze" onPick={onPick} openSignal={4} />));
+    expect(q('snooze-preset-tomorrow')).not.toBeNull();
+  });
 });

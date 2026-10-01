@@ -45,7 +45,10 @@
     "undoSend": "Annuler l’envoi",
     "undoSendHelp": "Après avoir cliqué sur Envoyer, le message attend ce délai pour que vous puissiez le reprendre. EmailOps doit rester ouvert jusqu’à son départ.",
     "undoSendOff": "Désactivé",
-    "undoSendSeconds": "{{count}} secondes"
+    "undoSendSeconds": "{{count}} secondes",
+    "keyboardShortcuts": "Raccourcis clavier",
+    "keyboardShortcutsHelp": "Naviguez, agissez sur les conversations et rédigez au clavier. Appuyez sur ? pour voir tous les raccourcis.",
+    "keyboardShortcutsShowList": "Afficher la liste"
   },
   "dialog": {
     "closeTitle": "Fermer les paramètres",

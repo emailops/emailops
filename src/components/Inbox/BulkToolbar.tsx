@@ -9,6 +9,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { isSnoozed, snoozeLeavesList, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { selectedThreads, useSelectionStore } from '@/stores/selectionStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import type { Email } from '@/types';
 
 interface BulkToolbarProps {
@@ -41,6 +42,15 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const foldersAccountId = useFolderStore((s) => s.accountId);
 
   const rows = useMemo(() => emails.filter((e) => ids.has(e.id)), [emails, ids]);
+  // The `b` shortcut asks for the snooze picker; the toolbar may only now be
+  // mounting (a cursor row was just selected), so it consumes the request.
+  const snoozeRequested = useShortcutStore((s) => s.bulkSnoozeRequested);
+  const [snoozeSignal, setSnoozeSignal] = useState(0);
+  useEffect(() => {
+    if (!snoozeRequested) return;
+    useShortcutStore.getState().consumeBulkSnooze();
+    setSnoozeSignal((n) => n + 1);
+  }, [snoozeRequested]);
   if (rows.length === 0) return null;
 
   const threads = selectedThreads({ ids, anchor: null }, emails);
@@ -84,6 +94,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
       {can.canSnooze && (
         <SnoozeMenuButton
           testId="bulk-snooze"
+          openSignal={snoozeSignal}
           className="p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100 hover:text-gray-800"
           onPick={(until) => {
             const run = () => snoozeThreads(threads, until);
