@@ -24,9 +24,7 @@ pub async fn set_main_password(
     current_password: Option<String>,
     new_password: String,
 ) -> Result<()> {
-    if new_password.is_empty() {
-        return Err(AppError::InvalidInput("Password cannot be empty.".into()));
-    }
+    password::validate_new_password(&new_password)?;
 
     let existing = state.db.get_preference(PREF_KEY)?.filter(|v| !v.is_empty());
 
