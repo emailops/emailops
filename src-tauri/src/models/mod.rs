@@ -96,7 +96,8 @@ pub struct SyncStatus {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+/// Wiped from memory on drop, so a token does not linger in freed heap.
+#[derive(Clone, Serialize, Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,

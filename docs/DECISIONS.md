@@ -2695,3 +2695,17 @@ reqwest, serde and keyring messages, or `format!`ed text with absolute paths.
   by any component that renders `message` directly.
 - *Redacting the CLI too*: the CLI is a developer surface; agents debugging a failure need
   the raw cause.
+
+## 2026-10-01 — Meeting-reminder OS notifications hide the title by default
+
+**Decision:** The OS notification for an upcoming meeting reads "Upcoming meeting · Starts in
+N min" unless the user turns on **Settings → Calendar → Show the meeting title in
+notifications** (`calendar_notification_show_title`, default off). The in-app reminder
+banner always shows the full event.
+**Context:** The CASA desktop checklist (DASA 1.10.2) asks that sensitive data not be
+exposed through notifications. Meeting titles often name people, deals or medical
+appointments, and OS notifications reach the lock screen and Notification Center even
+while EmailOps' main password lock is up.
+**Rejected:**
+- *Hide the title only when a main password is set*: the lock screen is outside EmailOps'
+  lock either way, so the main password is no signal; one plain switch is easier to explain.

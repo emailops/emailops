@@ -504,6 +504,8 @@
     "accountToggleAria": "Activer ou désactiver l'intégration du calendrier de {{email}}",
     "notificationsLabel": "Notifications de réunion",
     "notificationsDesc": "Soyez averti avant une réunion, avec un lien direct pour la rejoindre.",
+    "showTitleLabel": "Afficher le titre de la réunion dans les notifications",
+    "showTitleDesc": "Désactivé par défaut : les notifications peuvent apparaître sur l'écran verrouillé et dans le centre de notifications, hors du verrouillage de l'app. Le rappel dans EmailOps affiche toujours la réunion complète.",
     "leadTimeLabel": "Délai de notification",
     "leadTimeDesc": "Combien de temps avant le début de la réunion la notification est envoyée.",
     "minutesOption": "{{n}} minutes",

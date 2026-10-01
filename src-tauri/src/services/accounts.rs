@@ -712,7 +712,7 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
     // Try keychain first — if it succeeds we have everything *and* can
     // opportunistically backfill the DB for next time.
     match get_imap_credentials(account_id) {
-        Ok(creds) => {
+        Ok(mut creds) => {
             // Backfill DB so future loads don't depend on the keychain entry.
             // A failure here is not fatal (the settings are already in hand) but
             // must not be silent — a mirror that never gets written is exactly
@@ -732,10 +732,10 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
                 );
             }
             Ok(ImapEditSettings {
-                host: creds.host,
+                host: std::mem::take(&mut creds.host),
                 port: creds.port,
-                username: creds.username,
-                smtp_host: creds.smtp_host,
+                username: std::mem::take(&mut creds.username),
+                smtp_host: std::mem::take(&mut creds.smtp_host),
                 smtp_port: creds.smtp_port,
                 has_password: true,
                 keychain_error: None,
@@ -783,7 +783,7 @@ pub fn resolve_update_password(account_id: &str, provided: &str) -> Result<Strin
         return Ok(provided.to_string());
     }
     match get_imap_credentials(account_id) {
-        Ok(creds) if !creds.password.is_empty() => Ok(creds.password),
+        Ok(mut creds) if !creds.password.is_empty() => Ok(std::mem::take(&mut creds.password)),
         Ok(_) | Err(AppError::NeedsReauth { .. }) => Err(AppError::InvalidInput(
             "No password is stored for this account — enter one to continue.".to_string(),
         )),
@@ -1628,10 +1628,8 @@ mod tests {
         bind_credential_db(&db);
 
         let account = imap_account("imap-split", "alex@example.de");
-        let creds = ImapCredentials {
-            username: "alex".into(),
-            ..imap_creds()
-        };
+        let mut creds = imap_creds();
+        creds.username = "alex".into();
 
         persist_imap_account(&db, &account, &creds).expect("persist should succeed");
 

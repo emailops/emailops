@@ -138,6 +138,15 @@ impl Database {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         std::fs::create_dir_all(&data_dir)
             .map_err(|_| AppError::DbError(rusqlite::Error::InvalidPath(data_dir.clone())))?;
+        // Keep the mailbox private to this OS user. Not fatal: a data dir on a
+        // file system without Unix permissions must still open.
+        if let Err(e) = crate::util::owner_only::restrict_dir_to_owner(&data_dir) {
+            crate::services::logger::log(
+                "error",
+                "system",
+                format!("could not restrict the data directory to its owner: {e}"),
+            );
+        }
 
         // Register sqlite-vec extension before opening connection
         unsafe {

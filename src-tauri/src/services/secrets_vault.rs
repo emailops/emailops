@@ -71,6 +71,8 @@ fn ensure_loaded(cache: &mut Option<Entries>) -> Result<()> {
     }
     let entries = match keychain::current().get_password(VAULT_SERVICE, VAULT_ACCOUNT)? {
         Some(json) => {
+            // The serialized vault holds every secret; wipe it once parsed.
+            let json = zeroize::Zeroizing::new(json);
             serde_json::from_str::<VaultData>(&json)
                 .map_err(|e| AppError::KeyringError(format!("secrets vault is corrupt: {e}")))?
                 .entries
@@ -89,10 +91,10 @@ fn loaded(cache: &mut Option<Entries>) -> Result<&mut Entries> {
 }
 
 fn persist(entries: &Entries) -> Result<()> {
-    let json = serde_json::to_string(&VaultDataRef {
+    let json = zeroize::Zeroizing::new(serde_json::to_string(&VaultDataRef {
         version: VAULT_VERSION,
         entries,
-    })?;
+    })?);
     keychain::current().set_password(VAULT_SERVICE, VAULT_ACCOUNT, &json)
 }
 
@@ -371,5 +373,17 @@ mod tests {
         assert_eq!(get(VAULT_SERVICE, VAULT_ACCOUNT).unwrap(), None);
         assert!(kc.get_password("emailops", "vault").unwrap().is_some());
         assert_eq!(get("emailops", "acct-1").unwrap(), Some("tok".into()));
+    }
+}
+
+#[cfg(test)]
+mod zeroize_tests {
+    fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+
+    #[test]
+    fn credential_types_are_wiped_from_memory_when_dropped() {
+        // CASA/DASA 1.2.3: secrets do not linger in freed heap memory.
+        wipes_on_drop::<crate::models::OAuthTokens>();
+        wipes_on_drop::<crate::sync::imap::ImapCredentials>();
     }
 }

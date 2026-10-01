@@ -26,19 +26,19 @@ pub(super) async fn build_provider_for_account(
 ) -> Result<Box<dyn EmailProvider>> {
     match account.provider.as_str() {
         "gmail" => {
-            let tokens = refresh_oauth_tokens_if_needed(account).await?;
+            let mut tokens = refresh_oauth_tokens_if_needed(account).await?;
             Ok(Box::new(GmailClient::new(
-                tokens.access_token,
-                tokens.refresh_token,
+                std::mem::take(&mut tokens.access_token),
+                tokens.refresh_token.take(),
                 app,
                 Some(account.id.clone()),
             )))
         }
         "outlook" => {
-            let tokens = refresh_oauth_tokens_if_needed(account).await?;
+            let mut tokens = refresh_oauth_tokens_if_needed(account).await?;
             Ok(Box::new(OutlookClient::new(
-                tokens.access_token,
-                tokens.refresh_token,
+                std::mem::take(&mut tokens.access_token),
+                tokens.refresh_token.take(),
                 app,
                 Some(account.id.clone()),
             )))
