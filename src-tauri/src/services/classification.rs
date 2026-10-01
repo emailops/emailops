@@ -1909,4 +1909,73 @@ mod tests {
 
         assert!(matches!(err, ReplyError::Unparseable(_)), "{err:?}");
     }
+    // ── rules ──
+
+    fn rule(sender: Option<&str>, subject: Option<&str>, enabled: bool) -> ClassificationRule {
+        ClassificationRule {
+            id: "r1".to_string(),
+            account_id: "acc-1".to_string(),
+            name: "Billing".to_string(),
+            sender_pattern: sender.map(str::to_string),
+            subject_pattern: subject.map(str::to_string),
+            priority: "high".to_string(),
+            intent: "request".to_string(),
+            topic: "billing".to_string(),
+            enabled,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn classify(rules: &[ClassificationRule], sender: &str, subject: &str) -> Option<String> {
+        rule_based_classify(&compile_rules(rules), sender, subject).map(|c| c.topic)
+    }
+
+    #[test]
+    fn a_glob_becomes_an_anchored_case_insensitive_regex() {
+        assert_eq!(glob_to_regex("*@acme.example"), r"(?i)^.*@acme\.example$");
+        assert_eq!(glob_to_regex("inv?ice (q1)"), r"(?i)^inv.ice \(q1\)$");
+    }
+
+    #[test]
+    fn a_glob_becomes_an_escaped_like_pattern() {
+        assert_eq!(glob_to_sql_like("A*_b?%\\"), r"a%\_b_\%\\");
+    }
+
+    #[test]
+    fn a_rule_matches_on_every_pattern_it_sets() {
+        let rules = [rule(Some(" , *@acme.example"), Some("invoice*"), true)];
+        assert_eq!(
+            classify(&rules, "Billing@Acme.example", "Invoice 12").as_deref(),
+            Some("billing")
+        );
+        assert_eq!(
+            classify(&rules, "someone@other.example", "Invoice 12"),
+            None,
+            "sender pattern"
+        );
+        assert_eq!(
+            classify(&rules, "billing@acme.example", "Hello"),
+            None,
+            "subject pattern"
+        );
+    }
+
+    #[test]
+    fn a_disabled_rule_or_an_empty_pattern_behaves_as_documented() {
+        assert_eq!(
+            classify(
+                &[rule(Some("*@acme.example"), None, false)],
+                "billing@acme.example",
+                "x"
+            ),
+            None
+        );
+        // An empty pattern means "any".
+        let any = [rule(Some(""), Some(""), true)];
+        assert_eq!(
+            classify(&any, "anyone@other.example", "anything").as_deref(),
+            Some("billing")
+        );
+    }
 }

@@ -1385,6 +1385,222 @@ mod tests {
             .contains(&ReasonCode::StatisticalSpam));
     }
 
+    // A confident clearance by the receiving server takes a fixed amount off
+    // the spam score (0.30 by default), never below zero.
+    #[test]
+    fn a_confident_server_clearance_discounts_the_spam_score() {
+        let mut base = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), "hello");
+        base.statistical_spam = Some(0.95);
+        let mut cleared = signals(
+            &format!("{ALIGNED}X-Spam-Status: No, score=-2.0 required=5.0\nFrom: X <x@ordinary.example>\n"),
+            "hello",
+        );
+        cleared.statistical_spam = Some(0.95);
+        let before = judged(&base).spam.score;
+        assert!(
+            before > 0.30,
+            "the fixture needs a score the discount can show on: {before}"
+        );
+        let after = judged(&cleared).spam.score;
+        assert!((after - (before - 0.30)).abs() < 1e-4, "{before} -> {after}");
+    }
+
+    fn phishing_codes(raw_headers: &str, known: &[&str]) -> Vec<ReasonCode> {
+        let mut s = signals(&format!("{ALIGNED}{raw_headers}"), "hello");
+        s.known_contact_domains = known.iter().map(|d| d.to_string()).collect();
+        judged(&s).reason_codes_for(JunkAxis::Phishing)
+    }
+
+    // No authentication header, so correspondence does not vouch for the
+    // sender and clear the spam axis: what is left is first contact itself.
+    #[test]
+    fn first_contact_counts_only_for_a_stranger() {
+        let stranger = signals("From: X <x@ordinary.example>\n", "hello");
+        assert!(judged(&stranger)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+
+        let mut engaged = stranger.clone();
+        engaged.sender_engaged = true;
+        assert!(!judged(&engaged)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+
+        let mut known = stranger.clone();
+        known.known_contact_domains = vec!["ordinary.example".to_string()];
+        assert!(!judged(&known)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::FirstContact));
+    }
+
+    #[test]
+    fn an_address_in_the_display_name_counts_only_when_it_names_another_domain() {
+        let other = phishing_codes("From: \"billing@bank.example\" <x@ordinary.example>\n", &[]);
+        assert!(other.contains(&ReasonCode::DisplayNameContainsAddress), "{other:?}");
+        let same = phishing_codes("From: \"billing@ordinary.example\" <x@ordinary.example>\n", &[]);
+        assert!(!same.contains(&ReasonCode::DisplayNameContainsAddress), "{same:?}");
+    }
+
+    #[test]
+    fn invisible_characters_in_the_display_name_count_like_mixed_scripts() {
+        let codes = phishing_codes("From: Ac\u{200B}me <x@ordinary.example>\n", &[]);
+        assert!(codes.contains(&ReasonCode::MixedScriptDisplayName), "{codes:?}");
+    }
+
+    #[test]
+    fn a_reply_to_on_the_senders_own_or_a_known_domain_is_not_a_mismatch() {
+        let own = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@ordinary.example\n", &[]);
+        assert!(!own.contains(&ReasonCode::ReplyToMismatch), "{own:?}");
+        let known = phishing_codes(
+            "From: X <x@ordinary.example>\nReply-To: y@partner.example\n",
+            &["partner.example"],
+        );
+        assert!(!known.contains(&ReasonCode::ReplyToMismatch), "{known:?}");
+        let third = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", &[]);
+        assert!(third.contains(&ReasonCode::ReplyToMismatch), "{third:?}");
+    }
+
+    #[test]
+    fn a_return_path_on_the_senders_own_domain_is_not_a_mismatch() {
+        let codes = phishing_codes(
+            "From: X <x@ordinary.example>\nReturn-Path: <bounce@ordinary.example>\n",
+            &[],
+        );
+        assert!(!codes.contains(&ReasonCode::ReturnPathMismatch), "{codes:?}");
+    }
+
+    /// Phishing reasons for a message failing authentication, with `tweak`
+    /// adding one identity signal.
+    fn failing_phishing_codes(from_and_more: &str, tweak: impl FnOnce(&mut JunkSignals)) -> Vec<ReasonCode> {
+        let mut s = signals(&format!("{FAILING}{from_and_more}"), "hello");
+        tweak(&mut s);
+        judged(&s).reason_codes_for(JunkAxis::Phishing)
+    }
+
+    // Each identity signal on its own is enough to let an authentication
+    // failure count as phishing evidence.
+    #[test]
+    fn each_identity_signal_alone_lets_an_authentication_failure_count() {
+        let cases: Vec<(&str, Vec<ReasonCode>)> = vec![
+            (
+                "reply-to elsewhere",
+                failing_phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", |_| {}),
+            ),
+            (
+                "dangerous attachment",
+                failing_phishing_codes("From: X <x@ordinary.example>\n", |s| {
+                    s.attachment_names = vec!["setup.exe".to_string()];
+                }),
+            ),
+            (
+                "invisible characters",
+                failing_phishing_codes("From: Ac\u{200B}me <x@ordinary.example>\n", |_| {}),
+            ),
+            (
+                "address in the display name",
+                failing_phishing_codes("From: \"billing@bank.example\" <x@ordinary.example>\n", |_| {}),
+            ),
+        ];
+        for (label, codes) in cases {
+            assert!(codes.contains(&ReasonCode::DmarcFail), "{label}: {codes:?}");
+        }
+    }
+
+    // A message with no Received hops is suspicious routing, unless
+    // authentication already vouches for it.
+    #[test]
+    fn no_received_hops_counts_only_without_full_alignment() {
+        let failing = failing_phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", |_| {});
+        assert!(failing.contains(&ReasonCode::NoReceivedHops), "{failing:?}");
+        let aligned = phishing_codes("From: X <x@ordinary.example>\nReply-To: y@elsewhere.example\n", &[]);
+        assert!(!aligned.contains(&ReasonCode::NoReceivedHops), "{aligned:?}");
+    }
+
+    #[test]
+    fn a_server_spam_flag_counts_whether_decisive_or_marginal() {
+        for status in ["Yes, score=12.7 required=5.0", "Yes, score=5.4 required=5.0"] {
+            let s = signals(
+                &format!("{ALIGNED}X-Spam-Status: {status}\nFrom: X <x@ordinary.example>\n"),
+                "hello",
+            );
+            let codes = judged(&s).reason_codes_for(JunkAxis::Spam);
+            assert!(codes.contains(&ReasonCode::ServerSpamFlag), "{status}: {codes:?}");
+        }
+    }
+
+    // Bulk mail the user never answers is graymail only once the sender has
+    // written often enough for silence to mean something.
+    #[test]
+    fn no_engagement_needs_a_recurring_sender_the_user_never_answered() {
+        let bulk = |count: usize, engaged: bool| {
+            let mut s = signals(
+                &format!("{ALIGNED}From: News <news@shop.example>\nList-Unsubscribe: <https://shop.example/u>\n"),
+                "hello",
+            );
+            s.sender_message_count = count;
+            s.sender_engaged = engaged;
+            judged(&s).reason_codes_for(JunkAxis::Graymail)
+        };
+        assert!(bulk(MIN_RECURRENCE, false).contains(&ReasonCode::NoEngagement));
+        assert!(!bulk(MIN_RECURRENCE - 1, false).contains(&ReasonCode::NoEngagement));
+        assert!(!bulk(MIN_RECURRENCE, true).contains(&ReasonCode::NoEngagement));
+    }
+
+    #[test]
+    fn shouting_counts_as_excessive_caps() {
+        let mut s = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), "hello");
+        s.subject = "ACT NOW AND CLAIM YOUR PRIZE TODAY".to_string();
+        assert!(judged(&s)
+            .reason_codes_for(JunkAxis::Spam)
+            .contains(&ReasonCode::ExcessiveCaps));
+    }
+
+    // Links to four or more different domains, none of them the sender's, is
+    // the shape of a link farm.
+    #[test]
+    fn many_foreign_link_domains_count_only_from_four_and_without_the_senders_own() {
+        let links = |domains: &[&str]| {
+            let body: String = domains
+                .iter()
+                .map(|d| format!("<a href=\"https://{d}/x\">x</a> "))
+                .collect();
+            let s = signals(&format!("{ALIGNED}From: X <x@ordinary.example>\n"), &body);
+            judged(&s)
+                .reason_codes_for(JunkAxis::Spam)
+                .contains(&ReasonCode::HighLinkDensity)
+        };
+        assert!(links(&["a.example", "b.example", "c.example", "d.example"]));
+        assert!(!links(&["a.example", "b.example", "c.example"]));
+        assert!(!links(&["a.example", "b.example", "c.example", "ordinary.example"]));
+    }
+
+    // A bounce domain that differs from From is how every ESP sends: recorded,
+    // but not an identity claim, so a mailing list failing DMARC is not phishing.
+    #[test]
+    fn a_return_path_mismatch_alone_does_not_let_an_authentication_failure_count() {
+        let s = signals(
+            &format!("{FAILING}From: News <news@shop.example>\nReturn-Path: <bounce@esp-mail.example>\n"),
+            "hello",
+        );
+        let codes = judged(&s).reason_codes_for(JunkAxis::Phishing);
+        assert!(codes.contains(&ReasonCode::ReturnPathMismatch), "{codes:?}");
+        assert!(!codes.contains(&ReasonCode::DmarcFail), "{codes:?}");
+    }
+
+    // A lookalike domain is an identity claim on its own: with it, a DMARC
+    // failure counts as phishing evidence even without a Reply-To mismatch.
+    #[test]
+    fn a_lookalike_domain_alone_lets_an_authentication_failure_count() {
+        let mut s = signals(
+            &format!("{FAILING}From: Billing <billing@acme-payments.example>\n"),
+            "hello",
+        );
+        s.known_contact_domains = vec!["acme.example".to_string()];
+        let codes = judged(&s).reason_codes_for(JunkAxis::Phishing);
+        assert!(codes.contains(&ReasonCode::LookalikeDomain), "{codes:?}");
+        assert!(codes.contains(&ReasonCode::DmarcFail), "{codes:?}");
+    }
+
     #[test]
     fn a_model_with_no_opinion_contributes_nothing() {
         // 0.5 is "I do not know". It must add exactly zero rather than half a

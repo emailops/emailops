@@ -659,4 +659,126 @@ mod tests {
         assert!(list.contains("— Budget requested (3 correos)"), "{list}");
         assert!(render_match_list(&matches, "en").contains("(3 emails)"));
     }
+    // ── condense input and reply ──
+
+    #[test]
+    fn the_condense_step_sees_each_note_labelled_with_its_tag() {
+        let group = vec![
+            note(&[0], FindingTag::Match, "quote to Acme"),
+            note(&[1], FindingTag::Context, "asked a supplier"),
+        ];
+        assert_eq!(
+            render_condense_input(&group),
+            "N1 (MATCH): quote to Acme\nN2 (CONTEXT): asked a supplier\n"
+        );
+    }
+
+    #[test]
+    fn a_condense_reply_wrapped_in_prose_is_still_read() {
+        let group = vec![note(&[0], FindingTag::Match, "quote")];
+        let reply = r#"Here are the notes: {"notes":[{"text":"One quote","from":["N1"]}]} Done."#;
+        let merged = parse_condensed(reply, &group).unwrap();
+        assert_eq!(merged, vec![note(&[0], FindingTag::Match, "One quote")]);
+    }
+
+    #[test]
+    fn a_reply_with_its_braces_the_wrong_way_round_is_an_error_not_a_panic() {
+        let group = vec![note(&[0], FindingTag::Match, "quote")];
+        assert!(parse_condensed("} no notes here {", &group).is_err());
+    }
+
+    #[test]
+    fn a_label_past_the_group_is_ignored_and_the_note_kept() {
+        let group = vec![note(&[0], FindingTag::Match, "a"), note(&[1], FindingTag::Match, "b")];
+        let merged = parse_condensed(r#"{"notes":[{"text":"x","from":["N1","N3"]}]}"#, &group).unwrap();
+        assert_eq!(
+            merged,
+            vec![note(&[0], FindingTag::Match, "x"), note(&[1], FindingTag::Match, "b")]
+        );
+    }
+
+    #[test]
+    fn a_batch_is_measured_by_its_note_text_plus_the_line_overhead() {
+        assert_eq!(notes_len(&[note(&[0], FindingTag::Match, "abc")]), 3 + 24);
+    }
+
+    // ── the report's notes block ──
+
+    /// Two batches of three 14-char lines (15 with the newline) around an
+    /// empty one; no conversations, so the legend is just its heading.
+    fn three_by_two() -> Vec<Vec<Note>> {
+        let batch = || vec![note(&[], FindingTag::Match, "aaaa"); 3];
+        vec![batch(), vec![], batch()]
+    }
+
+    const LEGEND: &str = "CONVERSATIONS:\n";
+
+    fn rendered_lines(max_notes_chars: usize) -> usize {
+        let out = render_notes(&three_by_two(), &[], &[], LEGEND.len() + max_notes_chars);
+        out.lines().filter(|l| l.starts_with("- MATCH")).count()
+    }
+
+    #[test]
+    fn notes_that_fit_are_all_kept() {
+        assert_eq!(rendered_lines(90), 6);
+    }
+
+    #[test]
+    fn overflowing_notes_give_each_non_empty_batch_an_equal_share() {
+        // 90 chars of notes in 85: each of the two batches gets 42, room for 2 lines.
+        assert_eq!(rendered_lines(85), 4);
+        // A share of exactly two lines keeps two lines.
+        assert_eq!(rendered_lines(60), 4);
+        // A share under one line keeps none.
+        assert_eq!(rendered_lines(29), 0);
+    }
+
+    // ── labels and link targets ──
+
+    #[test]
+    fn a_long_subject_is_cut_to_sixty_chars_with_an_ellipsis() {
+        let label = link_label(&"abcdefghij".repeat(8));
+        assert_eq!(label.chars().count(), MAX_LABEL_CHARS);
+        assert!(label.ends_with('…'), "{label}");
+    }
+
+    fn doc(thread_id: &str, first_email: &str) -> ResearchDoc {
+        ResearchDoc {
+            thread_id: thread_id.into(),
+            subject: format!("Subject {thread_id}"),
+            messages: vec![super::super::prompts::DocMessage {
+                id: first_email.into(),
+                date: "2024-01-02".into(),
+                from: "sender@example.com".into(),
+                to: String::new(),
+                from_user: false,
+                text: String::new(),
+            }],
+        }
+    }
+
+    fn finding(doc: usize, email: &str) -> Finding {
+        Finding {
+            doc,
+            tag: FindingTag::Context,
+            text: "context".into(),
+            emails: vec![email.into()],
+        }
+    }
+
+    #[test]
+    fn an_unmatched_conversation_links_the_email_its_own_note_cited() {
+        let docs = vec![doc("t0", "t0-first"), doc("t1", "t1-first")];
+        let findings = vec![finding(0, "t0-cited"), finding(1, "t1-cited")];
+        let targets = citation_targets(&[0, 1], &docs, &[], &findings);
+        assert_eq!(targets[0].1, "t0-cited");
+        assert_eq!(targets[1].1, "t1-cited");
+    }
+
+    #[test]
+    fn the_full_list_heading_is_in_the_report_language() {
+        let matches = vec![a_match("a")];
+        assert!(render_match_list(&matches, "fr").starts_with("### Liste complète (1)"));
+        assert!(render_match_list(&matches, "de").starts_with("### Vollständige Liste (1)"));
+    }
 }

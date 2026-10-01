@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -396,6 +396,22 @@ docs-gen:
 # Measured peak memory per chat model, as quoted in the docs' model catalog.
 model-memory:
 	bash scripts/measure_model_memory.sh $(ARGS)
+
+# Coverage: Rust (cargo-llvm-cov, CI feature set) + TS (vitest v8) + per-feature ranking.
+# Reports under src-tauri/reports/coverage/. See docs/testing/COVERAGE-AND-MUTATION.md.
+coverage:
+	bash scripts/coverage.sh all
+
+coverage-rust:
+	bash scripts/coverage.sh rust
+
+coverage-ts:
+	bash scripts/coverage.sh ts
+
+# Mutation testing (cargo-mutants, Rust only) in a detached worktree, never in this checkout.
+# ARGS are passed to cargo mutants, e.g. ARGS="--file src/sync/http_retry.rs" or ARGS="--in-diff x.diff".
+mutants:
+	bash scripts/mutants.sh $(ARGS)
 
 # Private evals (private data) against the `make eval-snapshot` copy; report stays local.
 verify-private:

@@ -923,6 +923,37 @@ mod tests {
         assert!(pages.contains("Choosing a backend"), "section titles listed: {pages}");
     }
 
+    // Each page's line carries that page's own English sections, once each and
+    // in order: not the intro (whose heading is the page title), not a second
+    // copy for every part a long section is split into, not another page's or
+    // another language's headings.
+    #[test]
+    fn each_guide_page_lists_its_own_english_sections_once() {
+        use crate::services::help_docs::corpus;
+        let rendered = render_guide_pages();
+        for page in corpus::PAGES {
+            let mut expected: Vec<(i32, &str)> = corpus::corpus()
+                .iter()
+                .filter(|c| c.lang == "en" && c.page == *page && c.section_index != 0)
+                .map(|c| (c.section_index, c.heading.as_str()))
+                .collect();
+            expected.sort();
+            expected.dedup();
+            let expected: Vec<&str> = expected.into_iter().map(|(_, h)| h).collect();
+            let line = rendered
+                .lines()
+                .find(|l| l.starts_with(&format!("  {page}: ")))
+                .unwrap_or_else(|| panic!("no line for {page}: {rendered}"));
+            let listed = line.split_once(" — ").map(|(_, s)| s).unwrap_or_default();
+            let listed: Vec<&str> = if listed.is_empty() {
+                Vec::new()
+            } else {
+                listed.split("; ").collect()
+            };
+            assert_eq!(listed, expected, "{page}");
+        }
+    }
+
     #[test]
     fn a_false_app_help_flag_is_not_a_verdict() {
         let plan = search(r#"{"app_help": false, "from": "marisol"}"#);

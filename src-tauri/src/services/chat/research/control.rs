@@ -181,6 +181,34 @@ mod tests {
         assert!(take_estimate(&id, "acct", "¿qué facturas?").is_none(), "used up");
     }
 
+    // Storing an estimate sweeps out expired ones; a fresh one must survive
+    // the sweep.
+    #[test]
+    fn an_earlier_estimate_survives_a_later_one_being_stored() {
+        let first = store_estimate("acct", "first question", prepared(&["e1"]));
+        let _second = store_estimate("acct", "second question", prepared(&["e2"]));
+        assert!(take_estimate(&first, "acct", "first question").is_some());
+    }
+
+    #[test]
+    fn every_registered_run_counts() {
+        // Other tests register runs concurrently: assert a floor.
+        let a = register_run("msg-count-a");
+        let b = register_run("msg-count-b");
+        assert!(running_runs() >= 2);
+        drop((a, b));
+    }
+
+    // EXIT_CONFIRMED is process-wide and nothing else in the test binary reads
+    // it, so setting it here does not leak into another test.
+    #[test]
+    fn confirming_the_exit_lets_it_through_while_research_runs() {
+        let guard = register_run("msg-exit-1");
+        confirm_exit();
+        assert_eq!(exit_decision(), ExitDecision::Allow);
+        drop(guard);
+    }
+
     #[test]
     fn an_estimate_does_not_serve_another_account_or_question() {
         let id = store_estimate("acct", "q1", prepared(&["e1"]));

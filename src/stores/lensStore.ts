@@ -308,10 +308,13 @@ export const useLensStore = create<LensStore>((set, get) => ({
   setSort: async (sort) => {
     dispatch(set, { type: 'SET_SORT', sort });
     const id = get().activeLensId;
-    if (id) {
+    if (!id) return;
+    try {
       const page = await api.getLensRows(id, { sort: sort ?? undefined, filters: get().columnFilters });
       if (get().activeLensId !== id) return;
       dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
+    } catch (err) {
+      dispatch(set, { type: 'SET_ERROR', error: errorText(err) });
     }
   },
 
@@ -408,12 +411,17 @@ export const useLensStore = create<LensStore>((set, get) => ({
     dispatch(set, { type: 'SET_SHOW_EXCLUDED', showExcluded });
     const id = get().activeLensId;
     if (!id) return;
-    const page = showExcluded
-      ? await api.getExcludedLensRows(id)
-      : await api.getLensRows(id, { sort: get().sort ?? undefined, filters: get().columnFilters });
-    if (get().activeLensId !== id || get().showExcluded !== showExcluded) return;
-    dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
-    dispatch(set, { type: 'SET_LOADING_ROWS', loading: false });
+    try {
+      const page = showExcluded
+        ? await api.getExcludedLensRows(id)
+        : await api.getLensRows(id, { sort: get().sort ?? undefined, filters: get().columnFilters });
+      if (get().activeLensId !== id || get().showExcluded !== showExcluded) return;
+      dispatch(set, { type: 'SET_ROWS', rows: page.rows, total: page.total });
+      dispatch(set, { type: 'SET_LOADING_ROWS', loading: false });
+    } catch (err) {
+      // SET_ERROR also clears isLoadingRows, which SET_SHOW_EXCLUDED turned on.
+      dispatch(set, { type: 'SET_ERROR', error: errorText(err) });
+    }
   },
 
   updateRowOverride: async (emailId, overrides) => {

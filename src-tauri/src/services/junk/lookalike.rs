@@ -333,6 +333,7 @@ mod tests {
     #[test]
     fn subdomains_reduce_to_the_registrable_domain() {
         assert_eq!(registrable_domain("mail.corp.acme.example"), "acme.example");
+        assert_eq!(registrable_domain("a.b.mail.corp.acme.example"), "acme.example");
         assert_eq!(registrable_domain("acme.example"), "acme.example");
     }
 
@@ -492,5 +493,39 @@ mod tests {
     fn empty_strings_cost_their_full_length() {
         assert_eq!(edit_distance("", "acme"), 4);
         assert_eq!(edit_distance("acme", ""), 4);
+    }
+    #[test]
+    fn an_inserted_or_dropped_letter_is_one_edit() {
+        assert_eq!(edit_distance("acme", "acmes"), 1);
+        assert_eq!(edit_distance("acmes", "acme"), 1);
+        assert_eq!(edit_distance("acme", "xacme"), 1);
+        // A swap late in a longer word is still one edit.
+        assert_eq!(edit_distance("abcdef", "abcdfe"), 1);
+    }
+
+    // Short brands match tighter: at distance 2 almost every four-letter word
+    // is "close" to every other.
+    #[test]
+    fn latin_mixed_with_arabic_letters_is_mixed_scripts() {
+        assert!(has_mixed_scripts("Pay\u{0627}al"));
+    }
+
+    #[test]
+    fn an_embedded_address_needs_a_real_looking_tld() {
+        assert_eq!(embedded_address_domain("billing@acme.xy"), Some("acme.xy".to_string()));
+        assert_eq!(embedded_address_domain("billing@acme.x"), None);
+    }
+
+    #[test]
+    fn the_edit_budget_grows_with_the_brand_length() {
+        let budgets: Vec<usize> = [1, 4, 5, 8, 9, 20].iter().map(|n| distance_budget(*n)).collect();
+        assert_eq!(budgets, vec![1, 1, 2, 2, 3, 3]);
+    }
+
+    #[test]
+    fn a_domain_with_any_punycode_label_is_punycode() {
+        assert!(is_punycode("xn--acme-9db.example"));
+        assert!(is_punycode("mail.xn--80ak6aa92e.example"));
+        assert!(!is_punycode("acme.example"));
     }
 }

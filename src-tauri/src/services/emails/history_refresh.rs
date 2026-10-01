@@ -1067,4 +1067,16 @@ mod tests {
             vec![set_read("read", true), set_mailbox("trashed", "trash"), delete("gone")]
         );
     }
+    #[test]
+    fn a_label_change_that_leaves_a_sent_message_in_sent_moves_nothing() {
+        let plan = plan_history_changes(&[stored("s-1", "sent", true)], &[added("s-1", &["IMPORTANT"])]);
+        assert_eq!(plan.changes, vec![]);
+    }
+
+    // Two accounts must never share a cursor: one account's position in its
+    // change log means nothing in another's.
+    #[test]
+    fn the_history_cursor_is_kept_per_account() {
+        assert_ne!(history_cursor_key("acc-1"), history_cursor_key("acc-2"));
+    }
 }

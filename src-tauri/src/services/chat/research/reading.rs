@@ -465,4 +465,30 @@ mod tests {
         let any = collect_matches(&docs, &findings, Direction::Any);
         assert_eq!(any[0].emails, 2);
     }
+    #[test]
+    fn a_conversation_label_past_the_batch_is_ignored() {
+        let docs = batch();
+        let reply = r#"{"findings":[
+            {"conversation":"C2","tag":"match","text":"x","emails":["E2"]},
+            {"conversation":"C3","tag":"match","text":"y","emails":["E1"]}]}"#;
+        let findings = BatchLabels::new(0, &docs).parse(reply).unwrap();
+        assert_eq!(findings.iter().map(|f| f.doc).collect::<Vec<_>>(), vec![1]);
+    }
+
+    #[test]
+    fn a_sent_match_citing_no_email_is_background_that_says_why() {
+        let docs = batch();
+        let held = enforce_direction(vec![finding(1, FindingTag::Match, &[])], &docs, Direction::Sent);
+        assert_eq!(held[0].tag, FindingTag::Context);
+        assert_eq!(held[0].text, "a quote [no email by the user cited]");
+    }
+
+    #[test]
+    fn a_received_match_links_the_email_the_user_received() {
+        let docs = batch();
+        let findings = vec![finding(1, FindingTag::Match, &["id-b", "id-c"])];
+        let matches = collect_matches(&docs, &findings, Direction::Received);
+        assert_eq!(matches[0].id, "id-c", "the reply, not the user's own email");
+        assert_eq!(matches[0].emails, 1);
+    }
 }
