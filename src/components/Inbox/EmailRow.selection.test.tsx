@@ -108,3 +108,20 @@ describe.each([false, true])('EmailRow selection (compact: %s)', (compact) => {
     expect(checkbox.checked).toBe(true);
   });
 });
+
+// Discoverability: the full-width list shows every row's checkbox at rest, as
+// Gmail does — it was invisible until hover, so multi-select went unnoticed.
+// The split layout keeps its swap: the checkbox takes the avatar's place on
+// hover or once something is selected, so the narrow row stays uncluttered.
+describe('EmailRow checkbox at rest', () => {
+  it('full-width (compact) rows show the checkbox without hover', () => {
+    const { checkbox } = render(true);
+    expect(checkbox.className).not.toContain('opacity-0');
+  });
+
+  it('split rows show the avatar at rest and the checkbox on hover', () => {
+    const { checkbox } = render(false);
+    expect(checkbox.className).toContain('opacity-0');
+    expect(checkbox.className).toContain('group-hover:opacity-100');
+  });
+});

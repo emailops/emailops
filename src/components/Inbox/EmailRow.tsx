@@ -113,8 +113,11 @@ export function EmailRow({
   const handleMouseDown = (e: React.MouseEvent) => {
     if (onCheck && e.shiftKey) e.preventDefault();
   };
+  // Full-width rows always show the checkbox (as Gmail's list does), so
+  // multi-select is discoverable without hovering; split rows swap it with the
+  // avatar on hover or while selecting.
   const checkbox = onCheck ? (
-    <RowCheckbox checked={isChecked} alwaysVisible={selectionActive || isChecked} onCheck={onCheck} />
+    <RowCheckbox checked={isChecked} alwaysVisible={compact || selectionActive || isChecked} onCheck={onCheck} />
   ) : null;
 
   useEffect(() => {
@@ -337,8 +340,8 @@ export function EmailRow({
   );
 }
 
-/** Multi-select checkbox. Hidden until the row is hovered or focused, unless
- *  a selection exists. Never opens the row. */
+/** Multi-select checkbox. Unless `alwaysVisible`, hidden until the row is
+ *  hovered or focused. Never opens the row. */
 function RowCheckbox({
   checked,
   alwaysVisible,
