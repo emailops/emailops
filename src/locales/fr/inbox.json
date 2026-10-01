@@ -86,6 +86,7 @@
     "aiDraftTitle": "Générer une réponse avec l'IA (utilise les destinataires de Répondre à tous)",
     "openInNewTab": "Ouvrir dans un nouvel onglet",
     "deleteThread": "Supprimer le fil",
+    "deleteThreadShortcut": "Supprimer le fil (Suppr)",
     "closeTab": "Fermer l'onglet",
     "trustSender": "Toujours faire confiance à cet expéditeur",
     "untrustSender": "Ne plus faire confiance à cet expéditeur",

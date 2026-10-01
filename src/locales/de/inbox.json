@@ -86,6 +86,7 @@
     "aiDraftTitle": "Antwort mit KI erzeugen (verwendet die Empfänger von Allen antworten)",
     "openInNewTab": "In neuem Tab öffnen",
     "deleteThread": "Thread löschen",
+    "deleteThreadShortcut": "Thread löschen (Entf)",
     "closeTab": "Tab schließen",
     "trustSender": "Diesem Absender immer vertrauen",
     "untrustSender": "Diesem Absender nicht mehr vertrauen",

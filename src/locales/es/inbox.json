@@ -86,6 +86,7 @@
     "aiDraftTitle": "Generar una respuesta con IA (usa los destinatarios de Responder a todos)",
     "openInNewTab": "Abrir en una pestaña nueva",
     "deleteThread": "Eliminar hilo",
+    "deleteThreadShortcut": "Eliminar hilo (Supr)",
     "closeTab": "Cerrar pestaña",
     "trustSender": "Confiar siempre en este remitente",
     "untrustSender": "Dejar de confiar en este remitente",
