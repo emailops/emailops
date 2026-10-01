@@ -19,6 +19,7 @@ pub mod junk;
 pub mod junk_model;
 pub mod mailbox_state;
 pub mod search;
+pub mod snoozes;
 
 #[cfg(test)]
 pub(super) mod test_helpers;
@@ -264,9 +265,8 @@ mod normalize_mailbox_tests {
     }
 }
 
-// Used by test code to benchmark the scalar subquery approach against
-// the inbox-scoped variant. Production paths use `latest_inbox_email_predicate`.
-#[cfg(test)]
+// The latest live message of the thread, whatever its mailbox. The Snoozed
+// view picks its row with it; the inbox uses `latest_inbox_email_predicate`.
 pub(super) fn latest_thread_email_predicate(alias: &str) -> String {
     // Scalar subquery: check that this email IS the latest in its thread.
     // Uses idx_emails_thread_latest (account_id, thread_id, timestamp DESC, id DESC)
@@ -304,6 +304,16 @@ pub(super) fn latest_inbox_email_predicate(alias: &str) -> String {
             LIMIT 1
         )"
     )
+}
+
+/// [`EMAIL_COLUMNS`] qualified with `alias`, for queries that join another
+/// table carrying same-named columns (`account_id`, `thread_id`, `created_at`).
+pub(super) fn qualified_email_columns(alias: &str) -> String {
+    EMAIL_COLUMNS
+        .split(',')
+        .map(|c| format!("{alias}.{}", c.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(super) fn thread_order_clause(alias: &str, ascending: bool) -> String {

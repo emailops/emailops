@@ -216,6 +216,48 @@ pub async fn apply_thread_action(
     Ok(services::emails::apply_thread_action(&state.db, &threads, action, Some(app)).await)
 }
 
+/// Snooze conversations until `until` (unix seconds): they leave the inbox
+/// and come back, unread and on top, at that time. Local state. The report
+/// lists conversations that no longer exist.
+#[tauri::command]
+pub async fn snooze_threads(
+    state: State<'_, AppState>,
+    threads: Vec<services::emails::ThreadRef>,
+    until: i64,
+) -> Result<services::emails::ThreadActionReport, AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    services::emails::snooze_threads(&state.db, &threads, until, crate::services::clock::now_secs())
+}
+
+/// Bring snoozed conversations back to the inbox now (the inverse of
+/// `snooze_threads`, and its undo).
+#[tauri::command]
+pub async fn unsnooze_threads(
+    state: State<'_, AppState>,
+    threads: Vec<services::emails::ThreadRef>,
+) -> Result<(), AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    services::emails::unsnooze_threads(&state.db, &threads)
+}
+
+/// Snooze records (snoozed and woken) of one account, or of every enabled
+/// account when `account_id` is omitted.
+#[tauri::command]
+pub async fn list_thread_snoozes(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+) -> Result<Vec<crate::models::ThreadSnooze>, AppError> {
+    services::emails::list_thread_snoozes(&state.db, account_id.as_deref())
+}
+
 #[tauri::command]
 pub async fn delete_email(state: State<'_, AppState>, app: AppHandle, email_id: String) -> Result<(), AppError> {
     // Memory is logged only once the delete actually succeeded (including at

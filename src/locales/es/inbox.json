@@ -234,6 +234,39 @@
     "moveToFolder": "Mover a carpeta",
     "clear": "Borrar selección",
     "moveFailed_one": "No se pudo mover {{count}} mensaje: {{detail}}",
-    "moveFailed_other": "No se pudieron mover {{count}} mensajes: {{detail}}"
+    "moveFailed_other": "No se pudieron mover {{count}} mensajes: {{detail}}",
+    "snooze": "Posponer",
+    "unsnooze": "Dejar de posponer"
+  },
+  "snooze": {
+    "button": "Posponer",
+    "unsnooze": "Dejar de posponer",
+    "menuTitle": "Posponer hasta…",
+    "back": "Atrás",
+    "presets": {
+      "laterToday": "Más tarde hoy",
+      "tomorrow": "Mañana",
+      "thisWeekend": "Este fin de semana",
+      "nextWeek": "La próxima semana"
+    },
+    "pickDateTime": "Elegir fecha y hora",
+    "customLabel": "Fecha y hora",
+    "confirm": "Posponer",
+    "mustBeFuture": "Elige una hora futura",
+    "done_one": "Pospuesta hasta {{when}}",
+    "done_other": "{{count}} conversaciones pospuestas hasta {{when}}",
+    "undone_one": "Se deshizo posponer {{count}} conversación",
+    "undone_other": "Se deshizo posponer {{count}} conversaciones",
+    "undoFailed": "No se pudo deshacer el aplazamiento: {{detail}}",
+    "failed_one": "No se pudo posponer {{count}} conversación: {{detail}}",
+    "failed_other": "No se pudieron posponer {{count}} conversaciones: {{detail}}",
+    "unsnoozed_one": "{{count}} conversación ya no está pospuesta",
+    "unsnoozed_other": "{{count}} conversaciones ya no están pospuestas",
+    "unsnoozeFailed_one": "No se pudo dejar de posponer {{count}} conversación: {{detail}}",
+    "unsnoozeFailed_other": "No se pudo dejar de posponer {{count}} conversaciones: {{detail}}",
+    "loadFailed": "No se pudieron cargar las conversaciones pospuestas: {{detail}}",
+    "until": "Pospuesta hasta {{when}}",
+    "marker": "Pospuesta",
+    "markerTitle": "Vuelve tras posponerla"
   }
 }

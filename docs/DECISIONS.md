@@ -2718,3 +2718,46 @@ each racing the state refresh.
 - *Keeping the old per-message delete loop in the frontend*: N invokes with no error
   aggregation; bulk delete is one `apply_thread_action(threads, delete)` call with a
   per-thread report.
+
+## 2026-10-01 — Snooze is local state; a woken conversation sorts by its wake time
+
+**Decision:** Snooze is stored locally (V031 `thread_snoozes`, keyed by
+`(account_id, thread_id)`) and works the same on Gmail, Outlook and IMAP. A snoozed
+conversation is left out of the Inbox list and count (a primary-key `NOT EXISTS` seek per
+candidate row) but stays findable by search, filters and the other views; the new
+**Snoozed** view lists it, soonest wake first. A ticker in `sync_scheduler` wakes due
+snoozes every 30 s and once at start-up (a snooze that fell due while the app was closed
+wakes on the next launch). Waking does three things: the record is kept as *woken*
+(`woke_at`), the latest message is marked unread **and that is pushed to the provider**
+like any mark-unread (otherwise the next state refresh would read it back as read, and
+other clients would not see it as new), and a `snoozes-woken` event refreshes the list
+(the hook a future new-mail notifier can use). The Inbox then sorts a woken conversation by
+its **wake time** instead of its latest message's date, so a thread snoozed weeks ago comes
+back at the top, as in Gmail, while the message keeps its real timestamp. The list query
+merges two arms on a sort key: the woken conversations (a handful, driven from
+`thread_snoozes`) and every other conversation read through `idx_emails_account_mailbox`
+in date order and cut at `offset + limit`; only that small merge is sorted (pinned by an
+`EXPLAIN QUERY PLAN` test). A new inbound inbox message in a snoozed or woken conversation
+deletes the record in the ingest transaction (Gmail returns the thread on a reply; the
+thread then sorts by the new message); sent mail, spam, backfill dated before the snooze
+and re-downloads of stored messages do not. Archiving or deleting a conversation ends its
+snooze. Woken records whose conversation left the inbox are pruned on each tick. Snooze and
+unsnooze are separate commands (`snooze_threads(threads, until)`, `unsnooze_threads`,
+`list_thread_snoozes`), not `ThreadAction` variants: they carry a time and never touch the
+provider. Undo of a snooze is an unsnooze (no deferral needed — nothing reaches the
+provider).
+**Context:** Parity audit item (High). No provider exposes a portable snooze (Gmail's is not
+in its API; Graph and IMAP have none), and the audit's constraint is that snooze, mute and
+pin are local state. The inbox query must stay index-driven on 47k+ emails.
+**Rejected:**
+- *Rewriting the message timestamp to the wake time*: corrupts dates shown in the thread,
+  search ordering and every date-based feature.
+- *Ordering the inbox by `COALESCE(woke_at, timestamp)`*: defeats the index order, so every
+  page sorts the whole inbox.
+- *Normal ordering plus unread only*: a thread snoozed for a week reappears pages down,
+  which defeats the point of snoozing.
+- *Not pushing the wake's unread to the provider*: the state refresh would mark it read
+  again within minutes.
+- *Hiding snoozed mail at the provider (archive on snooze, move back on wake)*: provider
+  writes, IMAP re-keying and failure modes for a reminder, and the conversation would be
+  lost from the inbox if the app never ran again.

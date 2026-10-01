@@ -229,8 +229,17 @@ export async function getAvailableCategories(accountId: string): Promise<string[
 // Email commands
 /** `folder:<serverPath>` addresses one custom IMAP folder. `archive` is mail
  *  taken out of the inbox (Gmail/Outlook; IMAP files it in its archive
- *  folder, a `folder:` view); `starred` lists starred mail wherever it is. */
-export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted' | 'archive' | 'starred' | `folder:${string}`;
+ *  folder, a `folder:` view); `starred` lists starred mail wherever it is;
+ *  `snoozed` lists snoozed conversations, soonest wake first. */
+export type MailboxView =
+  | 'inbox'
+  | 'sent'
+  | 'spam'
+  | 'deleted'
+  | 'archive'
+  | 'starred'
+  | 'snoozed'
+  | `folder:${string}`;
 
 /** A custom IMAP folder discovered on the server, as stored by sync. */
 export interface Folder {
@@ -352,6 +361,33 @@ export interface ThreadActionReport {
  *  exactly the threads that failed. */
 export async function applyThreadAction(threads: ThreadRef[], action: ThreadAction): Promise<ThreadActionReport> {
   return invoke('apply_thread_action', { threads, action });
+}
+
+/** A snoozed conversation (local state). `wokeAt` is null while it is hidden
+ *  from the inbox, and the wake time once it came back (the inbox then sorts
+ *  it by that time). Times are unix seconds. Mirrors the Rust `ThreadSnooze`. */
+export interface ThreadSnooze {
+  accountId: string;
+  threadId: string;
+  snoozedUntil: number;
+  createdAt: number;
+  wokeAt: number | null;
+}
+
+/** Hide conversations from the inbox until `until` (unix seconds, in the
+ *  future). The report lists conversations that no longer exist. */
+export async function snoozeThreads(threads: ThreadRef[], until: number): Promise<ThreadActionReport> {
+  return invoke('snooze_threads', { threads, until });
+}
+
+/** Bring snoozed conversations back to the inbox now. */
+export async function unsnoozeThreads(threads: ThreadRef[]): Promise<void> {
+  return invoke('unsnooze_threads', { threads });
+}
+
+/** Snooze records of one account, or of every enabled account (`null`). */
+export async function listThreadSnoozes(accountId: string | null): Promise<ThreadSnooze[]> {
+  return invoke('list_thread_snoozes', { accountId: accountId ?? undefined });
 }
 
 export async function sendReply(

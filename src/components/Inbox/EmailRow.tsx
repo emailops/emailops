@@ -10,6 +10,7 @@ import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
+import { SnoozeBadge } from './SnoozeBadge';
 
 export type { RulePrefill } from './EmailActionsMenu';
 
@@ -228,6 +229,7 @@ export function EmailRow({
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
             {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
           </div>
+          <SnoozeBadge email={email} />
           <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">
             {receivedTime}
           </span>
@@ -292,7 +294,9 @@ export function EmailRow({
             </span>
             {accountChip}
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
-            <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
+            <span className="ml-auto" />
+            <SnoozeBadge email={email} />
+            <span className="text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
             <StarToggle email={email} />
             <EmailActionsMenu
               email={email}

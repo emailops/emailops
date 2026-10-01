@@ -2,8 +2,9 @@ import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import type { MailboxView } from '@/lib/api';
 import type { InboxLayout } from '@/types';
 
-/** Views that list one mailbox (or, for `starred`, one flag) other than the inbox. */
-const MAILBOX_VIEWS: readonly ViewMode[] = ['sent', 'spam', 'deleted', 'starred', 'archive'];
+/** Views that list one mailbox (or, for `starred`, one flag; for `snoozed`,
+ *  the snoozed conversations) other than the inbox. */
+const MAILBOX_VIEWS: readonly ViewMode[] = ['sent', 'spam', 'deleted', 'starred', 'archive', 'snoozed'];
 
 /** The mailbox a list view shows; anything that is not a mailbox view is the inbox. */
 export function viewModeToMailbox(mode: ViewMode): MailboxView {

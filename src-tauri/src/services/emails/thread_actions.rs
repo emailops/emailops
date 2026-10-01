@@ -84,7 +84,7 @@ pub struct ThreadActionReport {
 }
 
 impl ThreadActionFailure {
-    fn new(thread: &ThreadRef, error: &AppError) -> Self {
+    pub(crate) fn new(thread: &ThreadRef, error: &AppError) -> Self {
         Self {
             account_id: thread.account_id.clone(),
             thread_id: thread.thread_id.clone(),
@@ -338,6 +338,12 @@ pub async fn apply_to_thread(
             ThreadAction::MoveToInbox => move_message_to_inbox(db, email, writable(access)?).await?,
             ThreadAction::Delete => delete_email_with_provider(db, id, writable(access)?).await?,
         }
+    }
+    // A conversation the user archives or deletes is done with: its snooze
+    // ends too (as in Gmail), so it neither lingers in the Snoozed view nor
+    // wakes later.
+    if matches!(action, ThreadAction::Archive | ThreadAction::Delete) {
+        db.unsnooze_threads(&[(account_id, thread_id)])?;
     }
     // The same interaction signals the single-message read and delete
     // commands record (thread state, follow-up tasks).
@@ -780,6 +786,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row(&db, "a").unwrap().mailbox, "inbox");
+    }
+
+    #[tokio::test]
+    async fn archiving_or_deleting_a_snoozed_thread_ends_its_snooze() {
+        for action in [ThreadAction::Archive, ThreadAction::Delete] {
+            let db = test_db(&[message("a", 1, "inbox")]);
+            db.snooze_threads(&[("acc-1", "t-1")], 9_999_999_999, 1).unwrap();
+            run(&db, action, ProviderAccess::LocalOnly).await.unwrap();
+            assert!(
+                db.pending_snoozes().unwrap().is_empty(),
+                "{action:?} must end the snooze (Gmail does the same)"
+            );
+        }
+        // Other actions leave it snoozed.
+        let db = test_db(&[message("a", 1, "inbox")]);
+        db.snooze_threads(&[("acc-1", "t-1")], 9_999_999_999, 1).unwrap();
+        run(&db, ThreadAction::Star, ProviderAccess::LocalOnly).await.unwrap();
+        assert_eq!(db.pending_snoozes().unwrap().len(), 1);
     }
 
     #[tokio::test]

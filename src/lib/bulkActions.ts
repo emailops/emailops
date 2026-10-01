@@ -6,6 +6,8 @@ import type { Account, Email } from '@/types';
  *  change something. Delete always applies. */
 export interface BulkAvailability {
   canArchive: boolean;
+  /** Snooze hides inbox conversations, like archive takes them out. */
+  canSnooze: boolean;
   canMarkRead: boolean;
   canMarkUnread: boolean;
   canStar: boolean;
@@ -15,6 +17,7 @@ export interface BulkAvailability {
 export function bulkAvailability(rows: readonly Email[]): BulkAvailability {
   return {
     canArchive: rows.some((e) => e.mailbox === 'inbox'),
+    canSnooze: rows.some((e) => e.mailbox === 'inbox'),
     canMarkRead: rows.some((e) => !e.isRead),
     canMarkUnread: rows.some((e) => e.isRead),
     canStar: rows.some((e) => !e.isStarred),

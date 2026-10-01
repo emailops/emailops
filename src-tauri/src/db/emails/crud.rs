@@ -8,8 +8,22 @@ pub(super) struct MailboxScopeSql {
     pub conditions: Vec<String>,
     /// Value to bind to the folder placeholder, for custom-folder views.
     pub folder_value: Option<String>,
-    /// Whether the view collapses each thread to a single row (inbox only).
-    pub thread_deduped: bool,
+    /// How the view's rows are shaped and ordered.
+    pub shape: ListShape,
+}
+
+/// How a mailbox view lists its rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ListShape {
+    /// One row per message, newest first.
+    Flat,
+    /// The inbox: one row per conversation (its latest inbox message), newest
+    /// first, snoozed conversations left out and woken ones placed by their
+    /// wake time.
+    InboxThreads,
+    /// The Snoozed view: one row per snoozed conversation (its latest
+    /// message), soonest wake first. Driven from `thread_snoozes`.
+    SnoozedThreads,
 }
 
 /// Build the scope for `view`. `prefix` qualifies every column (`"e."` for the
@@ -21,7 +35,7 @@ pub(super) struct MailboxScopeSql {
 pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &str) -> MailboxScopeSql {
     let mut conditions: Vec<String> = Vec::new();
     let mut folder_value = None;
-    let mut thread_deduped = false;
+    let mut shape = ListShape::Flat;
 
     match view {
         "deleted" => {
@@ -73,17 +87,25 @@ pub(super) fn mailbox_scope_sql(view: &str, prefix: &str, folder_placeholder: &s
             conditions.push(format!("{prefix}mailbox = {folder_placeholder}"));
             folder_value = Some(v.to_string());
         }
+        "snoozed" => {
+            // Snoozed conversations wherever their messages are filed; the
+            // list and count drive from the (small) snooze table.
+            conditions.push(format!("{prefix}is_deleted = 0"));
+            shape = ListShape::SnoozedThreads;
+        }
         _ => {
             conditions.push(format!("{prefix}is_deleted = 0"));
             conditions.push(format!("{prefix}mailbox = 'inbox'"));
-            thread_deduped = true;
+            // A snoozed conversation is out of the inbox until it wakes.
+            conditions.push(super::snoozes::not_snoozed_predicate(prefix));
+            shape = ListShape::InboxThreads;
         }
     }
 
     MailboxScopeSql {
         conditions,
         folder_value,
-        thread_deduped,
+        shape,
     }
 }
 
@@ -291,9 +313,49 @@ impl Database {
         mailbox: Option<&str>,
         category: Option<&str>,
     ) -> Result<Vec<Email>> {
+        let (sql, params_vec) = Self::email_list_query(scope, limit, offset, cursor, mailbox, category);
         let conn = self.reader();
-        let order_clause = thread_order_clause("e", false);
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let emails = stmt.query_map(params_refs.as_slice(), row_to_email)?;
+        let mut result = Vec::new();
+        for email in emails {
+            result.push(email?);
+        }
+        Ok(result)
+    }
 
+    /// `EXPLAIN QUERY PLAN` rows for the inbox list query, so a test can pin
+    /// how the planner drives it.
+    #[cfg(test)]
+    pub(crate) fn explain_get_emails(
+        &self,
+        scope: crate::db::AccountScope<'_>,
+        limit: i32,
+        offset: i32,
+        mailbox: Option<&str>,
+    ) -> Vec<String> {
+        let (sql, binds) = Self::email_list_query(scope, limit, offset, None, mailbox, None);
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        let mut rows = stmt.query(refs.as_slice()).unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            plan.push(row.get::<_, String>(3).unwrap());
+        }
+        plan
+    }
+
+    /// SQL + binds behind [`Database::get_emails`], shared with the plan test.
+    fn email_list_query(
+        scope: crate::db::AccountScope<'_>,
+        limit: i32,
+        offset: i32,
+        cursor: Option<(i64, &str)>,
+        mailbox: Option<&str>,
+        category: Option<&str>,
+    ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
         let mut conditions: Vec<String> = Vec::new();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut param_idx = 1;
@@ -317,12 +379,14 @@ impl Database {
             params_vec.push(Box::new(folder));
             param_idx += 1;
         }
-        if scope_sql.thread_deduped {
+        match scope_sql.shape {
             // Inbox view: dedup by thread, picking the latest *inbox* email
             // per thread. Using the cross-mailbox predicate here causes
             // threads where the user replied to disappear (the Sent reply
             // wins the "latest" race but is then excluded by mailbox='inbox').
-            conditions.push(format!("({})", latest_inbox_email_predicate("e")));
+            ListShape::InboxThreads => conditions.push(format!("({})", latest_inbox_email_predicate("e"))),
+            ListShape::SnoozedThreads => conditions.push(format!("({})", latest_thread_email_predicate("e"))),
+            ListShape::Flat => {}
         }
 
         // Optional Gmail-category filter, applied on top of the mailbox scope.
@@ -332,55 +396,89 @@ impl Database {
             param_idx += 1;
         }
 
-        // Keyset pagination: skip past the cursor point
-        if let Some((ts, id)) = cursor {
-            conditions.push(format!(
-                "(e.timestamp < ?{} OR (e.timestamp = ?{} AND e.id < ?{}))",
-                param_idx,
-                param_idx,
-                param_idx + 1
-            ));
-            params_vec.push(Box::new(ts));
-            params_vec.push(Box::new(id.to_string()));
-            param_idx += 2;
-        } else if offset > 0 {
-            // Fallback to OFFSET for backward compatibility
-            // OFFSET fallback, no extra condition needed
-        }
-
-        let where_clause = conditions.join(" AND ");
-        let sql = if cursor.is_some() || offset == 0 {
+        // The Snoozed view is not date-ordered: a date cursor does not apply.
+        let cursor = cursor.filter(|_| scope_sql.shape != ListShape::SnoozedThreads);
+        // Keyset pagination over `sort_key`: skip past the cursor point.
+        let cursor_cond = |sort_key: &str| -> String {
             format!(
-                "SELECT {} FROM emails e WHERE {} ORDER BY {} LIMIT ?{}",
-                EMAIL_COLUMNS, where_clause, order_clause, param_idx
-            )
-        } else {
-            format!(
-                "SELECT {} FROM emails e WHERE {} ORDER BY {} LIMIT ?{} OFFSET ?{}",
-                EMAIL_COLUMNS,
-                where_clause,
-                order_clause,
-                param_idx,
-                param_idx + 1
+                "({sort_key} < ?{p} OR ({sort_key} = ?{p} AND e.id < ?{q}))",
+                p = param_idx,
+                q = param_idx + 1
             )
         };
-
+        let (cursor_on_date, cursor_on_wake) = match cursor {
+            Some((ts, id)) => {
+                let on_date = format!(" AND {}", cursor_cond("e.timestamp"));
+                let on_wake = format!(" AND {}", cursor_cond("snz.woke_at"));
+                params_vec.push(Box::new(ts));
+                params_vec.push(Box::new(id.to_string()));
+                param_idx += 2;
+                (on_date, on_wake)
+            }
+            None => (String::new(), String::new()),
+        };
+        // The cursor replaces the OFFSET (kept for backward compatibility).
+        let use_offset = cursor.is_none() && offset > 0;
+        let limit_idx = param_idx;
+        let paging = if use_offset {
+            format!("LIMIT ?{limit_idx} OFFSET ?{}", limit_idx + 1)
+        } else {
+            format!("LIMIT ?{limit_idx}")
+        };
         params_vec.push(Box::new(limit));
-        if cursor.is_none() && offset > 0 {
+        if use_offset {
             params_vec.push(Box::new(offset));
         }
 
-        let mut stmt = conn.prepare(&sql)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-
-        let emails = stmt.query_map(params_refs.as_slice(), row_to_email)?;
-
-        let mut result = Vec::new();
-        for email in emails {
-            result.push(email?);
-        }
-
-        Ok(result)
+        let where_clause = conditions.join(" AND ");
+        let sql = match scope_sql.shape {
+            ListShape::Flat => format!(
+                "SELECT {} FROM emails e WHERE {where_clause}{cursor_on_date} ORDER BY {} {paging}",
+                EMAIL_COLUMNS,
+                thread_order_clause("e", false),
+            ),
+            // Two arms merged on a sort key: the woken conversations (a
+            // handful, driven from `thread_snoozes`) by their wake time, and
+            // every other conversation by date, read through the index in
+            // date order and cut at the page's end. The real message date is
+            // never rewritten. The date arm stops at `offset + limit` rows, so
+            // the merge never costs more than the plain OFFSET query did.
+            ListShape::InboxThreads => {
+                let window_idx = if use_offset { limit_idx + 2 } else { limit_idx + 1 };
+                params_vec.push(Box::new(if use_offset { limit + offset } else { limit }));
+                let cols = qualified_email_columns("e");
+                format!(
+                    "SELECT {EMAIL_COLUMNS} FROM (
+                       SELECT {cols}, snz.woke_at AS sort_ts
+                       FROM thread_snoozes snz CROSS JOIN emails e
+                       WHERE snz.woke_at IS NOT NULL
+                         AND e.account_id = snz.account_id AND e.thread_id = snz.thread_id
+                         AND {where_clause}{cursor_on_wake}
+                       UNION ALL
+                       SELECT * FROM (
+                         SELECT {cols}, e.timestamp AS sort_ts
+                         FROM emails e
+                         WHERE {where_clause} AND {no_record}{cursor_on_date}
+                         ORDER BY {order} LIMIT ?{window_idx}
+                       )
+                     ) ORDER BY sort_ts DESC, id DESC {paging}",
+                    no_record = super::snoozes::no_snooze_record_predicate("e."),
+                    order = thread_order_clause("e", false),
+                )
+            }
+            // Drives from the snooze table; pages by offset only (it is not
+            // date-ordered, so a date cursor does not apply).
+            ListShape::SnoozedThreads => format!(
+                "SELECT {cols}
+                 FROM thread_snoozes snz CROSS JOIN emails e
+                 WHERE snz.woke_at IS NULL
+                   AND e.account_id = snz.account_id AND e.thread_id = snz.thread_id
+                   AND {where_clause}
+                 ORDER BY snz.snoozed_until ASC, e.id ASC {paging}",
+                cols = qualified_email_columns("e"),
+            ),
+        };
+        (sql, params_vec)
     }
 
     pub fn get_thread(&self, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
@@ -644,16 +742,23 @@ impl Database {
         }
         let where_clause = conditions.join(" AND ");
 
-        let sql = match (scope_sql.thread_deduped, scope) {
-            (true, crate::db::AccountScope::Account(_)) => {
+        let sql = match (scope_sql.shape, scope) {
+            (ListShape::InboxThreads, crate::db::AccountScope::Account(_)) => {
                 format!("SELECT COUNT(DISTINCT emails.thread_id) FROM emails WHERE {where_clause}")
             }
             // Thread ids are only unique per account, so dedup on the pair.
-            (true, crate::db::AccountScope::AllEnabled) => format!(
+            (ListShape::InboxThreads, crate::db::AccountScope::AllEnabled) => format!(
                 "SELECT COUNT(*) FROM (SELECT DISTINCT emails.account_id, emails.thread_id \
                  FROM emails WHERE {where_clause})"
             ),
-            (false, _) => format!("SELECT COUNT(*) FROM emails WHERE {where_clause}"),
+            // One per snoozed conversation that still has a live message.
+            (ListShape::SnoozedThreads, _) => format!(
+                "SELECT COUNT(*) FROM thread_snoozes snz \
+                 WHERE snz.woke_at IS NULL AND EXISTS (SELECT 1 FROM emails \
+                 WHERE emails.account_id = snz.account_id AND emails.thread_id = snz.thread_id \
+                 AND {where_clause})"
+            ),
+            (ListShape::Flat, _) => format!("SELECT COUNT(*) FROM emails WHERE {where_clause}"),
         };
 
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();

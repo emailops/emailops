@@ -10,6 +10,7 @@ const t = (key: string) =>
       'sidebar:deleted': 'Deleted',
       'sidebar:starred': 'Starred',
       'sidebar:archive': 'Archive',
+      'sidebar:snoozed': 'Snoozed',
     }) as Record<string, string>
   )[key] ?? key;
 
@@ -21,6 +22,7 @@ describe('mailboxTitle', () => {
     expect(mailboxTitle('inbox', 'Ulises', t)).toBe('Inbox — Ulises');
     expect(mailboxTitle('starred', 'Ulises', t)).toBe('Starred — Ulises');
     expect(mailboxTitle('archive', 'Ulises', t)).toBe('Archive — Ulises');
+    expect(mailboxTitle('snoozed', 'Ulises', t)).toBe('Snoozed — Ulises');
   });
 
   it('uses the folder name for a custom IMAP folder', () => {

@@ -780,6 +780,18 @@ function AppInner() {
       }),
     );
 
+    // Snoozed conversations came back (the backend wake-up ticker): refresh
+    // the list in place so they appear at the top, unread, with their marker.
+    unlisteners.push(
+      listen<{ threads: unknown }>('snoozes-woken', (event) => {
+        if (Array.isArray(event.payload?.threads)) {
+          silentRefetchEmailsRef.current();
+        } else {
+          console.error('Ignoring malformed snoozes-woken payload', event.payload);
+        }
+      }),
+    );
+
     // Backend-initiated calendar-integration change (permission-denied
     // auto-disable): the pref is already persisted — just mirror it so the
     // calendar surfaces hide immediately.

@@ -1236,6 +1236,7 @@ mod schema_parity_tests {
             "help_doc_chunks",
             "attachment_rule_suggestions",
             "folder_uid_validity",
+            "thread_snoozes",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

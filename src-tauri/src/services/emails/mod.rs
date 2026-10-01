@@ -11,6 +11,7 @@ mod provider;
 mod reconcile;
 mod redownload;
 mod send;
+mod snooze;
 mod state_refresh;
 mod sync;
 mod thread_actions;
@@ -37,6 +38,10 @@ pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, 
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
 pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
+pub use snooze::{
+    due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
+    SNOOZES_WOKEN_EVENT,
+};
 pub(crate) use state_refresh::last_refresh_key as state_refresh_last_key;
 pub use sync::{
     request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,

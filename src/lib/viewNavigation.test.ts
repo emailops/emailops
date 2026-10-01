@@ -9,7 +9,7 @@ import {
 
 describe('viewModeToMailbox', () => {
   it('maps every mailbox-backed view to its mailbox and anything else to the inbox', () => {
-    for (const mode of ['sent', 'spam', 'deleted', 'starred', 'archive', 'folder:Projects'] as const) {
+    for (const mode of ['sent', 'spam', 'deleted', 'starred', 'archive', 'snoozed', 'folder:Projects'] as const) {
       expect(viewModeToMailbox(mode)).toBe(mode);
     }
     expect(viewModeToMailbox('inbox')).toBe('inbox');
@@ -25,6 +25,7 @@ describe('isEmailListView', () => {
     expect(isEmailListView('deleted')).toBe(true);
     expect(isEmailListView('starred')).toBe(true);
     expect(isEmailListView('archive')).toBe(true);
+    expect(isEmailListView('snoozed')).toBe(true);
     expect(isEmailListView('folder:Projects/2026')).toBe(true);
   });
 

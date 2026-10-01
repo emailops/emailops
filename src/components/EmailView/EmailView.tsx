@@ -1,8 +1,9 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArchiveIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
+import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -10,7 +11,7 @@ import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest
 import { formatShortcut } from '@/lib/platform';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
-import { isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
+import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Email, EmailAttachmentMeta } from '@/types';
@@ -116,6 +117,9 @@ export function EmailView({
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const archiveThreads = useEmailStore((s) => s.archiveThreads);
   const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
+  const snoozeThreads = useEmailStore((s) => s.snoozeThreads);
+  const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
+  const threadSnoozed = useEmailStore((s) => threadEmails.length > 0 && isSnoozed(s.snoozes, threadEmails[0]));
   const openAttachmentTab = useEmailStore((s) => s.openAttachmentTab);
   // Chat-generated reply draft waiting for its thread to mount. The chat
   // dispatcher seeds this before navigating; consuming it here is what
@@ -611,6 +615,13 @@ export function EmailView({
               }}
               onMarkRead={() => void setThreadsRead([threadRefOf(latestEmail)], true)}
               onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
+              snoozed={threadSnoozed}
+              onSnooze={(until) => {
+                // Out of the inbox until then, like archive: back to the list.
+                void snoozeThreads([threadRefOf(latestEmail)], until);
+                onClose();
+              }}
+              onUnsnooze={() => void unsnoozeThreads([threadRefOf(latestEmail)])}
             />
             <button
               onClick={() => {
@@ -871,10 +882,15 @@ interface ThreadToolbarActionsProps {
   onMarkUnread: () => void;
   onMarkRead: () => void;
   onToggleStar: (starred: boolean) => void;
+  /** The conversation is snoozed (opened from the Snoozed view or search). */
+  snoozed: boolean;
+  onSnooze: (until: number) => void;
+  onUnsnooze: () => void;
 }
 
-/** Archive (or move back to the inbox), read/unread and star for the open
- *  conversation. Failures are reported by the store (toast + log). */
+/** Archive (or move back to the inbox), snooze (or unsnooze), read/unread and
+ *  star for the open conversation. Failures are reported by the store (toast
+ *  + log). */
 function ThreadToolbarActions({
   threadEmails,
   onArchive,
@@ -882,6 +898,9 @@ function ThreadToolbarActions({
   onMarkUnread,
   onMarkRead,
   onToggleStar,
+  snoozed,
+  onSnooze,
+  onUnsnooze,
 }: ThreadToolbarActionsProps) {
   const { t } = useTranslation(['inbox']);
   const starred = isThreadStarred(threadEmails);
@@ -900,6 +919,19 @@ function ThreadToolbarActions({
         <button onClick={onMoveToInbox} className={buttonClass} title={t('inbox:emailView.moveToInbox')}>
           <InboxIcon className="w-4 h-4" />
         </button>
+      )}
+      {snoozed ? (
+        <button
+          data-testid="thread-unsnooze"
+          onClick={onUnsnooze}
+          className={buttonClass}
+          title={t('inbox:snooze.unsnooze')}
+          aria-label={t('inbox:snooze.unsnooze')}
+        >
+          <ClockIcon className="w-4 h-4 text-primary-600" />
+        </button>
+      ) : (
+        inInbox && <SnoozeMenuButton testId="thread-snooze" onPick={onSnooze} className={buttonClass} align="right" />
       )}
       <button
         onClick={unread ? onMarkRead : onMarkUnread}

@@ -1,6 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ClockIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
@@ -46,6 +47,7 @@ export type ViewMode =
   | 'spam'
   | 'deleted'
   | 'starred'
+  | 'snoozed'
   | 'archive'
   | 'calendar'
   | 'chat'
@@ -547,6 +549,18 @@ export function Sidebar({
                     />
                   </svg>
                   {t('sidebar:starred')}
+                </button>
+              </li>
+              <li>
+                <button
+                  data-testid="sidebar-snoozed"
+                  onClick={() => onSetViewMode('snoozed')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'snoozed' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <ClockIcon className="w-4 h-4" />
+                  {t('sidebar:snoozed')}
                 </button>
               </li>
               {/* An IMAP account archives into its Archive folder, listed

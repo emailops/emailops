@@ -234,6 +234,39 @@
     "moveToFolder": "In Ordner verschieben",
     "clear": "Auswahl aufheben",
     "moveFailed_one": "{{count}} Nachricht konnte nicht verschoben werden: {{detail}}",
-    "moveFailed_other": "{{count}} Nachrichten konnten nicht verschoben werden: {{detail}}"
+    "moveFailed_other": "{{count}} Nachrichten konnten nicht verschoben werden: {{detail}}",
+    "snooze": "Zurückstellen",
+    "unsnooze": "Nicht mehr zurückstellen"
+  },
+  "snooze": {
+    "button": "Zurückstellen",
+    "unsnooze": "Nicht mehr zurückstellen",
+    "menuTitle": "Zurückstellen bis…",
+    "back": "Zurück",
+    "presets": {
+      "laterToday": "Später heute",
+      "tomorrow": "Morgen",
+      "thisWeekend": "Dieses Wochenende",
+      "nextWeek": "Nächste Woche"
+    },
+    "pickDateTime": "Datum und Uhrzeit wählen",
+    "customLabel": "Datum und Uhrzeit",
+    "confirm": "Zurückstellen",
+    "mustBeFuture": "Wähle einen Zeitpunkt in der Zukunft",
+    "done_one": "Zurückgestellt bis {{when}}",
+    "done_other": "{{count}} Unterhaltungen zurückgestellt bis {{when}}",
+    "undone_one": "Zurückstellen von {{count}} Unterhaltung rückgängig gemacht",
+    "undone_other": "Zurückstellen von {{count}} Unterhaltungen rückgängig gemacht",
+    "undoFailed": "Das Zurückstellen konnte nicht rückgängig gemacht werden: {{detail}}",
+    "failed_one": "{{count}} Unterhaltung konnte nicht zurückgestellt werden: {{detail}}",
+    "failed_other": "{{count}} Unterhaltungen konnten nicht zurückgestellt werden: {{detail}}",
+    "unsnoozed_one": "{{count}} Unterhaltung ist nicht mehr zurückgestellt",
+    "unsnoozed_other": "{{count}} Unterhaltungen sind nicht mehr zurückgestellt",
+    "unsnoozeFailed_one": "{{count}} Unterhaltung konnte nicht zurückgeholt werden: {{detail}}",
+    "unsnoozeFailed_other": "{{count}} Unterhaltungen konnten nicht zurückgeholt werden: {{detail}}",
+    "loadFailed": "Die zurückgestellten Unterhaltungen konnten nicht geladen werden: {{detail}}",
+    "until": "Zurückgestellt bis {{when}}",
+    "marker": "Zurückgestellt",
+    "markerTitle": "Aus dem Zurückstellen zurück"
   }
 }

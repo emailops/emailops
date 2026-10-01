@@ -234,6 +234,39 @@
     "moveToFolder": "Move to folder",
     "clear": "Clear selection",
     "moveFailed_one": "Could not move {{count}} message: {{detail}}",
-    "moveFailed_other": "Could not move {{count}} messages: {{detail}}"
+    "moveFailed_other": "Could not move {{count}} messages: {{detail}}",
+    "snooze": "Snooze",
+    "unsnooze": "Unsnooze"
+  },
+  "snooze": {
+    "button": "Snooze",
+    "unsnooze": "Unsnooze",
+    "menuTitle": "Snooze until…",
+    "back": "Back",
+    "presets": {
+      "laterToday": "Later today",
+      "tomorrow": "Tomorrow",
+      "thisWeekend": "This weekend",
+      "nextWeek": "Next week"
+    },
+    "pickDateTime": "Pick date & time",
+    "customLabel": "Date and time",
+    "confirm": "Snooze",
+    "mustBeFuture": "Choose a time in the future",
+    "done_one": "Snoozed until {{when}}",
+    "done_other": "Snoozed {{count}} conversations until {{when}}",
+    "undone_one": "Snooze of {{count}} conversation undone",
+    "undone_other": "Snooze of {{count}} conversations undone",
+    "undoFailed": "Could not undo the snooze: {{detail}}",
+    "failed_one": "Could not snooze {{count}} conversation: {{detail}}",
+    "failed_other": "Could not snooze {{count}} conversations: {{detail}}",
+    "unsnoozed_one": "Unsnoozed {{count}} conversation",
+    "unsnoozed_other": "Unsnoozed {{count}} conversations",
+    "unsnoozeFailed_one": "Could not unsnooze {{count}} conversation: {{detail}}",
+    "unsnoozeFailed_other": "Could not unsnooze {{count}} conversations: {{detail}}",
+    "loadFailed": "Could not load the snoozed conversations: {{detail}}",
+    "until": "Snoozed until {{when}}",
+    "marker": "Snoozed",
+    "markerTitle": "Back from snooze"
   }
 }

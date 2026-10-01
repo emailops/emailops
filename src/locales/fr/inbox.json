@@ -234,6 +234,39 @@
     "moveToFolder": "Déplacer vers un dossier",
     "clear": "Effacer la sélection",
     "moveFailed_one": "Impossible de déplacer {{count}} message : {{detail}}",
-    "moveFailed_other": "Impossible de déplacer {{count}} messages : {{detail}}"
+    "moveFailed_other": "Impossible de déplacer {{count}} messages : {{detail}}",
+    "snooze": "Mettre en attente",
+    "unsnooze": "Annuler la mise en attente"
+  },
+  "snooze": {
+    "button": "Mettre en attente",
+    "unsnooze": "Annuler la mise en attente",
+    "menuTitle": "Mettre en attente jusqu’à…",
+    "back": "Retour",
+    "presets": {
+      "laterToday": "Plus tard aujourd’hui",
+      "tomorrow": "Demain",
+      "thisWeekend": "Ce week-end",
+      "nextWeek": "La semaine prochaine"
+    },
+    "pickDateTime": "Choisir la date et l’heure",
+    "customLabel": "Date et heure",
+    "confirm": "Mettre en attente",
+    "mustBeFuture": "Choisissez une heure dans le futur",
+    "done_one": "En attente jusqu’au {{when}}",
+    "done_other": "{{count}} conversations en attente jusqu’au {{when}}",
+    "undone_one": "Mise en attente de {{count}} conversation annulée",
+    "undone_other": "Mise en attente de {{count}} conversations annulée",
+    "undoFailed": "Impossible d’annuler la mise en attente : {{detail}}",
+    "failed_one": "Impossible de mettre en attente {{count}} conversation : {{detail}}",
+    "failed_other": "Impossible de mettre en attente {{count}} conversations : {{detail}}",
+    "unsnoozed_one": "{{count}} conversation n’est plus en attente",
+    "unsnoozed_other": "{{count}} conversations ne sont plus en attente",
+    "unsnoozeFailed_one": "Impossible de sortir {{count}} conversation de l’attente : {{detail}}",
+    "unsnoozeFailed_other": "Impossible de sortir {{count}} conversations de l’attente : {{detail}}",
+    "loadFailed": "Impossible de charger les conversations en attente : {{detail}}",
+    "until": "En attente jusqu’au {{when}}",
+    "marker": "En attente",
+    "markerTitle": "Revenue de la mise en attente"
   }
 }

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { i18n } from '@/i18n';
-import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef } from '@/lib/api';
+import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef, ThreadSnooze } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { normalizeMimeType } from '@/lib/mimeType';
@@ -140,6 +140,9 @@ export function threadKey(accountId: string, threadId: string): string {
 
 const keyOf = (e: Pick<Email, 'accountId' | 'threadId'>) => threadKey(e.accountId, e.threadId);
 
+/** The `threadKey` of a row's conversation. */
+export const keyOfThread = keyOf;
+
 /** The conversation an email belongs to, as the thread actions take it. */
 export function threadRefOf(email: Pick<Email, 'accountId' | 'threadId'>): ThreadRef {
   return { accountId: email.accountId, threadId: email.threadId };
@@ -270,6 +273,78 @@ export function leavesList(action: ThreadAction, list: ListScope): boolean {
     default:
       return false;
   }
+}
+
+/** Pure: snooze records keyed by conversation (`threadKey`). */
+export function snoozeMap(records: readonly ThreadSnooze[]): Map<string, ThreadSnooze> {
+  return new Map(records.map((r) => [threadKey(r.accountId, r.threadId), r]));
+}
+
+/** Pure: `map` with the conversations snoozed until `until` (a re-snooze
+ *  replaces a woken record, as the backend does). */
+export function withSnoozes(
+  map: ReadonlyMap<string, ThreadSnooze>,
+  threads: readonly ThreadRef[],
+  until: number,
+  now: number,
+): Map<string, ThreadSnooze> {
+  const next = new Map(map);
+  for (const t of threads) {
+    next.set(threadKey(t.accountId, t.threadId), {
+      accountId: t.accountId,
+      threadId: t.threadId,
+      snoozedUntil: until,
+      createdAt: now,
+      wokeAt: null,
+    });
+  }
+  return next;
+}
+
+/** Pure: `map` without the conversations in `keys`. */
+export function withoutSnoozes(
+  map: ReadonlyMap<string, ThreadSnooze>,
+  keys: ReadonlySet<string>,
+): Map<string, ThreadSnooze> {
+  const next = new Map(map);
+  for (const k of keys) next.delete(k);
+  return next;
+}
+
+/** The conversation of `email` is snoozed (hidden from the inbox). */
+export function isSnoozed(
+  map: ReadonlyMap<string, ThreadSnooze>,
+  email: Pick<Email, 'accountId' | 'threadId'>,
+): boolean {
+  const record = map.get(keyOf(email));
+  return record !== undefined && record.wokeAt === null;
+}
+
+/** The conversation came back from a snooze and is still unread — the row
+ *  shows a "Snoozed" marker until it is read. */
+export function isBackFromSnooze(
+  map: ReadonlyMap<string, ThreadSnooze>,
+  email: Pick<Email, 'accountId' | 'threadId' | 'isRead'>,
+): boolean {
+  const record = map.get(keyOf(email));
+  return record !== undefined && record.wokeAt !== null && !email.isRead;
+}
+
+/** Pure: whether snoozing takes a conversation out of the list on screen (the
+ *  inbox), and unsnoozing out of the Snoozed view. */
+export function snoozeLeavesList(action: 'snooze' | 'unsnooze', list: ListScope): boolean {
+  return action === 'snooze' ? list === 'inbox' : list === 'snoozed';
+}
+
+/** A snooze time for toasts and the Snoozed view ("Thu, Oct 8, 08:00"). */
+export function formatSnoozeTime(unixSeconds: number): string {
+  return new Intl.DateTimeFormat(i18n.language || 'en', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(unixSeconds * 1000));
 }
 
 /**
@@ -458,6 +533,18 @@ interface EmailStore {
   /** Conversations taken out of the list by an archive/delete still inside
    *  its undo window: a refetch must not bring them back meanwhile. */
   pendingRemovals: ReadonlySet<string>;
+  /** Snooze records of the account scope on screen, keyed by `threadKey`
+   *  (snoozed and woken). Refreshed with every list fetch. */
+  snoozes: ReadonlyMap<string, ThreadSnooze>;
+  fetchSnoozes: (accountId: string | null) => Promise<void>;
+  /**
+   * Hide the conversations until `until` (unix seconds). Local, so it applies
+   * at once: the rows leave the inbox and a toast offers Undo (which
+   * unsnoozes). Refused conversations come back with an error toast.
+   */
+  snoozeThreads: (threads: ThreadRef[], until: number) => Promise<void>;
+  /** Bring snoozed conversations back to the inbox now. */
+  unsnoozeThreads: (threads: ThreadRef[]) => Promise<void>;
   deleteEmail: (emailId: string) => Promise<void>;
   /** Move an email to the inbox or a custom folder (IMAP accounts only).
    *  Throws on failure so callers can surface the error. */
@@ -505,6 +592,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   resetAccountKey: null,
   listScope: 'inbox',
   pendingRemovals: new Set<string>(),
+  snoozes: new Map<string, ThreadSnooze>(),
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
@@ -708,6 +796,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           api.getEmailCount(accountId, mailbox),
         ]);
       }
+
+      // The snooze records ride along: the rows' markers and the Snoozed
+      // view's wake times read them.
+      void get().fetchSnoozes(accountId);
 
       // Only update state if this is still the current fetch operation
       if (get().currentFetchId === fetchId) {
@@ -998,6 +1090,99 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     useToastStore.getState().addToast({ message });
   },
 
+  fetchSnoozes: async (accountId) => {
+    try {
+      const records = await api.listThreadSnoozes(accountId);
+      set({ snoozes: snoozeMap(records) });
+    } catch (error) {
+      useLogStore.getState().addLog('error', 'system', i18n.t('inbox:snooze.loadFailed', { detail: errorText(error) }));
+    }
+  },
+
+  snoozeThreads: async (threads, until) => {
+    if (threads.length === 0) return;
+    const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
+    const before = get();
+    const now = Math.floor(Date.now() / 1000);
+    set((state) => {
+      const patched = { ...state, snoozes: withSnoozes(state.snoozes, threads, until, now) };
+      return snoozeLeavesList('snooze', state.listScope) ? removeThreads(patched, keys) : patched;
+    });
+    let failed: ReadonlySet<string>;
+    let detail = '';
+    try {
+      const report = await api.snoozeThreads(threads, until);
+      failed = new Set(report.failed.map((f) => threadKey(f.accountId, f.threadId)));
+      if (report.failed.length > 0) detail = errorText(report.failed[0]);
+    } catch (error) {
+      failed = keys;
+      detail = errorText(error);
+    }
+    if (failed.size > 0) {
+      set((current) => ({
+        ...restoreThreads(current, before, failed),
+        snoozes: withoutSnoozes(current.snoozes, failed),
+      }));
+    }
+    const snoozed = threads.filter((t) => !failed.has(threadKey(t.accountId, t.threadId)));
+    const log = useLogStore.getState().addLog;
+    const toasts = useToastStore.getState();
+    if (snoozed.length > 0) {
+      const done = new Set(snoozed.map((t) => threadKey(t.accountId, t.threadId)));
+      const message = i18n.t('inbox:snooze.done', {
+        count: snoozed.length,
+        when: formatSnoozeTime(until),
+      });
+      log('success', 'system', message);
+      toasts.addToast({
+        message,
+        actionLabel: i18n.t('inbox:undo.action'),
+        durationMs: UNDO_WINDOW_MS,
+        onAction: () => {
+          void (async () => {
+            try {
+              await api.unsnoozeThreads(snoozed);
+            } catch (error) {
+              const text = i18n.t('inbox:snooze.undoFailed', { detail: errorText(error) });
+              log('error', 'system', text);
+              useToastStore.getState().addToast({ message: text });
+              return;
+            }
+            set((current) => ({
+              ...restoreThreads(current, before, done),
+              snoozes: withoutSnoozes(current.snoozes, done),
+            }));
+            log('info', 'system', i18n.t('inbox:snooze.undone', { count: snoozed.length }));
+          })();
+        },
+      });
+    }
+    if (failed.size > 0) {
+      const message = i18n.t('inbox:snooze.failed', { count: failed.size, detail });
+      log('error', 'system', message);
+      toasts.addToast({ message });
+    }
+  },
+
+  unsnoozeThreads: async (threads) => {
+    if (threads.length === 0) return;
+    const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
+    const before = get();
+    set((state) => {
+      const patched = { ...state, snoozes: withoutSnoozes(state.snoozes, keys) };
+      return snoozeLeavesList('unsnooze', state.listScope) ? removeThreads(patched, keys) : patched;
+    });
+    try {
+      await api.unsnoozeThreads(threads);
+      useLogStore.getState().addLog('success', 'system', i18n.t('inbox:snooze.unsnoozed', { count: threads.length }));
+    } catch (error) {
+      set((current) => ({ ...restoreThreads(current, before, keys), snoozes: before.snoozes }));
+      const message = i18n.t('inbox:snooze.unsnoozeFailed', { count: threads.length, detail: errorText(error) });
+      useLogStore.getState().addLog('error', 'system', message);
+      useToastStore.getState().addToast({ message });
+    }
+  },
+
   moveThreadsToInbox: (threads) =>
     runThreadAction(threads, 'moveToInbox', (state, keys) => ({
       ...state,
@@ -1091,6 +1276,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       pendingChatDraft: null,
       sentRefreshTick: 0,
       listScope: 'inbox',
+      snoozes: new Map<string, ThreadSnooze>(),
     });
   },
 }));

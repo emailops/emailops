@@ -25,6 +25,11 @@ describe('bulkAvailability', () => {
     expect(bulkAvailability([row('a', { mailbox: 'archive' }), row('b', { mailbox: 'sent' })]).canArchive).toBe(false);
   });
 
+  it('offers snooze when any selected row is in the inbox', () => {
+    expect(bulkAvailability([row('a', { mailbox: 'archive' }), row('b')]).canSnooze).toBe(true);
+    expect(bulkAvailability([row('a', { mailbox: 'sent' })]).canSnooze).toBe(false);
+  });
+
   it('offers mark read / unread and star / unstar by what the selection holds', () => {
     const mixed = bulkAvailability([row('a', { isRead: false, isStarred: true }), row('b')]);
     expect(mixed).toMatchObject({ canMarkRead: true, canMarkUnread: true, canStar: true, canUnstar: true });

@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { ArchiveIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { SnoozeOptions } from '@/components/Inbox/SnoozePicker';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { computeDropdownTop } from '@/lib/dropdownPosition';
 import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
-import { threadRefOf, useEmailStore } from '@/stores/emailStore';
+import { isSnoozed, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import type { Email } from '@/types';
 
@@ -90,10 +91,14 @@ export function EmailActionsMenu({
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const archiveThreads = useEmailStore((s) => s.archiveThreads);
   const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
+  const snoozeThreads = useEmailStore((s) => s.snoozeThreads);
+  const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
+  const snoozed = useEmailStore((s) => isSnoozed(s.snoozes, email));
   const { moveTargets } = useMoveTargets(email);
   const [menuOpen, setMenuOpen] = useState(false);
-  /** 'move' shows the folder-picker page of the menu. */
-  const [menuView, setMenuView] = useState<'main' | 'move'>('main');
+  /** 'move' shows the folder-picker page of the menu, 'snooze' the snooze
+   *  times. */
+  const [menuView, setMenuView] = useState<'main' | 'move' | 'snooze'>('main');
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuDropdownRef = useRef<HTMLDivElement>(null);
@@ -163,7 +168,29 @@ export function EmailActionsMenu({
             className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
-            {menuView === 'move' ? (
+            {menuView === 'snooze' ? (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuView('main');
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  {t('inbox:snooze.back')}
+                </button>
+                <div className="border-t border-gray-100 my-1" />
+                <SnoozeOptions
+                  onPick={(until) => {
+                    setMenuOpen(false);
+                    void snoozeThreads([threadRefOf(email)], until);
+                  }}
+                />
+              </>
+            ) : menuView === 'move' ? (
               <>
                 <button
                   onClick={(e) => {
@@ -272,6 +299,9 @@ export function EmailActionsMenu({
                   onStar={(starred) => setThreadsStarred([threadRefOf(email)], starred)}
                   onArchive={() => archiveThreads([threadRefOf(email)])}
                   onMoveToInbox={() => moveThreadsToInbox([threadRefOf(email)])}
+                  snoozed={snoozed}
+                  onSnooze={() => setMenuView('snooze')}
+                  onUnsnooze={() => unsnoozeThreads([threadRefOf(email)])}
                 />
                 <div className="border-t border-gray-100 my-1" />
                 <button
@@ -473,11 +503,27 @@ interface ThreadActionItemsProps {
   onStar: (starred: boolean) => Promise<void>;
   onArchive: () => Promise<void>;
   onMoveToInbox: () => Promise<void>;
+  /** The row's conversation is snoozed (the Snoozed view lists it). */
+  snoozed: boolean;
+  /** Open the snooze-times page of the menu. */
+  onSnooze: () => void;
+  onUnsnooze: () => Promise<void>;
 }
 
-/** Read/unread, star and archive (or its inverse, move to inbox) for the
- *  row's conversation. Errors are reported by the store (toast + log). */
-function ThreadActionItems({ email, onPick, onRead, onStar, onArchive, onMoveToInbox }: ThreadActionItemsProps) {
+/** Read/unread, star, snooze (or unsnooze) and archive (or its inverse, move
+ *  to inbox) for the row's conversation. Errors are reported by the store
+ *  (toast + log). */
+function ThreadActionItems({
+  email,
+  onPick,
+  onRead,
+  onStar,
+  onArchive,
+  onMoveToInbox,
+  snoozed,
+  onSnooze,
+  onUnsnooze,
+}: ThreadActionItemsProps) {
   const { t } = useTranslation(['inbox']);
   const itemClass = 'w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2';
   return (
@@ -509,6 +555,33 @@ function ThreadActionItems({ email, onPick, onRead, onStar, onArchive, onMoveToI
         <StarIcon filled={email.isStarred} className="w-4 h-4 text-gray-400" />
         {email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star')}
       </button>
+      {snoozed ? (
+        <button
+          data-testid="row-unsnooze"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onUnsnooze);
+          }}
+          className={itemClass}
+        >
+          <ClockIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:snooze.unsnooze')}
+        </button>
+      ) : (
+        email.mailbox === 'inbox' && (
+          <button
+            data-testid="row-snooze"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSnooze();
+            }}
+            className={itemClass}
+          >
+            <ClockIcon className="w-4 h-4 text-gray-400" />
+            {t('inbox:snooze.button')}
+          </button>
+        )
+      )}
       {email.mailbox === 'inbox' && (
         <button
           onClick={(e) => {

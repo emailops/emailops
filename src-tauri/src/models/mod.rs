@@ -91,6 +91,24 @@ fn default_mailbox() -> String {
     "inbox".to_string()
 }
 
+/// A snoozed conversation (V031 `thread_snoozes`). Local state: no provider
+/// exposes a portable snooze.
+///
+/// `woke_at` is `None` while the thread is snoozed (hidden from the Inbox,
+/// listed in the Snoozed view) and the wake-up time once it came back; a
+/// woken thread sorts in the Inbox by that time instead of its latest
+/// message's date.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSnooze {
+    pub account_id: String,
+    pub thread_id: String,
+    pub snoozed_until: i64,
+    pub created_at: i64,
+    pub woke_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]

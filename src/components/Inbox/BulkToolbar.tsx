@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArchiveIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import type { MailboxView } from '@/lib/api';
 import { bulkAvailability, bulkMoveTargets } from '@/lib/bulkActions';
 import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { isSnoozed, snoozeLeavesList, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { selectedThreads, useSelectionStore } from '@/stores/selectionStore';
 import type { Email } from '@/types';
@@ -31,6 +32,10 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const moveEmailsToMailbox = useEmailStore((s) => s.moveEmailsToMailbox);
+  const snoozeThreads = useEmailStore((s) => s.snoozeThreads);
+  const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
+  const snoozes = useEmailStore((s) => s.snoozes);
+  const listScope = useEmailStore((s) => s.listScope);
   const accounts = useAccountStore((s) => s.accounts);
   const folders = useFolderStore((s) => s.folders);
   const foldersAccountId = useFolderStore((s) => s.accountId);
@@ -42,6 +47,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const can = bulkAvailability(rows);
   const move = bulkMoveTargets(rows, accounts, folders, foldersAccountId);
   const allSelected = rows.length === emails.length;
+  const snoozedThreads = rows.filter((e) => isSnoozed(snoozes, e)).map(threadRefOf);
 
   /** Archive, delete and move take the rows out of the list: the selection
    *  goes with them. Flag changes keep it, so another action can follow. */
@@ -73,6 +79,30 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
           onClick={leaving(() => archiveThreads(threads))}
         >
           <ArchiveIcon className="w-4 h-4" />
+        </ToolbarButton>
+      )}
+      {can.canSnooze && (
+        <SnoozeMenuButton
+          testId="bulk-snooze"
+          className="p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+          onPick={(until) => {
+            const run = () => snoozeThreads(threads, until);
+            if (snoozeLeavesList('snooze', listScope)) leaving(run)();
+            else void run();
+          }}
+        />
+      )}
+      {snoozedThreads.length > 0 && (
+        <ToolbarButton
+          testId="bulk-unsnooze"
+          label={t('inbox:bulk.unsnooze')}
+          onClick={() => {
+            const run = () => unsnoozeThreads(snoozedThreads);
+            if (snoozeLeavesList('unsnooze', listScope)) leaving(run)();
+            else void run();
+          }}
+        >
+          <ClockIcon className="w-4 h-4 text-primary-600" />
         </ToolbarButton>
       )}
       <ToolbarButton

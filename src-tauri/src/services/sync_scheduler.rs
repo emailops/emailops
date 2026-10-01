@@ -207,6 +207,16 @@ impl SyncScheduler {
             );
         }
 
+        // Single global snooze wake-up ticker. Its first tick runs at once, so
+        // a snooze that fell due while the app was closed wakes at start-up.
+        {
+            let flag = Arc::new(AtomicBool::new(false));
+            scheduler.push_global(
+                tauri::async_runtime::spawn(snooze_wake_loop(db.clone(), app.clone(), flag.clone())),
+                flag,
+            );
+        }
+
         scheduler
     }
 
@@ -753,6 +763,33 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
                     );
                 }
             }
+        }
+    }
+}
+
+// ── Snooze wake-up ────────────────────────────────────────────────────────────
+
+/// How often snoozed conversations are checked for their wake time. A snooze
+/// wakes at most this late.
+const SNOOZE_WAKE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Every 30 s (and once at start-up): bring back the snoozed conversations
+/// whose time has come — see `services::emails::wake_due_snoozes`.
+async fn snooze_wake_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<AtomicBool>) {
+    let mut ticker = tokio::time::interval(SNOOZE_WAKE_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        if stop_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        let now = crate::services::clock::now_secs();
+        if let Err(e) = crate::services::emails::wake_due_snoozes(&db, now, Some(app.clone())).await {
+            crate::services::logger::log(
+                "error",
+                "system",
+                format!("Snoozed conversations could not be brought back: {e}"),
+            );
         }
     }
 }

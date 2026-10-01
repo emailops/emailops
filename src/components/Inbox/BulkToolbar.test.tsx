@@ -12,7 +12,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { useAccountStore } from '@/stores/accountStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { snoozeMap, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import { BulkToolbar } from './BulkToolbar';
@@ -36,6 +36,8 @@ const deleteThreads = vi.fn(async () => undefined);
 const archiveThreads = vi.fn(async () => undefined);
 const setThreadsRead = vi.fn(async () => undefined);
 const moveEmailsToMailbox = vi.fn(async () => undefined);
+const snoozeThreads = vi.fn(async () => undefined);
+const unsnoozeThreads = vi.fn(async () => undefined);
 
 beforeEach(() => {
   container = document.createElement('div');
@@ -43,7 +45,16 @@ beforeEach(() => {
   root = createRoot(container);
   vi.clearAllMocks();
   useSelectionStore.getState().clear();
-  useEmailStore.setState({ deleteThreads, archiveThreads, setThreadsRead, moveEmailsToMailbox });
+  useEmailStore.setState({
+    deleteThreads,
+    archiveThreads,
+    setThreadsRead,
+    moveEmailsToMailbox,
+    snoozeThreads,
+    unsnoozeThreads,
+    snoozes: new Map(),
+    listScope: 'inbox',
+  });
   useAccountStore.setState({ accounts: [] });
   useFolderStore.setState({ folders: [], accountId: null });
 });
@@ -129,6 +140,37 @@ describe('BulkToolbar', () => {
     await click('bulk-move-folder:Projects');
 
     expect(moveEmailsToMailbox).toHaveBeenCalledWith('acc', ['a', 'b'], 'folder:Projects');
+    expect(useSelectionStore.getState().ids.size).toBe(0);
+  });
+
+  it('snoozes the selected inbox conversations and clears the selection', async () => {
+    useSelectionStore.getState().selectAll(['a', 'b']);
+    render([row('a'), row('b')]);
+
+    await click('bulk-snooze');
+    await click('snooze-preset-tomorrow');
+
+    expect(snoozeThreads).toHaveBeenCalledTimes(1);
+    const [threads, until] = snoozeThreads.mock.calls[0] as unknown as [unknown, number];
+    expect(threads).toEqual([
+      { accountId: 'acc', threadId: 't-a' },
+      { accountId: 'acc', threadId: 't-b' },
+    ]);
+    expect(until).toBeGreaterThan(Date.now() / 1000);
+    expect(useSelectionStore.getState().ids.size).toBe(0);
+  });
+
+  it('unsnoozes the snoozed conversations of the selection', async () => {
+    useEmailStore.setState({
+      listScope: 'snoozed',
+      snoozes: snoozeMap([{ accountId: 'acc', threadId: 't-a', snoozedUntil: 9e9, createdAt: 1, wokeAt: null }]),
+    });
+    useSelectionStore.getState().selectAll(['a', 'b']);
+    render([row('a'), row('b')]);
+
+    await click('bulk-unsnooze');
+
+    expect(unsnoozeThreads).toHaveBeenCalledWith([{ accountId: 'acc', threadId: 't-a' }]);
     expect(useSelectionStore.getState().ids.size).toBe(0);
   });
 
