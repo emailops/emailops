@@ -60,6 +60,8 @@ interface InboxProps {
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
   onSearch?: (query: string) => void;
+  /** Column width in pixels for the split layout (resizable). Omitted: 384px. */
+  width?: number;
 }
 
 interface CategoryTabConfig {
@@ -171,6 +173,7 @@ export function Inbox({
   isChatPanelOpen = true,
   accountId,
   onSearch,
+  width,
 }: InboxProps) {
   const { t } = useTranslation(['inbox', 'common', 'chat']);
   // Only render tabs for categories the active account is actually
@@ -222,7 +225,9 @@ export function Inbox({
   // min-content width and overflows (clipping its own toolbar buttons) rather
   // than narrowing when something else — e.g. the docked chat panel — takes
   // horizontal space.
-  const widthClass = fullWidth ? 'flex-1 min-w-0' : 'w-96';
+  // Split layout: a fixed column, resizable when the parent passes `width`.
+  const widthClass = fullWidth ? 'flex-1 min-w-0' : width === undefined ? 'w-96 flex-shrink-0' : 'flex-shrink-0';
+  const widthStyle = !fullWidth && width !== undefined ? { width } : undefined;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Unified ("All accounts") mode: rows get a colored per-account indicator,
@@ -433,7 +438,10 @@ export function Inbox({
 
   const showTabs = showCategoryFilter && visibleCategories.length > 0;
   return (
-    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
+    <div
+      className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}
+      style={widthStyle}
+    >
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
         <div className="flex items-center gap-2">
           {/* Title */}
