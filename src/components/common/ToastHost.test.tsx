@@ -33,6 +33,14 @@ afterEach(() => {
 });
 
 describe('ToastHost', () => {
+  it('stacks above the Output bar, whose height it reads from a CSS variable', () => {
+    act(() => {
+      useToastStore.getState().addToast({ message: 'Saved report.pdf' });
+    });
+    const stack = container.querySelector<HTMLElement>('[data-testid="toast-stack"]');
+    expect(stack?.style.bottom).toBe('calc(var(--log-panel-height, 0px) + 1rem)');
+  });
+
   it('auto-dismisses a regular toast after the timeout', () => {
     act(() => {
       useToastStore.getState().addToast({ message: 'Saved report.pdf' });

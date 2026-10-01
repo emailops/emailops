@@ -2,12 +2,20 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DEFAULT_TOAST_MS, type Toast, useToastStore } from '@/stores/toastStore';
 
+/** Above the Output bar, which publishes its height (collapsed or expanded)
+ *  as `--log-panel-height`; 0 where there is no bar. */
+const STACK_BOTTOM = 'calc(var(--log-panel-height, 0px) + 1rem)';
+
 /** Renders the toast stack bottom-right; each toast auto-dismisses. */
 export function ToastHost() {
   const toasts = useToastStore((s) => s.toasts);
   if (toasts.length === 0) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 items-end">
+    <div
+      data-testid="toast-stack"
+      className="fixed right-4 z-[60] flex flex-col gap-2 items-end"
+      style={{ bottom: STACK_BOTTOM }}
+    >
       {toasts.map((toast) => (
         <ToastCard key={toast.id} toast={toast} />
       ))}
