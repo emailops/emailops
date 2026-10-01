@@ -226,6 +226,16 @@ pub async fn compose_draft(
     input: ComposeInput,
     provider: Option<&dyn EmailProvider>,
 ) -> Result<Draft> {
+    // An existing draft id must be this account's draft, or the upsert would
+    // overwrite another account's draft and push it through this provider.
+    if let Some(draft_id) = input.draft_id.as_deref() {
+        if db.get_draft(draft_id)?.is_some() {
+            crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
+        }
+    }
+    if let Some(email_id) = input.email_id.as_deref() {
+        crate::services::ownership::email_in_account(db, &account.id, email_id)?;
+    }
     let plan = plan_compose(&input);
     let saved = db.save_user_draft(&plan.save_req)?;
 
@@ -351,7 +361,11 @@ pub async fn delete_draft(
     draft_id: &str,
     provider: Option<&dyn EmailProvider>,
 ) -> Result<()> {
-    if let Some(draft) = db.get_draft(draft_id)? {
+    // A draft that is already gone deletes as a no-op; one that belongs to
+    // another account is refused before its provider id reaches this
+    // account's provider.
+    if db.get_draft(draft_id)?.is_some() {
+        let draft = crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
         if let (Some(provider_id), Some(provider)) = (draft.provider_draft_id.as_deref(), provider) {
             if provider_supports_drafts(&account.provider) {
                 if let Err(e) = provider.delete_draft(provider_id).await {
@@ -728,6 +742,62 @@ mod tests {
             .expect("delete");
         assert!(db.get_draft(&draft.id).expect("get").is_none());
         assert_eq!(provider.provider_drafts().len(), 0, "provider copy removed too");
+    }
+
+    #[tokio::test]
+    async fn compose_draft_refuses_another_accounts_draft_id() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "imap");
+        let other = seed_account(&db, "a2", "imap");
+        let theirs = compose_draft(&db, &other, input("a2", "Theirs", "kept"), None)
+            .await
+            .expect("compose");
+
+        let mut overwrite = input("a1", "Mine", "replaced");
+        overwrite.draft_id = Some(theirs.id.clone());
+        let result = compose_draft(&db, &owner, overwrite, None).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        let kept = db.get_draft(&theirs.id).expect("get").expect("still there");
+        assert_eq!((kept.account_id.as_str(), kept.body.as_str()), ("a2", "kept"));
+    }
+
+    #[tokio::test]
+    async fn compose_draft_refuses_a_reply_to_another_accounts_email() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "imap");
+        seed_account(&db, "a2", "imap");
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, recipients_json, snippet, timestamp, created_at) \
+                 VALUES ('their-email', 'a2', 't', 's', 'S', 's@example.com', '[]', '', 0, 0)",
+                [],
+            )
+            .expect("seed email");
+
+        let mut reply = input("a1", "Re: s", "body");
+        reply.email_id = Some("their-email".to_string());
+        let result = compose_draft(&db, &owner, reply, None).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_draft_leaves_another_accounts_draft_alone() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "gmail");
+        let other = seed_account(&db, "a2", "gmail");
+        let owner_provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let other_provider = FakeEmailProvider::new("a2@example.com", "A Two");
+        let theirs = compose_draft(&db, &other, input("a2", "Theirs", "body"), Some(&other_provider))
+            .await
+            .expect("compose");
+
+        let result = delete_draft(&db, &owner, &theirs.id, Some(&owner_provider)).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        assert!(db.get_draft(&theirs.id).expect("get").is_some(), "local copy kept");
+        assert_eq!(other_provider.provider_drafts().len(), 1, "provider copy kept");
     }
 
     #[tokio::test]

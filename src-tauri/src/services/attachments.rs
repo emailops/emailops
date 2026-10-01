@@ -796,6 +796,7 @@ pub fn create_rule(
 
 pub fn update_rule(
     db: &Arc<Database>,
+    account_id: &str,
     rule_id: &str,
     name: &str,
     sender_email_pattern: Option<&str>,
@@ -805,9 +806,7 @@ pub fn update_rule(
     enabled: bool,
     app_data_dir: &Path,
 ) -> Result<AttachmentRule> {
-    let existing = db
-        .get_attachment_rule(rule_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Rule {} not found", rule_id)))?;
+    let existing = crate::services::ownership::attachment_rule_in_account(db, account_id, rule_id)?;
 
     let has_sender = sender_email_pattern.is_some_and(|p| !p.is_empty());
     let has_subject = subject_pattern.is_some_and(|p| !p.is_empty());
@@ -854,6 +853,9 @@ pub fn update_rule(
 }
 
 pub fn delete_rule(db: &Arc<Database>, rule_id: &str, account_id: &str, app_data_dir: &Path) -> Result<()> {
+    // The delete below is scoped to the account, but the attachments it
+    // removes are keyed by rule id alone: check the rule first.
+    crate::services::ownership::attachment_rule_in_account(db, account_id, rule_id)?;
     // Rows and rule go in one transaction, so an apply storing a file at the
     // same time either lands before (its file is listed here) or finds the
     // rule gone and removes the file itself.
@@ -861,6 +863,12 @@ pub fn delete_rule(db: &Arc<Database>, rule_id: &str, account_id: &str, app_data
         remove_attachment_file(&app_data_dir.join(relative_path));
     }
     Ok(())
+}
+
+/// How many attachments `rule_id` has collected, for the account that owns it.
+pub fn count_rule_attachments(db: &Arc<Database>, account_id: &str, rule_id: &str) -> Result<i32> {
+    crate::services::ownership::attachment_rule_in_account(db, account_id, rule_id)?;
+    db.count_attachments_for_rule(rule_id)
 }
 
 pub fn list_rules(db: &Arc<Database>, account_id: &str) -> Result<Vec<AttachmentRule>> {
@@ -1047,9 +1055,7 @@ pub async fn apply_rule_retroactively(
     on_progress: &(dyn Fn(RetroProgress) + Send + Sync),
     should_abort: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<u32> {
-    let rule = db
-        .get_attachment_rule(rule_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Rule {} not found", rule_id)))?;
+    let rule = crate::services::ownership::attachment_rule_in_account(db, account_id, rule_id)?;
 
     let account = db
         .get_account(account_id)?
@@ -1179,6 +1185,7 @@ pub async fn run_rule_apply(
         APPLY_FINISHED_EVENT,
         serde_json::json!({
             "ruleId": rule_id,
+            "accountId": account_id,
             "runId": run_id,
             "status": outcome.status,
             "saved": outcome.saved,
@@ -2693,6 +2700,7 @@ mod tests {
         let (name, finished) = emitted.last().expect("finished");
         assert_eq!(*name, APPLY_FINISHED_EVENT);
         assert_eq!(finished["runId"], "run-7");
+        assert_eq!(finished["accountId"], "acc-q");
         assert_eq!(finished["status"], "done");
         assert_eq!(finished["saved"], 2);
     }
@@ -2847,6 +2855,48 @@ mod tests {
         assert_eq!(collected, vec!["m-folder:INBOX.Facturas", "m-inbox", "m-sent"]);
     }
 
+    // ── A rule is only reachable from its own account ──────────────────────
+
+    #[tokio::test]
+    async fn another_account_cannot_edit_apply_count_or_delete_a_rule() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let rule = stored_invoices(&db, tmp.path(), "acc-owner");
+        make_account(&db, "acc-other", "imap", "other@example.com");
+        apply_rule_with_provider(&db, &rule, "acc-owner", None, tmp.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+        let not_found = |r: Result<()>| assert!(matches!(r, Err(AppError::NotFound(_))), "{r:?}");
+
+        not_found(
+            update_rule(
+                &db,
+                "acc-other",
+                &rule.id,
+                "Renamed",
+                Some("x@example.com"),
+                None,
+                None,
+                vec![],
+                true,
+                tmp.path(),
+            )
+            .map(|_| ()),
+        );
+        not_found(
+            apply_rule_retroactively(&db, &rule.id, "acc-other", tmp.path(), None, &|_| {}, &|| false)
+                .await
+                .map(|_| ()),
+        );
+        not_found(count_rule_attachments(&db, "acc-other", &rule.id).map(|_| ()));
+        not_found(delete_rule(&db, &rule.id, "acc-other", tmp.path()));
+
+        let kept = db.get_attachment_rule(&rule.id).expect("get").expect("rule kept");
+        assert_eq!(kept.name, rule.name);
+        assert_eq!(db.get_attachments_for_rule(&rule.id).expect("query").len(), 2);
+        assert_eq!(count_rule_attachments(&db, "acc-owner", &rule.id).expect("count"), 2);
+    }
+
     // ── Editing a rule drops what it no longer matches ─────────────────────
 
     #[tokio::test]
@@ -2862,6 +2912,7 @@ mod tests {
 
         update_rule(
             &db,
+            "acc-n",
             &rule.id,
             "Vendor",
             Some("billing@vendor.example"),

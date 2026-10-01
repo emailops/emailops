@@ -136,7 +136,17 @@ export function useAttachments() {
       tags: string[],
       enabled: boolean,
     ): Promise<AttachmentRule> => {
-      const rule = await updateRule(ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled);
+      if (!activeAccountId) throw new Error('No account is selected');
+      const rule = await updateRule(
+        activeAccountId,
+        ruleId,
+        name,
+        senderEmailPattern,
+        subjectPattern,
+        filenamePattern,
+        tags,
+        enabled,
+      );
       addLog('info', 'attachments', `Updated rule "${name}"`);
       // The backend dropped attachments the new patterns no longer match; the
       // rules modal re-scans existing mail in the background with progress.

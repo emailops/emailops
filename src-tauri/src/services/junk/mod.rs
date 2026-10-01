@@ -291,6 +291,7 @@ pub async fn train_models(db: &Arc<Database>, account_id: &str) -> Result<Vec<(&
 /// correction reaches the model on the next `train_models` pass instead, where
 /// it carries `FEEDBACK_WEIGHT`.
 pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, is_junk: bool) -> Result<()> {
+    crate::services::ownership::email_in_account(db, account_id, email_id)?;
     let verdict = if is_junk { "junk" } else { "not_junk" };
     db.set_junk_override(email_id, account_id, Some(verdict), now_secs())?;
     if is_junk {
@@ -380,6 +381,7 @@ mod suppression_tests {
 #[cfg(test)]
 mod feedback_tests {
     use super::*;
+    use crate::models::error::AppError;
 
     fn seed_email(db: &Database) {
         let conn = db.connection();
@@ -398,6 +400,24 @@ mod feedback_tests {
             [],
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn feedback_on_another_accounts_email_is_refused() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('other', 'gmail', 'other@example.com', 'Other', 0)",
+                [],
+            )
+            .unwrap();
+
+        let result = set_feedback(&db, "other", "e1", true).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        assert_eq!(junk_chip(&db), None, "no chip written on the email");
     }
 
     fn junk_chip(db: &Database) -> Option<String> {

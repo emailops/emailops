@@ -714,6 +714,7 @@ export async function createAttachmentRule(
 }
 
 export async function updateAttachmentRule(
+  accountId: string,
   ruleId: string,
   name: string,
   senderEmailPattern?: string | null,
@@ -723,6 +724,7 @@ export async function updateAttachmentRule(
   enabled?: boolean,
 ): Promise<AttachmentRule> {
   return invoke('update_attachment_rule', {
+    accountId,
     ruleId,
     name,
     senderEmailPattern,
@@ -741,8 +743,8 @@ export async function listAttachmentRules(accountId: string): Promise<Attachment
   return invoke('list_attachment_rules', { accountId });
 }
 
-export async function countAttachmentsForRule(ruleId: string): Promise<number> {
-  return invoke('count_attachments_for_rule', { ruleId });
+export async function countAttachmentsForRule(accountId: string, ruleId: string): Promise<number> {
+  return invoke('count_attachments_for_rule', { accountId, ruleId });
 }
 
 export async function listAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {

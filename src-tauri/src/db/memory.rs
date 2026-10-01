@@ -9,7 +9,7 @@
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{InteractionEvent, MemoryFact, PendingTask, ThreadState};
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 
 /// The newest email in a thread that the account received rather than sent —
 /// who the user owes a reply to, and which email to link.
@@ -975,6 +975,30 @@ impl Database {
     /// Delete a fact row outright. Cascades to FTS via trigger and to
     /// memory_fact_chunks / vec_memory_facts via explicit cleanup here, all in
     /// one transaction.
+    /// The account a memory fact belongs to, `None` if it does not exist.
+    pub fn get_memory_fact_account(&self, fact_id: &str) -> Result<Option<String>> {
+        self.reader()
+            .query_row(
+                "SELECT account_id FROM memory_facts WHERE id = ?1",
+                params![fact_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// The account a pending task belongs to, `None` if it does not exist.
+    pub fn get_pending_task_account(&self, task_id: &str) -> Result<Option<String>> {
+        self.reader()
+            .query_row(
+                "SELECT account_id FROM pending_tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn delete_memory_fact(&self, fact_id: &str) -> Result<()> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;

@@ -1,6 +1,5 @@
 use tauri::{AppHandle, Emitter, State};
 
-use crate::db::Database;
 use crate::models::error::AppError;
 use crate::models::{Email, SyncStatus};
 use crate::services;
@@ -14,15 +13,6 @@ use crate::AppState;
 /// Returns `AppError::NotFound` whether the email is missing OR belongs to
 /// another account — the IPC surface deliberately doesn't tell the caller
 /// the email exists under a different owner.
-fn ensure_email_in_account(db: &Database, account_id: &str, email_id: &str) -> Result<Email, AppError> {
-    let email = db
-        .get_email(email_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Email {email_id} not found")))?;
-    if email.account_id != account_id {
-        return Err(AppError::NotFound(format!("Email {email_id} not found")));
-    }
-    Ok(email)
-}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,7 +133,7 @@ pub async fn move_email(
     email_id: String,
     target_mailbox: String,
 ) -> Result<(), AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     let (account, provider) = account_and_provider(&state, app, &account_id).await?;
     services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target_mailbox).await
 }
@@ -163,7 +153,7 @@ pub async fn get_email_body(
     account_id: String,
     email_id: String,
 ) -> Result<String, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     state.db.get_email_body(&email_id)
 }
 
@@ -801,7 +791,7 @@ pub async fn get_email_by_id(
     account_id: String,
     email_id: String,
 ) -> Result<Email, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)
 }
 
 /// `account_id: None` counts across every enabled account (unified "All
