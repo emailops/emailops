@@ -18,7 +18,11 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
   developer's key in `.env.local` is not loaded and nothing in the UI can reach OpenRouter.
 - Verification fixtures (`insert_verification_fixtures` in `scripts/generate_demo_db.py`): a trashed quote and its
   correction (Larkspur Freight, with a shortcut and a web-page attachment), a renewal notice and a junk-marked
-  lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly), a draft with a table.
+  lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly) whose `email_headers` carry
+  RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote and one
+  archived message (*Studio key handover confirmed*).
+- The schema comes from this checkout's migrations (`init_db` example), not from the production DB; `ensure_demo_db.sh`
+  rebuilds the demo DB when a migration is newer than it.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's
   own app on port 1420 usually holds the production mailbox).
 - The red "Authentication required for account …" banners are expected on all three accounts.
@@ -66,4 +70,10 @@ that says `n/a` and why.
 - [Contacts and Dashboard](./contacts-dashboard.md) — the two views.
 - [Settings, language and updates](./settings.md) — dialog, tabs, Escape.
 - [CLI and agents](./cli.md) — envelope, read-only open, exit codes (no window).
+- [Archive, star, snooze and multi-select](./organize-archive-star-snooze.md) — star, Starred/Archive/Snoozed, bulk toolbar, undo window, snooze. **Driven live 02/10/2026.**
+- [Undo send and scheduled send](./outbox-undo-schedule.md) — Send + Undo, Schedule send, Scheduled view, failure without credentials. **Driven live 02/10/2026.**
+- [Signatures](./signatures.md) — Settings → Signatures, insertion in the composer. **Driven live 02/10/2026.**
+- [Keyboard shortcuts](./keyboard-shortcuts.md) — `?` overlay, `j`/`k` cursor, action keys. **Driven live 02/10/2026.**
+- [Unsubscribe and block sender](./sender-controls.md) — Unsubscribe dialog (Cancel only), Block/Unblock, Settings → Junk list. **Driven live 02/10/2026.**
+- [New-mail notifications](./new-mail-notifications.md) — Settings → Notifications persistence; delivery via the fake provider. **Driven live 02/10/2026.**
 - [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.

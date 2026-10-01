@@ -1,6 +1,6 @@
 # Settings, language and updates
 
-The settings dialog (appearance, AI tabs, privacy and security, junk, calendar), the UI
+The settings dialog (appearance, signatures, notifications, AI tabs, privacy and security, junk, calendar), the UI
 language, and the update check. AI provider settings have their own recipe
 ([ai-providers.md](./ai-providers.md)).
 

@@ -74,6 +74,145 @@ await step('Inbox', 'menú ⋮ de una fila', 'el menú de acciones de la fila ab
   return ok(items.length >= 2, `opciones: ${items.join(', ')}`, `opciones visibles: ${items.join(', ') || 'ninguna'}`);
 });
 
+// ---------- Helpers de filas y avisos (paridad Gmail/Outlook) ----------
+const toastText = () => js(() => document.querySelector('[data-testid="toast-stack"]')?.innerText.replace(/\n/g, ' | ') || '');
+const closeToasts = async () => { await js(() => document.querySelectorAll('[data-testid="toast-stack"] button[aria-label="Close"]').forEach((x) => x.click())); await sleep(300); };
+const clickToastAction = (label) => js((l) => { const x = [...document.querySelectorAll('[data-testid="toast-stack"] button')].find((y) => y.textContent.trim() === l); if (!x) return false; x.click(); return true; }, label);
+async function waitToast(re, ms) { const t0 = Date.now(); while (Date.now() - t0 < ms) { const t = await toastText(); if (re.test(t)) return t; await sleep(400); } return null; }
+const rowTexts = () => js(() => [...document.querySelectorAll('div[role="button"]')].map((r) => r.innerText.replace(/\n/g, ' ')));
+const hasRow = async (text) => (await rowTexts()).some((t) => t.includes(text));
+// Something inside the first row whose text includes `text`: returns null without the row/element, else its aria-pressed (or true) after an optional click.
+const inRow = (text, sel, act = false) => js((s, q, a) => { const r = [...document.querySelectorAll('div[role="button"]')].find((x) => x.innerText.includes(s)); const el = r?.querySelector(q); if (!el) return null; if (a) el.click(); return el.getAttribute('aria-pressed') ?? true; }, text, sel, act);
+const rowMenu = (text) => inRow(text, '[aria-label="More actions"]', true);
+const menuItem = (label) => js((l) => { const x = [...document.querySelectorAll('button')].find((y) => y.textContent.trim() === l && y.offsetParent && !y.closest('[data-testid="bulk-toolbar"], nav, aside, [data-testid="toast-stack"]')); if (!x) return false; x.click(); return true; }, label);
+const ids = (rows) => rows.map((r) => `'${String(r).replace(/'/g, "''")}'`).join(',');
+const blur = () => js(() => document.activeElement?.blur());
+// `aria/Close settings` resolves the accessible name over the whole DOM and can take 45 s with the signature editor open: use the title.
+const closeSettings = async () => { await js(() => document.querySelector('button[title="Close settings"]')?.click()); await sleep(800); };
+
+// ---------- Atajos de teclado ----------
+await click('button=Inbox'); await sleep(1000);
+await step('Atajos', '? abre la ayuda y Escape la cierra', 'con el foco fuera de un campo, «?» abre la lista de atajos por grupos y Escape la cierra', async () => {
+  await blur(); await b.keys('?'); await sleep(800);
+  const help = await js(() => { const h = document.querySelector('[data-testid="shortcut-help"]'); return h ? { groups: h.querySelectorAll('[data-testid="shortcut-group"]').length, text: h.innerText } : null; });
+  await b.keys('Escape'); await sleep(600);
+  const closed = !(await exists('[data-testid="shortcut-help"]'));
+  return ok(help && help.groups >= 5 && /Next conversation/.test(help.text) && closed, `${help?.groups} grupos; cerrado con Escape`, `ayuda=${JSON.stringify(help && { groups: help.groups })}, cerrada=${closed}`);
+});
+const cursorRow = () => js(() => document.querySelector('[data-cursor="true"]')?.innerText.replace(/\n/g, ' ').slice(0, 80) ?? null);
+await step('Atajos', 'j y k mueven el cursor', 'j baja el cursor de teclado a la fila siguiente y k lo devuelve', async () => {
+  await blur();
+  const c0 = await cursorRow(); await b.keys('j'); await sleep(400); const c1 = await cursorRow(); await b.keys('k'); await sleep(400); const c2 = await cursorRow();
+  return ok(c0 && c1 && c1 !== c0 && c2 === c0, `${c0?.slice(0, 40)} → ${c1?.slice(0, 40)} → de vuelta`, `cursor: ${c0} → ${c1} → ${c2}`);
+});
+await step('Atajos', 's destaca la conversación del cursor', 's pone la estrella en la fila del cursor (y en la BD) y otra s la quita', async () => {
+  await blur();
+  const star = () => js(() => document.querySelector('[data-cursor="true"] [data-testid="star-toggle"]')?.getAttribute('aria-pressed') ?? null);
+  const starredInDb = () => sql("SELECT COUNT(DISTINCT thread_id) AS n FROM emails WHERE account_id = 'demo-acct-work' AND is_starred = 1")[0]?.n;
+  const row = await cursorRow(); if (!row) return 'FAIL: no hay fila con el cursor de teclado';
+  if ((await star()) === 'true') return `FAIL: la fila del cursor ya estaba destacada: ${row}`;
+  const base = starredInDb();
+  await b.keys('s'); await sleep(1500); const on = await star(); const dbOn = starredInDb();
+  await b.keys('s'); await sleep(1500); const off = await star(); const dbOff = starredInDb();
+  return ok(on === 'true' && off === 'false' && dbOn === base + 1 && dbOff === base, `«${row.slice(0, 50)}»: estrella puesta y quitada; hilos destacados en BD ${base} → ${dbOn} → ${dbOff}`, `UI ${on} → ${off}, BD ${base} → ${dbOn} → ${dbOff}`);
+});
+
+// ---------- Organizar: estrella, archivo, selección múltiple, deshacer, posponer ----------
+await step('Organizar', 'destacar desde la fila', 'la estrella de la fila de Nadia Brunner queda pulsada y la BD marca el hilo como destacado', async () => {
+  const before = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
+  if (before === null) return 'FAIL: la fila de Nadia Brunner no tiene estrella';
+  if (before === 'true') { await inRow('Nadia Brunner', '[data-testid="star-toggle"]', true); await sleep(1200); }
+  await inRow('Nadia Brunner', '[data-testid="star-toggle"]', true); await sleep(1500);
+  const pressed = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
+  const dbs = sql("SELECT MAX(is_starred) AS s FROM emails WHERE sender = 'Nadia Brunner'")[0]?.s;
+  return ok(pressed === 'true' && dbs === 1, 'estrella pulsada; emails.is_starred = 1', `aria-pressed=${pressed}, BD is_starred=${dbs}`);
+});
+await step('Organizar', 'vista Starred', 'Starred lista el hilo recién destacado y el que la BD demo trae destacado (Corrected Larkspur Freight renewal quote)', async () => {
+  await click('button*=Starred'); await sleep(1500);
+  const h2 = await js(() => document.querySelector('h2')?.textContent.trim() || ''); const rows = await rowTexts();
+  const want = ['Nadia Brunner', 'Corrected Larkspur Freight renewal quote'].filter((x) => !rows.some((r) => r.includes(x)));
+  return ok(/^Starred/.test(h2) && !want.length, `${h2}: ${rows.length} filas`, `cabecera «${h2}», faltan: ${want.join(', ')} (¿BD demo sin la fixture destacada?)`);
+});
+await step('Organizar', 'quitar la estrella en Starred', 'quitar la estrella saca el hilo de Starred y de la BD; la fixture destacada se queda', async () => {
+  await inRow('Nadia Brunner', '[data-testid="star-toggle"]', true); await sleep(1500);
+  const rows = await rowTexts(); const dbs = sql("SELECT MAX(is_starred) AS s FROM emails WHERE sender = 'Nadia Brunner'")[0]?.s;
+  const gone = !rows.some((r) => r.includes('Nadia Brunner')), kept = rows.some((r) => r.includes('Corrected Larkspur'));
+  return ok(gone && kept && dbs === 0, 'fuera de Starred; BD is_starred = 0', `fuera=${gone}, fixture=${kept}, BD=${dbs}`);
+});
+await step('Organizar', 'vista Archive', 'una cuenta IMAP no muestra la vista Archive (archiva en su carpeta); con All accounts, Archive lista el correo archivado de la BD demo', async () => {
+  await click('button*=ulises@emailopslabs.dev'); await sleep(1000);
+  const imapHidden = !(await exists('button=Archive'));
+  await click('button=All accounts'); await sleep(1500);
+  if (!(await exists('button=Archive'))) { await click('button*=ulises@emailopslabs.dev'); await sleep(800); return 'FAIL: sin entrada Archive con All accounts'; }
+  await click('button=Archive'); await sleep(1500);
+  const h2 = await js(() => document.querySelector('h2')?.textContent.trim() || ''); const has = await hasRow('Studio key handover confirmed');
+  await click('button*=ulises@emailopslabs.dev'); await sleep(1000); await click('button=Inbox'); await sleep(1200);
+  return ok(imapHidden && /^Archive/.test(h2) && has, `IMAP sin Archive; ${h2} con «Studio key handover confirmed»`, `IMAP oculta=${imapHidden}, cabecera «${h2}», fila archivada=${has}`);
+});
+await step('Organizar', 'selección múltiple', 'marcar dos casillas muestra la barra de acciones con «2 selected» y Archive, Snooze, Delete, Mark as unread, Star', async () => {
+  await inRow('Kwame Boateng', '[data-testid="row-select"]', true); await inRow('GlitchTip', '[data-testid="row-select"]', true); await sleep(600);
+  const bar = await js(() => { const t = document.querySelector('[data-testid="bulk-toolbar"]'); return t ? { text: t.innerText.replace(/\n/g, ' '), buttons: [...t.querySelectorAll('button')].map((x) => x.getAttribute('aria-label') || x.title || x.textContent.trim()) } : null; });
+  if (!bar) return 'FAIL: no aparece la barra de acciones en bloque';
+  const want = ['Archive', 'Snooze', 'Delete', 'Mark as unread', 'Star'].filter((x) => !bar.buttons.includes(x));
+  return ok(/2 selected/.test(bar.text) && !want.length, `${bar.text.trim()}; ${bar.buttons.join(', ')}`, `texto «${bar.text}», faltan: ${want.join(', ')}`);
+});
+await step('Organizar', 'archivar en bloque y deshacer', 'Archive en la barra quita las dos filas con un aviso «Archived 2 conversations · Undo»; Undo las devuelve y la BD nunca las movió', async () => {
+  const hit = await js(() => { const x = [...document.querySelectorAll('[data-testid="bulk-toolbar"] button')].find((y) => (y.getAttribute('aria-label') || y.title || y.textContent.trim()) === 'Archive'); if (!x) return false; x.click(); return true; });
+  if (!hit) return 'FAIL: no hay Archive en la barra';
+  await sleep(800);
+  const gone = !(await hasRow('Kwame Boateng')) && !(await hasRow('GlitchTip')); const t = await toastText();
+  const undone = await clickToastAction('Undo'); await sleep(1500);
+  const back = (await hasRow('Kwame Boateng')) && (await hasRow('GlitchTip'));
+  await sleep(7000); // past the 6 s window: nothing may reach the provider after Undo
+  const mb = sql("SELECT DISTINCT mailbox FROM emails WHERE sender IN ('Kwame Boateng', 'GlitchTip')").map((r) => r.mailbox);
+  const late = await toastText();
+  return ok(gone && /Archived 2 conversations/.test(t) && undone && back && mb.join() === 'inbox' && !/Could not archive/.test(late), `aviso «${t}»; Undo devuelve las filas; BD: ${mb.join()}`, `quitadas=${gone}, aviso «${t}», undo=${undone}, de vuelta=${back}, BD=${mb.join()}, aviso tardío «${late}»`);
+});
+await step('Organizar', 'archivar sin credenciales', 'archivar en la cuenta demo sin credenciales: tras la ventana de deshacer falla con un aviso visible y la fila vuelve a la bandeja (la BD no cambia)', async () => {
+  await closeToasts();
+  if (!(await rowMenu('GlitchTip'))) return 'FAIL: la fila de GlitchTip no tiene menú ⋮';
+  await sleep(700);
+  if (!(await menuItem('Archive'))) { await b.keys('Escape'); return 'FAIL: el menú ⋮ no ofrece Archive'; }
+  await sleep(600); const gone = !(await hasRow('GlitchTip'));
+  const err = await waitToast(/Could not archive 1 conversation/, 20000);
+  await sleep(800); const back = await hasRow('GlitchTip');
+  const mb = sql("SELECT DISTINCT mailbox FROM emails WHERE sender = 'GlitchTip'").map((r) => r.mailbox).join();
+  await closeToasts();
+  return ok(gone && !!err && back && mb === 'inbox', `aviso: ${err?.slice(0, 120)}; fila restaurada; BD inbox`, `quitada=${gone}, aviso=${err}, restaurada=${back}, BD=${mb}`);
+});
+const kwameThread = () => sql("SELECT DISTINCT thread_id FROM emails WHERE sender = 'Kwame Boateng' AND account_id = 'demo-acct-work'").map((r) => r.thread_id);
+await step('Organizar', 'posponer desde el menú', 'Snooze en el menú ⋮ ofrece momentos predefinidos; elegir el primero saca el hilo de la bandeja y lo guarda en thread_snoozes', async () => {
+  await closeToasts();
+  if (!(await rowMenu('Kwame Boateng'))) return 'FAIL: la fila de Kwame Boateng no tiene menú ⋮';
+  await sleep(700);
+  if (!(await exists('[data-testid="row-snooze"]'))) { await b.keys('Escape'); return 'FAIL: el menú ⋮ no ofrece Snooze'; }
+  await click('[data-testid="row-snooze"]'); await sleep(600);
+  const presets = await js(() => [...document.querySelectorAll('[data-testid^="snooze-preset-"]')].map((x) => x.innerText.replace(/\n/g, ' ')));
+  if (!presets.length) { await b.keys('Escape'); return 'FAIL: el selector no ofrece ningún momento'; }
+  await js(() => document.querySelector('[data-testid^="snooze-preset-"]').click()); await sleep(1500);
+  const t = await toastText(); const gone = !(await hasRow('Kwame Boateng'));
+  const thr = kwameThread(); const rows = sql(`SELECT snoozed_until, woke_at FROM thread_snoozes WHERE thread_id IN (${ids(thr)})`);
+  const future = rows.length === 1 && rows[0].snoozed_until > Date.now() / 1000 && rows[0].woke_at === null;
+  await closeToasts();
+  return ok(gone && future && /Snoozed until/.test(t), `«${presets[0]}»; aviso «${t.slice(0, 60)}»; thread_snoozes con hora futura`, `fuera=${gone}, BD=${JSON.stringify(rows)}, aviso «${t}»`);
+});
+await step('Organizar', 'vista Snoozed', 'Snoozed lista el hilo pospuesto con su marca «Snoozed until …»', async () => {
+  await click('button*=Snoozed'); await sleep(1500);
+  const has = await hasRow('Kwame Boateng'); const badge = await inRow('Kwame Boateng', '[data-testid="snooze-badge"]');
+  return ok(has && badge !== null, 'hilo listado con su marca', `fila=${has}, marca=${badge}`);
+});
+await step('Organizar', 'quitar el aplazamiento', 'Unsnooze en el menú ⋮ saca el hilo de Snoozed, borra su fila de thread_snoozes y lo devuelve a la bandeja', async () => {
+  if (!(await rowMenu('Kwame Boateng'))) return 'FAIL: la fila pospuesta no tiene menú ⋮';
+  await sleep(700);
+  if (!(await exists('[data-testid="row-unsnooze"]'))) { await b.keys('Escape'); return 'FAIL: el menú ⋮ no ofrece Unsnooze'; }
+  await click('[data-testid="row-unsnooze"]'); await sleep(1500);
+  const gone = !(await hasRow('Kwame Boateng'));
+  const left = sql(`SELECT COUNT(*) AS n FROM thread_snoozes WHERE thread_id IN (${ids(kwameThread())})`)[0]?.n;
+  await click('button=Inbox'); await sleep(1500); const back = await hasRow('Kwame Boateng');
+  await closeToasts();
+  return ok(gone && left === 0 && back, 'fuera de Snoozed; BD sin aplazamiento; de vuelta en Inbox', `fuera=${gone}, filas en BD=${left}, en Inbox=${back}`);
+});
+
 // ---------- Search ----------
 await step('Búsqueda', 'consulta Ollama', 'filtra a la fila de Kwame Boateng', async () => {
   await type('input[placeholder^="Search…"]', 'Ollama'); await enter(); await sleep(1500);
@@ -141,6 +280,60 @@ await step('Junk', 'chip en la bandeja', 'el aviso que el usuario marcó como no
   return ok(!!marked && !!genuine && marked.chip === 'junk: phishing' && genuine.chip === null, `marcado: ${marked?.chip}; legítimo: sin chip`, JSON.stringify(found));
 });
 
+// ---------- Remitentes: darse de baja y bloquear (boletín de la BD demo con List-Unsubscribe) ----------
+const HARBOR = 'news@harborlight-weekly.example';
+const dialogWith = (re) => js((r) => { const d = [...document.querySelectorAll('[role="dialog"], .fixed')].find((x) => new RegExp(r).test(x.innerText.trim())); return d ? d.innerText : null; }, re);
+const dialogButton = (re, label) => js((r, l) => { const d = [...document.querySelectorAll('[role="dialog"], .fixed')].find((x) => new RegExp(r).test(x.innerText.trim())); const x = d && [...d.querySelectorAll('button')].filter((y) => y.textContent.trim() === l).pop(); if (!x) return false; x.click(); return true; }, re, label);
+await step('Remitentes', 'Unsubscribe: diálogo y Cancel', 'el boletín con List-Unsubscribe-Post ofrece Unsubscribe; el diálogo explica la petición de un clic a harborlight-weekly.example y Cancel lo cierra sin pedir nada', async () => {
+  await type(SEARCH, 'Harborlight'); await enter(); await sleep(1500);
+  if (!(await exists('//div[@role="button"][contains(., "Harborlight Weekly")]'))) { await clearSearch(); return 'FAIL: no hay correo de Harborlight Weekly (¿BD demo sin las fixtures de verificación?)'; }
+  await click('//div[@role="button"][contains(., "Harborlight Weekly")]'); await sleep(1500);
+  if (!(await exists('[data-testid="unsubscribe-button"]'))) { await click('button=Back'); await clearSearch(); return 'FAIL: el correo no ofrece Unsubscribe (¿sin cabeceras List-Unsubscribe en email_headers?)'; }
+  await click('[data-testid="unsubscribe-button"]'); await sleep(1000);
+  const text = await dialogWith('^Unsubscribe from');
+  // Never "Unsubscribe": that would POST to the sender's host.
+  await dialogButton('^Unsubscribe from', 'Cancel'); await sleep(800);
+  const closed = !(await exists('[data-testid="unsubscribe-confirm"]'));
+  const stored = sql('SELECT COUNT(*) AS n FROM sender_unsubscribes')[0]?.n;
+  return ok(!!text && /harborlight-weekly\.example/.test(text) && /request/.test(text) && closed && stored === 0, 'diálogo de un clic con el host del remitente; Cancel lo cierra; sender_unsubscribes vacío', `diálogo=${text?.replace(/\n/g, ' ').slice(0, 160)}, cerrado=${closed}, filas=${stored}`);
+});
+await step('Remitentes', 'bloquear remitente', 'Block sender en el menú ⋮ pide confirmación; al confirmar se guarda el bloqueo y, sin credenciales, el aviso dice que el correo existente no se pudo mover (se queda en la bandeja marcado como no deseado aquí)', async () => {
+  await closeToasts(); await click('button=Back'); await sleep(1000);
+  if (!(await rowMenu('Harborlight Weekly'))) return 'FAIL: la fila del boletín no tiene menú ⋮';
+  await sleep(700);
+  if (!(await exists('[data-testid="menu-block-sender"]'))) { await b.keys('Escape'); return 'FAIL: el menú ⋮ no ofrece Block sender'; }
+  await click('[data-testid="menu-block-sender"]'); await sleep(1000);
+  const text = await dialogWith(`^Block ${HARBOR}`);
+  if (!text) return 'FAIL: no aparece el diálogo «Block …?»';
+  await click('[data-testid="sender-block-confirm"]');
+  const t = await waitToast(/Blocked news@harborlight-weekly\.example/, 10000);
+  const blocked = sql(`SELECT COUNT(*) AS n FROM blocked_senders WHERE account_id = 'demo-acct-work' AND address = '${HARBOR}'`)[0]?.n;
+  const mail = sql(`SELECT e.mailbox, j.user_override FROM emails e LEFT JOIN email_junk j ON j.email_id = e.id WHERE e.sender_email = '${HARBOR}'`);
+  await closeToasts();
+  return ok(blocked === 1 && /could not be moved: 1/.test(t || '') && mail.length === 1 && mail[0].mailbox === 'inbox' && mail[0].user_override === 'junk',
+    `aviso «${t}»; blocked_senders 1; el correo sigue en inbox marcado junk`, `aviso «${t}», bloqueos=${blocked}, correo=${JSON.stringify(mail)}`);
+});
+await step('Remitentes', 'aviso de remitente bloqueado en el hilo', 'abrir un correo del remitente bloqueado muestra el aviso con Unblock', async () => {
+  await click('//div[@role="button"][contains(., "Harborlight Weekly")]'); await sleep(1500);
+  const banner = await js(() => document.querySelector('[data-testid="blocked-sender-banner"]')?.innerText.replace(/\n/g, ' ') || null);
+  await click('button=Back'); await sleep(800); await clearSearch();
+  return ok(!!banner && /Unblock/.test(banner), banner, 'no aparece el aviso de remitente bloqueado');
+});
+await step('Remitentes', 'Ajustes → Junk: lista y desbloqueo', 'Blocked senders lista el remitente; Unblock (con «devolver su correo») lo quita de la lista y de la BD y olvida la marca de no deseado que dejó el bloqueo', async () => {
+  await click('aria/Application settings'); await sleep(1200);
+  await js(() => [...document.querySelectorAll('button')].filter((x) => x.textContent.includes('Junk')).pop()?.click()); await sleep(1200);
+  const list = await js(() => document.querySelector('[data-testid="blocked-senders"]')?.innerText || '');
+  if (!list.includes(HARBOR)) { await closeSettings(); return `FAIL: Blocked senders no lista ${HARBOR}: ${list.replace(/\n/g, ' ').slice(0, 120)}`; }
+  await js(() => [...document.querySelectorAll('[data-testid="blocked-senders"] button')].find((x) => x.textContent.trim() === 'Unblock')?.click()); await sleep(1000);
+  if (!(await dialogButton(`^Unblock ${HARBOR}`, 'Unblock'))) { await closeSettings(); return 'FAIL: no aparece el diálogo «Unblock …?»'; }
+  const t = await waitToast(/Unblocked/, 10000); await sleep(600);
+  const after = await js(() => document.querySelector('[data-testid="blocked-senders"]')?.innerText || '');
+  const blocked = sql(`SELECT COUNT(*) AS n FROM blocked_senders WHERE address = '${HARBOR}'`)[0]?.n;
+  const mark = sql(`SELECT j.user_override FROM emails e LEFT JOIN email_junk j ON j.email_id = e.id WHERE e.sender_email = '${HARBOR}'`)[0]?.user_override ?? null;
+  await closeToasts(); await closeSettings();
+  return ok(!!t && !after.includes(HARBOR) && blocked === 0 && mark === null, `aviso «${t}»; lista vacía; BD sin bloqueo ni marca junk`, `aviso «${t}», en lista=${after.includes(HARBOR)}, bloqueos=${blocked}, marca=${mark}`);
+});
+
 // ---------- Cuentas ----------
 await step('Cuentas', 'cambiar a fastmail', 'la lista cambia a la cuenta personal', async () => {
   await click('button*=ulises@fastmail.com'); await sleep(1500);
@@ -156,7 +349,7 @@ await step('Cuentas', 'volver a la cuenta de trabajo', 'la cuenta demo-acct-work
 // ---------- Otras vistas ----------
 if (!(await exists('button=Spam'))) { await click('button=Other Views'); await sleep(800); }
 const optional = { Calendar: 'el calendario solo se activa en cuentas Gmail/Outlook' };
-for (const view of ['Tag Board', 'Attachments', 'Drafts', 'Sent', 'Calendar', 'Spam', 'Deleted', 'Contacts', 'Dashboard', 'Tasks', 'Lenses', 'Memory']) {
+for (const view of ['Tag Board', 'Attachments', 'Drafts', 'Scheduled', 'Sent', 'Starred', 'Snoozed', 'Calendar', 'Spam', 'Deleted', 'Contacts', 'Dashboard', 'Tasks', 'Lenses', 'Memory']) {
   await step('Vistas', view, `la vista ${view} abre sin errores y con contenido`, async () => {
     const sel = `button*=${view}`;
     if (!(await exists(sel))) return optional[view] ? `SKIP: ${optional[view]}` : `FAIL: no hay entrada "${view}" en la barra lateral`;
@@ -211,6 +404,42 @@ await step('Tag Board', 'barra de herramientas visible', 'con el panel de chat a
 // The modal root is the fixed overlay around the subject field; `body` would also match a `:has()` query.
 const composeSend = () => js(() => { const m = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]'); const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Send'); return b ? { disabled: b.disabled } : null; });
 const clickComposeSend = () => js(() => { const m = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]'); const b = m && [...m.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Send'); if (!b) return false; b.click(); return true; });
+// ---------- Firmas (Ajustes → Signatures, y su inserción en el compositor) ----------
+const SIGNATURE = 'Ulises Demo · verification signature';
+const signatureRow = () => sql("SELECT html, use_for_new FROM account_signatures WHERE account_id = 'demo-acct-work'")[0] || null;
+async function openSignaturesTab() {
+  await click('aria/Application settings'); await sleep(1200);
+  await js(() => [...document.querySelectorAll('button')].filter((x) => x.textContent.includes('Signatures')).pop()?.click()); await sleep(1200);
+}
+const saveSignature = () => js(() => { const x = [...document.querySelectorAll('[data-testid="signatures-settings"] button')].find((y) => y.textContent.trim() === 'Save signature'); if (!x) return false; x.click(); return true; });
+await click('button=Inbox'); await sleep(800);
+await step('Firmas', 'guardar firma', 'en Ajustes → Signatures se escribe una firma para la cuenta de trabajo y «Save signature» la guarda en account_signatures', async () => {
+  await openSignaturesTab();
+  const editor = await js(() => { const ed = document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]'); if (!ed) return false; ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); return true; });
+  if (!editor) { await closeSettings(); return 'FAIL: la pestaña Signatures no tiene editor'; }
+  await js((t) => document.execCommand('insertText', false, t), SIGNATURE); await sleep(400);
+  if (!(await saveSignature())) { await closeSettings(); return 'FAIL: no hay botón «Save signature»'; }
+  await sleep(1500);
+  const saved = await js(() => /Signature saved/.test(document.querySelector('[data-testid="signatures-settings"]')?.innerText || ''));
+  const row = signatureRow();
+  await closeSettings();
+  return ok(saved && row?.html.includes(SIGNATURE) && row.use_for_new === 1, `«Signature saved»; BD: ${row?.html}`, `guardada=${saved}, BD=${JSON.stringify(row)}`);
+});
+await step('Firmas', 'firma en un mensaje nuevo', 'Compose abre con la firma de la cuenta ya insertada en el cuerpo; Cancel lo cierra sin dejar borrador', async () => {
+  await click('button=Compose'); await sleep(1800);
+  const sig = await js(() => document.querySelector('[contenteditable="true"] [data-emailops-signature]')?.innerText.trim() || null);
+  if (await exists('button=Cancel')) { await click('button=Cancel'); await sleep(800); }
+  if (await exists('input[placeholder^="Email subject"]')) { await b.keys('Escape'); await sleep(600); }
+  return ok(sig === SIGNATURE, `firma insertada: «${sig}»`, `firma en el cuerpo: ${JSON.stringify(sig)}`);
+});
+await step('Firmas', 'borrar la firma', 'vaciar el editor y guardar deja la firma vacía (el estado de partida de la BD demo)', async () => {
+  await openSignaturesTab();
+  await js(() => { const ed = document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]'); ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); }); await sleep(400);
+  await saveSignature(); await sleep(1500);
+  const row = signatureRow();
+  await closeSettings();
+  return ok(row !== null && row.html === '', 'firma vacía en la BD', `BD=${JSON.stringify(row)}`);
+});
 await click('button=Inbox'); await sleep(1200);
 await step('Compose', 'abrir', 'el modal de redacción aparece con To, Subject y cuerpo', async () => {
   await click('button=Compose'); await sleep(1500);
@@ -240,15 +469,73 @@ await step('Compose', 'rellenar', 'To, Subject y cuerpo aceptan texto y Send se 
   v.sendDisabled = (await composeSend())?.disabled;
   return ok(v.subject === 'Verification run' && /hello from the verifier/.test(v.body || '') && v.sendDisabled === false, JSON.stringify(v), JSON.stringify(v));
 });
-await step('Compose', 'enviar sin credenciales', 'Send falla con un aviso visible, no en silencio', async () => {
-  if (!(await clickComposeSend())) return 'FAIL: no hay botón Send en el compositor';
-  await sleep(5000);
-  // The notice must be inside the composer (the sidebar's sync banner also says "Authentication required").
-  const t = await js(() => document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed, [role="dialog"]')?.innerText || '');
-  const m = t.match(/Failed to send[^\n]*|not authenticated[^\n]*|Authentication required[^\n]*|could not[^\n]*|error[^\n]*/i);
-  return ok(!!m, `aviso: ${m?.[0]}`, 'ningún aviso de error en el compositor tras Send');
+// ---------- Envío: deshacer el envío y envío programado (outbox local) ----------
+// Send no longer sends straight away: the message waits in the outbox for the undo window (10 s by default).
+const outboxRows = (subject) => sql(`SELECT id, origin, status, send_at, created_at, last_error FROM outbox WHERE subject = ${ids([subject])} ORDER BY created_at DESC, rowid DESC`);
+const subjectValue = () => js(() => document.querySelector('input[placeholder^="Email subject"]')?.value ?? null);
+async function fillCompose(subject, body) {
+  await click('button=Compose'); await sleep(1500);
+  await type('input[placeholder^="Add recipients"]', 'someone@example.com'); await sleep(400);
+  await js(() => { const i = document.querySelector('input[placeholder^="Add recipients"]'); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true })); }); await sleep(500);
+  await type('input[placeholder^="Email subject"]', subject);
+  const ed = await b.$('[contenteditable="true"]'); await ed.click(); await sleep(200);
+  await js((t) => document.execCommand('insertText', false, t), body); await sleep(800);
+}
+const sendButton = (suffix = '') => js((s) => { const x = [...document.querySelectorAll('[data-testid]')].find((y) => /^(compose|compose-tab|reply)-send$/.test(y.getAttribute('data-testid'))); if (!x) return null; const el = s ? document.querySelector(`[data-testid="${x.getAttribute('data-testid')}${s}"]`) : x; if (!el) return null; el.click(); return x.getAttribute('data-testid'); }, suffix);
+await step('Envío', 'enviar y deshacer', 'Send cierra el compositor y deja el mensaje en el outbox con un aviso «Sending… · Undo»; Undo lo retira (cancelled) y reabre el compositor con el asunto y el texto', async () => {
+  const subject = 'Verification run';
+  if (!(await sendButton())) return 'FAIL: no hay botón Send en el compositor';
+  const t = await waitToast(/Sending/, 5000);
+  const closed = (await subjectValue()) === null;
+  const queued = outboxRows(subject)[0];
+  const window = queued ? queued.send_at - queued.created_at : null;
+  if (!(await clickToastAction('Undo'))) return `FAIL: sin Undo en el aviso (aviso «${t}», en cola=${JSON.stringify(queued)})`;
+  await sleep(2000);
+  const after = outboxRows(subject)[0];
+  const reopened = await subjectValue(); const text = await js(() => document.querySelector('[contenteditable="true"]')?.innerText || '');
+  return ok(!!t && closed && queued?.origin === 'undo' && window > 0 && after?.id === queued.id && after.status === 'cancelled' && reopened === subject && /hello from the verifier/.test(text),
+    `aviso «${t}»; en cola ${window} s; Undo → cancelled y compositor reabierto`, `aviso=${t}, cerrado=${closed}, cola=${JSON.stringify(queued)}, después=${JSON.stringify(after)}, asunto=${reopened}`);
+});
+await step('Envío', 'programar envío', 'el desplegable de Send ofrece «Schedule send» con momentos y la nota de que la app debe estar abierta; elegir uno cierra el compositor y guarda el mensaje como programado a esa hora', async () => {
+  const subject = 'Verification run';
+  const id = await sendButton('-schedule'); if (!id) return 'FAIL: el compositor no tiene el desplegable de Send';
+  await sleep(600);
+  const menu = await js((i) => document.querySelector(`[data-testid="${i}-schedule-menu"]`)?.innerText.replace(/\n/g, ' | ') || '', id);
+  const preset = await js(() => { const x = document.querySelector('[data-testid*="-send-preset-"]'); if (!x) return null; const label = x.innerText.replace(/\n/g, ' '); x.click(); return label; });
+  if (!preset) return `FAIL: sin momentos en el menú: ${menu}`;
+  const t = await waitToast(/Scheduled for/, 5000); await sleep(500);
+  const row = outboxRows(subject)[0];
+  return ok(/Schedule send/.test(menu) && /must be open/.test(menu) && !!t && (await subjectValue()) === null && row?.origin === 'scheduled' && row.status === 'scheduled' && row.send_at > Date.now() / 1000,
+    `«${preset}»; aviso «${t}»; outbox scheduled`, `menú «${menu.slice(0, 120)}», aviso=${t}, fila=${JSON.stringify(row)}`);
+});
+await step('Envío', 'vista Scheduled y borrar', 'Scheduled lista el mensaje con su hora; Delete lo quita con un aviso con Undo y la fila del outbox queda cancelled', async () => {
+  await closeToasts(); await click('[data-testid="sidebar-scheduled"]'); await sleep(1500);
+  const rows = await js(() => [...document.querySelectorAll('[data-testid="scheduled-row"]')].map((r) => r.innerText.replace(/\n/g, ' | ')));
+  const mine = rows.find((r) => r.includes('Verification run'));
+  if (!mine) return `FAIL: Scheduled no lista el mensaje: ${rows.join(' // ') || 'vacía'}`;
+  await js(() => { const r = [...document.querySelectorAll('[data-testid="scheduled-row"]')].find((x) => x.innerText.includes('Verification run')); r.querySelector('[data-testid="scheduled-delete"]').click(); }); await sleep(1500);
+  const t = await toastText(); const left = await js(() => [...document.querySelectorAll('[data-testid="scheduled-row"]')].some((r) => r.innerText.includes('Verification run')));
+  const status = outboxRows('Verification run')[0]?.status;
+  await closeToasts();
+  return ok(/Sends/.test(mine) && /Scheduled message deleted/.test(t) && /Undo/.test(t) && !left && status === 'cancelled', `«${mine.slice(0, 80)}»; aviso «${t}»; BD cancelled`, `fila «${mine}», aviso «${t}», sigue=${left}, BD=${status}`);
+});
+await click('button=Inbox'); await sleep(1000);
+await step('Compose', 'enviar sin credenciales', 'Send en la cuenta demo sin credenciales: al acabar la ventana de deshacer el envío falla con un aviso visible, el outbox queda failed con el error y Scheduled lo muestra «Not sent»; Delete lo retira', async () => {
+  const subject = 'Verification run (no credentials)';
+  await fillCompose(subject, 'hello from the verifier');
+  if (!(await sendButton())) return 'FAIL: no hay botón Send en el compositor';
+  const err = await waitToast(/could not be sent/i, 30000);
+  const row = outboxRows(subject)[0];
+  await closeToasts(); await click('[data-testid="sidebar-scheduled"]'); await sleep(1500);
+  const shown = await js((s) => [...document.querySelectorAll('[data-testid="scheduled-row"]')].find((r) => r.innerText.includes(s))?.innerText.replace(/\n/g, ' | ') || null, subject);
+  await js((s) => [...document.querySelectorAll('[data-testid="scheduled-row"]')].find((r) => r.innerText.includes(s))?.querySelector('[data-testid="scheduled-delete"]')?.click(), subject); await sleep(1200);
+  const cleaned = outboxRows(subject)[0]?.status;
+  await closeToasts(); await click('button=Inbox'); await sleep(800);
+  return ok(!!err && row?.status === 'failed' && /Authentication required/.test(row.last_error || '') && /Not sent/.test(shown || '') && cleaned === 'cancelled',
+    `aviso: ${err?.slice(0, 110)}; outbox failed; Scheduled «Not sent»; borrado`, `aviso=${err}, fila=${JSON.stringify(row)}, Scheduled=${shown}, tras borrar=${cleaned}`);
 });
 await step('Compose', 'cerrar y borrador', 'al cancelar, el borrador aparece en Drafts (los borradores se guardan automáticamente)', async () => {
+  await fillCompose('Verification run', 'hello from the verifier');
   if (await exists('button=Cancel')) { await click('button=Cancel'); await sleep(800); for (const c of ['button=Discard', 'button=Keep', 'button=Save draft']) if (await exists(c)) { await click(c === 'button=Discard' ? 'button=Keep' : c).catch(() => {}); break; } }
   if (await exists('[role="dialog"]')) { await b.keys('Escape'); await sleep(800); }
   await click('button=Drafts'); await sleep(1500);
@@ -296,7 +583,7 @@ await step('Ajustes', 'abrir', 'el diálogo de ajustes abre con sus pestañas', 
   const t = await bodyText(); const tabs = ['Appearance', 'AI Backend & Models', 'AI Classification', 'Privacy & Security', 'Junk'].filter(x => t.includes(x));
   return ok(tabs.length >= 4, `pestañas: ${tabs.join(', ')}`, `pestañas visibles: ${tabs.join(', ')}`);
 });
-for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 'AI Translation', 'Privacy', 'Junk', 'Calendar', 'Appearance']) {
+for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 'AI Translation', 'Privacy', 'Junk', 'Signatures', 'Notifications', 'Calendar', 'Appearance']) {
   await step('Ajustes', `pestaña ${tab}`, `la pestaña ${tab} renderiza contenido`, async () => {
     // The sidebar has a "Calendar" view button behind the modal that `button*=` would hit first. The settings
     // dialog is portalled after the sidebar, so the last matching button in DOM order is the tab.
@@ -307,6 +594,27 @@ for (const tab of ['AI Backend', 'AI Classification', 'AI Search', 'AI Drafts', 
     return ok(t.length > 100, t.slice(0, 100), 'contenido vacío');
   });
 }
+// ---------- Notificaciones (Ajustes → Notifications) ----------
+await step('Notificaciones', 'los ajustes persisten', 'cambiar «Only when EmailOps is not focused», una cuenta y el contenido a «Hide content» se guarda en user_preferences y sobrevive a cerrar y reabrir Ajustes; después se dejan como estaban', async () => {
+  const UNF = 'Only when EmailOps is not focused', ACC = 'Notify for ulises@fastmail.com';
+  const tab = async () => { await js(() => [...document.querySelectorAll('button')].filter((x) => x.textContent.includes('Notifications')).pop()?.click()); await sleep(1200); };
+  const sw = (l, act) => js((label, a) => { const x = [...document.querySelectorAll('button')].find((y) => y.getAttribute('aria-label') === label && y.offsetParent); if (!x) return null; if (a) x.click(); return x.getAttribute('aria-checked'); }, l, act);
+  const radio = (v, act) => js((val, a) => { const r = [...document.querySelectorAll('input[name="notification-content"]')].find((x) => x.value === val); if (!r) return null; if (a) r.click(); return r.checked; }, v, act);
+  const prefs = () => Object.fromEntries(sql("SELECT key, value FROM user_preferences WHERE key LIKE 'notifications.new_mail.%'").map((r) => [r.key, r.value]));
+  await tab();
+  const start = { unf: await sw(UNF), acc: await sw(ACC), hidden: await radio('hidden') };
+  if (start.unf === null || start.acc === null || start.hidden === null) return `FAIL: faltan controles en Notifications: ${JSON.stringify(start)}`;
+  await sw(UNF, true); await sleep(600); await sw(ACC, true); await sleep(600); await radio(start.hidden ? 'preview' : 'hidden', true); await sleep(800);
+  const saved = prefs();
+  await closeSettings(); await click('aria/Application settings'); await sleep(1200); await tab();
+  const reopened = { unf: await sw(UNF), acc: await sw(ACC), hidden: await radio('hidden') };
+  await sw(UNF, true); await sleep(600); await sw(ACC, true); await sleep(600); await radio(start.hidden ? 'hidden' : 'preview', true); await sleep(800);
+  const restored = prefs();
+  const flipped = reopened.unf !== start.unf && reopened.acc !== start.acc && reopened.hidden !== start.hidden;
+  const inDb = saved['notifications.new_mail.only_unfocused'] === String(start.unf !== 'true') && saved['notifications.new_mail.account:demo-acct-personal'] === String(start.acc !== 'true') && saved['notifications.new_mail.content'] === (start.hidden ? 'preview' : 'hidden');
+  const back = restored['notifications.new_mail.only_unfocused'] === String(start.unf === 'true') && restored['notifications.new_mail.content'] === (start.hidden ? 'hidden' : 'preview');
+  return ok(flipped && inDb && back, `guardado ${JSON.stringify(saved)}; persiste al reabrir; restaurado`, `inicio=${JSON.stringify(start)}, reabierto=${JSON.stringify(reopened)}, BD=${JSON.stringify(saved)}, restaurado=${JSON.stringify(restored)}`);
+});
 // ---------- IA: proveedores y modelos (dentro de Ajustes → AI Backend) ----------
 // Elegir una pestaña de proveedor solo cambia el formulario; nada se guarda sin «Save», que ningún paso pulsa.
 const settingsBox = () => js(() => { const d = document.querySelector('button[title="Close settings"]')?.closest('.fixed'); if (!d) return null;

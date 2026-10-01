@@ -6319,3 +6319,178 @@ async fn calendar_invite_card_comes_from_the_ics_part_kept_at_ingest() {
         .expect("no invite is not an error");
     assert_eq!(none, None);
 }
+
+// ── Gmail/Outlook parity: archive, snooze, outbox, signatures ──────────────
+
+fn local_only_account(id: &str) -> Account {
+    Account {
+        provider: "local".to_string(),
+        ..make_account(id, &format!("{id}@example.com"))
+    }
+}
+
+/// Archive and Move to Inbox through the command entry point: the thread
+/// leaves the inbox list for Archive and comes back, with no provider to call
+/// on an account that has no mailbox writes.
+#[tokio::test]
+async fn thread_action_archive_and_move_to_inbox_round_trip() {
+    use emailops_lib::services::emails::{apply_thread_action, ThreadAction, ThreadRef};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&local_only_account("acc-ta")).unwrap();
+    db.insert_email(&make_email("ta-1", "acc-ta", 1000)).unwrap();
+    db.insert_email(&make_email("ta-2", "acc-ta", 900)).unwrap();
+    let thread = ThreadRef {
+        account_id: "acc-ta".to_string(),
+        thread_id: "thread-ta-1".to_string(),
+    };
+    let inbox = |db: &Arc<Database>| {
+        db.get_emails(
+            emailops_lib::db::AccountScope::Account("acc-ta"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect::<Vec<_>>()
+    };
+
+    let report = apply_thread_action(&db, std::slice::from_ref(&thread), ThreadAction::Archive, None).await;
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(db.get_email("ta-1").unwrap().unwrap().mailbox, "archive");
+    assert_eq!(inbox(&db), vec!["ta-2"]);
+
+    let report = apply_thread_action(&db, std::slice::from_ref(&thread), ThreadAction::MoveToInbox, None).await;
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(inbox(&db), vec!["ta-1", "ta-2"]);
+}
+
+/// Snooze takes a thread out of the inbox list until it is due; the wake pass
+/// brings it back and reports it.
+#[tokio::test]
+async fn snooze_hides_a_thread_until_the_wake_pass_brings_it_back() {
+    use emailops_lib::services::emails::{snooze_threads, wake_due_snoozes, ThreadRef};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&local_only_account("acc-sn")).unwrap();
+    db.insert_email(&make_email("sn-1", "acc-sn", 1000)).unwrap();
+    db.insert_email(&make_email("sn-2", "acc-sn", 900)).unwrap();
+    let thread = ThreadRef {
+        account_id: "acc-sn".to_string(),
+        thread_id: "thread-sn-1".to_string(),
+    };
+    let inbox = |db: &Arc<Database>| {
+        db.get_emails(
+            emailops_lib::db::AccountScope::Account("acc-sn"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect::<Vec<_>>()
+    };
+    let now = 2_000_000;
+
+    let report = snooze_threads(&db, std::slice::from_ref(&thread), now + 3600, now).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(inbox(&db), vec!["sn-2"]);
+
+    assert!(
+        wake_due_snoozes(&db, now + 60, None).await.unwrap().is_empty(),
+        "not due yet"
+    );
+    let woken = wake_due_snoozes(&db, now + 3600, None).await.unwrap();
+    assert_eq!(woken, vec![thread]);
+    assert_eq!(inbox(&db), vec!["sn-1", "sn-2"]);
+}
+
+struct FreshFakeProviders;
+
+#[async_trait::async_trait]
+impl emailops_lib::services::outbox::OutboxProviders for FreshFakeProviders {
+    async fn provider_for(&self, account: &Account) -> emailops_lib::models::error::Result<Box<dyn EmailProvider>> {
+        Ok(Box::new(FakeEmailProvider::new(&account.email, "Sender")))
+    }
+}
+
+/// Undo send: a queued message waits for its window, Undo takes it back, and
+/// one left alone is sent by the dispatcher once due.
+#[tokio::test]
+async fn outbox_undo_send_cancels_or_sends_once_the_window_closes() {
+    use emailops_lib::models::outbox::{OutboxSchedule, OutboxStatus, OutgoingMessage};
+    use emailops_lib::services::outbox::{cancel_outbox_message, dispatch_due_outbox, queue_outgoing};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-ob", "ob@example.com")).unwrap();
+    let message = OutgoingMessage {
+        account_id: "acc-ob".to_string(),
+        reply_to_email_id: None,
+        to: vec!["ben@example.com".to_string()],
+        cc: vec![],
+        subject: "Lunch".to_string(),
+        body: "Friday?".to_string(),
+        body_html: None,
+        inline_images: vec![],
+        attachments: vec![],
+    };
+    let now = 2_000_000;
+    let undo = OutboxSchedule::Undo { delay_secs: 10 };
+
+    let taken_back = queue_outgoing(&db, message.clone(), undo.clone(), None, None, now)
+        .await
+        .unwrap();
+    let restored = cancel_outbox_message(&db, &taken_back.id, now + 2).unwrap();
+    assert_eq!(restored.subject, "Lunch");
+
+    let left = queue_outgoing(&db, message, undo, None, None, now).await.unwrap();
+    let early = dispatch_due_outbox(&db, now + 5, &FreshFakeProviders).await.unwrap();
+    assert!(early.sent.is_empty(), "nothing goes out inside the undo window");
+    let due = dispatch_due_outbox(&db, now + 10, &FreshFakeProviders).await.unwrap();
+    assert_eq!(
+        due.sent.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec![left.id.as_str()]
+    );
+    assert_eq!(
+        db.get_outbox_entry(&left.id).unwrap().unwrap().status,
+        OutboxStatus::Sent
+    );
+    assert_eq!(
+        db.get_outbox_entry(&taken_back.id).unwrap().unwrap().status,
+        OutboxStatus::Cancelled
+    );
+}
+
+/// A signature saved for an account is read back cleaned of active content,
+/// with its insertion choices.
+#[test]
+fn signature_saved_for_an_account_is_read_back_without_scripts() {
+    use emailops_lib::models::SignatureInput;
+    use emailops_lib::services::signatures::{get_signature, save_signature};
+    let db = test_db();
+    db.insert_account(&make_account("acc-sig", "sig@example.com")).unwrap();
+    save_signature(
+        &db,
+        "acc-sig",
+        SignatureInput {
+            html: "<p>Ana Demo</p><script>alert(1)</script>".to_string(),
+            use_for_new: true,
+            use_for_replies: false,
+        },
+        1_000,
+    )
+    .unwrap();
+
+    let read = get_signature(&db, "acc-sig").unwrap();
+    assert!(read.html.contains("Ana Demo"));
+    assert!(!read.html.contains("script"));
+    assert!(read.use_for_new);
+    assert!(!read.use_for_replies);
+}
