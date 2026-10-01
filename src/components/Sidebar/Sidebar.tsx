@@ -115,6 +115,8 @@ interface SidebarProps {
   /** Opens the right-docked calendar agenda (the calendar's default surface). */
   onOpenCalendarPanel: () => void;
   onSelectLens: (lensId: string) => void;
+  /** Width in pixels (resizable layout). Omitted: the original fixed 256px. */
+  width?: number;
 }
 
 export function Sidebar({
@@ -157,6 +159,7 @@ export function Sidebar({
   calendarActive,
   onOpenCalendarPanel,
   onSelectLens,
+  width,
 }: SidebarProps) {
   const { counts } = useMemoryStore();
   const tasksBadge = counts.totalOpen + counts.awaitingThem;
@@ -308,7 +311,10 @@ export function Sidebar({
   };
 
   return (
-    <aside className="theme-chrome w-64 bg-white text-gray-900 border-r border-gray-200 flex flex-col">
+    <aside
+      className={`theme-chrome ${width === undefined ? 'w-64' : ''} flex-shrink-0 bg-white text-gray-900 border-r border-gray-200 flex flex-col`}
+      style={width === undefined ? undefined : { width }}
+    >
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <div>

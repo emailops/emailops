@@ -43,6 +43,7 @@ import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
 import { SkillsView } from '@/components/Skills/SkillsView';
+import { ColumnResizeHandle } from '@/components/shared/ColumnResizeHandle';
 import { SenderDialogs } from '@/components/shared/SenderDialogs';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TagBoardView } from '@/components/TagBoard/TagBoardView';
@@ -60,6 +61,7 @@ import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appU
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
+import { LIST_COLUMN, parseWidth, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
@@ -207,6 +209,16 @@ function AppInner() {
   const [inboxLayout, setInboxLayout] = usePersistedPref<InboxLayout>('inbox_layout', 'split', {
     parse: (raw) => (raw === 'split' || raw === 'full-width' ? raw : null),
     serialize: (v) => v,
+  });
+  // Resizable columns: folder sidebar and (split layout) email list widths.
+  const [sidebarWidth, setSidebarWidth] = usePersistedPref<number>(
+    SIDEBAR_COLUMN.prefKey,
+    SIDEBAR_COLUMN.defaultWidth,
+    { parse: (raw) => parseWidth(raw, SIDEBAR_COLUMN), serialize: String },
+  );
+  const [listWidth, setListWidth] = usePersistedPref<number>(LIST_COLUMN.prefKey, LIST_COLUMN.defaultWidth, {
+    parse: (raw) => parseWidth(raw, LIST_COLUMN),
+    serialize: String,
   });
   // Tag board "group by" dimension. Persisted in SQLite (never localStorage)
   // so the board opens on the dimension the user left it on.
@@ -1620,6 +1632,14 @@ function AppInner() {
             void useLensStore.getState().selectLens(lensId);
             setViewMode('lenses');
           }}
+          width={sidebarWidth}
+        />
+        <ColumnResizeHandle
+          spec={SIDEBAR_COLUMN}
+          width={sidebarWidth}
+          onResize={setSidebarWidth}
+          label={t('common:layout.resizeSidebar')}
+          title={t('common:layout.resizeHint')}
         />
 
         {/* `min-w-0` is load-bearing: a flex item defaults to min-width:auto,
@@ -1837,6 +1857,7 @@ function AppInner() {
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
+                    width={listWidth}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onRetry={retryEmails}
@@ -1898,10 +1919,20 @@ function AppInner() {
                   );
                 }
 
-                // Split layout: inbox list + email pane side by side
+                // Split layout: inbox list + email pane side by side, with a
+                // handle to resize the list (not while it is collapsed).
                 return (
                   <>
                     {inboxList}
+                    {!isInboxCollapsed && (
+                      <ColumnResizeHandle
+                        spec={LIST_COLUMN}
+                        width={listWidth}
+                        onResize={setListWidth}
+                        label={t('common:layout.resizeList')}
+                        title={t('common:layout.resizeHint')}
+                      />
+                    )}
                     {emailPane}
                   </>
                 );
