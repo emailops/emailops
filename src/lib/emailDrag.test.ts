@@ -4,6 +4,7 @@ import tauriConf from '../../src-tauri/tauri.conf.json';
 import {
   allowEmailDragOver,
   buildDragPreview,
+  dragPayloadItems,
   EMAIL_DRAG_MIME,
   ignoreEmailDrop,
   isEmailDrag,
@@ -66,6 +67,39 @@ describe('email drag payload', () => {
     for (const raw of ['not json', '42', '{}', '{"emailId":"x"}', '{"emailId":"","accountId":"a","mailbox":"inbox"}']) {
       const dt = fakeDataTransfer();
       dt.setData(EMAIL_DRAG_MIME, raw);
+      expect(readEmailDragPayload(dt)).toBeNull();
+    }
+  });
+});
+
+describe('multi-email drag payload', () => {
+  it('carries the rest of the selection and lists every email to move', () => {
+    const dt = fakeDataTransfer();
+    writeEmailDragPayload(dt, {
+      emailId: 'e1',
+      accountId: 'a1',
+      mailbox: 'inbox',
+      extra: [
+        { emailId: 'e2', accountId: 'a1', mailbox: 'inbox' },
+        { emailId: 'e3', accountId: 'a1', mailbox: 'folder:INBOX.A' },
+      ],
+    });
+    const payload = readEmailDragPayload(dt);
+    expect(payload && dragPayloadItems(payload).map((i) => i.emailId)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('a single-email payload stays exactly as before', () => {
+    const dt = fakeDataTransfer();
+    writeEmailDragPayload(dt, { emailId: 'e1', accountId: 'a1', mailbox: 'inbox' });
+    const payload = readEmailDragPayload(dt);
+    expect(payload).toEqual({ emailId: 'e1', accountId: 'a1', mailbox: 'inbox' });
+    expect(payload && dragPayloadItems(payload)).toHaveLength(1);
+  });
+
+  it('rejects the whole drag when the selection part is malformed', () => {
+    for (const extra of ['nope', [{ emailId: '' }], [{ emailId: 'e2', accountId: 'a1' }]]) {
+      const dt = fakeDataTransfer();
+      dt.setData(EMAIL_DRAG_MIME, JSON.stringify({ emailId: 'e1', accountId: 'a1', mailbox: 'inbox', extra }));
       expect(readEmailDragPayload(dt)).toBeNull();
     }
   });

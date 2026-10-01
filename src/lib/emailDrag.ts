@@ -4,11 +4,38 @@
 
 export const EMAIL_DRAG_MIME = 'application/x-emailops-email';
 
-export interface EmailDragPayload {
+export interface EmailDragItem {
   emailId: string;
   accountId: string;
   /** The email's current mailbox — drops onto the same mailbox are no-ops. */
   mailbox: string;
+}
+
+export interface EmailDragPayload extends EmailDragItem {
+  /** The other emails of a multi-selection dragged together with this one
+   *  (the row under the pointer). Absent for a single-email drag. */
+  extra?: EmailDragItem[];
+}
+
+/** Every email a drop moves: the dragged row first, then the rest of the selection. */
+export function dragPayloadItems(payload: EmailDragPayload): EmailDragItem[] {
+  const first: EmailDragItem = { emailId: payload.emailId, accountId: payload.accountId, mailbox: payload.mailbox };
+  return [first, ...(payload.extra ?? [])];
+}
+
+function parseItem(value: unknown): EmailDragItem | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const c = value as Record<string, unknown>;
+  if (
+    typeof c.emailId !== 'string' ||
+    c.emailId === '' ||
+    typeof c.accountId !== 'string' ||
+    c.accountId === '' ||
+    typeof c.mailbox !== 'string'
+  ) {
+    return null;
+  }
+  return { emailId: c.emailId, accountId: c.accountId, mailbox: c.mailbox };
 }
 
 export function writeEmailDragPayload(dataTransfer: DataTransfer, payload: EmailDragPayload): void {
@@ -23,18 +50,15 @@ export function readEmailDragPayload(dataTransfer: DataTransfer): EmailDragPaylo
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      typeof candidate.emailId !== 'string' ||
-      candidate.emailId === '' ||
-      typeof candidate.accountId !== 'string' ||
-      candidate.accountId === '' ||
-      typeof candidate.mailbox !== 'string'
-    ) {
-      return null;
-    }
-    return { emailId: candidate.emailId, accountId: candidate.accountId, mailbox: candidate.mailbox };
+    const first = parseItem(parsed);
+    if (!first) return null;
+    const rawExtra = (parsed as Record<string, unknown>).extra;
+    if (rawExtra === undefined) return first;
+    // A malformed selection is rejected whole rather than half-moved.
+    if (!Array.isArray(rawExtra)) return null;
+    const extra = rawExtra.map(parseItem);
+    if (extra.some((item) => item === null)) return null;
+    return { ...first, extra: extra as EmailDragItem[] };
   } catch {
     return null;
   }

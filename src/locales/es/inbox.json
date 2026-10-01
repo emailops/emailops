@@ -173,5 +173,27 @@
     "notJunkFailed": "No se pudo registrar que este mensaje no es basura",
     "hideFlagged": "Ocultar mensajes de basura"
   },
-  "emailUnavailable": "El correo ya no está disponible."
+  "emailUnavailable": "El correo ya no está disponible.",
+  "multiSelect": {
+    "selected_one": "{{count}} seleccionado",
+    "selected_other": "{{count}} seleccionados",
+    "selected_many": "{{count}} seleccionados",
+    "delete": "Eliminar",
+    "move": "Mover a…",
+    "clear": "Salir de la selección",
+    "selectAll": "Seleccionar todo",
+    "deleting": "Eliminando…",
+    "moving": "Moviendo…",
+    "deleted_one": "{{count}} correo movido a la papelera",
+    "deleted_other": "{{count}} correos movidos a la papelera",
+    "deleted_many": "{{count}} correos movidos a la papelera",
+    "moved_one": "{{count}} correo movido a {{name}}",
+    "moved_other": "{{count}} correos movidos a {{name}}",
+    "moved_many": "{{count}} correos movidos a {{name}}",
+    "failed": "{{count}} no se pudieron procesar: {{error}}",
+    "moveUnavailable": "Mover solo es posible para correos de una única cuenta IMAP, desde la bandeja de entrada o una carpeta.",
+    "hint": "Haz clic en los correos para seleccionarlos · ✕ o Esc para salir",
+    "deselectAll": "Quitar toda la selección",
+    "noneSelected": "Ninguno seleccionado"
+  }
 }

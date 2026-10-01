@@ -11,6 +11,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
 vi.mock('@/lib/api', () => ({
+  currentPlatform: vi.fn(() => 'linux'),
   getEmailTagsBatch: vi.fn(async () => ({})),
   getJunkConfig: vi.fn(async () => null),
   getJunkVerdicts: vi.fn(async () => []),

@@ -33,7 +33,10 @@
     "rename": "Rename folder",
     "deleteTitle": "Delete folder",
     "deleteConfirm": "Delete folder '{{name}}'? Its emails will also be deleted from the mail server.",
-    "movedTo": "Email moved to {{name}}"
+    "movedTo": "Email moved to {{name}}",
+    "movedManyTo_one": "{{count}} email moved to {{name}}",
+    "movedManyTo_other": "{{count}} emails moved to {{name}}",
+    "movedManyTo_many": "{{count}} emails moved to {{name}}"
   },
   "attachments": "Attachments",
   "deleted": "Deleted",

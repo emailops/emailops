@@ -20,7 +20,12 @@ const EMPTY_TAGS: readonly string[] = Object.freeze([]);
 interface EmailRowProps {
   email: Email;
   isSelected: boolean;
-  onClick: () => void;
+  /** Receives the click so Ctrl/⌘ and Shift can extend a multi-selection. */
+  onClick: (e?: React.MouseEvent | React.KeyboardEvent) => void;
+  /** Part of a multi-selection (two or more emails ticked). */
+  isMultiSelected?: boolean;
+  /** The other selected emails, dragged along with this one when it is selected. */
+  dragCompanions?: Email[];
   onAddSenderFilter?: (senderEmail: string) => void;
   onBlockSender?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
@@ -42,6 +47,8 @@ export function EmailRow({
   email,
   isSelected,
   onClick,
+  isMultiSelected = false,
+  dragCompanions,
   onAddSenderFilter,
   onBlockSender,
   onCreateAttachmentRule,
@@ -88,13 +95,20 @@ export function EmailRow({
   // Drag to a sidebar folder: the payload says which email moves; the preview
   // card follows the pointer so the user sees what is being dragged.
   const handleDragStart = (e: React.DragEvent) => {
+    // Dragging a selected row moves the whole selection; any other row moves alone.
+    const extra = isMultiSelected && dragCompanions ? dragCompanions.filter((c) => c.id !== email.id) : [];
     writeEmailDragPayload(e.dataTransfer, {
       emailId: email.id,
       accountId: email.accountId,
       mailbox: email.mailbox,
+      ...(extra.length > 0
+        ? { extra: extra.map((c) => ({ emailId: c.id, accountId: c.accountId, mailbox: c.mailbox })) }
+        : {}),
     });
-    setEmailDragImage(e, { sender: senderName(email), subject: email.subject });
+    setEmailDragImage(e, { sender: senderName(email), subject: email.subject, count: 1 + extra.length });
   };
+  // A multi-selected row is highlighted like the open one.
+  const highlighted = isSelected || isMultiSelected;
 
   useEffect(() => {
     if (!copyMessage) return;
@@ -130,14 +144,15 @@ export function EmailRow({
       <div
         role="button"
         tabIndex={0}
+        aria-pressed={isMultiSelected || undefined}
         className={`@container group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-          isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
-        onClick={onClick}
+          highlighted ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
+        } ${!email.isRead && !highlighted ? 'bg-blue-50/40' : ''} ${junkTag && !highlighted ? 'opacity-55' : ''}`}
+        onClick={(e) => onClick(e)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            onClick();
+            onClick(e);
           }
         }}
         draggable={canMove}
@@ -220,14 +235,15 @@ export function EmailRow({
     <div
       role="button"
       tabIndex={0}
+      aria-pressed={isMultiSelected || undefined}
       className={`group relative hover:z-10 w-full text-left px-4 py-3 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-        isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-      } ${!email.isRead && !isSelected ? 'bg-blue-50/50' : ''}`}
-      onClick={onClick}
+        highlighted ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
+      } ${!email.isRead && !highlighted ? 'bg-blue-50/50' : ''}`}
+      onClick={(e) => onClick(e)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onClick();
+          onClick(e);
         }
       }}
       draggable={canMove}

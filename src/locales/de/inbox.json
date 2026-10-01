@@ -173,5 +173,27 @@
     "notJunkFailed": "Es konnte nicht gespeichert werden, dass diese Nachricht kein Spam ist",
     "hideFlagged": "Spam-Nachrichten ausblenden"
   },
-  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar."
+  "emailUnavailable": "Die E-Mail ist nicht mehr verfügbar.",
+  "multiSelect": {
+    "selected_one": "{{count}} ausgewählt",
+    "selected_other": "{{count}} ausgewählt",
+    "selected_many": "{{count}} ausgewählt",
+    "delete": "Löschen",
+    "move": "Verschieben nach…",
+    "clear": "Auswahl beenden",
+    "selectAll": "Alle auswählen",
+    "deleting": "Wird gelöscht…",
+    "moving": "Wird verschoben…",
+    "deleted_one": "{{count}} E-Mail in den Papierkorb verschoben",
+    "deleted_other": "{{count}} E-Mails in den Papierkorb verschoben",
+    "deleted_many": "{{count}} E-Mails in den Papierkorb verschoben",
+    "moved_one": "{{count}} E-Mail nach {{name}} verschoben",
+    "moved_other": "{{count}} E-Mails nach {{name}} verschoben",
+    "moved_many": "{{count}} E-Mails nach {{name}} verschoben",
+    "failed": "{{count}} konnten nicht verarbeitet werden: {{error}}",
+    "moveUnavailable": "Verschieben ist nur für E-Mails eines IMAP-Kontos aus dem Posteingang oder einem Ordner möglich.",
+    "hint": "Klicken Sie auf E-Mails, um sie auszuwählen · ✕ oder Esc zum Beenden",
+    "deselectAll": "Alle abwählen",
+    "noneSelected": "Keine ausgewählt"
+  }
 }

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useMultiSelect } from '@/hooks/useMultiSelect';
 import { accountColorClass } from '@/lib/colors';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -9,6 +10,7 @@ import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import type { RulePrefill } from './EmailRow';
 import { InboxSearchBox } from './InboxSearchBox';
+import { MultiSelectBar } from './MultiSelectBar';
 import { VirtualEmailList } from './VirtualEmailList';
 
 interface InboxProps {
@@ -278,6 +280,19 @@ export function Inbox({
     if (searchQuery || activeFilter) return filteredEmails;
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+
+  // Multi-selection: Ctrl/⌘+click, Shift+click, then delete or move them together.
+  const multiDeleteRef = useRef<(() => void) | null>(null);
+  const registerMultiDelete = useCallback((run: (() => void) | null) => {
+    multiDeleteRef.current = run;
+  }, []);
+  const multi = useMultiSelect(
+    visibleEmails,
+    selectedEmailId,
+    onSelectEmail,
+    () => multiDeleteRef.current?.(),
+    scrollContainerRef,
+  );
 
   // Whether any of the loaded messages are flagged, regardless of the current
   // setting — the toggle only appears when it would do something.
@@ -563,9 +578,21 @@ export function Inbox({
           <span>{t('inbox:junk.hideFlagged')}</span>
         </label>
       )}
+      {multi.isActive && (
+        <MultiSelectBar
+          emails={multi.selectedEmails}
+          allSelected={multi.allSelected}
+          onToggleAll={multi.toggleAllVisible}
+          onClear={multi.clear}
+          registerDelete={registerMultiDelete}
+        />
+      )}
       <VirtualEmailList
         emails={visibleEmails}
         selectedEmailId={selectedEmailId}
+        onRowClick={multi.handleRowClick}
+        multiSelectedIds={multi.selectedIds}
+        multiSelectedEmails={multi.selectedEmails}
         focusEmailId={focusEmailId}
         scrollContainerRef={scrollContainerRef}
         isLoadingMore={isLoadingMore}

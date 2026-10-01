@@ -2,7 +2,7 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
-import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
+import { dragPayloadItems, isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
 import { folderLabel } from '@/lib/folderDisplay';
@@ -257,12 +257,30 @@ export function Sidebar({
     setDragOverTarget(null);
     if (!activeAccount || !isImapAccount) return;
     const payload = readEmailDragPayload(e.dataTransfer);
-    if (!payload || payload.accountId !== activeAccount.id || payload.mailbox === targetMailbox) return;
-    try {
-      await moveEmail(activeAccount.id, payload.emailId, targetMailbox);
-      addLog('success', 'sync', t('sidebar:folderActions.movedTo', { name: targetLabel }));
-    } catch (err) {
-      addLog('error', 'sync', errorText(err));
+    if (!payload) return;
+    // One email, or a whole multi-selection dragged together. Folders belong to
+    // the active account, so only its emails move; ones already there are skipped.
+    const items = dragPayloadItems(payload).filter(
+      (item) => item.accountId === activeAccount.id && item.mailbox !== targetMailbox,
+    );
+    if (items.length === 0) return;
+    let moved = 0;
+    for (const item of items) {
+      try {
+        await moveEmail(activeAccount.id, item.emailId, targetMailbox);
+        moved += 1;
+      } catch (err) {
+        addLog('error', 'sync', errorText(err));
+      }
+    }
+    if (moved > 0) {
+      addLog(
+        'success',
+        'sync',
+        moved === 1
+          ? t('sidebar:folderActions.movedTo', { name: targetLabel })
+          : t('sidebar:folderActions.movedManyTo', { count: moved, name: targetLabel }),
+      );
     }
   };
 

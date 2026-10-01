@@ -26,6 +26,13 @@ interface VirtualEmailListProps {
   isSyncing: boolean;
   emptyStateMessage?: string;
   onSelectEmail: (email: Email) => void;
+  /** Row click with its modifiers; when set, it is called instead of onSelectEmail
+   *  so the parent can apply Ctrl/Shift multi-selection. */
+  onRowClick?: (email: Email, e?: React.MouseEvent | React.KeyboardEvent) => void;
+  /** Ids of the emails in the current multi-selection (two or more). */
+  multiSelectedIds?: ReadonlySet<string>;
+  /** The selected emails, dragged together when one of them is dragged. */
+  multiSelectedEmails?: Email[];
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
   onBlockSender?: (senderEmail: string) => void;
@@ -54,6 +61,9 @@ export function VirtualEmailList({
   isSyncing,
   emptyStateMessage,
   onSelectEmail,
+  onRowClick,
+  multiSelectedIds,
+  multiSelectedEmails,
   onLoadMore,
   onAddSenderFilter,
   onBlockSender,
@@ -245,7 +255,9 @@ export function VirtualEmailList({
               <EmailRow
                 email={email}
                 isSelected={email.id === selectedEmailId}
-                onClick={() => onSelectEmail(email)}
+                onClick={(e) => (onRowClick ? onRowClick(email, e) : onSelectEmail(email))}
+                isMultiSelected={multiSelectedIds?.has(email.id) ?? false}
+                dragCompanions={multiSelectedEmails}
                 onAddSenderFilter={onAddSenderFilter}
                 onBlockSender={onBlockSender}
                 onCreateAttachmentRule={onCreateAttachmentRule}

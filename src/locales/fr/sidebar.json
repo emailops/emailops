@@ -33,7 +33,10 @@
     "rename": "Renommer le dossier",
     "deleteTitle": "Supprimer le dossier",
     "deleteConfirm": "Supprimer le dossier '{{name}}' ? Ses e-mails seront aussi supprimés du serveur de messagerie.",
-    "movedTo": "E-mail déplacé vers {{name}}"
+    "movedTo": "E-mail déplacé vers {{name}}",
+    "movedManyTo_one": "{{count}} e-mail déplacé vers {{name}}",
+    "movedManyTo_other": "{{count}} e-mails déplacés vers {{name}}",
+    "movedManyTo_many": "{{count}} e-mails déplacés vers {{name}}"
   },
   "attachments": "Pièces jointes",
   "deleted": "Supprimés",
