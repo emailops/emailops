@@ -50,10 +50,43 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 
 ## Feature entry contract
 
-Each file has an H1, one paragraph of user-visible behaviour, then exactly four H2s:
-`Sub-features`, `How to get to it (user POV)`, `Driving it with verify.sh`, `Gotchas`, and ends
-with a "test kind per case" table. A layer a feature does not have is a row of that table
-that says `n/a` and why.
+Each file has an H1, one paragraph of user-visible behaviour, then exactly five H2s:
+`Sub-features`, `How to get to it (user POV)`, `Parity`, `Driving it with verify.sh`,
+`Gotchas`, and ends with a "test kind per case" table. A layer a feature does not have is
+a row of that table that says `n/a` and why.
+
+### `## Parity`
+
+One table: a row per id in `Sub-features`, a column per entry point listed in "How to
+get to it". A feature with one entry point still has the table, with one column — that
+column is what makes the second entry point a visible decision. Each cell is exactly one of:
+
+| Cell | Meaning |
+|---|---|
+| `e2e:<Feature>/<step>` | a `step(...)` in `scripts/sweep.mjs`; a template step (`` `borrador en ${entry}` ``) matches any value |
+| `vitest:<file>::<test title>` | an `it()` / `test()` with that exact title in that file |
+| `rust:<file>::<fn>` | a test fn in that Rust file |
+| `integration:<fn>` | a test fn under `src-tauri/tests/` |
+| `n/a: <reason>` | the capability does not apply to that entry point |
+| `gap: missing — <what>` | not implemented there |
+| `gap: untested — <what>` | implemented, but no test listed here proves it there |
+
+`scripts/check_parity.py` (static layer of `make verify`) fails every `gap`, every empty
+cell, every `n/a` without a reason, every reference that does not resolve, and every
+sub-feature without a row. It proves a referenced test exists, not that it passes — the
+other layers of the same run do that.
+
+Rules when filling a cell:
+
+- The test must go through **that** entry point: a component test of the entry's
+  component, or an e2e step that opens it. A test of a shared helper (`src/lib/…`) does not
+  prove an entry point calls it — that wiring is exactly what goes missing.
+- A capability that lives entirely below the entry points (a backend service every entry
+  calls the same way) puts its backend test in the first column and
+  `n/a: backend, same path for every entry point` in the others.
+- A `gap` is closed by a fix plus a test, or by a test alone. Never by rewriting it as `n/a`.
+- When several columns need the same e2e proof, write one sweep loop over the entry points
+  (the shape of the settings-tab loop) and reference its template step.
 
 ## Features
 
