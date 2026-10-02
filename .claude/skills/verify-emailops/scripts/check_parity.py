@@ -25,7 +25,7 @@ SKILL = HERE.parent
 REPO = SKILL.parents[2]
 REF_KINDS = ("e2e", "vitest", "rust", "integration")
 
-STEP_CALL = re.compile(r"""step\(\s*(['"`])(.*?)\1\s*,\s*(['"`])(.*?)\3""")
+STEP_CALL = re.compile(r"""step\(\s*(['"`])(.*?)\1\s*,\s*(?:(['"`])(.*?)\3|([A-Za-z_$][\w$]*))\s*,""")
 SUBFEATURE = re.compile(r"^- `([\w.-]+)`", re.M)
 
 
@@ -64,7 +64,9 @@ def _template_regex(text):
 
 
 def sweep_steps(sweep_text):
-    return [(_template_regex(feature), _template_regex(step)) for _, feature, _, step in STEP_CALL.findall(sweep_text)]
+    # A step named by a bare loop variable (`step('Vistas', view, …)`) matches any name.
+    return [(_template_regex(feature), _template_regex(step) if not variable else re.compile(r"^.+$"))
+            for _, feature, _, step, variable in STEP_CALL.findall(sweep_text)]
 
 
 def _has_fn(path, fn):
@@ -74,8 +76,9 @@ def _has_fn(path, fn):
 def resolves(ref, repo, steps):
     kind, _, target = ref.partition(":")
     if kind == "e2e":
-        feature, _, step = target.partition("/")
-        return any(f.match(feature) and s.match(step) for f, s in steps)
+        # Sweep feature names may hold a slash (`Chat/Formularios`): try every split point.
+        splits = [(target[:i], target[i + 1:]) for i, c in enumerate(target) if c == "/"]
+        return any(f.match(feature) and s.match(step) for feature, step in splits for f, s in steps)
     if kind == "vitest":
         path, _, title = target.partition("::")
         f = repo / path

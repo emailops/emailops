@@ -85,6 +85,19 @@ class ResolveTest(unittest.TestCase):
             self.assertFalse(cp.resolves("e2e:Compose/borrador en ", root, self.steps))
             self.assertFalse(cp.resolves("e2e:Compose/no such step", root, self.steps))
 
+    def test_e2e_step_named_by_a_loop_variable(self):
+        # `for (const view of [...]) await step('Vistas', view, …)` names the step by a bare identifier.
+        steps = cp.sweep_steps("for (const view of ['Calendar']) { await step('Vistas', view, 'x', async () => {}); }")
+        with Repo() as root:
+            self.assertTrue(cp.resolves("e2e:Vistas/Calendar", root, steps))
+            self.assertFalse(cp.resolves("e2e:Otra/Calendar", root, steps))
+
+    def test_e2e_feature_name_containing_a_slash(self):
+        steps = cp.sweep_steps("await step('Chat/Formularios', 'cerrar sin guardar', 'x', async () => {});")
+        with Repo() as root:
+            self.assertTrue(cp.resolves("e2e:Chat/Formularios/cerrar sin guardar", root, steps))
+            self.assertFalse(cp.resolves("e2e:Chat/cerrar sin guardar", root, steps))
+
     def test_vitest_title_in_file(self):
         with Repo() as root:
             self.assertTrue(cp.resolves("vitest:src/components/Reply.test.tsx::saves what was typed", root, self.steps))
