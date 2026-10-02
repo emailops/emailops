@@ -114,6 +114,7 @@
     "deleted": "Geplante Nachricht gelöscht",
     "sentCount_one": "{{count}} wartende Nachricht gesendet",
     "sentCount_other": "{{count}} wartende Nachrichten gesendet",
+    "sentCount_many": "{{count}} wartende Nachrichten gesendet",
     "interrupted": "EmailOps wurde beendet, während eine Nachricht gesendet wurde. Sie ist möglicherweise nicht verschickt worden: Prüfen Sie „Gesendet“, bevor Sie es erneut versuchen.",
     "failed": "Eine Nachricht konnte nicht gesendet werden: {{error}}",
     "view": "Anzeigen"
@@ -142,6 +143,7 @@
     "reply": "Antwort",
     "attachments_one": "{{count}} Anhang",
     "attachments_other": "{{count}} Anhänge",
+    "attachments_many": "{{count}} Anhänge",
     "sendNow": "Jetzt senden",
     "retry": "Erneut versuchen",
     "edit": "Bearbeiten",

@@ -114,6 +114,7 @@
     "deleted": "Scheduled message deleted",
     "sentCount_one": "{{count}} queued message sent",
     "sentCount_other": "{{count}} queued messages sent",
+    "sentCount_many": "{{count}} queued messages sent",
     "interrupted": "EmailOps stopped while a message was being sent. It may or may not have gone out: check Sent before retrying it.",
     "failed": "A message could not be sent: {{error}}",
     "view": "View"
@@ -142,6 +143,7 @@
     "reply": "Reply",
     "attachments_one": "{{count}} attachment",
     "attachments_other": "{{count}} attachments",
+    "attachments_many": "{{count}} attachments",
     "sendNow": "Send now",
     "retry": "Retry",
     "edit": "Edit",
