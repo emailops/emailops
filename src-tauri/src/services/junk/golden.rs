@@ -583,6 +583,54 @@ mod tests {
         }
     }
 
+    fn stored(id: &str, mailbox: &str, timestamp: i64) -> crate::models::Email {
+        crate::models::Email {
+            id: id.into(),
+            account_id: "a1".into(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            references: None,
+            subject: "Weekly digest".into(),
+            sender: "Sender".into(),
+            sender_email: "sender@example.com".into(),
+            recipients: vec![],
+            cc: vec![],
+            body: String::new(),
+            snippet: String::new(),
+            timestamp,
+            is_read: false,
+            triage_status: None,
+            category: "primary".into(),
+            mailbox: mailbox.into(),
+            is_sent: false,
+            is_starred: false,
+            headers: None,
+        }
+    }
+
+    #[test]
+    fn the_review_queue_is_unlabelled_received_mail_newest_first() {
+        let db = Database::new_for_testing().expect("db");
+        db.seed_test_account("a1");
+        db.insert_emails_batch(&[
+            stored("inbox-old", "inbox", 100),
+            stored("archived", "archive", 200),
+            stored("labelled", "inbox", 300),
+            stored("spam", "spam", 400),
+            stored("sent", "sent", 500),
+        ])
+        .expect("insert");
+        let db = Arc::new(db);
+        let known = [entry("labelled", GoldenLabel::Legit, LabelSource::Manual)];
+
+        let queue = unlabelled(&db, "a1", &known, 10, false).expect("queue");
+        assert_eq!(queue, vec!["spam", "archived", "inbox-old"]);
+        assert_eq!(
+            unlabelled(&db, "a1", &known, 2, false).expect("queue"),
+            vec!["spam", "archived"]
+        );
+    }
+
     #[test]
     fn a_missing_label_file_is_an_empty_set_not_an_error() {
         let dir = TempDir::new().expect("tmp");
