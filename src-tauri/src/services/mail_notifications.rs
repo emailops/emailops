@@ -768,6 +768,15 @@ mod tests {
         assert_eq!(shown[0].body, "4 snoozed conversations are back");
     }
 
+    #[test]
+    fn up_to_three_snoozed_conversations_notify_one_by_one() {
+        let all_on = |_: &str| NotifyPrefs::default();
+        let three: Vec<_> = (0..3).map(|i| snooze_return("acc-1", &format!("t{i}"))).collect();
+        let shown = plan_snooze_return_notifications(&three, &all_on, &snooze_state());
+        assert_eq!(shown.len(), 3);
+        assert!(shown.iter().all(|n| n.thread.is_some()), "{shown:?}");
+    }
+
     // ── Executor ────────────────────────────────────────────────────────────
 
     fn account() -> Account {
@@ -898,5 +907,33 @@ mod tests {
         assert_eq!(notifier.shown().len(), 1, "second summary within a minute is dropped");
         notify_new_mail(&db, &notifier, &account(), Some(WATERMARK), five(), NOW + 61);
         assert_eq!(notifier.shown().len(), 2);
+    }
+
+    #[test]
+    fn the_summary_rate_limit_is_kept_per_account() {
+        let db = test_db();
+        db.seed_test_account("acc-2");
+        let other = Account {
+            id: "acc-2".into(),
+            email: "acc-2".into(),
+            ..account()
+        };
+        let notifier = VecNotifier::new();
+        let five = || ["a", "b", "c", "d", "e"].iter().map(|id| mail(id)).collect::<Vec<_>>();
+        notify_new_mail(&db, &notifier, &account(), Some(WATERMARK), five(), NOW);
+        notify_new_mail(&db, &notifier, &other, Some(WATERMARK), five(), NOW + 30);
+        let bodies: Vec<String> = notifier.shown().into_iter().map(|n| n.body).collect();
+        assert_eq!(bodies, vec!["5 new messages in acc-1", "5 new messages in acc-2"]);
+    }
+
+    #[test]
+    fn the_executor_writes_in_the_ui_language() {
+        let db = test_db();
+        db.set_preference(crate::services::i18n::PREF_UI_LANGUAGE, "es")
+            .unwrap();
+        let notifier = VecNotifier::new();
+        let five = ["a", "b", "c", "d", "e"].iter().map(|id| mail(id)).collect::<Vec<_>>();
+        notify_new_mail(&db, &notifier, &account(), Some(WATERMARK), five, NOW);
+        assert_eq!(notifier.shown()[0].body, "5 mensajes nuevos en acc-1");
     }
 }
