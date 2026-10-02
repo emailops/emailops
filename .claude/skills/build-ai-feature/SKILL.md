@@ -112,6 +112,10 @@ From the user's request, capture in 4-6 bullets:
   with no model round-trip", not "works well".
 - **User-facing?** — does it need a Settings toggle + feature gating (most
   user-visible AI features do), or is it internal plumbing?
+- **Parity** — which feature files' `## Parity` rows (capabilities) and columns (entry
+  points) this touches, e.g. "`compose.ai` × Compose modal, Compose tab, Reply". A
+  capability that will exist on some entry points and not others gets `n/a: <reason>`
+  cells decided now, not discovered later.
 - **Model vs heuristic** — if a planner/classifier: deterministic heuristic or
   a model call? Note the leaning; confirm in Phase 2 if it's a real fork.
 
