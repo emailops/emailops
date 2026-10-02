@@ -369,6 +369,19 @@ mod tests {
     }
 
     #[test]
+    fn addresses_with_a_separator_quote_or_control_are_refused() {
+        for bad in [
+            "a,b@example.com",
+            "a;b@example.com",
+            "a\"b@example.com",
+            "a>b@example.com",
+            "a\u{1}b@example.com",
+        ] {
+            assert!(normalize_address(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn only_received_inbox_mail_from_a_blocked_address_is_caught() {
         let blocked: HashSet<String> = ["deals@shop.example".to_string()].into();
         let mut sent = message("sent", "deals@shop.example", "inbox");
@@ -442,6 +455,36 @@ mod tests {
         assert_eq!(report, SenderMoveReport::default());
         assert_eq!(db.get_email("m1").unwrap().unwrap().mailbox, "inbox");
         assert!(provider.mailbox_ops().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mail_the_provider_cannot_file_is_counted_as_marked_here_only() {
+        let (db, _provider) = setup(&[
+            message("m1", "deals@shop.example", "inbox"),
+            message("m2", "deals@shop.example", "inbox"),
+        ]);
+
+        let report = block_sender(
+            &db,
+            &account(),
+            "deals@shop.example",
+            true,
+            ProviderAccess::LocalOnly,
+            100,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            report,
+            SenderMoveReport {
+                moved: 0,
+                local_only: 2,
+                failed: 0
+            }
+        );
+        assert_eq!(db.get_email("m1").unwrap().unwrap().mailbox, "inbox");
+        assert_eq!(override_of(&db, "m1").as_deref(), Some("junk"));
     }
 
     #[tokio::test]
