@@ -2906,6 +2906,12 @@ FIXTURE_JUNK_SUBJECT = "Tessellate Hosting: payment failed, plan suspended"
 FIXTURE_REMOTE_IMAGE_SUBJECT = "Harborlight Weekly: shipping notes"
 FIXTURE_ATTACHMENT_FILENAME = "larkspur-renewal-terms.html"
 FIXTURE_SHORTCUT_FILENAME = "larkspur-client-portal.webloc"
+FIXTURE_IMAGE_FILENAME = "larkspur-dock-photo.png"
+# A real 48x32 PNG (flat slate blue), so the image viewer decodes it.
+FIXTURE_IMAGE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAN0lEQVR4nO3OQQ0AMAgEMGQjAiVTORccjyYV0Op5p1R8ICQkJJQeCAkJ"
+    "CaUHQkJCQumBkJDQsg+AVxSX8/T1ZwAAAABJRU5ErkJggg=="
+)
 FIXTURE_TABLE_DRAFT_SUBJECT = "Milestone dates (table)"
 FIXTURE_STARRED_SUBJECT = "Corrected Larkspur Freight renewal quote"
 FIXTURE_ARCHIVED_SUBJECT = "Studio key handover confirmed"
@@ -3020,6 +3026,10 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
         (FIXTURE_ATTACHMENT_FILENAME, "text/html", f"INLINE::{FIXTURE_ATTACHMENT_FILENAME}", len(page), None,
          base64.b64encode(page.encode("utf-8")).decode("ascii")),
         (FIXTURE_SHORTCUT_FILENAME, "application/octet-stream", "", len(shortcut), relative, None),
+        # An image, which opens in the in-app viewer (the sweep checks that no
+        # conversation shortcut acts behind it).
+        (FIXTURE_IMAGE_FILENAME, "image/png", f"INLINE::{FIXTURE_IMAGE_FILENAME}",
+         len(base64.b64decode(FIXTURE_IMAGE_PNG_B64)), None, FIXTURE_IMAGE_PNG_B64),
     ):
         conn.execute(
             """INSERT OR IGNORE INTO email_attachment_meta

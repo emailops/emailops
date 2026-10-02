@@ -13,6 +13,7 @@ chosen time (Snoozed view); Unsnooze brings it back at once.
 - `organize.archive` Archive / Move to Inbox; IMAP accounts archive into their Archive folder, so the Archive view is offered for Gmail/Outlook and All accounts only.
 - `organize.select` row checkboxes, the bulk toolbar (Archive, Snooze, Delete, Mark as read/unread, Star) and Clear selection.
 - `organize.undo` the 6 s undo window on archive and delete, and the error + rollback when the provider refuses.
+- `organize.advance` after archive, delete, snooze, block or Confirm junk of the open conversation the next one opens (Settings → Appearance → *After archiving or deleting*: next / previous / back to the list; pref `ui.after_thread_leave`). Mark as unread and bulk actions never advance; a slow action never replaces a conversation opened meanwhile.
 - `organize.snooze` ⋮ → Snooze presets (later today, tomorrow, this weekend, next week, custom), the Snoozed view with its badge, Unsnooze.
 
 ## How to get to it (user POV)
@@ -46,6 +47,7 @@ archived message (*Studio key handover confirmed*) in `demo-acct-work` (`insert_
 | snooze planner, wake pass, snooze rows | unit (`services::emails::snooze`, `db::emails::snoozes`) |
 | selection, bulk planning, undo queue, snooze presets, star/selection rows, toasts | vitest (`selectionStore`, `bulkActions`, `pendingActions`, `snooze`, `BulkToolbar`, `SnoozePicker`, `EmailRow.star/.selection`, `emailStore.threadActions/.snooze`, `ToastHost`) |
 | archive ↔ inbox through the command entry point; snooze → wake | integration (`thread_action_archive_and_move_to_inbox_round_trip`, `snooze_hides_a_thread_until_the_wake_pass_brings_it_back`) |
+| auto-advance planner, executor and race guard, setting, junk confirm race, block | vitest (`autoAdvance`, `autoAdvanceStore`, `AutoAdvanceSetting`, `JunkBanner.autoAdvance`, `EmailView.shortcuts`, `SenderDialogs`) |
 | command arguments | contract (`src/lib/apiContract/inbox.api.test.ts`, `emails.rs`) |
 | star, Starred, Archive, select, bulk archive + Undo, archive refused, snooze, Snoozed, Unsnooze | e2e (`Organizar/*`, `Vistas/Starred`, `Vistas/Snoozed`) |
 | eval | n/a: no model involved |

@@ -117,6 +117,39 @@ await step('Atajos', 's destaca la conversación del cursor', 's pone la estrell
   return ok(on === 'true' && off === 'false' && dbOn === base + 1 && dbOff === base, `«${row.slice(0, 50)}»: estrella puesta y quitada; hilos destacados en BD ${base} → ${dbOn} → ${dbOff}`, `UI ${on} → ${off}, BD ${base} → ${dbOn} → ${dbOff}`);
 });
 
+// The open conversation's subject (the reading pane header; the app has other h1s).
+const h1Text = () => js(() => document.querySelector('header h1')?.textContent.trim() || '');
+const listRowTexts = () => js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.querySelector('[data-testid="row-select"]')).map((r) => r.innerText.replace(/\n/g, ' ')));
+await step('Atajos', 'e archiva y abre la siguiente', 'con una conversación abierta, «e» la archiva y abre la siguiente de la lista (auto-avance por defecto); Undo la devuelve a la lista sin quitar la que se lee', async () => {
+  await closeToasts(); await blur();
+  const list = await listRowTexts(); if (list.length < 3) return `FAIL: la lista solo tiene ${list.length} filas`;
+  await js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.querySelector('[data-testid="row-select"]'))[1].click()); await sleep(1500);
+  const first = await h1Text(); if (!first || !list[1].includes(first)) return `FAIL: no se abrió la segunda fila (H1 «${first}»)`;
+  await blur(); await b.keys('e'); await sleep(1500);
+  const next = await h1Text(); const t = await toastText();
+  const undone = await clickToastAction('Undo'); await sleep(1200);
+  const stillOpen = await h1Text(); await closeToasts();
+  if (await exists('button=Back')) { await click('button=Back'); await sleep(1000); }
+  const back = (await listRowTexts()).some((r) => r.includes(first));
+  return ok(next !== first && list[2].includes(next) && /Archived 1 conversation/.test(t) && undone && stillOpen === next && back,
+    `«${first.slice(0, 40)}» archivada → abierta «${next.slice(0, 40)}»; Undo la devuelve a la lista`,
+    `antes «${first}», después «${next}» (esperada la fila 3: ${list[2].slice(0, 60)}), aviso «${t}», undo=${undone}, abierta tras Undo «${stillOpen}», de vuelta=${back}`);
+});
+await step('Atajos', 'nada actúa con el menú ⋮ abierto', 'con el menú ⋮ de una fila abierto, «#», «e» y «j» no hacen nada (ni borran ni archivan ni mueven el cursor); Escape cierra el menú', async () => {
+  await closeToasts(); await blur(); await sleep(1000);
+  const before = await listRowTexts(); const cursor0 = await cursorRow();
+  await js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.querySelector('[data-testid="row-select"]'))[2]?.querySelector('[aria-label="More actions"]')?.click()); await sleep(700);
+  const menuOpen = /Block sender/.test(await bodyText()); if (!menuOpen) return 'FAIL: el menú ⋮ no se abrió';
+  await b.keys('#'); await sleep(300); await b.keys('e'); await sleep(300); await b.keys('j'); await sleep(800);
+  const after = await listRowTexts(); const t = await toastText(); const cursor1 = await cursorRow();
+  await b.keys('Escape'); await sleep(500); const closed = !/Block sender/.test(await bodyText());
+  // The list may grow (paging, a late refresh); no row may leave it.
+  const left = before.filter((r) => !after.includes(r));
+  return ok(!left.length && !/Deleted|Archived/.test(t) && cursor1 === cursor0 && closed,
+    `ninguna fila salió de la lista, sin aviso, cursor quieto; Escape cerró el menú`,
+    `filas que salieron: ${left.join(' // ').slice(0, 120) || 'ninguna'}, aviso «${t}», cursor ${cursor0} → ${cursor1}, menú cerrado=${closed}`);
+});
+
 // ---------- Organizar: estrella, archivo, selección múltiple, deshacer, posponer ----------
 await step('Organizar', 'destacar desde la fila', 'la estrella de la fila de Nadia Brunner queda pulsada y la BD marca el hilo como destacado', async () => {
   const before = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
@@ -258,6 +291,37 @@ await step('Adjuntos', 'página web en vista previa aislada', 'un adjunto HTML s
   const dialog = await exists('[data-testid="cancel-open-attachment"]');
   await js(() => document.querySelector('button[title="Close"]')?.click()); await sleep(800);
   return ok(!!frame && frame.sandbox === '' && frame.src === 'data:text/html;base64,' && !dialog, JSON.stringify(frame), `iframe=${JSON.stringify(frame)}, diálogo=${dialog}`);
+});
+const LARKSPUR = 'Corrected Larkspur Freight renewal quote';
+const larkspurState = () => sql(`SELECT mailbox, MAX(is_starred) AS starred FROM emails WHERE subject = '${LARKSPUR}' GROUP BY mailbox`);
+await step('Atajos', 'la ayuda emergente nombra la tecla', 'los botones de la conversación abierta muestran su atajo: «Archive (E)», «Delete thread (#)», «Reply (R)»', async () => {
+  if (!(await exists(`//div[@role="button"][contains(., "${LARKSPUR}")]`))) return 'FAIL: la búsqueda «Larkspur» ya no lista la corrección';
+  await click(`//div[@role="button"][contains(., "${LARKSPUR}")]`); await sleep(1500);
+  const titles = await js(() => [...document.querySelectorAll('header button')].map((x) => x.title).filter(Boolean));
+  const want = ['Archive (E)', 'Delete thread (#)', 'Reply (R)'].filter((x) => !titles.includes(x));
+  return ok(!want.length, titles.filter((x) => /\(.+\)$/.test(x)).join(', '), `faltan: ${want.join(', ')}; títulos: ${titles.join(', ')}`);
+});
+await step('Atajos', 'nada actúa tras el visor de imágenes', 'con la imagen adjunta abierta en el visor, «#», «e», «s» y «j» no tocan la conversación de detrás; Escape cierra el visor', async () => {
+  const chip = 'button[title^="larkspur-dock-photo.png"]';
+  if (!(await exists(chip))) return 'FAIL: el correo no muestra la imagen larkspur-dock-photo.png (¿BD demo anterior al fixture? make demo-db)';
+  const before = JSON.stringify(larkspurState()); const h0 = await h1Text();
+  await click(chip); await sleep(1200);
+  const open = await exists('img[alt="larkspur-dock-photo.png"]'); if (!open) return 'FAIL: no se abrió el visor de imágenes';
+  await blur(); for (const k of ['#', 'e', 's', 'j']) { await b.keys(k); await sleep(300); } await sleep(1000);
+  const after = JSON.stringify(larkspurState()); const t = await toastText(); const stillOpen = await exists('img[alt="larkspur-dock-photo.png"]');
+  await b.keys('Escape'); await sleep(600); const closed = !(await exists('img[alt="larkspur-dock-photo.png"]'));
+  return ok(stillOpen && after === before && !/Deleted|Archived|Snoozed/.test(t) && (await h1Text()) === h0 && closed,
+    `visor abierto; BD ${after}; sin aviso; Escape lo cierra`, `visor=${stillOpen}, BD ${before} → ${after}, aviso «${t}», cerrado=${closed}`);
+});
+await step('Atajos', 'nada actúa tras Ajustes', 'con Ajustes abierto sobre la conversación, «#», «e» y «s» no la tocan', async () => {
+  const before = JSON.stringify(larkspurState()); const h0 = await h1Text();
+  await click('aria/Application settings'); await sleep(1200);
+  await blur(); for (const k of ['#', 'e', 's']) { await b.keys(k); await sleep(300); } await sleep(1000);
+  const after = JSON.stringify(larkspurState()); const t = await toastText();
+  await closeSettings();
+  const h1 = await h1Text();
+  if (await exists('button=Back')) { await click('button=Back'); await sleep(800); }
+  return ok(after === before && !/Deleted|Archived|Snoozed/.test(t) && h1 === h0, `BD ${after}; sin aviso; la conversación sigue abierta`, `BD ${before} → ${after}, aviso «${t}», H1 «${h0}» → «${h1}»`);
 });
 await step('Inbox', 'imágenes remotas bloqueadas', 'un correo con una imagen remota muestra el aviso y «Show images», y el cuerpo se pinta sin la URL de la imagen', async () => {
   await type(SEARCH, 'Harborlight'); await enter(); await sleep(1500);
@@ -431,6 +495,32 @@ await step('Firmas', 'firma en un mensaje nuevo', 'Compose abre con la firma de 
   if (await exists('button=Cancel')) { await click('button=Cancel'); await sleep(800); }
   if (await exists('input[placeholder^="Email subject"]')) { await b.keys('Escape'); await sleep(600); }
   return ok(sig === SIGNATURE, `firma insertada: «${sig}»`, `firma en el cuerpo: ${JSON.stringify(sig)}`);
+});
+// Feeds the hidden «Add image» input a file built in the page (WebDriver cannot pick files from a dialog).
+const pickSignatureImage = (kind) => js((k) => {
+  const input = document.querySelector('[data-testid="signature-image-input"]'); if (!input) return false;
+  const deliver = (file) => { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true })); };
+  if (k === 'svg') { deliver(new File(['<svg xmlns="http://www.w3.org/2000/svg"><script>x()</script></svg>'], 'verify-logo.svg', { type: 'image/svg+xml' })); return true; }
+  const c = document.createElement('canvas'); c.width = 1600; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#2b6cb0'; g.fillRect(0, 0, 1600, 200);
+  c.toBlob((blob) => deliver(new File([blob], 'verify-wide-logo.png', { type: 'image/png' })), 'image/png'); return true;
+}, kind);
+await step('Firmas', 'imagen no válida', '«Add image» con un SVG muestra el motivo (solo PNG, JPEG, GIF o WebP) y no toca la firma', async () => {
+  await openSignaturesTab();
+  if (!(await exists('[data-testid="signature-add-image"]'))) { await closeSettings(); return 'FAIL: no hay botón «Add image»'; }
+  const before = await js(() => document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]')?.innerHTML || '');
+  if (!(await pickSignatureImage('svg'))) { await closeSettings(); return 'FAIL: no hay selector de archivo'; }
+  await sleep(1200);
+  const text = await js(() => document.querySelector('[data-testid="signatures-settings"]')?.innerText || '');
+  const after = await js(() => document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]')?.innerHTML || '');
+  return ok(/PNG, JPEG, GIF or WebP/.test(text) && after === before, 'aviso de tipo no admitido; firma sin cambios', `aviso=${/PNG, JPEG, GIF or WebP/.test(text)}, firma cambiada=${after !== before}`);
+});
+await step('Firmas', 'imagen aceptada y reducida', 'un PNG de 1600 px se reduce a 600 px, entra en la firma y «Save signature» la guarda como data:image/png', async () => {
+  await pickSignatureImage('png'); await sleep(2500);
+  const width = await js(() => document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"] img')?.naturalWidth ?? null);
+  if (!(await saveSignature())) { await closeSettings(); return 'FAIL: no hay botón «Save signature»'; }
+  await sleep(1500);
+  const row = signatureRow(); await closeSettings();
+  return ok(width === 600 && /<img[^>]+src="data:image\/png;base64,/.test(row?.html || ''), `imagen de ${width} px guardada en account_signatures`, `ancho=${width}, BD=${(row?.html || '').slice(0, 120)}`);
 });
 await step('Firmas', 'borrar la firma', 'vaciar el editor y guardar deja la firma vacía (el estado de partida de la BD demo)', async () => {
   await openSignaturesTab();

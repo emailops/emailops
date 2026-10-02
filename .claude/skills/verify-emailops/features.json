@@ -36,7 +36,11 @@
         "src/stores/emailStore.threadActions",
         "src/stores/emailStore.snooze",
         "src/components/common/MailIcons",
-        "src/components/common/ToastHost"
+        "src/components/common/ToastHost",
+        "src/lib/autoAdvance",
+        "src/stores/autoAdvanceStore",
+        "src/components/Settings/AutoAdvanceSetting",
+        "src/components/EmailView/JunkBanner.autoAdvance"
       ],
       "e2e": [
         "Organizar",
@@ -91,7 +95,8 @@
         "src/stores/signatureStore",
         "src/hooks/useComposerSignature",
         "src/components/Settings/SignaturesSettings",
-        "src/components/EmailView/ReplyCompose.signature"
+        "src/components/EmailView/ReplyCompose.signature",
+        "src/lib/signatureImage"
       ],
       "e2e": [
         "Firmas"
@@ -114,7 +119,9 @@
         "src/components/Settings/KeyboardShortcutsSetting",
         "src/components/Inbox/Inbox.shortcuts",
         "src/components/EmailView/EmailView.shortcuts",
-        "src/components/EmailView/ReplyCompose.sendShortcut"
+        "src/components/EmailView/ReplyCompose.sendShortcut",
+        "src/stores/overlayStore",
+        "src/components/EmailView/EmailView.tooltips"
       ],
       "e2e": [
         "Atajos"
