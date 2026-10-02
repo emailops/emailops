@@ -114,6 +114,7 @@
     "deleted": "Message programmé supprimé",
     "sentCount_one": "{{count}} message en attente envoyé",
     "sentCount_other": "{{count}} messages en attente envoyés",
+    "sentCount_many": "{{count}} messages en attente envoyés",
     "interrupted": "EmailOps s’est arrêté pendant l’envoi d’un message. Il est peut-être parti, ou non : vérifiez les Envoyés avant de réessayer.",
     "failed": "Un message n’a pas pu être envoyé : {{error}}",
     "view": "Voir"
@@ -142,6 +143,7 @@
     "reply": "Réponse",
     "attachments_one": "{{count}} pièce jointe",
     "attachments_other": "{{count}} pièces jointes",
+    "attachments_many": "{{count}} pièces jointes",
     "sendNow": "Envoyer maintenant",
     "retry": "Réessayer",
     "edit": "Modifier",

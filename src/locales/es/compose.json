@@ -114,6 +114,7 @@
     "deleted": "Mensaje programado eliminado",
     "sentCount_one": "{{count}} mensaje en cola enviado",
     "sentCount_other": "{{count}} mensajes en cola enviados",
+    "sentCount_many": "{{count}} mensajes en cola enviados",
     "interrupted": "EmailOps se cerró mientras se enviaba un mensaje. Puede que haya salido o no: revisa Enviados antes de reintentarlo.",
     "failed": "No se pudo enviar un mensaje: {{error}}",
     "view": "Ver"
@@ -142,6 +143,7 @@
     "reply": "Respuesta",
     "attachments_one": "{{count}} adjunto",
     "attachments_other": "{{count}} adjuntos",
+    "attachments_many": "{{count}} adjuntos",
     "sendNow": "Enviar ahora",
     "retry": "Reintentar",
     "edit": "Editar",
