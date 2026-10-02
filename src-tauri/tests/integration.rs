@@ -6444,7 +6444,7 @@ async fn outbox_undo_send_cancels_or_sends_once_the_window_closes() {
     let now = 2_000_000;
     let undo = OutboxSchedule::Undo { delay_secs: 10 };
 
-    let taken_back = queue_outgoing(&db, message.clone(), undo.clone(), None, None, now)
+    let taken_back = queue_outgoing(&db, message.clone(), undo, None, None, now)
         .await
         .unwrap();
     let restored = cancel_outbox_message(&db, &taken_back.id, now + 2).unwrap();
