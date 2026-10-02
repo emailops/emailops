@@ -333,7 +333,7 @@ pub async fn unsubscribe(
     provider: Option<&dyn EmailProvider>,
     now: i64,
 ) -> Result<UnsubscribeKind> {
-    let email = crate::services::sender_controls::owned_email(db, &account.id, email_id)?;
+    let email = crate::services::ownership::email_in_account(db, &account.id, email_id)?;
     let headers = db
         .get_email_headers_batch(std::slice::from_ref(&email.id))?
         .remove(&email.id);

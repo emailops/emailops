@@ -99,7 +99,7 @@ pub fn plan_blocked_arrivals<'a>(emails: &'a [Email], blocked: &HashSet<String>)
 
 /// The sender facts of one message, for the reading pane.
 pub fn sender_status(db: &Database, account_id: &str, email_id: &str) -> Result<SenderStatus> {
-    let email = owned_email(db, account_id, email_id)?;
+    let email = crate::services::ownership::email_in_account(db, account_id, email_id)?;
     let address = email.sender_email.trim().to_lowercase();
     let headers = db
         .get_email_headers_batch(std::slice::from_ref(&email.id))?
@@ -114,13 +114,6 @@ pub fn sender_status(db: &Database, account_id: &str, email_id: &str) -> Result<
         unsubscribe,
         address,
     })
-}
-
-/// A message of `account_id`, or `NotFound`.
-pub(crate) fn owned_email(db: &Database, account_id: &str, email_id: &str) -> Result<Email> {
-    db.get_email(email_id)?
-        .filter(|e| e.account_id == account_id)
-        .ok_or_else(|| AppError::NotFound(format!("Email {email_id} not found")))
 }
 
 /// Block `raw_address` in `account`, then — when `move_existing` — mark the

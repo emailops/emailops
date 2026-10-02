@@ -90,7 +90,7 @@ pub async fn report_junk_to_provider(
     // trains the model — and it must survive a failure to reach the server.
     junk::set_feedback(&state.db, &account_id, &email_id, true).await?;
 
-    let email = crate::services::sender_controls::owned_email(&state.db, &account_id, &email_id)?;
+    let email = crate::services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     let account = state
         .db
         .get_account(&account_id)?
