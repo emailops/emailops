@@ -32,7 +32,8 @@ export function isEmailListView(mode: ViewMode): boolean {
  * replaces the list, so any open email must be closed for the chosen view to show.
  *
  * Filters reset for every mailbox-backed view, not just the inbox: a smart
- * filter or search query is always resolved against `mailbox IN ('inbox','sent')`
+ * filter or search query is always resolved against the live mailboxes
+ * (`mailbox IN ('inbox','sent','archive')`)
  * and ignores the selected mailbox, so keeping one alive while switching to
  * Sent/Spam/Trash/a folder would highlight a view whose emails never appear.
  */

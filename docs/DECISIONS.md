@@ -3002,3 +3002,22 @@ verification run on such a branch needed the schema patched by hand.
 (needs sqlite-vec loaded in Python), and refinery verifies a checksum of every applied
 migration on open, so Python would have to re-implement refinery's hashing. The CLI's
 `doctor` — read-only by design, and its bootstrap touches the keychain.
+
+## 2026-10-02 — Archive is live mail: in every search, filter and AI scope, out of only the Inbox view
+
+**Decision:** `emails.mailbox = 'archive'` is live mail. Only the Inbox view (and what is
+defined as "in the inbox": snooze, new-mail notifications, the archive action itself)
+leaves it out. Search, the chat tools, embeddings, classification, lenses, contacts,
+attachment rules and the junk detector's "not spam" training reach it, and so do the
+sidebar's sender/domain/tag filters and their counts, which used to read
+`mailbox IN ('inbox', 'sent')` and now share one list, `db::live_mailboxes_sql!()`
+(`('inbox', 'sent', 'archive')`).
+**Context:** Before the Archive mailbox, Gmail-archived mail stayed `inbox` locally, so
+"inbox + sent" meant all live mail. Once Gmail mail without `INBOX` mapped to `archive`,
+those queries silently dropped it: a sender filter missed the archived half of a
+conversation, and an attachment rule ignored an archived invoice. Gmail and Outlook search
+and labels include archived mail; only the Inbox excludes it.
+**Rejected:** *`mailbox NOT IN ('spam', 'trash')` for the smart filters*: it would also
+pull custom IMAP folders into them, a separate product change; the filters' covering
+indexes (V008) serve an `IN` list either way. *Leaving archive out of the filters*: the
+archived message of a thread would vanish from a sender filter the moment it was archived.

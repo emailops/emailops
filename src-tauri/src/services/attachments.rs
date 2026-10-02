@@ -399,10 +399,10 @@ pub async fn apply_rules_to_stored_email(
 }
 
 /// Whether attachment rules collect mail filed in `mailbox`: the inbox,
-/// Sent and the user's own folders, never Spam or Trash — a sender rule must
+/// Sent, the Archive and the user's own folders, never Spam or Trash — a sender rule must
 /// not pick up the copy of a message the user junked or deleted.
 pub fn rules_apply_to_mailbox(mailbox: &str) -> bool {
-    matches!(mailbox, "inbox" | "sent") || mailbox.starts_with("folder:")
+    matches!(mailbox, "inbox" | "sent" | "archive") || mailbox.starts_with("folder:")
 }
 
 /// Check if a filename matches a rule's filename pattern.
@@ -2792,12 +2792,13 @@ mod tests {
     // ── Which mailboxes rules reach ────────────────────────────────────────
 
     #[test]
-    fn rules_reach_the_inbox_sent_and_filed_folders_not_spam_or_trash() {
+    fn rules_reach_the_inbox_sent_archive_and_filed_folders_not_spam_or_trash() {
         for (mailbox, applies) in [
             ("inbox", true),
             ("sent", true),
             ("folder:INBOX.Facturas", true),
             ("folder:Archive", true),
+            ("archive", true),
             ("spam", false),
             ("trash", false),
         ] {
