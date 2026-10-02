@@ -1,6 +1,6 @@
 ---
 title: 'Funciones estándar'
-description: 'El cliente de correo en sí: cuentas, bandeja unificada, calendario, adjuntos, búsqueda y filtrado de correo basura.'
+description: 'El cliente de correo en sí: cuentas, bandeja unificada, archivo, posponer, envío programado, firmas, calendario, adjuntos, búsqueda, filtrado de correo basura, notificaciones y atajos de teclado.'
 weight: 30
 nav:
   unified-inbox: view/inbox
@@ -9,6 +9,9 @@ nav:
   junk-and-bulk-mail: settings/junk
   privacy-and-security-controls: settings/privacy
   interface: settings/appearance
+  undo-send-and-scheduled-send: settings/appearance
+  unsubscribe-and-block-sender: settings/junk
+  keyboard-shortcuts: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -45,6 +48,98 @@ borrador se abre sin destinatarios y lleva el mensaje original bajo una cabecera
 reenviado* con su remitente, fecha y destinatarios, junto con los adjuntos originales (hasta
 20 MB en total). Sale como un mensaje nuevo, así que no se une a las conversaciones que el
 destinatario ya tiene.
+
+## Organizar conversaciones {#organizing-conversations}
+
+<!-- claim:feat-organize-1 -->
+**Archivar** saca una conversación de la bandeja de entrada sin borrarla, y **Mover a Recibidos**
+la devuelve. Ambas, junto con **Marcar como no leído** y **Destacar**, están en el panel de lectura
+y en el menú **Más acciones** (⋮) de cada conversación; la estrella aparece además en cada fila de
+la lista. El cambio se hace también en tu proveedor de correo, así que Gmail u Outlook muestran lo
+mismo.
+
+<!-- claim:feat-organize-2 -->
+**Destacados**, en la barra lateral, lista tus conversaciones destacadas. **Archivo** lista el
+correo archivado de las cuentas de Gmail y Outlook y en **Todas las cuentas**; una cuenta IMAP
+archiva en su propia carpeta de archivo, que aparece junto a sus demás carpetas. El correo
+archivado solo sale de la bandeja de entrada: la búsqueda, los filtros inteligentes y las
+funciones de IA lo siguen alcanzando.
+
+<!-- claim:feat-organize-3 -->
+Marca la casilla al principio de una fila para seleccionarla. Con una o más seleccionadas, una
+barra sobre la lista actúa sobre todas a la vez — archivar, posponer, eliminar, marcar como leídas
+o no leídas, destacar — y **Borrar selección** la termina. Las cuentas con carpetas propias
+tienen además **Mover a carpeta**.
+
+<!-- claim:feat-organize-4 -->
+Archivar o eliminar quita las conversaciones de la lista al momento y muestra un aviso con
+**Deshacer** durante 6 segundos. Tu proveedor de correo solo se entera cuando pasan esos segundos
+(o antes, si archivas o eliminas otra cosa o abres otra vista), así que Deshacer simplemente las
+devuelve.
+
+<!-- claim:feat-organize-5 -->
+Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o
+movida a Spam —, se abre la siguiente. **Ajustes → Apariencia → Después de archivar o eliminar**
+elige entre la conversación siguiente, la anterior o volver a la lista. Marcar una conversación
+como no leída siempre vuelve a la lista.
+
+## Posponer {#snooze}
+
+<!-- claim:feat-snooze-1 -->
+**Posponer** oculta una conversación de la bandeja de entrada hasta el momento que elijas: más
+tarde hoy, mañana, este fin de semana, la próxima semana, o la fecha y hora que indiques. Se
+ofrece en el panel de lectura, en el menú ⋮ de la fila y en la barra de selección.
+
+<!-- claim:feat-snooze-2 -->
+Las conversaciones pospuestas aparecen en **Pospuestos**, en la barra lateral, de la más próxima
+a la más lejana; **Dejar de posponer** devuelve una antes de tiempo. Llegado el momento, la
+conversación vuelve arriba del todo en la bandeja de entrada, marcada como no leída. Un mensaje
+nuevo en una conversación pospuesta la devuelve en el acto.
+
+<!-- claim:feat-snooze-3 -->
+Posponer se guarda solo en este ordenador: las demás aplicaciones de correo siguen mostrando la
+conversación en la bandeja de entrada. Las conversaciones vuelven mientras EmailOps está en
+marcha; una cuya hora pasó con la app cerrada vuelve la próxima vez que la abras.
+
+## Deshacer envío y envío programado {#undo-send-and-scheduled-send}
+
+<!-- claim:feat-send-1 -->
+Al pulsar **Enviar**, el mensaje espera unos segundos con un aviso de **Deshacer**; Deshacer lo
+retira y lo vuelve a abrir para editarlo. La espera se ajusta en **Ajustes → Apariencia →
+Deshacer envío**: desactivado, 5, 10, 20 o 30 segundos, 10 por defecto. EmailOps tiene que seguir
+abierto hasta que el mensaje haya salido.
+
+<!-- claim:feat-send-2 -->
+La flecha junto a **Enviar** abre **Programar envío**: mañana por la mañana, mañana por la tarde,
+lunes por la mañana, o la fecha y hora que indiques.
+
+<!-- claim:feat-send-3 -->
+Los mensajes pendientes de salir aparecen en **Programados**, en la barra lateral, donde puedes
+**Enviar ahora**, **Editar** o **Eliminar** cada uno. Un mensaje programado solo sale mientras
+EmailOps está abierto; uno cuya hora pasó con la app cerrada se envía la próxima vez que la
+abras. Un mensaje que no se pudo enviar se queda ahí marcado como **No enviado**, con
+**Reintentar**: EmailOps nunca lo reenvía por su cuenta.
+## Firmas {#signatures}
+
+<!-- claim:feat-signatures-1 -->
+Cada cuenta tiene su propia firma, que se configura en **Ajustes → Firmas**. Dos interruptores
+deciden dónde va: **Insertar en mensajes nuevos** e **Insertar en respuestas y reenvíos**. En un
+mensaje nuevo o una respuesta va debajo de tu texto; en un reenvío, encima del mensaje reenviado.
+Forma parte del cuerpo del mensaje, así que puedes cambiarla o borrarla en cualquier mensaje antes
+de enviarlo.
+
+<!-- claim:feat-signatures-2 -->
+**Añadir imagen** inserta en ella un logotipo o una imagen de tu firma manuscrita. Se aceptan PNG,
+JPEG, GIF y WebP; SVG y otros archivos se rechazan indicando el motivo. Una imagen ancha se reduce
+a 600 px, cada imagen puede ocupar 200 KB como máximo y la firma entera 512 KB. Las cuentas de
+Gmail ofrecen además **Importar de Gmail**, que copia en el editor la firma que Gmail tiene para
+esa dirección.
+
+<!-- claim:feat-signatures-3 -->
+En la versión de texto plano de un mensaje, una firma que lo cierra va precedida de la línea
+estándar `-- `, para que otras aplicaciones de correo la reconozcan. Cuando la cuenta tiene firma
+para ese tipo de mensaje, los borradores de la IA no incluyen tu nombre ni tus datos de contacto y
+dejan que firme la firma.
 
 ## Filtros inteligentes
 
@@ -92,8 +187,8 @@ reglas** (o **Crear una regla** en la vista vacía) y rellena:
 <!-- claim:feat-attachments-view-7 -->
 Tienen que coincidir todos los patrones que rellenes. Las reglas se aplican al correo nuevo
 según se sincroniza; marca **Aplicar a los correos existentes después de crear** para recopilar
-también del correo que ya tienes. Las reglas llegan a la bandeja de entrada, Enviados y tus
-propias carpetas, nunca a Spam ni a la Papelera. Selecciona adjuntos para descargarlos juntos en
+también del correo que ya tienes. Las reglas llegan a la bandeja de entrada, Enviados, el
+archivo y tus propias carpetas, nunca a Spam ni a la Papelera. Selecciona adjuntos para descargarlos juntos en
 tu carpeta de Descargas.
 
 <!-- claim:feat-attachments-view-8 -->
@@ -138,7 +233,44 @@ es basura") entrenan el filtro con el tiempo. Tú decides qué pasa con el corre
 
 <!-- claim:feat-junk-bulk-4 -->
 Ninguna de las dos opciones mueve ni borra nada en el servidor; solo lo hace un **Confirmar
-basura** explícito. Hay un aviso opcional de suplantación/phishing, desactivado por defecto.
+basura** o un **Bloquear remitente** explícito. Hay un aviso opcional de suplantación/phishing, desactivado por defecto.
+
+## Cancelar suscripciones y bloquear remitentes {#unsubscribe-and-block-sender}
+
+<!-- claim:feat-unsubscribe-1 -->
+Un boletín o un mensaje de una lista de correo que indica cómo darse de baja muestra **Cancelar
+suscripción** junto a su remitente. Antes de enviar nada, una confirmación explica exactamente qué
+va a pasar: una petición enviada directamente al servidor del remitente (no a través de tu
+proveedor de correo), un correo de baja enviado desde tu cuenta, o la propia página del remitente
+abierta en tu navegador.
+
+<!-- claim:feat-block-sender-1 -->
+**Bloquear remitente**, en el menú ⋮ de una conversación, manda a Spam el correo nuevo de ese
+remitente en esta cuenta y lo notifica a tu proveedor de correo como spam. **Mover también sus
+mensajes actuales a Spam** archiva lo que ya está ahí, y la conversación indica que el remitente
+está bloqueado, con **Desbloquear** a mano.
+
+<!-- claim:feat-block-sender-2 -->
+**Ajustes → Basura → Remitentes bloqueados** lista a todos los que has bloqueado, con
+**Desbloquear**, que además puede devolver sus mensajes de Spam a la bandeja de entrada.
+**Ocultar de los filtros inteligentes**, en el menú ⋮, es otra cosa: solo quita al remitente de
+los filtros inteligentes de la barra lateral.
+
+## Notificaciones de correo nuevo {#new-mail-notifications}
+
+<!-- claim:feat-notifications-1 -->
+EmailOps muestra una notificación de escritorio cuando llega correo nuevo a tu bandeja de entrada
+y cuando vuelve una conversación pospuesta — nunca en la primera sincronización de una cuenta, ni
+por correo antiguo, correo que ya leíste, basura o remitentes bloqueados. Más de tres mensajes
+nuevos a la vez se agrupan en un único resumen. Al pulsar una notificación, EmailOps pasa a primer
+plano; no abre el mensaje.
+
+<!-- claim:feat-notifications-2 -->
+**Ajustes → Notificaciones** tiene el interruptor general, uno por cuenta, el **Contenido de la
+notificación** (remitente y asunto, u **Ocultar contenido**, que solo muestra la cuenta) y **Solo
+cuando EmailOps no está en primer plano**; todo viene activado por defecto, con remitente y asunto
+visibles. El texto del mensaje no se muestra nunca, y mientras la app está bloqueada con la
+contraseña principal tampoco el remitente ni el asunto.
 
 ## Controles de privacidad y seguridad {#privacy-and-security-controls}
 
@@ -153,3 +285,25 @@ sistema. Todo ello se detalla en [Privacidad y seguridad](../privacy-security/).
 Bandeja en vista dividida o a ancho completo, y una interfaz disponible en español, inglés,
 francés y alemán. El idioma de salida de la IA se configura aparte, así que puedes leer la
 interfaz en un idioma y que los borradores se redacten en otro.
+
+## Atajos de teclado {#keyboard-shortcuts}
+
+<!-- claim:feat-shortcuts-1 -->
+Pulsa `?` en cualquier sitio fuera de un campo de texto para ver todos los atajos. Siguen los de
+Gmail:
+
+| Teclas | Acción |
+|---|---|
+| `j` / `k` | conversación siguiente / anterior |
+| `Enter` u `o`, `u` | abrir la conversación, volver a la lista |
+| `x` | seleccionar o deseleccionar la conversación |
+| `e`, `#`, `s`, `b` | archivar, eliminar, destacar, posponer |
+| `Shift+U` / `Shift+I` | marcar como no leído / leído |
+| `c`, `r`, `a`, `f` | mensaje nuevo, responder, responder a todos, reenviar |
+| `g` y luego `i`, `s`, `b`, `a`, `l` | ir a Bandeja de entrada, Destacados, Pospuestos, Archivo, Programados |
+| `/` | buscar |
+
+<!-- claim:feat-shortcuts-2 -->
+Los atajos se pausan mientras escribes y mientras hay un diálogo o un menú abierto. Los botones a
+los que corresponden indican su tecla en la ayuda emergente, como en «Archivar (E)». **Ajustes →
+Apariencia → Atajos de teclado** los desactiva, y **Ver la lista** abre el mismo resumen que `?`.

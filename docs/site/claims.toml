@@ -564,7 +564,7 @@ checks = [
 [feat-attachments-view-7]
 checks = [
   { app = true },
-  { tests = ['services::attachments::tests::applying_a_rule_to_existing_mail_skips_spam_and_trash', 'services::attachments::tests::rules_reach_the_inbox_sent_and_filed_folders_not_spam_or_trash'], covers = ["Rules reach the inbox, Sent and your own folders, never Spam or Trash."] },
+  { tests = ['services::attachments::tests::applying_a_rule_to_existing_mail_skips_spam_and_trash', 'services::attachments::tests::rules_reach_the_inbox_sent_archive_and_filed_folders_not_spam_or_trash'], covers = ["Rules reach the inbox, Sent, the archive and your own folders, never Spam or Trash."] },
 ]
 
 [feat-attachments-view-8]
@@ -620,6 +620,146 @@ checks = [
 [feat-interface-1]
 checks = [
   { app = true },
+]
+
+[feat-organize-1]
+checks = [
+  { app = true },
+  { tests = ['services::emails::thread_actions::tests::archive_takes_only_inbox_messages_and_move_to_inbox_brings_back_archived_and_foldered_ones', 'services::emails::thread_actions::tests::archive_files_the_inbox_messages_under_archive_and_leaves_sent_alone'], covers = ["Archive takes a conversation out of the inbox without deleting it"] },
+  { tests = ['services::emails::thread_actions::tests::move_to_inbox_brings_an_archived_thread_back_through_the_provider', 'services::emails::thread_actions::tests::mark_unread_writes_locally_and_pushes_to_the_provider', 'services::emails::thread_actions::tests::star_and_unstar_push_the_star', 'sync::gmail::tests::mail_without_the_inbox_label_is_archived', 'sync::outlook::tests::archiving_moves_to_the_archive_folder_and_reports_the_new_id'], covers = ["The change is made at your mail provider too, so Gmail or Outlook show the same thing."] },
+]
+
+[feat-organize-2]
+checks = [
+  { app = true },
+  { tests = ['sync::folder_plan::tests::the_special_use_archive_folder_wins_over_a_folder_named_archive', 'sync::folder_plan::tests::a_folder_named_archive_or_archives_is_the_fallback'], covers = ["an IMAP account archives into its own Archive folder, which appears with its other folders"] },
+  { tests = ['db::emails::crud::tests::archived_mail_leaves_the_inbox_and_has_its_own_view', 'db::emails::search::tests::filtered_emails_sender_filter_includes_archived_mail', 'db::emails::search::tests::filtered_emails_tag_filter_includes_archived_mail', 'db::emails::search::tests::quick_filter_stats_count_archived_mail'], covers = ["Archived mail is only out of the inbox: search, the smart filters and the AI features still reach it."] },
+  { manual = 'That the AI features (chat tools, embeddings, classification, lenses) reach archived mail rests on the shared live-mailbox list (DECISIONS 2026-10-02); no single test or demo screen shows it, and the demo has no Gmail or Outlook account.', covers = ["the AI features still reach it"] },
+]
+
+[feat-organize-3]
+checks = [
+  { app = true },
+  { manual = 'The demo accounts have no folders of their own, so the toolbar shows no Move to folder there; src/components/Inbox/BulkToolbar.test.tsx covers it.', covers = ["Accounts with folders of their own also get Move to folder."] },
+]
+
+[feat-organize-4]
+checks = [
+  { app = true },
+  { manual = 'The 6-second length and the early commit when another archive/delete starts or another view opens are covered by src/lib/pendingActions.test.ts and src/stores/emailStore tests (vitest), not by a check this harness runs.', covers = ["(or sooner, if you archive or delete something else or open another view)"] },
+]
+
+[feat-organize-5]
+checks = [
+  { app = true },
+  { manual = 'Deleted, snoozed and moved-to-Spam advancing, and Mark as unread going back to the list, are covered by src/lib/autoAdvance.test.ts and the EmailView/JunkBanner vitest suites; the demo case only archives.', covers = ["Marking a conversation as unread always goes back to the list."] },
+]
+
+[feat-snooze-1]
+checks = [
+  { app = true },
+]
+
+[feat-snooze-2]
+checks = [
+  { app = true },
+  { tests = ['db::emails::snoozes::tests::the_snoozed_view_lists_snoozed_threads_soonest_wake_first'], covers = ["soonest first"] },
+  { tests = ['services::emails::snooze::tests::a_due_snooze_wakes_unread_at_the_top_of_the_inbox_and_announces_itself', 'db::emails::snoozes::tests::a_woken_thread_sorts_by_its_wake_time'], covers = ["When the time comes, the conversation returns to the top of the inbox marked unread."] },
+  { tests = ['db::emails::snoozes::tests::new_inbound_mail_releases_the_snooze'], covers = ["A new message in a snoozed conversation brings it back straight away."] },
+]
+
+[feat-snooze-3]
+checks = [
+  { manual = 'Snooze is stored only in the local thread_snoozes table and its commands never call a provider (DECISIONS 2026-10-01, "Snooze is local state"); no test asserts the absence of a provider call.', covers = ["Snoozing is kept on this computer only: other mail apps keep showing the conversation in the inbox."] },
+  { tests = ['services::emails::snooze::tests::due_snoozes_are_the_snoozed_ones_whose_time_has_come', 'services::emails::snooze::tests::a_snooze_not_yet_due_stays_hidden'], covers = ["Conversations wake while EmailOps is running"] },
+  { manual = 'The wake pass also runs once at start-up (sync_scheduler::snooze_wake_loop), which wakes snoozes that fell due while the app was closed; there is no test of the start-up tick itself.', covers = ["one whose time passed while the app was closed comes back the next time you open it."] },
+]
+
+[feat-send-1]
+checks = [
+  { app = true },
+  { tests = ['services::outbox::tests::undo_send_waits_one_of_the_offered_delays', 'services::outbox::tests::undo_wins_before_the_pass_and_loses_after_it_claimed_the_row', 'db::outbox::tests::cancel_returns_the_message_once_and_loses_to_a_claim'], covers = ["After you press Send, the message waits for a few seconds with an Undo notice; Undo takes it back and reopens it for editing."] },
+  { manual = 'Sending needs the app running (the dispatcher is a loop in the app); the demo cannot send, and the case does not compose mail on the shared demo DB. make verify (Envío/enviar y deshacer) drives Send + Undo end to end.', covers = ["EmailOps has to stay open until the message has gone."] },
+]
+
+[feat-send-2]
+checks = [
+  { manual = 'The arrow enables only once the message has a recipient, a subject and a body, and the composer would then autosave a draft into the shared demo DB, so the docs check does not open it. make verify (Envío/programar envío) opens the menu and schedules a message; the presets themselves are src/lib/outbox.test.ts (vitest).', covers = ["The arrow next to Send opens Schedule send: tomorrow morning, tomorrow afternoon, Monday morning, or a date and time you pick."] },
+]
+
+[feat-send-3]
+checks = [
+  { app = true },
+  { tests = ['db::outbox::tests::the_scheduled_view_lists_waiting_and_failed_rows_but_not_undo_windows', 'db::outbox::tests::send_now_moves_a_scheduled_row_forward_but_never_a_sent_one', 'db::outbox::tests::a_failed_row_can_be_retried_now_or_cancelled'], covers = ["where you can Send now, Edit or Delete each one."] },
+  { tests = ['services::outbox::tests::an_overdue_message_from_a_closed_app_is_sent_at_the_next_pass'], covers = ["one whose time passed while the app was closed is sent the next time you open it."] },
+  { tests = ['services::outbox::tests::a_refused_send_fails_visibly_keeps_the_message_and_is_not_retried', 'services::outbox::tests::a_message_interrupted_mid_send_is_reported_and_never_resent'], covers = ["A message that could not be sent stays there marked Not sent, with Retry: EmailOps never resends on its own."] },
+]
+
+[feat-signatures-1]
+checks = [
+  { app = true },
+  { tests = ['services::signatures::tests::a_saved_signature_is_read_back_with_its_options', 'services::signatures::tests::the_signature_goes_with_its_account'], covers = ["Each account has its own signature"] },
+  { manual = 'Placement (below the text in a new message or reply, above the quoted message in a forward) is covered by src/hooks/useComposerSignature and ReplyCompose.signature vitest suites; the demo case only opens a new message.', covers = ["In a new message or a reply it sits below your text; in a forward, above the forwarded message."] },
+]
+
+[feat-signatures-2]
+checks = [
+  { app = true },
+  { tests = ['services::signatures::tests::jpeg_gif_and_webp_logos_are_accepted', 'services::signatures::tests::a_valid_png_logo_is_saved', 'services::signatures::tests::an_svg_image_is_refused'], covers = ["PNG, JPEG, GIF and WebP are accepted"] },
+  { tests = ['services::signatures::tests::an_image_over_the_size_cap_is_refused', 'services::signatures::tests::an_oversized_signature_is_refused'], covers = ["each image may be 200 KB at most and the whole signature 512 KB"] },
+  { tests = ['services::signatures::tests::the_provider_signature_is_imported_sanitized', 'services::signatures::tests::a_provider_without_a_signature_imports_none'], covers = ["Gmail accounts also offer Import from Gmail, which copies the signature Gmail has for that address into the editor."] },
+  { manual = 'The demo has no Gmail account, so the Import from Gmail button (shown only for Gmail accounts) is not seen by the app check.', covers = ["Gmail accounts also offer Import from Gmail"] },
+]
+
+[feat-signatures-3]
+checks = [
+  { manual = 'The "-- " line is derived in the frontend (htmlToPlainText with signatureDelimiter) and covered by src/lib/composeHtml vitest tests; not run by this harness.', covers = ["In the plain-text version of a message, a signature that ends it is preceded by the standard -- line, so other mail apps can recognise it."] },
+  { tests = ['services::emails::drafts::tests::sign_off_is_left_to_the_app_when_the_signature_applies', 'services::emails::drafts::tests::sign_off_follows_the_option_for_the_draft_kind', 'services::emails::drafts::tests::per_draft_section_carries_the_sign_off_rule_with_a_signature', 'services::emails::drafts::tests::sign_off_is_unchanged_without_a_signature'], covers = ["When the account has a signature for that kind of message, AI drafts leave your name and contact details out and let the signature sign."] },
+]
+
+[feat-shortcuts-1]
+checks = [
+  { app = true },
+]
+
+[feat-shortcuts-2]
+checks = [
+  { app = true },
+]
+
+[feat-unsubscribe-1]
+checks = [
+  { app = true },
+  { tests = ['services::unsubscribe::parser_tests::https_with_the_rfc8058_post_header_is_one_click', 'services::unsubscribe::parser_tests::one_click_beats_mailto', 'services::unsubscribe::parser_tests::mailto_beats_a_plain_link', 'services::unsubscribe::executor_tests::one_click_posts_the_rfc8058_form_body', 'services::unsubscribe::executor_tests::mailto_sends_the_requested_message_from_the_receiving_account', 'services::unsubscribe::executor_tests::a_link_is_only_recorded_never_fetched'], covers = ["a request sent straight to the sender's server (not through your mail provider), an unsubscribe email sent from your account, or the sender's own page opened in your browser."] },
+  { tests = ['services::unsubscribe::executor_tests::a_message_without_an_option_is_refused_and_nothing_is_recorded'], covers = ["A newsletter or mailing-list message that says how to leave the list"] },
+]
+
+[feat-block-sender-1]
+checks = [
+  { app = true },
+  { tests = ['services::sender_controls::tests::a_new_arrival_from_a_blocked_sender_is_marked_junk_and_filed_as_spam', 'db::sender_controls::tests::blocks_are_per_account_and_idempotent', 'services::emails::spam::tests::filing_moves_it_at_the_provider_then_locally'], covers = ["sends that sender's new mail to Spam in this account and reports it to your mail provider as spam."] },
+  { tests = ['services::sender_controls::tests::blocking_records_the_block_and_files_existing_mail_as_spam'], covers = ["Also move their existing messages to Spam files what is already there"] },
+]
+
+[feat-block-sender-2]
+checks = [
+  { app = true },
+  { tests = ['services::sender_controls::tests::unblocking_removes_the_block_and_brings_their_mail_back_from_spam'], covers = ["which can also bring their messages back from Spam to the inbox"] },
+  { manual = 'That Hide from smart filters only hides the sender chip is the pre-existing behaviour, renamed in this release; not exercised.', covers = ["it only removes the sender from the sidebar's smart filters."] },
+]
+
+[feat-notifications-1]
+checks = [
+  { tests = ['services::mail_notifications::tests::a_new_unread_inbox_message_notifies_with_sender_and_subject', 'services::mail_notifications::tests::snoozed_conversations_coming_back_notify_behind_the_same_switches', 'services::mail_notifications::tests::the_first_sync_of_an_account_never_notifies', 'services::mail_notifications::tests::excluded_messages_never_notify', 'services::mail_notifications::tests::the_executor_shows_the_plan_and_reads_junk_after_the_hooks'], covers = ["EmailOps shows a desktop notification when new mail arrives in your inbox, and when a snoozed conversation comes back — never for an account's first sync, older mail, mail you already read, junk or blocked senders."] },
+  { tests = ['services::mail_notifications::tests::up_to_three_messages_notify_one_by_one_and_more_coalesce'], covers = ["More than three new messages at once become a single summary."] },
+  { manual = 'tauri-plugin-notification delivers no click events on desktop (DECISIONS 2026-10-01); the click focusing the app is OS behaviour and the demo never syncs, so no notification is shown there.', covers = ["Clicking a notification brings EmailOps to the front; it does not open the message."] },
+]
+
+[feat-notifications-2]
+checks = [
+  { app = true },
+  { tests = ['services::mail_notifications::tests::hidden_mode_reveals_only_the_account'], covers = ["or Hide content, which shows only the account"] },
+  { tests = ['services::mail_notifications::tests::a_locked_app_hides_content_whatever_the_setting', 'services::mail_notifications::tests::a_new_unread_inbox_message_notifies_with_sender_and_subject'], covers = ["The message text is never shown, and while the app is locked with the main password neither are the sender and subject."] },
 ]
 
 # ── ai-features.md ────────────────────────────────────────────────────

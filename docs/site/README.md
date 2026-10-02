@@ -46,8 +46,9 @@ Current ids: `with-local-ai`, `direct-download`, `smartscreen`, `linux` (install
 `choosing-a-backend`, `the-model-catalog`, `performance-knobs`, `chat-with-your-mailbox`,
 `ai-drafts`, `classification`, `tag-board`, `semantic-search`, `translation`, `tasks`,
 `memory`, `lenses`, `turning-it-all-off` (ai-features); `unified-inbox`, `calendar`,
-`attachments-view`, `junk-and-bulk-mail`, `privacy-and-security-controls`, `interface`
-(features); `ai-on-or-off`, `ai-backend-and-model`, `inbox-layout` (getting-started);
+`attachments-view`, `junk-and-bulk-mail`, `privacy-and-security-controls`, `interface`,
+`organizing-conversations`, `snooze`, `undo-send-and-scheduled-send`, `signatures`,
+`unsubscribe-and-block-sender`, `new-mail-notifications`, `keyboard-shortcuts` (features); `ai-on-or-off`, `ai-backend-and-model`, `inbox-layout` (getting-started);
 `where-your-data-is-stored`, `protection-from-the-mail-itself`, `locking-the-app`
 (privacy-security); `ai-features-are-unavailable`, `chat-is-slow`, `gpu-not-used`,
 `search-returns-keyword-results-only`, `classification-is-not-tagging-anything`

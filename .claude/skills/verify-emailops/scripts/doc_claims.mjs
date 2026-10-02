@@ -969,6 +969,29 @@ async function afterWizard() {
     doc.match(/No model and no network call/);
     return ok(/No model, no network/.test(junk), 'la app describe el detector como local y sin red', 'no');
   });
+  // Factory defaults of the parity settings: Undo send and new-mail notifications.
+  await tab('Appearance');
+  const undoSendDefault = await js(() => document.querySelector('[data-testid="undo-send-setting"] select')?.value ?? null);
+  await claim('feat-send-1', 'por defecto', {
+    covers: ['10 by default'],
+    how: 'En una instalación nueva, lee el valor del desplegable «Undo send» de Ajustes → Appearance y lo compara con el de la doc.',
+  }, async ({ doc }) => {
+    const want = doc.number(/(\d+) by default/);
+    return ok(Number(undoSendDefault) === want, `Undo send de fábrica: ${undoSendDefault} s`, `de fábrica: ${undoSendDefault}, la doc dice ${want}`);
+  });
+  await tab('Notifications');
+  const notifDefaults = await toggles();
+  const contentDefault = await js(() => [...document.querySelectorAll('input[name="notification-content"]')].find((r) => r.checked)?.value ?? null);
+  await claim('feat-notifications-2', 'por defecto', {
+    covers: ['all are on by default, with sender and subject shown'],
+    how: 'En una instalación nueva, lee Ajustes → Notifications: el interruptor general y «Only when EmailOps is not focused» encendidos, y el contenido en «Show sender and subject».',
+  }, async ({ doc }) => {
+    doc.match(/all are on by default, with sender and subject shown/);
+    const master = Object.entries(notifDefaults).find(([k]) => k.startsWith('New mail notifications'))?.[1];
+    const unfocused = Object.entries(notifDefaults).find(([k]) => k.startsWith('Only when EmailOps is not focused'))?.[1];
+    return ok(master === true && unfocused === true && contentDefault === 'preview', 'encendidas, solo sin foco, con remitente y asunto',
+      `general=${master}, sin foco=${unfocused}, contenido=${contentDefault}`);
+  });
   const cls = await tab('AI Classification');
   await claim('trbl-classification-tagging-1', 'ajuste', {
     covers: ['Confirm auto-classify new emails is on in Settings → AI Classification.'],
