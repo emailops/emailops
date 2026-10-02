@@ -157,6 +157,17 @@ pub fn is_app_locked(db: &Database) -> Result<bool> {
     ))
 }
 
+/// Tests only: start from a locked session, holding the guard that every test
+/// unlocking the session must hold — the flag is process-wide and the test
+/// runner is multi-threaded.
+#[cfg(test)]
+fn locked_session_for_testing() -> std::sync::MutexGuard<'static, ()> {
+    static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = M.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    SESSION_UNLOCKED.store(false, std::sync::atomic::Ordering::Relaxed);
+    guard
+}
+
 #[cfg(test)]
 mod lock_state_tests {
     #[test]
@@ -319,8 +330,17 @@ mod tests {
 
     #[test]
     fn the_right_password_unlocks() {
+        let _session = locked_session_for_testing();
         let db = db_with_main_password("right");
         assert!(verify_main_password(&db, "right", 1_000).unwrap());
+        assert!(!is_app_locked(&db).unwrap(), "unlocked for the rest of the session");
+    }
+
+    #[test]
+    fn a_main_password_locks_the_app_until_this_session_unlocks_it() {
+        let _session = locked_session_for_testing();
+        let db = db_with_main_password("right");
+        assert!(is_app_locked(&db).unwrap());
     }
 
     #[test]
@@ -335,6 +355,7 @@ mod tests {
 
     #[test]
     fn the_lockout_ends_after_its_delay() {
+        let _session = locked_session_for_testing();
         let db = db_with_main_password("right");
         for _ in 0..5 {
             assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
@@ -344,6 +365,7 @@ mod tests {
 
     #[test]
     fn a_success_resets_the_failure_count() {
+        let _session = locked_session_for_testing();
         let db = db_with_main_password("right");
         for _ in 0..4 {
             assert!(!verify_main_password(&db, "wrong", 1_000).unwrap());
