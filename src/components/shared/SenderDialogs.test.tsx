@@ -12,13 +12,19 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   blockSender: vi.fn(),
   unblockSender: vi.fn(),
   listBlockedSenders: vi.fn(async () => []),
+  getThread: vi.fn(async () => []),
+  getEmailBody: vi.fn(async () => ''),
+  markAsRead: vi.fn(async () => {}),
 }));
 
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { initI18n } from '@/i18n';
 import * as api from '@/lib/api';
+import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
+import { useEmailStore } from '@/stores/emailStore';
 import { statusKey, useSenderStore } from '@/stores/senderStore';
-import type { SenderStatus, UnsubscribeOption } from '@/types';
+import { useShortcutStore } from '@/stores/shortcutStore';
+import type { Email, SenderStatus, UnsubscribeOption } from '@/types';
 import { SenderDialogs } from './SenderDialogs';
 
 let container: HTMLDivElement;
@@ -154,5 +160,34 @@ describe('block confirmation', () => {
     await click(byTestId('sender-block-confirm'));
 
     expect(api.unblockSender).toHaveBeenCalledWith('acc', 'deals@shop.example', true);
+  });
+});
+
+describe('blocking the sender of the open conversation', () => {
+  const row = (id: string, senderEmail: string) =>
+    ({ id, accountId: 'acc', threadId: `t-${id}`, mailbox: 'inbox', senderEmail, isRead: true, timestamp: 1 }) as Email;
+  const LIST = [row('m1', 'news@other.example'), row('m2', 'deals@shop.example'), row('m3', 'ana@example.com')];
+
+  beforeEach(async () => {
+    useAutoAdvanceStore.setState({ mode: 'next' });
+    useEmailStore.setState({ emails: LIST, totalCount: 3, tabs: [], activeTabId: null });
+    useShortcutStore.setState({ listEmails: LIST });
+    vi.mocked(api.blockSender).mockResolvedValue({ moved: 1, localOnly: 0, failed: 0 });
+  });
+
+  it('opens the next conversation once their mail has left for Spam', async () => {
+    await useEmailStore.getState().selectEmail(LIST[1]);
+    useSenderStore.setState({ dialog: { type: 'block', accountId: 'acc', address: 'deals@shop.example' } });
+    await render();
+    await click(byTestId('sender-block-confirm'));
+    expect(useEmailStore.getState().selectedEmail?.id).toBe('m3');
+  });
+
+  it('stays on the open conversation when it is from someone else', async () => {
+    await useEmailStore.getState().selectEmail(LIST[0]);
+    useSenderStore.setState({ dialog: { type: 'block', accountId: 'acc', address: 'deals@shop.example' } });
+    await render();
+    await click(byTestId('sender-block-confirm'));
+    expect(useEmailStore.getState().selectedEmail?.id).toBe('m1');
   });
 });

@@ -18,6 +18,7 @@ vi.mock('./ReplyCompose', () => ({
 }));
 
 import { initI18n } from '@/i18n';
+import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import type { Email } from '@/types';
@@ -57,7 +58,8 @@ beforeEach(() => {
   onClose.mockClear();
   for (const fn of Object.values(actions)) fn.mockClear();
   useEmailStore.setState({ ...actions, snoozes: new Map() });
-  useShortcutStore.setState({ paneCommand: null });
+  useShortcutStore.setState({ paneCommand: null, listEmails: [] });
+  useAutoAdvanceStore.setState({ mode: 'next' });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -130,5 +132,65 @@ describe('EmailView pane commands', () => {
     useShortcutStore.getState().requestPaneCommand('delete');
     await render();
     expect(actions.deleteThreads).not.toHaveBeenCalled();
+  });
+});
+
+describe('EmailView auto-advance', () => {
+  const prev = { ...email, id: 'e0', threadId: 't0' } as Email;
+  const next = { ...email, id: 'e2', threadId: 't2' } as Email;
+  const selectEmail = vi.fn(async () => {});
+
+  beforeEach(() => {
+    selectEmail.mockClear();
+    useEmailStore.setState({
+      selectEmail,
+      setActiveTab: vi.fn(),
+      selectedEmail: email,
+      activeTabId: null,
+      emails: [prev, email, next],
+    });
+    useShortcutStore.setState({ listEmails: [prev, email, next] });
+  });
+
+  it.each([
+    ['archive', 'archiveThreads'],
+    ['delete', 'deleteThreads'],
+  ] as const)('%s opens the next conversation instead of going back to the list', async (cmd, action) => {
+    await render();
+    await command(cmd);
+    expect(actions[action]).toHaveBeenCalled();
+    expect(selectEmail).toHaveBeenCalledWith(next, undefined, { markRead: true });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('snoozing from the toolbar opens the next conversation', async () => {
+    useEmailStore.setState({ snoozeThreads: vi.fn(async () => {}) });
+    await render();
+    await command('snooze');
+    const first = container.querySelector('[data-testid="snooze-options"] button') as HTMLButtonElement;
+    await act(async () => first.click());
+    expect(selectEmail).toHaveBeenCalledWith(next, undefined, { markRead: true });
+  });
+
+  it('opens the previous one when set to', async () => {
+    useAutoAdvanceStore.setState({ mode: 'previous' });
+    await render();
+    await command('archive');
+    expect(selectEmail).toHaveBeenCalledWith(prev, undefined, { markRead: true });
+  });
+
+  it('goes back to the list when set to', async () => {
+    useAutoAdvanceStore.setState({ mode: 'list' });
+    await render();
+    await command('archive');
+    expect(selectEmail).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('mark as unread always goes back to the list', async () => {
+    await render();
+    await command('markUnread');
+    expect(selectEmail).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

@@ -3042,3 +3042,28 @@ open conversation or the cursor row.
 remembered, and a styling change silently disables it. Stopping propagation inside each
 overlay — every overlay would need it on every key, and a portalled menu is outside its
 owner's DOM subtree.
+
+## 2026-10-02 — Auto-advance: open the next conversation after it leaves the list
+
+**Decision:** When the open conversation leaves the list because of archive, delete,
+snooze (toolbar or `e`/`#`/`Delete`/`b`), a block that files it in Spam, or "Confirm
+junk", the reading pane opens the next conversation in list order (the previous one at the
+end of the list, back to the list when none is left). Settings → Appearance → "After
+archiving or deleting" offers next (default) / previous / back to the list, SQLite pref
+`ui.after_thread_leave`. Mark as unread always goes back to the list (staying would read
+it again); bulk actions never advance; a conversation shown in a tab just closes. The
+decision is the pure `planAdvance` (`src/lib/autoAdvance.ts`); `beginLeave`/`finishLeave`
+(`src/stores/autoAdvanceStore.ts`) capture the screen when the action starts and do
+nothing if the user navigated since (`selectionGeneration()`), so a slow action never
+closes or replaces a conversation opened meanwhile. Undo brings the conversation back into
+the list but reopens it only when nothing else is open.
+**Context:** Parity with Gmail's Auto-advance and Outlook's "after moving or deleting an
+item". Default "next" follows Outlook rather than Gmail (whose default is back to the
+list): EmailOps' split layout already shows a reading pane, and triaging a queue with `e`
+or `#` without a click between items is the point of the shortcuts. "Confirm junk" used to
+`await` the provider and then clear the selection, which closed whatever the user had
+opened in the meantime.
+**Rejected:** Gmail's default (back to the list) — an extra click or `Enter` per message
+during triage. Reopening the conversation on undo while another is open — it would yank
+the user away from what they are reading. Advancing after bulk actions — there is no
+single "current" conversation to step from.

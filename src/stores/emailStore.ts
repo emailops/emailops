@@ -244,7 +244,10 @@ export function restoreThreads<S extends ThreadSlices>(current: S, before: S, fa
   }
   const known = new Set(before.emails.map((e) => e.id));
   for (const e of current.emails) if (!known.has(e.id) && !failed.has(keyOf(e))) emails.push(e);
-  const restoreSelection = before.selectedEmail !== null && failed.has(keyOf(before.selectedEmail));
+  // The conversation comes back into the list; it reopens only when nothing
+  // else was opened since (auto-advance may already show the next one).
+  const restoreSelection =
+    before.selectedEmail !== null && failed.has(keyOf(before.selectedEmail)) && current.selectedEmail === null;
   return {
     ...current,
     emails,
@@ -354,6 +357,12 @@ export function formatSnoozeTime(unixSeconds: number): string {
  * email on screen — which would also point Reply at the wrong message.
  */
 let threadRequestSeq = 0;
+
+/** Changes whenever the user navigates to another conversation (or none):
+ *  lets a slow action tell whether what it was started on is still shown. */
+export function selectionGeneration(): number {
+  return threadRequestSeq;
+}
 /** Latest load id per open thread tab (keyed by tab id). A tab closed and
  *  reopened, or wiped by `reset`, must not receive the older load's result. */
 const tabLoadIds = new Map<string, number>();

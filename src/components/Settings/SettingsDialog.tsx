@@ -10,6 +10,7 @@ import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
 import { AiSettings } from './AiSettings';
 import { AiTranslationSettings } from './AiTranslationSettings';
+import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
@@ -324,6 +325,7 @@ function AppearancePanel({
         </div>
       </section>
       <UndoSendSetting />
+      <AutoAdvanceSetting />
       <KeyboardShortcutsSetting />
     </div>
   );

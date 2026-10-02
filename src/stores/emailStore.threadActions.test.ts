@@ -115,6 +115,28 @@ describe('removeThreads / restoreThreads', () => {
     expect(restored.totalCount).toBe(2);
   });
 
+  it('an undo brings the conversation back to the list without replacing the one now open', () => {
+    const a = email('a', 't1');
+    const b = email('b', 't2');
+    const before = slices([a, b], { selectedEmail: a, threadEmails: [a] });
+    const advanced = { ...removeThreads(before, keysOf('t1')), selectedEmail: b, threadEmails: [b] };
+
+    const restored = restoreThreads(advanced, before, keysOf('t1'));
+
+    expect(restored.emails.map((e) => e.id)).toEqual(['a', 'b']);
+    expect(restored.selectedEmail?.id).toBe('b');
+    expect(restored.threadEmails).toEqual([b]);
+  });
+
+  it('an undo reopens the conversation when nothing else was opened', () => {
+    const a = email('a', 't1');
+    const before = slices([a], { selectedEmail: a, threadEmails: [a] });
+
+    const restored = restoreThreads(removeThreads(before, keysOf('t1')), before, keysOf('t1'));
+
+    expect(restored.selectedEmail?.id).toBe('a');
+  });
+
   it('restores the flags of failed threads', () => {
     const before = slices([email('a', 't1'), email('b', 't2')]);
     const patched = applyThreadFlag(before, keysOf('t1', 't2'), 'isStarred', true);

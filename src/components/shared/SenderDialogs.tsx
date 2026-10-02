@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Modal } from '@/components/common/Modal';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
+import { beginLeave, finishLeave } from '@/stores/autoAdvanceStore';
 import { useLogStore } from '@/stores/logStore';
 import { type SenderDialogRequest, statusKey, useSenderStore } from '@/stores/senderStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -159,9 +160,13 @@ function BlockDialog({ request, onClose }: { request: BlockRequest; onClose: () 
   const handleConfirm = async () => {
     setWorking(true);
     setError(null);
+    // What is open now: if the block files it in Spam, the next conversation
+    // opens (auto-advance) — unless the user has moved on meanwhile.
+    const ticket = beginLeave();
     try {
       if (isBlock) {
         const report = await block(request.accountId, address, moveMail);
+        finishLeave(ticket, { onlyIfLeft: true });
         const lines = [
           report.moved > 0
             ? t('inbox:sender.blockedMoved', { address, count: report.moved })

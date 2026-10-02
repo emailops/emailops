@@ -50,7 +50,12 @@
     "undoSendSeconds": "{{count}} seconds",
     "keyboardShortcuts": "Keyboard shortcuts",
     "keyboardShortcutsHelp": "Navigate, act on conversations and compose from the keyboard. Press ? to see every shortcut.",
-    "keyboardShortcutsShowList": "Show the list"
+    "keyboardShortcutsShowList": "Show the list",
+    "afterLeave": "After archiving or deleting",
+    "afterLeaveHelp": "When the open conversation leaves the list (archive, delete, snooze, block or junk), what to show next. Marking as unread always goes back to the list.",
+    "afterLeaveNext": "Open the next conversation",
+    "afterLeavePrevious": "Open the previous conversation",
+    "afterLeaveList": "Go back to the list"
   },
   "dialog": {
     "closeTitle": "Close settings",

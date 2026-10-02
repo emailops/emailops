@@ -50,7 +50,12 @@
     "undoSendSeconds": "{{count}} Sekunden",
     "keyboardShortcuts": "Tastenkombinationen",
     "keyboardShortcutsHelp": "Navigieren, Konversationen bearbeiten und Nachrichten verfassen per Tastatur. Drücken Sie ?, um alle Tastenkombinationen zu sehen.",
-    "keyboardShortcutsShowList": "Liste anzeigen"
+    "keyboardShortcutsShowList": "Liste anzeigen",
+    "afterLeave": "Nach dem Archivieren oder Löschen",
+    "afterLeaveHelp": "Was angezeigt wird, wenn die geöffnete Konversation die Liste verlässt (archivieren, löschen, zurückstellen, blockieren oder als Spam melden). „Als ungelesen markieren“ kehrt immer zur Liste zurück.",
+    "afterLeaveNext": "Nächste Konversation öffnen",
+    "afterLeavePrevious": "Vorherige Konversation öffnen",
+    "afterLeaveList": "Zurück zur Liste"
   },
   "dialog": {
     "closeTitle": "Einstellungen schließen",

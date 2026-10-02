@@ -50,7 +50,12 @@
     "undoSendSeconds": "{{count}} segundos",
     "keyboardShortcuts": "Atajos de teclado",
     "keyboardShortcutsHelp": "Navega, actúa sobre las conversaciones y redacta desde el teclado. Pulsa ? para ver todos los atajos.",
-    "keyboardShortcutsShowList": "Ver la lista"
+    "keyboardShortcutsShowList": "Ver la lista",
+    "afterLeave": "Después de archivar o eliminar",
+    "afterLeaveHelp": "Qué mostrar cuando la conversación abierta sale de la lista (archivar, eliminar, posponer, bloquear o correo no deseado). Marcar como no leído siempre vuelve a la lista.",
+    "afterLeaveNext": "Abrir la conversación siguiente",
+    "afterLeavePrevious": "Abrir la conversación anterior",
+    "afterLeaveList": "Volver a la lista"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",

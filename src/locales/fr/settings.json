@@ -50,7 +50,12 @@
     "undoSendSeconds": "{{count}} secondes",
     "keyboardShortcuts": "Raccourcis clavier",
     "keyboardShortcutsHelp": "Naviguez, agissez sur les conversations et rédigez au clavier. Appuyez sur ? pour voir tous les raccourcis.",
-    "keyboardShortcutsShowList": "Afficher la liste"
+    "keyboardShortcutsShowList": "Afficher la liste",
+    "afterLeave": "Après l’archivage ou la suppression",
+    "afterLeaveHelp": "Ce qui s’affiche quand la conversation ouverte quitte la liste (archiver, supprimer, mettre en attente, bloquer ou signaler comme indésirable). Marquer comme non lu revient toujours à la liste.",
+    "afterLeaveNext": "Ouvrir la conversation suivante",
+    "afterLeavePrevious": "Ouvrir la conversation précédente",
+    "afterLeaveList": "Revenir à la liste"
   },
   "dialog": {
     "closeTitle": "Fermer les paramètres",

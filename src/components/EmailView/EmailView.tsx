@@ -13,6 +13,7 @@ import { formatShortcut } from '@/lib/platform';
 import type { PaneCommand } from '@/lib/shortcutPlan';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
+import { beginLeave, finishLeave } from '@/stores/autoAdvanceStore';
 import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
@@ -441,22 +442,23 @@ export function EmailView({
   };
   const thread = [threadRefOf(latestEmail)];
   const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
-  const archive = () => {
-    void archiveThreads(thread);
-    onClose();
+  /** The conversation leaves the list: open the next one (or the previous,
+   *  or go back to the list — Settings → Appearance). */
+  const leave = (run: () => void) => {
+    const ticket = beginLeave();
+    run();
+    finishLeave(ticket, { close: onClose });
   };
+  const archive = () => leave(() => void archiveThreads(thread));
   const markUnread = () => {
     // Back to the list, like Gmail: staying on the thread would read it again
     // at once.
     void setThreadsRead(thread, false);
     onClose();
   };
-  const deleteThread = () => {
-    // Leaves at once; the provider call waits out the undo window and a
-    // refusal brings the thread back (emailStore.deleteThreads).
-    void deleteThreads(thread);
-    onClose();
-  };
+  // Leaves at once; the provider call waits out the undo window and a
+  // refusal brings the thread back (emailStore.deleteThreads).
+  const deleteThread = () => leave(() => void deleteThreads(thread));
   runPaneCommandRef.current = (command) => {
     switch (command) {
       case 'reply':
@@ -678,9 +680,8 @@ export function EmailView({
               onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
               snoozed={threadSnoozed}
               onSnooze={(until) => {
-                // Out of the inbox until then, like archive: back to the list.
-                void snoozeThreads([threadRefOf(latestEmail)], until);
-                onClose();
+                // Out of the inbox until then, like archive.
+                leave(() => void snoozeThreads([threadRefOf(latestEmail)], until));
               }}
               onUnsnooze={() => void unsnoozeThreads([threadRefOf(latestEmail)])}
               snoozeSignal={snoozeSignal}

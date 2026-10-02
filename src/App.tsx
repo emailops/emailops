@@ -79,6 +79,7 @@ import {
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
@@ -753,6 +754,7 @@ function AppInner() {
   // for the whole app, honouring the Settings → Appearance switch.
   useEffect(() => {
     void useShortcutStore.getState().loadEnabled();
+    void useAutoAdvanceStore.getState().loadMode();
   }, []);
   const listView = isEmailListView(viewMode);
   const conversationShown =
