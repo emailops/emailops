@@ -141,5 +141,30 @@ class CheckFeatureTest(unittest.TestCase):
             self.assertEqual([r["detail"] for r in cp.check_feature("# X\n\n## Parity\n\ntbd\n", root, steps)], ["## Parity sin tabla"])
 
 
+class CheckAllTest(unittest.TestCase):
+    def skill(self, root, features):
+        skill = root / "skill"
+        (skill / "features").mkdir(parents=True)
+        (skill / "scripts").mkdir()
+        (skill / "scripts/sweep.mjs").write_text(SWEEP)
+        (skill / "features.json").write_text(json.dumps({"features": features}))
+        return skill
+
+    def test_results_carry_the_manifest_feature_name(self):
+        with Repo() as root:
+            skill = self.skill(root, [{"id": "compose", "name": "Redacción y borradores", "doc": "compose.md"}])
+            table = "| Capability | Modal |\n|---|---|\n| compose.draft | e2e:Compose/cerrar y borrador |"
+            (skill / "features/compose.md").write_text(md(table))
+            self.assertEqual([(n, r["status"]) for n, r in cp.check_all(root, skill)], [("Redacción y borradores", "ok")])
+
+    def test_feature_without_doc_or_file_fails_once(self):
+        with Repo() as root:
+            skill = self.skill(root, [{"id": "a", "name": "A"}, {"id": "b", "name": "B", "doc": "missing.md"}])
+            out = list(cp.check_all(root, skill))
+        self.assertEqual([(n, r["status"]) for n, r in out], [("A", "fail"), ("B", "fail")])
+        self.assertIn("falta doc", out[0][1]["detail"])
+        self.assertIn("missing.md", out[1][1]["detail"])
+
+
 if __name__ == "__main__":
     unittest.main()

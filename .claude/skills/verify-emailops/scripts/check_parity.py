@@ -121,3 +121,30 @@ def check_feature(md, repo, steps):
     have = {capability for capability, _ in rows}
     out += [_result(sf, "-", "fail", "sub-feature sin fila en ## Parity") for sf in subfeatures(md) if sf not in have]
     return out
+
+
+def check_all(repo=REPO, skill=SKILL):
+    manifest = json.loads((skill / "features.json").read_text())
+    steps = sweep_steps((skill / "scripts/sweep.mjs").read_text())
+    for feature in manifest["features"]:
+        doc = feature.get("doc")
+        path = skill / "features" / doc if doc else None
+        if path is None or not path.is_file():
+            yield feature["name"], _result("-", "-", "fail", f"sin fichero de feature ({doc or 'falta doc en features.json'})")
+            continue
+        for result in check_feature(path.read_text(), repo, steps):
+            yield feature["name"], result
+
+
+def main():
+    failing = 0
+    for name, r in check_all():
+        if r["status"] == "fail":
+            failing += 1
+            print(f"FAIL {name} :: {r['capability']} × {r['entry']} — {r['detail']}")
+    print(f"parity: {failing} failing cells")
+    return 1 if failing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
