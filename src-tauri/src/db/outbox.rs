@@ -394,6 +394,19 @@ mod tests {
     }
 
     #[test]
+    fn only_a_row_being_sent_can_be_marked_sent_or_failed() {
+        let db = db_with(&[
+            ("waiting", OutboxOrigin::Scheduled, NOW + 60),
+            ("cancelled", OutboxOrigin::Undo, NOW),
+        ]);
+        db.cancel_outbox("cancelled", NOW).unwrap();
+        assert!(!db.mark_outbox_sent("waiting", NOW).unwrap());
+        assert!(!db.mark_outbox_failed("cancelled", "too late", NOW).unwrap());
+        assert_eq!(db.outbox_status("waiting").unwrap(), OutboxStatus::Scheduled);
+        assert_eq!(db.outbox_status("cancelled").unwrap(), OutboxStatus::Cancelled);
+    }
+
+    #[test]
     fn a_row_left_sending_by_a_crash_fails_and_is_never_claimed_again() {
         let db = db_with(&[
             ("crashed", OutboxOrigin::Undo, NOW),
