@@ -6,6 +6,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { privacyPolicyUrl } from '@/lib/privacyPolicy';
 import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { TrustedSendersSection } from './TrustedSendersSection';
 
 // ── Small reusable toggle row ─────────────────────────────────────────────────
@@ -60,6 +61,7 @@ function PasswordDialog({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');

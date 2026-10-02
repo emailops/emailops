@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 
 /**
  * Generic dark-themed modal scaffold used across settings/dialogs/confirms.
@@ -82,6 +83,7 @@ export function Modal({
   zIndex = 50,
   nonBlocking = false,
 }: ModalProps) {
+  useOverlay(open);
   const { t } = useTranslation(['common']);
   // Escape-to-close. Bound to window so focused inputs don't swallow it.
   useEffect(() => {

@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { EmailPreviewById } from '@/components/shared/EmailPreviewById';
+import { useOverlay } from '@/stores/overlayStore';
 import type { LensRow } from '@/types';
 
 interface LensRowDrawerProps {
@@ -14,6 +15,7 @@ interface LensRowDrawerProps {
 }
 
 export function LensRowDrawer({ row, onClose }: LensRowDrawerProps) {
+  useOverlay(row !== null);
   const { t } = useTranslation(['common', 'lenses']);
   // Esc closes the drawer.
   useEffect(() => {

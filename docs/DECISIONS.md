@@ -3021,3 +3021,24 @@ and labels include archived mail; only the Inbox excludes it.
 pull custom IMAP folders into them, a separate product change; the filters' covering
 indexes (V008) serve an `IN` list either way. *Leaving archive out of the filters*: the
 archived message of a thread would vanish from a sender filter the moment it was archived.
+
+## 2026-10-02 — Overlays register themselves; no conversation shortcut runs behind one
+
+**Decision:** Every dialog, drawer, lightbox, menu and popover calls `useOverlay(open)`
+(`src/stores/overlayStore.ts`) while it is on screen. The app-wide key handler
+(`useGlobalShortcuts`) treats a non-zero count, or any `[aria-modal="true"]` element, as
+"an overlay owns the keyboard" and runs no shortcut at all; each overlay handles its own
+Escape (the row ⋮ menu and the snooze picker gained one). The old `.fixed.inset-0` class
+sniffing is gone. `overlayStore.test.ts` fails when a component draws a `fixed inset-0`
+layer without registering, and `useGlobalShortcuts.overlays.test.tsx` presses `#`,
+`Delete`, `e`, `s`, `b` and `j` with each real overlay open. Backspace is not bound on any
+platform and stays that way.
+**Context:** A contributor PR's Delete key trashed the conversation behind dialogs because
+its "is a dialog open?" check only matched elements with a role. Probing ours with the real
+overlays showed the same class of hole: the portalled row ⋮ menu and the snooze picker
+popover (neither is `fixed inset-0`) let `#`, `Delete`, `e`, `s`, `b` and `j` act on the
+open conversation or the cursor row.
+**Rejected:** Adding more selectors to the DOM query — it only knows the overlays someone
+remembered, and a styling change silently disables it. Stopping propagation inside each
+overlay — every overlay would need it on every key, and a portalled menu is outside its
+owner's DOM subtree.

@@ -98,6 +98,7 @@ import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useOutboxStore } from '@/stores/outboxStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { useReminderStore } from '@/stores/reminderStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
@@ -253,6 +254,7 @@ function AppInner() {
   const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
   const [isAddAccountPickerOpen, setIsAddAccountPickerOpen] = useState(false);
+  useOverlay(isAddAccountPickerOpen);
   const [isAddImapAccountOpen, setIsAddImapAccountOpen] = useState(false);
   const [accountSettingsAccountId, setAccountSettingsAccountId] = useState<string | null>(null);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);

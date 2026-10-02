@@ -14,6 +14,7 @@ import { bulkAvailability } from '@/lib/bulkActions';
 import { planShortcut, type ShortcutEffect, type ThreadShortcutAction } from '@/lib/shortcutPlan';
 import { createShortcutMatcher } from '@/lib/shortcuts';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
+import { anyOverlayOpen, useOverlayStore } from '@/stores/overlayStore';
 import { selectedThreads, useSelectionStore } from '@/stores/selectionStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import type { Email, InboxLayout } from '@/types';
@@ -71,9 +72,12 @@ function isActivatingControl(event: KeyboardEvent): boolean {
   return target instanceof HTMLElement && target.closest('button, a[href], [role="button"], summary') !== null;
 }
 
-/** Any modal on screen: they all handle their own keys (Escape, Enter). */
-function isModalOpen(): boolean {
-  return document.querySelector('[aria-modal="true"], .fixed.inset-0') !== null;
+/** An overlay is on screen: it owns the keyboard (Escape, Enter, typing), so
+ *  no conversation shortcut may run. Overlays say so explicitly through
+ *  `useOverlay` (src/stores/overlayStore.ts); `aria-modal` still counts for any
+ *  dialog that declares itself the standard way. */
+export function isOverlayOpen(): boolean {
+  return anyOverlayOpen(useOverlayStore.getState()) || document.querySelector('[aria-modal="true"]') !== null;
 }
 
 function runThreadAction(action: ThreadShortcutAction, rows: Email[], fromSelection: boolean) {
@@ -195,7 +199,7 @@ export function useGlobalShortcuts(host: GlobalShortcutHost, options: GlobalShor
       if (event.defaultPrevented) return;
       if (!useShortcutStore.getState().enabled) return;
       const editable = isEditableTarget(event.target);
-      const id = matcher.match(event, { platform, editable, modalOpen: isModalOpen(), scope: 'global' });
+      const id = matcher.match(event, { platform, editable, modalOpen: isOverlayOpen(), scope: 'global' });
       if (id === null || isActivatingControl(event)) return;
       const current = hostRef.current;
       const { listEmails, cursorId } = useShortcutStore.getState();

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
 
 type SyncPreset = '7d' | '30d' | '90d' | '365d' | 'all' | 'custom';
@@ -80,6 +81,7 @@ export function AccountSettingsDialog({
   onToggleEnabled,
   onDelete,
 }: AccountSettingsDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['modal']);
   const isGmail = account.provider === 'gmail';
   const isImap = account.provider === 'imap';

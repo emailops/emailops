@@ -31,6 +31,7 @@ import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
 
 export interface ComposeMaximizeState {
@@ -88,6 +89,7 @@ export function ComposeModal({
   onClose,
   onMaximize,
 }: ComposeModalProps) {
+  useOverlay();
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());

@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
+import { useOverlay } from '@/stores/overlayStore';
 
 export interface EmailHtmlFrameProps {
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
@@ -304,6 +305,7 @@ export function EmailHtmlFrame({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
+  useOverlay(confirmUrl !== null);
 
   const srcDoc = useMemo(() => buildSrcDoc(html, allowRemoteContent), [html, allowRemoteContent]);
 

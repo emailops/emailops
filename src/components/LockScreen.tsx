@@ -2,12 +2,14 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface LockScreenProps {
   onUnlock: () => void;
 }
 
 export function LockScreen({ onUnlock }: LockScreenProps) {
+  useOverlay();
   const { t } = useTranslation(['auth']);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

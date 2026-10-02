@@ -10,6 +10,7 @@ import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
 import { isSnoozed, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { useSenderStore } from '@/stores/senderStore';
 import type { Email } from '@/types';
 
@@ -98,6 +99,7 @@ export function EmailActionsMenu({
   const openSenderDialog = useSenderStore((s) => s.openDialog);
   const { moveTargets } = useMoveTargets(email);
   const [menuOpen, setMenuOpen] = useState(false);
+  useOverlay(menuOpen);
   /** 'move' shows the folder-picker page of the menu, 'snooze' the snooze
    *  times. */
   const [menuView, setMenuView] = useState<'main' | 'move' | 'snooze'>('main');
@@ -117,8 +119,17 @@ export function EmailActionsMenu({
         setMenuOpen(false);
       }
     };
+    // The global shortcuts stand down while the menu is open (useOverlay), so
+    // Escape has to be handled here.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [menuOpen]);
 
   // The menu first renders below the button (estimate set on click), then —

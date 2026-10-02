@@ -4,6 +4,7 @@ import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
 import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
@@ -98,6 +99,7 @@ export function SettingsDialog({
   onChangeLensesEnabled,
   onClose,
 }: SettingsDialogProps) {
+  useOverlay();
   // Both AI Tasks and AI Memory are always visible in Settings now: each tab
   // owns its experimental enable toggle in its own panel. The underlying
   // sidebar visibility flags (`tasksEnabled` / `memoriesEnabled`) are still

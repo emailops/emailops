@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 
 type SyncHistoryPreset = '7d' | '30d' | '90d' | '365d' | 'all' | 'custom';
 
@@ -107,6 +108,7 @@ export function AddAccountModal({
   initialSyncFromTimestamp,
   warningMessage,
 }: AddAccountModalProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'modal']);
   const initialState = useMemo(() => stateFromInitialTimestamp(initialSyncFromTimestamp), [initialSyncFromTimestamp]);
   const [preset, setPreset] = useState<SyncHistoryPreset>(initialState.preset);

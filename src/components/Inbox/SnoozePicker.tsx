@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ClockIcon } from '@/components/common/MailIcons';
 import { useFormatters } from '@/hooks/useFormatters';
 import { parseCustomSnooze, snoozePresets, toDatetimeLocalValue, toUnixSeconds } from '@/lib/snooze';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface SnoozeOptionsProps {
   /** The chosen wake time, in unix seconds. */
@@ -130,6 +131,7 @@ export function SnoozeMenuButton({
 }: SnoozeMenuButtonProps) {
   const { t } = useTranslation(['inbox']);
   const [open, setOpen] = useState(false);
+  useOverlay(open);
   const ref = useRef<HTMLDivElement>(null);
   const seenSignal = useRef(openSignal);
   useEffect(() => {
@@ -142,8 +144,17 @@ export function SnoozeMenuButton({
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    // The global shortcuts stand down while the picker is open, so Escape
+    // has to be handled here.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [open]);
   return (
     <div ref={ref} className="relative">

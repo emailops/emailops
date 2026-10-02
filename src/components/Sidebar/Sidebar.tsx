@@ -16,6 +16,7 @@ import { useFolderStore } from '@/stores/folderStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
@@ -192,6 +193,7 @@ export function Sidebar({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
+  useOverlay(confirmDeleteFolder !== null);
   const [folderBusy, setFolderBusy] = useState(false);
   /** Folder id (or 'inbox') currently hovered by an email drag. */
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
