@@ -464,6 +464,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_send_can_be_scheduled_up_to_366_days_ahead() {
+        let year = 366 * 86_400;
+        assert_eq!(
+            plan_send_at(NOW, OutboxSchedule::At { send_at: NOW + year }).unwrap(),
+            (NOW + year, OutboxOrigin::Scheduled)
+        );
+        assert!(plan_send_at(
+            NOW,
+            OutboxSchedule::At {
+                send_at: NOW + year + 1
+            }
+        )
+        .is_err());
+    }
+
     // ── Fixtures ──
 
     struct FakeProviders(Arc<FakeEmailProvider>);
@@ -855,6 +871,27 @@ mod tests {
         let again = dispatch_due_outbox(&db, NOW + 60, &providers).await.unwrap();
         assert!(again.is_empty());
         assert_eq!(fake.sent().len(), 1, "never twice");
+    }
+
+    #[tokio::test]
+    async fn a_sent_row_is_kept_for_a_week_then_pruned_by_a_later_pass() {
+        let (db, fake) = setup();
+        let entry = queue(&db, new_message(), OutboxSchedule::Undo { delay_secs: 10 }).await;
+        let providers = FakeProviders(Arc::clone(&fake));
+        let sent_at = NOW + 10;
+        dispatch_due_outbox(&db, sent_at, &providers).await.unwrap();
+
+        dispatch_due_outbox(&db, sent_at + 6 * 86_400, &providers)
+            .await
+            .unwrap();
+        assert!(
+            db.get_outbox_entry(&entry.id).unwrap().is_some(),
+            "kept for the first week"
+        );
+        dispatch_due_outbox(&db, sent_at + 7 * 86_400 + 1, &providers)
+            .await
+            .unwrap();
+        assert!(db.get_outbox_entry(&entry.id).unwrap().is_none(), "pruned after a week");
     }
 
     #[tokio::test]
