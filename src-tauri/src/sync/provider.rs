@@ -2429,7 +2429,11 @@ mod tests {
         // silently pretend the push happened — callers gate on
         // `provider_supports_mailbox_writes` and keep the change local instead.
         let p = BareProvider;
-        for result in [p.set_read_state("m", true).await, p.trash_message("m", None).await] {
+        for result in [
+            p.set_read_state("m", true).await,
+            p.set_starred("m", true).await,
+            p.trash_message("m", None).await,
+        ] {
             match result {
                 Err(crate::models::error::AppError::InvalidInput(msg)) => {
                     assert!(msg.contains("not supported"), "unexpected message: {msg}");
@@ -2437,6 +2441,11 @@ mod tests {
                 other => panic!("expected InvalidInput, got {other:?}"),
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_provider_without_a_signature_api_has_no_signature_to_import() {
+        assert_eq!(BareProvider.get_signature("me@example.com").await.unwrap(), None);
     }
 
     #[test]
