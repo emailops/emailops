@@ -21,6 +21,8 @@ describe('ReplyCompose drafts', () => {
 """
 
 RUST = """
+pub fn save_draft() {}
+
 #[test]
 fn draft_keeps_its_thread() {}
 """
@@ -112,6 +114,17 @@ class ResolveTest(unittest.TestCase):
             self.assertTrue(cp.resolves("integration:reply_draft_sends_in_thread", root, self.steps))
             self.assertFalse(cp.resolves("integration:nope", root, self.steps))
 
+    def test_rust_reference_to_a_production_fn_does_not_resolve(self):
+        # Citing the function that implements a capability is not a test of it.
+        with Repo() as root:
+            self.assertFalse(cp.resolves("rust:src-tauri/src/db/drafts.rs::save_draft", root, self.steps))
+
+    def test_empty_fn_name_does_not_resolve(self):
+        with Repo() as root:
+            for ref in ("rust:src-tauri/src/db/drafts.rs", "rust:src-tauri/src/db/drafts.rs::", "integration:"):
+                with self.subTest(ref=ref):
+                    self.assertFalse(cp.resolves(ref, root, self.steps))
+
 
 class JudgeTest(unittest.TestCase):
     def test_each_cell_kind(self):
@@ -146,6 +159,12 @@ class CheckFeatureTest(unittest.TestCase):
         with Repo() as root:
             out = cp.check_feature(md(table, subs=("compose.draft", "compose.escape")), root, cp.sweep_steps(SWEEP))
         self.assertIn({"capability": "compose.escape", "entry": "-", "status": "fail", "detail": "sub-feature sin fila en ## Parity"}, out)
+
+    def test_header_only_table_fails(self):
+        # No rows and no sub-features would otherwise yield no record at all: a silent pass.
+        with Repo() as root:
+            out = cp.check_feature("# X\n\n## Parity\n\n| Capability | Modal |\n|---|---|\n", root, cp.sweep_steps(SWEEP))
+        self.assertEqual([r["detail"] for r in out], ["## Parity sin filas"])
 
     def test_missing_section_and_empty_table_fail_once(self):
         with Repo() as root:

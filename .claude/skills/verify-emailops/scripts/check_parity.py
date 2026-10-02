@@ -70,7 +70,9 @@ def sweep_steps(sweep_text):
 
 
 def _has_fn(path, fn):
-    return re.search(rf"\bfn {re.escape(fn)}\b", path.read_text(errors="replace")) is not None
+    # Only a test fn counts: `#[test]` / `#[tokio::test]`, other attributes allowed in between.
+    test_fn = rf"#\[(?:tokio::)?test[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub )?(?:async )?fn {re.escape(fn)}\b"
+    return bool(fn) and re.search(test_fn, path.read_text(errors="replace")) is not None
 
 
 def resolves(ref, repo, steps):
@@ -117,6 +119,8 @@ def check_feature(md, repo, steps):
     entries, rows = parsed
     if not entries:
         return [_result("-", "-", "fail", "## Parity sin tabla")]
+    if not rows:
+        return [_result("-", "-", "fail", "## Parity sin filas")]
     out = []
     for capability, cells in rows:
         for entry, cell in zip(entries, cells):
