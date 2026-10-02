@@ -1904,4 +1904,51 @@ mod tests {
         let ids: Vec<&str> = got.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["e1"]);
     }
+
+    /// Four inbox threads, newest first: t4, t3, t2, t1 (across two accounts,
+    /// so the unified inbox binds no account id and the placeholders start at 1).
+    fn four_threads_in_two_accounts(db: &Database) {
+        insert_account(db, "acc1", "a1@example.com");
+        insert_account(db, "acc2", "a2@example.com");
+        insert_email(db, "e1", "acc1", "t1", 100);
+        insert_email(db, "e2", "acc2", "t2", 200);
+        insert_email(db, "e3", "acc1", "t3", 300);
+        insert_email(db, "e4", "acc2", "t4", 400);
+    }
+
+    fn ids_of(emails: Vec<crate::models::Email>) -> Vec<String> {
+        emails.into_iter().map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn the_inbox_pages_by_keyset_cursor() {
+        let db = Database::new_for_testing().unwrap();
+        four_threads_in_two_accounts(&db);
+        let page2 = db
+            .get_emails(AccountScope::AllEnabled, 2, 0, Some((300, "e3")), None, None)
+            .unwrap();
+        assert_eq!(ids_of(page2), vec!["e2", "e1"], "the page after the cursor point");
+    }
+
+    #[test]
+    fn a_cursor_replaces_the_offset() {
+        let db = Database::new_for_testing().unwrap();
+        four_threads_in_two_accounts(&db);
+        let page = db
+            .get_emails(AccountScope::AllEnabled, 2, 1, Some((300, "e3")), None, None)
+            .unwrap();
+        assert_eq!(
+            ids_of(page),
+            vec!["e2", "e1"],
+            "the offset is ignored once a cursor is given"
+        );
+    }
+
+    #[test]
+    fn the_unified_inbox_pages_by_offset() {
+        let db = Database::new_for_testing().unwrap();
+        four_threads_in_two_accounts(&db);
+        let third = db.get_emails(AccountScope::AllEnabled, 1, 2, None, None, None).unwrap();
+        assert_eq!(ids_of(third), vec!["e2"]);
+    }
 }
