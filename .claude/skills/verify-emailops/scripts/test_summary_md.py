@@ -58,6 +58,20 @@ class SummaryTest(unittest.TestCase):
         self.assertNotIn("added", now_failing)
         self.assertIn("added", new_failing)
 
+    def test_parity_gaps_are_counted_per_feature(self):
+        records = [rec("paridad › compose.draft × Reply", "fail", feature="Redacción y borradores", typ="static"),
+                   rec("paridad › compose.escape × Reply", "fail", feature="Redacción y borradores", typ="static"),
+                   rec("paridad › chat.ask × Panel", "ok", feature="Chat", typ="static"),
+                   rec("tsc --noEmit", "fail", feature="Transversal", typ="static")]
+        section = summary_md.summarize(run(records), None).split("## Parity gaps (2)")[1].split("## Failing")[0]
+        self.assertIn("| Redacción y borradores | 2 |", section)
+        self.assertNotIn("Chat", section)
+        self.assertNotIn("tsc", section)
+
+    def test_parity_gaps_section_says_none_when_all_cells_pass(self):
+        md = summary_md.summarize(run([rec("paridad › chat.ask × Panel", "ok", feature="Chat", typ="static")]), None)
+        self.assertIn("## Parity gaps (0)", md)
+
     def test_without_a_previous_run_the_delta_says_so(self):
         md = summary_md.summarize(run([rec("a", "ok")]), None)
         self.assertIn("No previous full run", md)

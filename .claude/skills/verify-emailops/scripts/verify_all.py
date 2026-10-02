@@ -187,6 +187,12 @@ def layer_static():
         status = "ok" if rc == 0 else ("info" if sev == "info" else "fail")
         (LAYERS / f"static-{re.sub('[^a-z0-9]+', '-', name.lower())}.txt").write_text(text)
         add("Transversal", "static", name, status, "" if rc == 0 else tail, int((time.time() - t0) * 1000), desc=f"Comando: {cmd}", trace=tail if rc else "")
+    # Capability × entry point matrices (features/*.md, ## Parity): one record per cell.
+    import check_parity
+    for feature, r in check_parity.check_all(REPO, SKILL):
+        add(feature, "static", f"paridad › {r['capability']} × {r['entry']}", r["status"],
+            "" if r["status"] == "ok" else r["detail"],
+            desc=f"Matriz ## Parity de la feature: {r['detail']}")
 
 RUST_TEST = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)")
 def layer_rust():

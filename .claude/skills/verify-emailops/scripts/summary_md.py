@@ -11,6 +11,7 @@ Private runs (private data) are refused: their content must never reach git.
 import collections, datetime, json, pathlib, sys
 
 STATUSES = ("ok", "fail", "skip", "info")
+PARITY_PREFIX = "paridad › "
 
 
 def previous_run(run_dir):
@@ -94,6 +95,10 @@ def summarize(data, prev):
         for title, rs in (("Now passing", now_passing), ("Now failing", now_failing), ("New, failing", new_failing)):
             out += [f"### {title} ({len(rs)})", ""] + ([_line(r) for r in rs] or ["- none"]) + [""]
     failing = [r for r in records if r["status"] == "fail"]
+    parity = collections.Counter(r["feature"] for r in failing if r["name"].startswith(PARITY_PREFIX))
+    out += [f"## Parity gaps ({sum(parity.values())})", ""]
+    out += (["| feature | failing cells |", "|---|---|"] + [f"| {f} | {n} |" for f, n in parity.items()]) if parity else ["- none"]
+    out.append("")
     out += [f"## Failing ({len(failing)})", ""] + ([_line(r) for r in failing] or ["- none"]) + [""]
     return "\n".join(out)
 
