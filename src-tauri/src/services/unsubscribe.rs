@@ -732,6 +732,7 @@ mod parser_tests {
             "<mailto:a@b@c.example>",
             "<mailto:someone@localhost>",
             "<https://user:pw@news.example.org/leave>",
+            "<https://user@news.example.org/leave>",
         ] {
             assert_eq!(parse(header, None), None, "{header:?}");
         }
@@ -748,6 +749,56 @@ mod parser_tests {
         assert_eq!(parse(&long_subject, None), None);
         let long_body = format!("<mailto:a@b.example?body={}>", "x".repeat(MAX_MAILTO_BODY + 1));
         assert_eq!(parse(&long_body, None), None);
+    }
+
+    #[test]
+    fn values_at_exactly_the_length_caps_are_accepted() {
+        let mut header = "<mailto:a@b.example>".to_string();
+        header.push_str(&" ".repeat(MAX_HEADER_LEN - header.len()));
+        assert!(matches!(parse(&header, None), Some(UnsubscribeMethod::Mailto { .. })));
+
+        let prefix = "https://news.example.org/";
+        let uri = format!("{prefix}{}", "a".repeat(MAX_URI_LEN - prefix.len()));
+        assert!(matches!(
+            parse(&format!("<{uri}>"), None),
+            Some(UnsubscribeMethod::Link { .. })
+        ));
+
+        let subject = "x".repeat(MAX_MAILTO_SUBJECT);
+        let m = parse(&format!("<mailto:a@b.example?subject={subject}>"), None);
+        assert!(
+            matches!(&m, Some(UnsubscribeMethod::Mailto { subject: Some(s), .. }) if s.len() == MAX_MAILTO_SUBJECT),
+            "{m:?}"
+        );
+    }
+
+    #[test]
+    fn the_first_mailto_wins() {
+        let m = parse(
+            "<mailto:first@news.example.org>, <mailto:second@news.example.org>",
+            None,
+        );
+        assert!(
+            matches!(&m, Some(UnsubscribeMethod::Mailto { to, .. }) if to == "first@news.example.org"),
+            "{m:?}"
+        );
+    }
+
+    #[test]
+    fn a_mailto_address_is_capped_at_254_bytes() {
+        let domain = "@news.example.org";
+        let at_cap = format!("{}{domain}", "a".repeat(254 - domain.len()));
+        assert!(parse(&format!("<mailto:{at_cap}>"), None).is_some(), "254 bytes");
+        let over = format!("a{at_cap}");
+        assert_eq!(parse(&format!("<mailto:{over}>"), None), None, "255 bytes");
+    }
+
+    #[test]
+    fn a_mailto_address_with_a_space_separator_or_control_is_refused() {
+        for addr in ["a%20b", "a%2Cb", "a%3Bb", "a%22b", "a%28b", "a%3Eb", "a%01b"] {
+            let header = format!("<mailto:{addr}@news.example.org>");
+            assert_eq!(parse(&header, None), None, "{addr}");
+        }
     }
 
     #[test]
