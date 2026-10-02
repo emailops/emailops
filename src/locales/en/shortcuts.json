@@ -41,5 +41,6 @@
     "search": "Search mail",
     "searchPalette": "Open search",
     "help": "Show keyboard shortcuts"
-  }
+  },
+  "withKeys": "{{label}} ({{keys}})"
 }

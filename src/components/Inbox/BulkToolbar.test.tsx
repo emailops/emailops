@@ -9,6 +9,7 @@ import type { Email } from '@/types';
 vi.mock('@/lib/api', () => ({
   applyThreadAction: vi.fn(async () => ({ failed: [] })),
   moveEmails: vi.fn(async () => ({ failed: [] })),
+  currentPlatform: () => 'macos',
 }));
 
 import { useAccountStore } from '@/stores/accountStore';
@@ -186,5 +187,25 @@ describe('BulkToolbar', () => {
     render([row('a')]);
     expect(q('snooze-preset-tomorrow')).not.toBeNull();
     expect(useShortcutStore.getState().bulkSnoozeRequested).toBe(false);
+  });
+});
+
+describe('BulkToolbar shortcut tooltips', () => {
+  it('names each key from the registry, and none when shortcuts are off', async () => {
+    const { initI18n } = await import('@/i18n');
+    await initI18n('en');
+    useShortcutStore.setState({ enabled: true });
+    act(() => useSelectionStore.getState().toggle('a'));
+    const rows = [row('a', { isRead: false })];
+    act(() => root.render(<BulkToolbar emails={rows} />));
+    const title = (id: string) => container.querySelector(`[data-testid="${id}"]`)?.getAttribute('title');
+    expect(title('bulk-archive')).toBe('Archive (E)');
+    expect(title('bulk-delete')).toBe('Delete (#)');
+    expect(title('bulk-mark-read')).toBe('Mark as read (Shift+I)');
+    expect(title('bulk-star')).toBe('Star (S)');
+    expect(title('bulk-snooze')).toBe('Snooze (B)');
+    act(() => useShortcutStore.setState({ enabled: false }));
+    expect(title('bulk-archive')).toBe('Archive');
+    expect(title('bulk-snooze')).toBe('Snooze');
   });
 });

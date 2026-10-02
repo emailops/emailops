@@ -8,6 +8,8 @@ import {
   SEQUENCE_TIMEOUT_MS,
   SHORTCUTS,
   type ShortcutId,
+  shortcutHint,
+  shortcutHintKeys,
   shortcutKeyLabels,
 } from './shortcuts';
 
@@ -261,5 +263,41 @@ describe('isSendShortcut', () => {
     expect(isSendShortcut(key('Enter', { ctrlKey: true }), 'macos')).toBe(false);
     expect(isSendShortcut(key('Enter'), 'macos')).toBe(false);
     expect(isSendShortcut(key('Enter', { metaKey: true, isComposing: true }), 'macos')).toBe(false);
+  });
+});
+
+describe('toolbar shortcut hints', () => {
+  it.each([
+    ['thread.archive', 'E'],
+    ['thread.delete', '#'],
+    ['thread.star', 'S'],
+    ['thread.snooze', 'B'],
+    ['thread.markUnread', 'Shift+U'],
+    ['thread.markRead', 'Shift+I'],
+    ['compose.reply', 'R'],
+    ['compose.replyAll', 'A'],
+    ['compose.forward', 'F'],
+  ] as [ShortcutId, string][])('%s reads %s, from the registry', (id, keys) => {
+    expect(shortcutHintKeys(id, 'macos')).toBe(keys);
+  });
+
+  it('follows the registry when a binding changes', () => {
+    const archive = SHORTCUTS.find((s) => s.id === 'thread.archive');
+    expect(shortcutHintKeys('thread.archive', 'linux')).toBe(archive?.keys[0].toUpperCase());
+  });
+
+  it('formats a modifier binding for the platform', () => {
+    expect(shortcutHintKeys('app.searchPalette', 'macos')).toBe('⌘K');
+    expect(shortcutHintKeys('app.searchPalette', 'windows')).toBe('Ctrl+K');
+  });
+
+  const format = (label: string, keys: string) => `${label} [${keys}]`;
+
+  it('adds the keys to the label while shortcuts are on', () => {
+    expect(shortcutHint('Archive', 'thread.archive', { enabled: true, platform: 'macos', format })).toBe('Archive [E]');
+  });
+
+  it('leaves the label alone while shortcuts are off', () => {
+    expect(shortcutHint('Archive', 'thread.archive', { enabled: false, platform: 'macos', format })).toBe('Archive');
   });
 });

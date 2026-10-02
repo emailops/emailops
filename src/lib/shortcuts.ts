@@ -289,6 +289,35 @@ export function shortcutById(id: ShortcutId): ShortcutDef | undefined {
   return SHORTCUTS.find((s) => s.id === id);
 }
 
+/**
+ * A shortcut's first binding as a compact tooltip label: `E`, `#`, `Shift+U`,
+ * `⌘K` / `Ctrl+K`, `G I`. Read from `SHORTCUTS`, so a tooltip cannot name a
+ * key the handler does not bind.
+ */
+export function shortcutHintKeys(id: ShortcutId, platform: string): string | null {
+  const shortcut = shortcutById(id);
+  if (!shortcut) return null;
+  const [first] = shortcutKeyLabels(shortcut, platform);
+  if (!first) return null;
+  return first.map((k) => (k.length === 1 ? k.toUpperCase() : k)).join(' ');
+}
+
+export interface ShortcutHintOptions {
+  /** Keyboard shortcuts are on (Settings → Appearance). */
+  enabled: boolean;
+  platform: string;
+  /** The locale's "label (keys)" pattern. */
+  format: (label: string, keys: string) => string;
+}
+
+/** Pure: a button label with its shortcut, or the bare label when shortcuts
+ *  are off (a hint for a key that does nothing would mislead). */
+export function shortcutHint(label: string, id: ShortcutId, options: ShortcutHintOptions): string {
+  if (!options.enabled) return label;
+  const keys = shortcutHintKeys(id, options.platform);
+  return keys ? options.format(label, keys) : label;
+}
+
 /** The composers' send key (Cmd+Enter on macOS, Ctrl+Enter elsewhere). */
 export function isSendShortcut(event: KeyEventLike, platform: string): boolean {
   return matchKey(event, { platform, editable: true, modalOpen: false, scope: 'composer' }, null).id === 'compose.send';

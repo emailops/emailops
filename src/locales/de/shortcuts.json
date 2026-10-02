@@ -41,5 +41,6 @@
     "search": "E-Mails durchsuchen",
     "searchPalette": "Suche öffnen",
     "help": "Tastenkombinationen anzeigen"
-  }
+  },
+  "withKeys": "{{label}} ({{keys}})"
 }

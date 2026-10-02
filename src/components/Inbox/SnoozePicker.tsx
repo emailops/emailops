@@ -119,6 +119,8 @@ interface SnoozeMenuButtonProps extends SnoozeOptionsProps {
   align?: 'left' | 'right';
   /** Opens the panel each time it changes after mount (keyboard `b`). */
   openSignal?: number;
+  /** Tooltip; defaults to "Snooze". The toolbars add the `b` key to it. */
+  title?: string;
 }
 
 /** A clock button opening the snooze choices in a dropdown. */
@@ -128,6 +130,7 @@ export function SnoozeMenuButton({
   className = 'p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors',
   align = 'left',
   openSignal = 0,
+  title,
 }: SnoozeMenuButtonProps) {
   const { t } = useTranslation(['inbox']);
   const [open, setOpen] = useState(false);
@@ -163,7 +166,7 @@ export function SnoozeMenuButton({
         data-testid={testId}
         onClick={() => setOpen(!open)}
         className={className}
-        title={t('inbox:snooze.button')}
+        title={title ?? t('inbox:snooze.button')}
         aria-label={t('inbox:snooze.button')}
         aria-expanded={open}
       >

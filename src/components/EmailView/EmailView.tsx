@@ -5,6 +5,7 @@ import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common
 import { TagChips } from '@/components/common/TagChips';
 import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import { useFormatters } from '@/hooks/useFormatters';
+import { useShortcutHint } from '@/hooks/useShortcutHint';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
@@ -110,6 +111,7 @@ export function EmailView({
 }: EmailViewProps) {
   const { t } = useTranslation(['inbox', 'compose']);
   const fmt = useFormatters();
+  const hint = useShortcutHint();
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
   const [threadExpanded, setThreadExpanded] = useState(false);
   const [lightboxMeta, setLightboxMeta] = useState<EmailAttachmentMeta | null>(null);
@@ -570,19 +572,21 @@ export function EmailView({
             <button
               onClick={() => openReply('reply', true)}
               className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
+              title={hint(t('compose:reply'), 'compose.reply')}
             >
-              Reply
+              {t('compose:reply')}
             </button>
             <button
               onClick={() => openReply('reply-all', true)}
               className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
+              title={hint(t('compose:replyAll'), 'compose.replyAll')}
             >
               {t('inbox:emailView.replyAll')}
             </button>
             <button
               onClick={() => void openForward()}
               className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 text-gray-700 text-sm font-medium rounded border border-gray-300 hover:bg-gray-200 transition-colors"
-              title={t('compose:forwardTitle')}
+              title={hint(t('compose:forward'), 'compose.forward')}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M4 5l7 7-7 7" />
@@ -684,7 +688,7 @@ export function EmailView({
             <button
               onClick={deleteThread}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-              title={t('inbox:emailView.deleteThread')}
+              title={hint(t('inbox:emailView.deleteThread'), 'thread.delete')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -990,6 +994,7 @@ function ThreadToolbarActions({
   snoozeSignal,
 }: ThreadToolbarActionsProps) {
   const { t } = useTranslation(['inbox']);
+  const hint = useShortcutHint();
   const starred = isThreadStarred(threadEmails);
   const unread = isThreadUnread(threadEmails);
   const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
@@ -998,7 +1003,11 @@ function ThreadToolbarActions({
   return (
     <>
       {inInbox && (
-        <button onClick={onArchive} className={buttonClass} title={t('inbox:emailView.archive')}>
+        <button
+          onClick={onArchive}
+          className={buttonClass}
+          title={hint(t('inbox:emailView.archive'), 'thread.archive')}
+        >
           <ArchiveIcon className="w-4 h-4" />
         </button>
       )}
@@ -1025,13 +1034,18 @@ function ThreadToolbarActions({
             className={buttonClass}
             align="right"
             openSignal={snoozeSignal}
+            title={hint(t('inbox:snooze.button'), 'thread.snooze')}
           />
         )
       )}
       <button
         onClick={unread ? onMarkRead : onMarkUnread}
         className={buttonClass}
-        title={unread ? t('inbox:emailView.markAsRead') : t('inbox:emailView.markAsUnread')}
+        title={
+          unread
+            ? hint(t('inbox:emailView.markAsRead'), 'thread.markRead')
+            : hint(t('inbox:emailView.markAsUnread'), 'thread.markUnread')
+        }
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path
@@ -1047,7 +1061,7 @@ function ThreadToolbarActions({
         className={`p-1.5 rounded transition-colors hover:bg-gray-100 ${
           starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-400 hover:text-gray-600'
         }`}
-        title={starred ? t('inbox:emailView.unstar') : t('inbox:emailView.star')}
+        title={hint(starred ? t('inbox:emailView.unstar') : t('inbox:emailView.star'), 'thread.star')}
         aria-pressed={starred}
       >
         <StarIcon filled={starred} className="w-4 h-4" />

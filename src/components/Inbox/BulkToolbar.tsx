@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
 import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
+import { useShortcutHint } from '@/hooks/useShortcutHint';
 import type { MailboxView } from '@/lib/api';
 import { bulkAvailability, bulkMoveTargets } from '@/lib/bulkActions';
 import { folderLabel } from '@/lib/folderDisplay';
@@ -25,6 +26,7 @@ interface BulkToolbarProps {
  */
 export function BulkToolbar({ emails }: BulkToolbarProps) {
   const { t } = useTranslation(['inbox']);
+  const hint = useShortcutHint();
   const ids = useSelectionStore((s) => s.ids);
   const selectAll = useSelectionStore((s) => s.selectAll);
   const clear = useSelectionStore((s) => s.clear);
@@ -86,6 +88,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <ToolbarButton
           testId="bulk-archive"
           label={t('inbox:bulk.archive')}
+          hint={hint(t('inbox:bulk.archive'), 'thread.archive')}
           onClick={leaving(() => archiveThreads(threads))}
         >
           <ArchiveIcon className="w-4 h-4" />
@@ -95,6 +98,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <SnoozeMenuButton
           testId="bulk-snooze"
           openSignal={snoozeSignal}
+          title={hint(t('inbox:snooze.button'), 'thread.snooze')}
           className="p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100 hover:text-gray-800"
           onPick={(until) => {
             const run = () => snoozeThreads(threads, until);
@@ -119,6 +123,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
       <ToolbarButton
         testId="bulk-delete"
         label={t('inbox:bulk.delete')}
+        hint={hint(t('inbox:bulk.delete'), 'thread.delete')}
         onClick={leaving(() => deleteThreads(threads))}
         danger
       >
@@ -128,6 +133,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <ToolbarButton
           testId="bulk-mark-read"
           label={t('inbox:bulk.markRead')}
+          hint={hint(t('inbox:bulk.markRead'), 'thread.markRead')}
           onClick={() => void setThreadsRead(threads, true)}
         >
           <EnvelopeOpenIcon />
@@ -137,6 +143,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <ToolbarButton
           testId="bulk-mark-unread"
           label={t('inbox:bulk.markUnread')}
+          hint={hint(t('inbox:bulk.markUnread'), 'thread.markUnread')}
           onClick={() => void setThreadsRead(threads, false)}
         >
           <EnvelopeIcon />
@@ -146,6 +153,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <ToolbarButton
           testId="bulk-star"
           label={t('inbox:bulk.star')}
+          hint={hint(t('inbox:bulk.star'), 'thread.star')}
           onClick={() => void setThreadsStarred(threads, true)}
         >
           <StarIcon filled={false} className="w-4 h-4" />
@@ -155,6 +163,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
         <ToolbarButton
           testId="bulk-unstar"
           label={t('inbox:bulk.unstar')}
+          hint={hint(t('inbox:bulk.unstar'), 'thread.star')}
           onClick={() => void setThreadsStarred(threads, false)}
         >
           <StarIcon filled className="w-4 h-4 text-amber-400" />
@@ -223,12 +232,15 @@ function SelectAllCheckbox({
 function ToolbarButton({
   testId,
   label,
+  hint,
   onClick,
   danger = false,
   children,
 }: {
   testId: string;
   label: string;
+  /** Tooltip: the label plus its shortcut key. */
+  hint?: string;
   onClick: () => void;
   danger?: boolean;
   children: ReactNode;
@@ -238,7 +250,7 @@ function ToolbarButton({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      title={label}
+      title={hint ?? label}
       aria-label={label}
       className={`p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100 ${
         danger ? 'hover:text-red-600 hover:bg-red-50' : 'hover:text-gray-800'

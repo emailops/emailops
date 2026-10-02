@@ -41,5 +41,6 @@
     "search": "Rechercher dans les e-mails",
     "searchPalette": "Ouvrir la recherche",
     "help": "Afficher les raccourcis clavier"
-  }
+  },
+  "withKeys": "{{label}} ({{keys}})"
 }

@@ -41,5 +41,6 @@
     "search": "Buscar correo",
     "searchPalette": "Abrir la búsqueda",
     "help": "Mostrar los atajos de teclado"
-  }
+  },
+  "withKeys": "{{label}} ({{keys}})"
 }
