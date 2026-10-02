@@ -71,24 +71,26 @@ describe('snoozePresets', () => {
 });
 
 describe('parseCustomSnooze', () => {
-  const now = local(2026, 10, 7, 10, 0);
+  // Built inside each test: at collection time the zone is not pinned yet, so a
+  // Date made here would be read in the host's zone (UTC on CI).
+  const now = () => local(2026, 10, 7, 10, 0);
 
   it('reads a datetime-local value in local time when it is in the future', () => {
-    expect(parseCustomSnooze('2026-10-07T10:30', now)).toEqual(local(2026, 10, 7, 10, 30));
+    expect(parseCustomSnooze('2026-10-07T10:30', now())).toEqual(local(2026, 10, 7, 10, 30));
   });
 
   it('rejects the past, now, and malformed input', () => {
-    expect(parseCustomSnooze('2026-10-07T09:59', now)).toBeNull();
-    expect(parseCustomSnooze('2026-10-07T10:00', now)).toBeNull();
-    expect(parseCustomSnooze('', now)).toBeNull();
-    expect(parseCustomSnooze('tomorrow', now)).toBeNull();
+    expect(parseCustomSnooze('2026-10-07T09:59', now())).toBeNull();
+    expect(parseCustomSnooze('2026-10-07T10:00', now())).toBeNull();
+    expect(parseCustomSnooze('', now())).toBeNull();
+    expect(parseCustomSnooze('tomorrow', now())).toBeNull();
   });
 
   it('round-trips with toDatetimeLocalValue', () => {
     const at = local(2026, 1, 5, 7, 5);
     expect(toDatetimeLocalValue(at)).toBe('2026-01-05T07:05');
-    expect(parseCustomSnooze(toDatetimeLocalValue(at), now)).toBeNull();
-    expect(parseCustomSnooze(toDatetimeLocalValue(local(2027, 1, 5, 7, 5)), now)).toEqual(local(2027, 1, 5, 7, 5));
+    expect(parseCustomSnooze(toDatetimeLocalValue(at), now())).toBeNull();
+    expect(parseCustomSnooze(toDatetimeLocalValue(local(2027, 1, 5, 7, 5)), now())).toEqual(local(2027, 1, 5, 7, 5));
   });
 });
 
