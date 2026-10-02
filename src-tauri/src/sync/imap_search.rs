@@ -208,9 +208,23 @@ pub(crate) fn uid_copy<T: Read + Write>(
 /// the mailbox no longer holds is not an error in IMAP — the command succeeds
 /// and changes nothing.
 pub(crate) fn uid_store_seen<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, seen: bool) -> Result<()> {
-    let sign = if seen { '+' } else { '-' };
+    uid_store_flag(session, uid, "\\Seen", seen)
+}
+
+/// Set or clear `\Flagged` — the star — on one message, the same way as
+/// [`uid_store_seen`].
+pub(crate) fn uid_store_flagged<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uid: u32,
+    flagged: bool,
+) -> Result<()> {
+    uid_store_flag(session, uid, "\\Flagged", flagged)
+}
+
+fn uid_store_flag<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, flag: &str, on: bool) -> Result<()> {
+    let sign = if on { '+' } else { '-' };
     session
-        .run_command_and_check_ok(format!("UID STORE {uid} {sign}FLAGS.SILENT (\\Seen)"))
+        .run_command_and_check_ok(format!("UID STORE {uid} {sign}FLAGS.SILENT ({flag})"))
         .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {e}")))
 }
 
@@ -256,6 +270,8 @@ pub(crate) struct FetchedMessage {
     pub internal_date: Option<i64>,
     /// Whether the server reports `\Seen` — the message's read state.
     pub seen: bool,
+    /// Whether the server reports `\Flagged` — the message's star.
+    pub flagged: bool,
 }
 
 impl FetchedMessage {
@@ -264,6 +280,7 @@ impl FetchedMessage {
             raw: fetch.body()?.to_vec(),
             internal_date: fetch.internal_date().map(|d| d.timestamp()),
             seen: fetch.flags().contains(&imap::types::Flag::Seen),
+            flagged: fetch.flags().contains(&imap::types::Flag::Flagged),
         })
     }
 }
@@ -358,7 +375,17 @@ pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
 /// well under the ~8 KB many servers cap a line at.
 const FLAGS_FETCH_CHUNK: usize = 200;
 
-/// Read the `\Seen` state of `uids` in the selected mailbox, keyed by UID.
+/// The system flags the state refresh reads for one message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MessageFlags {
+    /// `\Seen`: read.
+    pub seen: bool,
+    /// `\Flagged`: starred.
+    pub flagged: bool,
+}
+
+/// Read the `\Seen` / `\Flagged` state of `uids` in the selected mailbox,
+/// keyed by UID.
 ///
 /// A UID the mailbox no longer holds is simply absent from the result — that
 /// absence is the signal the caller is after (the message was deleted or moved
@@ -371,7 +398,7 @@ const FLAGS_FETCH_CHUNK: usize = 200;
 pub(crate) fn uid_fetch_flags<T: Read + Write>(
     session: &mut imap::Session<T>,
     uids: &[u32],
-) -> Result<std::collections::HashMap<u32, bool>> {
+) -> Result<std::collections::HashMap<u32, MessageFlags>> {
     let mut seen_by_uid = std::collections::HashMap::with_capacity(uids.len());
     for chunk in uids.chunks(FLAGS_FETCH_CHUNK) {
         let set = chunk.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -390,10 +417,10 @@ pub(crate) fn uid_fetch_flags<T: Read + Write>(
 }
 
 /// Scan the untagged lines of a `FETCH (UID FLAGS)` response for
-/// `(uid, has \Seen)` pairs. Lines that are not FETCH data, or that carry no
+/// `(uid, flags)` pairs. Lines that are not FETCH data, or that carry no
 /// UID or no FLAGS list, are skipped: without both there is nothing to say
 /// about a stored message.
-pub(crate) fn parse_flags_response(raw: &[u8]) -> Vec<(u32, bool)> {
+pub(crate) fn parse_flags_response(raw: &[u8]) -> Vec<(u32, MessageFlags)> {
     let text = String::from_utf8_lossy(raw);
     text.split("\r\n")
         .flat_map(|l| l.split('\n'))
@@ -407,8 +434,14 @@ pub(crate) fn parse_flags_response(raw: &[u8]) -> Vec<(u32, bool)> {
                 .and_then(|digits| digits.parse::<u32>().ok())?;
             let (_, after_flags) = split_once_ignore_ascii_case(attributes, "FLAGS (")?;
             let flags = after_flags.split(')').next()?;
-            let seen = flags.split_whitespace().any(|flag| flag.eq_ignore_ascii_case("\\Seen"));
-            Some((uid, seen))
+            let has = |name: &str| flags.split_whitespace().any(|flag| flag.eq_ignore_ascii_case(name));
+            Some((
+                uid,
+                MessageFlags {
+                    seen: has("\\Seen"),
+                    flagged: has("\\Flagged"),
+                },
+            ))
         })
         .collect()
 }
@@ -1112,24 +1145,64 @@ mod tests {
         assert!(err.contains("IMAP FETCH failed"), "got: {err}");
     }
 
+    fn flags(seen: bool, flagged: bool) -> MessageFlags {
+        MessageFlags { seen, flagged }
+    }
+
+    #[test]
+    fn starring_adds_the_flagged_flag_and_unstarring_removes_it() {
+        let (mut session, sent) = recorded_session_for("a2 OK Store completed.\r\na3 OK Store completed.\r\n");
+        assert!(uid_store_flagged(&mut session, 91, true).is_ok());
+        assert!(uid_store_flagged(&mut session, 91, false).is_ok());
+        let text = sent.text();
+        assert!(
+            text.contains("UID STORE 91 +FLAGS.SILENT (\\Flagged)\r\n"),
+            "sent: {text}"
+        );
+        assert!(
+            text.contains("UID STORE 91 -FLAGS.SILENT (\\Flagged)\r\n"),
+            "sent: {text}"
+        );
+    }
+
+    #[test]
+    fn a_fetched_body_reports_the_flagged_state() {
+        let response = "* 1 FETCH (UID 91 FLAGS (\\Flagged) BODY[] {5}\r\nhello)\r\n\
+                        a2 OK Fetch completed.\r\n";
+        let fetched = match uid_fetch_body_batch(&mut session_for(response), &[91]) {
+            Ok(fetched) => fetched,
+            Err(e) => panic!("batch fetch failed: {e}"),
+        };
+        let message = fetched.get(&91).expect("uid 91");
+        assert!(message.flagged);
+        assert!(!message.seen);
+    }
+
     #[test]
     fn flags_are_read_per_uid_in_either_attribute_order() {
         let raw = b"* 1 FETCH (UID 91 FLAGS (\\Seen \\Answered))\r\n\
                     * 2 FETCH (FLAGS () UID 92)\r\n\
                     * 3 FETCH (FLAGS (\\Flagged) UID 93)\r\n";
-        assert_eq!(parse_flags_response(raw), vec![(91, true), (92, false), (93, false)]);
+        assert_eq!(
+            parse_flags_response(raw),
+            vec![
+                (91, flags(true, false)),
+                (92, flags(false, false)),
+                (93, flags(false, true))
+            ]
+        );
     }
 
     #[test]
     fn flag_names_and_keywords_are_case_insensitive() {
-        let raw = b"* 1 fetch (uid 7 flags (\\SEEN))\r\n";
-        assert_eq!(parse_flags_response(raw), vec![(7, true)]);
+        let raw = b"* 1 fetch (uid 7 flags (\\SEEN \\flagged))\r\n";
+        assert_eq!(parse_flags_response(raw), vec![(7, flags(true, true))]);
     }
 
     #[test]
     fn a_keyword_that_merely_contains_seen_is_not_the_seen_flag() {
-        let raw = b"* 1 FETCH (UID 7 FLAGS (NotSeen $Seen-later))\r\n";
-        assert_eq!(parse_flags_response(raw), vec![(7, false)]);
+        let raw = b"* 1 FETCH (UID 7 FLAGS (NotSeen $Seen-later $Flagged-ish))\r\n";
+        assert_eq!(parse_flags_response(raw), vec![(7, flags(false, false))]);
     }
 
     #[test]
@@ -1158,8 +1231,8 @@ mod tests {
             "sent: {}",
             sent.text()
         );
-        assert_eq!(flags.get(&91), Some(&true));
-        assert_eq!(flags.get(&93), Some(&false));
+        assert_eq!(flags.get(&91).map(|f| f.seen), Some(true));
+        assert_eq!(flags.get(&93).map(|f| f.seen), Some(false));
         assert!(!flags.contains_key(&92));
     }
 
@@ -1173,7 +1246,7 @@ mod tests {
             Err(e) => panic!("flags fetch failed: {e}"),
         };
         assert_eq!(flags.len(), 1);
-        assert_eq!(flags.get(&91), Some(&false));
+        assert_eq!(flags.get(&91).map(|f| f.seen), Some(false));
     }
 
     #[test]

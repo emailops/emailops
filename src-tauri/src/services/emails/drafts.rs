@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::ai::provider::CompletionOptions;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::Email;
+use crate::models::{AccountSignature, Email};
 use crate::services::ai::AiService;
 use crate::services::i18n::Language;
 use crate::services::retrieval::{
@@ -44,6 +44,91 @@ Language: Match the language of the original email.
 {thread_context}
 {rag_context}
 {instructions}Write the reply (body only, no subject line, no signature):"#;
+
+/// What a draft is for. A forward follows the signature's "replies and
+/// forwards" option, so it plans as a reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftKind {
+    New,
+    Reply,
+}
+
+/// Who signs the draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignOff {
+    /// No signature applies: the prompt is exactly what it always was.
+    Unchanged,
+    /// The app adds the account's signature below the draft: the model must
+    /// not sign it again. `sender_name` is the account's display name, named
+    /// in the rule because small models ignore "the sender's name" in the
+    /// abstract and sign with the name the thread greets them by.
+    AppSignature { sender_name: String },
+}
+
+/// The per-draft rule for [`SignOff::AppSignature`]. Pure. Goes in the
+/// per-draft part of the prompt, never the cached prefix (it depends on the
+/// account).
+fn app_signature_rule(sender_name: &str) -> String {
+    let name = sender_name.trim();
+    let whose = if name.is_empty() {
+        "the sender's name".to_string()
+    } else {
+        format!("the sender's name (\"{name}\")")
+    };
+    format!(
+        "Sign-off: the app appends the sender's signature below your text automatically. End with \
+a closing line only (such as \"Best regards,\" in the email's language) and stop there: never \
+write {whose}, a title, contact details or a [Your name] placeholder after it.\n\n"
+    )
+}
+
+/// Decide who signs a draft. Pure: the app does when the sending account has
+/// a non-empty signature switched on for this kind of message.
+pub fn plan_sign_off(signature: Option<&AccountSignature>, kind: DraftKind, sender_name: &str) -> SignOff {
+    let Some(sig) = signature else {
+        return SignOff::Unchanged;
+    };
+    let enabled = match kind {
+        DraftKind::New => sig.use_for_new,
+        DraftKind::Reply => sig.use_for_replies,
+    };
+    if enabled && !sig.html.trim().is_empty() {
+        SignOff::AppSignature {
+            sender_name: sender_name.to_string(),
+        }
+    } else {
+        SignOff::Unchanged
+    }
+}
+
+/// The per-draft section that fills `{instructions}`: the user's instructions
+/// and, when the app signs, the sign-off rule. Pure. Empty (and so the prompt
+/// unchanged) with neither.
+fn per_draft_section(instructions: Option<&str>, sign_off: &SignOff) -> String {
+    let mut section = match instructions {
+        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
+        _ => String::new(),
+    };
+    if let SignOff::AppSignature { sender_name } = sign_off {
+        section.push_str(&app_signature_rule(sender_name));
+    }
+    section
+}
+
+/// The account's saved signature, or `None` when it has none. A read error
+/// is logged and treated as none: the draft is still written, as before.
+fn load_signature(db: &Database, account_id: &str) -> Option<AccountSignature> {
+    match db.get_account_signature(account_id) {
+        Ok(sig) => sig,
+        Err(e) => {
+            emit_log(
+                "warn",
+                &format!("signature unavailable ({e}); drafting without the sign-off rule"),
+            );
+            None
+        }
+    }
+}
 
 /// One past thread fed into the draft prompt as precedent. Returned to the
 /// frontend so the user can see *why* the draft looks the way it does and
@@ -103,7 +188,10 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_PROMPT_TEMPLATE.to_string());
 
-    let user_email = db.get_account(&email.account_id)?.map(|a| a.email).unwrap_or_default();
+    let (user_email, user_name) = db
+        .get_account(&email.account_id)?
+        .map(|a| (a.email, a.name))
+        .unwrap_or_default();
 
     emit_log(
         "info",
@@ -134,6 +222,11 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         build_style_context(&style_samples, &email.sender),
         build_rag_context(&sources, &user_email)
     );
+    let sign_off = plan_sign_off(
+        load_signature(db, &email.account_id).as_ref(),
+        DraftKind::Reply,
+        &user_name,
+    );
     let prompt = plan_reply_prompt(&ReplyPromptInput {
         template: &prompt_template,
         persona: &persona,
@@ -141,6 +234,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         thread: &thread_messages,
         rag_context: &rag_context,
         instructions,
+        sign_off: sign_off.clone(),
     });
 
     // ── Model call ───────────────────────────────────────────────────────
@@ -168,10 +262,11 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         "debug",
         "ai",
         format!(
-            "draft reply generated for '{}' (provider={}, model={}, thread={} msgs, sources={}, prompt={} chars, draft={} chars, {}ms)",
+            "draft reply generated for '{}' (provider={}, model={}, app_signature={}, thread={} msgs, sources={}, prompt={} chars, draft={} chars, {}ms)",
             truncate_utf8(&email.subject, 40),
             config.provider,
             config.model,
+            matches!(sign_off, SignOff::AppSignature { .. }),
             thread.len(),
             sources.len(),
             prompt.prefix.len() + prompt.suffix.len(),
@@ -283,10 +378,10 @@ pub async fn generate_new_draft(
         ),
     );
 
-    let instructions_section = match instructions {
-        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
-        _ => String::new(),
-    };
+    // The app signs when the account's signature is on for new messages.
+    let sender_name = db.get_account(account_id)?.map(|a| a.name).unwrap_or_default();
+    let sign_off = plan_sign_off(load_signature(db, account_id).as_ref(), DraftKind::New, &sender_name);
+    let instructions_section = per_draft_section(instructions, &sign_off);
 
     // Honor the user's explicit AI output language (ai_output_language_v2 →
     // ai_output_language → ui_language → English), same as chat / classify /
@@ -306,7 +401,6 @@ pub async fn generate_new_draft(
 
     emit_log("info", "calling model…");
     let ai = AiService::new(db.clone())?;
-    let _account = db.get_account(account_id)?;
     let start = std::time::Instant::now();
     let draft = ai
         .complete(
@@ -459,6 +553,7 @@ struct ReplyPromptInput<'a> {
     thread: &'a [ThreadMessage],
     rag_context: &'a str,
     instructions: Option<&'a str>,
+    sign_off: SignOff,
 }
 
 /// The reply prompt split for the prefix KV cache: `prefix` depends only on
@@ -492,10 +587,7 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .unwrap_or(template.len());
     let (prefix, suffix_template) = template.split_at(split);
 
-    let instructions_section = match input.instructions {
-        Some(i) if !i.trim().is_empty() => format!("Additional instructions: {}\n\n", i.trim()),
-        _ => String::new(),
-    };
+    let instructions_section = per_draft_section(input.instructions, &input.sign_off);
 
     let fixed_len = template.len() + input.rag_context.len() + instructions_section.len();
     let overhead = closing_instruction(input.thread.len(), "").len() + THREAD_HEADER_CHARS * input.thread.len();
@@ -504,10 +596,22 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .max(MIN_THREAD_CHARS);
     let thread_context = build_thread_context(input.thread, thread_budget);
 
-    let suffix = suffix_template
+    let mut suffix = suffix_template
         .replace("{thread_context}", &thread_context)
         .replace("{rag_context}", input.rag_context)
         .replace("{instructions}", &instructions_section);
+    // A custom template without `{instructions}` would drop the sign-off
+    // rule silently: append it, after the cached prefix. (Its user
+    // instructions keep their old behaviour, so an account without a
+    // signature gets exactly the prompt it had.)
+    if let SignOff::AppSignature { sender_name } = &input.sign_off {
+        if !suffix_template.contains("{instructions}") {
+            if !suffix.is_empty() && !suffix.ends_with('\n') {
+                suffix.push_str("\n\n");
+            }
+            suffix.push_str(&app_signature_rule(sender_name));
+        }
+    }
 
     ReplyPrompt {
         prefix: prefix.to_string(),
@@ -774,6 +878,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }
@@ -1088,14 +1193,189 @@ mod tests {
     }
 
     fn plan(thread: &[ThreadMessage], rag: &str, instructions: Option<&str>) -> ReplyPrompt {
+        plan_signed(thread, instructions, SignOff::Unchanged, DEFAULT_PROMPT_TEMPLATE, rag)
+    }
+
+    fn plan_signed(
+        thread: &[ThreadMessage],
+        instructions: Option<&str>,
+        sign_off: SignOff,
+        template: &str,
+        rag: &str,
+    ) -> ReplyPrompt {
         plan_reply_prompt(&ReplyPromptInput {
-            template: DEFAULT_PROMPT_TEMPLATE,
+            template,
             persona: "a consultant",
             style: "brief",
             thread,
             rag_context: rag,
             instructions,
+            sign_off,
         })
+    }
+
+    // ── plan_sign_off ─────────────────────────────────────────────────────
+
+    fn signed() -> SignOff {
+        SignOff::AppSignature {
+            sender_name: "Ana Example".to_string(),
+        }
+    }
+
+    fn rule() -> String {
+        app_signature_rule("Ana Example")
+    }
+
+    #[test]
+    fn app_signature_rule_names_the_sender_not_to_write() {
+        assert!(app_signature_rule("Ana Example").contains("(\"Ana Example\")"));
+    }
+
+    #[test]
+    fn app_signature_rule_says_to_stop_after_the_closing() {
+        assert!(app_signature_rule("Ana").contains("closing line only"));
+    }
+
+    #[test]
+    fn app_signature_rule_without_a_name_stays_generic() {
+        let r = app_signature_rule("  ");
+        assert!(r.contains("the sender's name") && !r.contains("(\""));
+    }
+
+    fn signature(html: &str, use_for_new: bool, use_for_replies: bool) -> AccountSignature {
+        AccountSignature {
+            account_id: "acc-1".to_string(),
+            html: html.to_string(),
+            use_for_new,
+            use_for_replies,
+            updated_at: Some(1),
+        }
+    }
+
+    #[test]
+    fn sign_off_is_left_to_the_app_when_the_signature_applies() {
+        let sig = signature("<p>Ana Example</p>", true, true);
+        assert_eq!(plan_sign_off(Some(&sig), DraftKind::Reply, "Ana Example"), signed());
+        assert_eq!(plan_sign_off(Some(&sig), DraftKind::New, "Ana Example"), signed());
+    }
+
+    #[test]
+    fn sign_off_is_unchanged_without_a_signature() {
+        assert_eq!(plan_sign_off(None, DraftKind::Reply, "Ana Example"), SignOff::Unchanged);
+        assert_eq!(plan_sign_off(None, DraftKind::New, "Ana Example"), SignOff::Unchanged);
+    }
+
+    #[test]
+    fn sign_off_is_unchanged_for_an_empty_signature() {
+        let sig = signature("  ", true, true);
+        assert_eq!(
+            plan_sign_off(Some(&sig), DraftKind::Reply, "Ana Example"),
+            SignOff::Unchanged
+        );
+    }
+
+    #[test]
+    fn sign_off_follows_the_option_for_the_draft_kind() {
+        let replies_only = signature("<p>Ana</p>", false, true);
+        assert_eq!(
+            plan_sign_off(Some(&replies_only), DraftKind::New, "Ana Example"),
+            SignOff::Unchanged
+        );
+        assert_eq!(
+            plan_sign_off(Some(&replies_only), DraftKind::Reply, "Ana Example"),
+            signed()
+        );
+        let new_only = signature("<p>Ana</p>", true, false);
+        assert_eq!(plan_sign_off(Some(&new_only), DraftKind::New, "Ana Example"), signed());
+        assert_eq!(
+            plan_sign_off(Some(&new_only), DraftKind::Reply, "Ana Example"),
+            SignOff::Unchanged
+        );
+    }
+
+    #[test]
+    fn per_draft_section_is_unchanged_without_a_signature() {
+        // Accounts without a signature keep exactly the prompt they had.
+        assert_eq!(per_draft_section(None, &SignOff::Unchanged), "");
+        assert_eq!(per_draft_section(Some("  "), &SignOff::Unchanged), "");
+        assert_eq!(
+            per_draft_section(Some(" say yes "), &SignOff::Unchanged),
+            "Additional instructions: say yes\n\n"
+        );
+    }
+
+    #[test]
+    fn per_draft_section_carries_the_sign_off_rule_with_a_signature() {
+        let section = per_draft_section(Some("say yes"), &signed());
+        assert!(section.starts_with("Additional instructions: say yes\n\n"));
+        assert!(section.contains(&rule()));
+        assert_eq!(per_draft_section(None, &signed()), rule());
+    }
+
+    #[test]
+    fn app_signature_rule_forbids_the_name_but_allows_a_closing() {
+        let rule = rule().to_lowercase();
+        assert!(rule.contains("closing"));
+        assert!(rule.contains("name"));
+        assert!(rule.contains("signature"));
+    }
+
+    #[test]
+    fn reply_prompt_cached_prefix_is_identical_with_and_without_a_signature() {
+        let thread = [msg("Alice", "can we meet?")];
+        let plain = plan_signed(&thread, None, SignOff::Unchanged, DEFAULT_PROMPT_TEMPLATE, "");
+        let signed = plan_signed(&thread, None, signed(), DEFAULT_PROMPT_TEMPLATE, "");
+        assert_eq!(plain.prefix.as_bytes(), signed.prefix.as_bytes());
+        assert!(!plain.suffix.contains(&rule()));
+        assert!(signed.suffix.contains(&rule()));
+        assert!(!signed.prefix.contains(&rule()));
+    }
+
+    #[test]
+    fn reply_prompt_puts_the_rule_before_the_closing_line() {
+        let p = plan_signed(
+            &[msg("Alice", "hi")],
+            Some("say yes"),
+            signed(),
+            DEFAULT_PROMPT_TEMPLATE,
+            "",
+        );
+        assert!(p.suffix.trim_end().ends_with("no signature):"));
+        let rule_at = p.suffix.find(&rule()).unwrap_or(usize::MAX);
+        assert!(rule_at < p.suffix.find("Write the reply").unwrap_or(0));
+    }
+
+    #[test]
+    fn reply_prompt_custom_template_without_instructions_still_gets_the_rule() {
+        let template = "You help {persona}.\n{thread_context}\nReply now:";
+        let p = plan_signed(&[msg("Alice", "hi")], None, signed(), template, "");
+        assert!(p.suffix.contains(&rule()));
+        assert!(!p.prefix.contains(&rule()));
+    }
+
+    #[test]
+    fn reply_prompt_custom_template_without_instructions_is_unchanged_without_a_signature() {
+        let template = "You help {persona}.\n{thread_context}\nReply now:";
+        let p = plan_signed(&[msg("Alice", "hi")], Some("say yes"), SignOff::Unchanged, template, "");
+        assert!(p.suffix.trim_end().ends_with("Reply now:"));
+    }
+
+    #[test]
+    fn new_draft_prompt_carries_the_rule_after_the_stable_head() {
+        let to = vec!["ana@example.com".to_string()];
+        let plain = build_new_draft_prompt(
+            "p",
+            "s",
+            Language::En,
+            &to,
+            "Hi",
+            &per_draft_section(None, &SignOff::Unchanged),
+        );
+        let signed = build_new_draft_prompt("p", "s", Language::En, &to, "Hi", &per_draft_section(None, &signed()));
+        assert!(!plain.contains(&rule()));
+        assert!(signed.contains(&rule()));
+        let head = &plain[..plain.find("Recipients:").unwrap_or(0)];
+        assert!(signed.starts_with(head) && !head.is_empty());
     }
 
     #[test]
@@ -1140,6 +1420,7 @@ mod tests {
             thread: &[msg("Alice", "hi")],
             rag_context: "",
             instructions: None,
+            sign_off: SignOff::Unchanged,
         });
         assert_eq!(format!("{}{}", p.prefix, p.suffix), "Just write something nice.");
     }

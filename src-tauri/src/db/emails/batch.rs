@@ -17,7 +17,22 @@ impl Database {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
         let now = chrono::Utc::now().timestamp();
+        // New mail un-snoozes its conversation. Only rows this batch stores
+        // for the first time count, and the check is skipped entirely while
+        // nothing is snoozed (the usual case, and every first sync).
+        let track_snoozes = super::snoozes::any_snooze(&tx)?;
+        let mut first_seen: Vec<&Email> = Vec::new();
         for email in emails {
+            if track_snoozes {
+                let stored: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM emails WHERE id = ?1)",
+                    params![email.id],
+                    |row| row.get(0),
+                )?;
+                if !stored {
+                    first_seen.push(email);
+                }
+            }
             let recipients_json = serde_json::to_string(&email.recipients)?;
             let cc_json = serde_json::to_string(&email.cc)?;
             let sender_domain = extract_sender_domain(&email.sender_email);
@@ -50,8 +65,8 @@ impl Database {
                 r#"INSERT INTO emails
                    (id, account_id, thread_id, message_id, subject, sender, sender_email,
                     sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
-                    references_header)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                    references_header, is_starred)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
                    ON CONFLICT(id) DO UPDATE SET
                      account_id = excluded.account_id,
                      thread_id = excluded.thread_id,
@@ -69,7 +84,11 @@ impl Database {
                      category = excluded.category,
                      mailbox = excluded.mailbox,
                      is_sent = excluded.is_sent,
-                     references_header = excluded.references_header"#,
+                     references_header = excluded.references_header,
+                     -- A star change still owed to the provider wins over
+                     -- the provider's older copy (V030).
+                     is_starred = CASE WHEN star_push_pending_since IS NULL
+                                       THEN excluded.is_starred ELSE is_starred END"#,
                 params![
                     email.id,
                     email.account_id,
@@ -90,6 +109,7 @@ impl Database {
                     is_sent_flag(email, mailbox) as i32,
                     now,
                     email.references,
+                    email.is_starred as i32,
                 ],
             )?;
             tx.execute(
@@ -111,7 +131,18 @@ impl Database {
                 params![email.id, email.subject, email.sender, body_text],
             )?;
         }
+        let released = super::snoozes::release_snoozes_for_new_mail(&tx, &first_seen)?;
         tx.commit()?;
+        if !released.is_empty() {
+            crate::services::logger::log(
+                "info",
+                "sync",
+                format!(
+                    "{} snoozed conversation(s) returned to the inbox: new mail arrived",
+                    released.len()
+                ),
+            );
+        }
         Ok(())
     }
 }

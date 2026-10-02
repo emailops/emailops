@@ -1,6 +1,6 @@
 ---
 title: 'Standardfunktionen'
-description: 'Der E-Mail-Client selbst: Konten, vereinter Posteingang, Kalender, Anhänge, Suche und Junk-Filterung.'
+description: 'Der E-Mail-Client selbst: Konten, vereinter Posteingang, Archiv, Zurückstellen, geplantes Senden, Signaturen, Kalender, Anhänge, Suche, Junk-Filterung, Benachrichtigungen und Tastenkombinationen.'
 weight: 30
 nav:
   unified-inbox: view/inbox
@@ -9,6 +9,9 @@ nav:
   junk-and-bulk-mail: settings/junk
   privacy-and-security-controls: settings/privacy
   interface: settings/appearance
+  undo-send-and-scheduled-send: settings/appearance
+  unsubscribe-and-block-sender: settings/junk
+  keyboard-shortcuts: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -46,6 +49,102 @@ direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-dro
 *Weitergeleitete Nachricht* mit Absender, Datum und Empfängern, dazu die ursprünglichen
 Anhänge (bis zu 20 MB insgesamt). Sie wird als neue Nachricht gesendet und landet daher nicht
 in bestehenden Unterhaltungen des Empfängers.
+
+## Konversationen organisieren {#organizing-conversations}
+
+<!-- claim:feat-organize-1 -->
+**Archivieren** nimmt eine Konversation aus dem Posteingang, ohne sie zu löschen, und **In den
+Posteingang verschieben** holt sie zurück. Beides, zusammen mit **Als ungelesen markieren** und
+**Mit Stern markieren**, findet sich in der Leseansicht und im Menü **Weitere Aktionen** (⋮) jeder
+Konversation; der Stern sitzt außerdem auf jeder Zeile der Liste. Die Änderung wird auch bei
+Ihrem E-Mail-Anbieter vorgenommen, sodass Gmail oder Outlook dasselbe zeigen.
+
+<!-- claim:feat-organize-2 -->
+**Mit Stern** in der Seitenleiste listet Ihre markierten Konversationen. **Archiv** listet die
+archivierte Post von Gmail- und Outlook-Konten sowie in **Alle Konten**; ein IMAP-Konto archiviert
+in seinen eigenen Archivordner, der bei seinen übrigen Ordnern erscheint. Archivierte Post ist nur
+aus dem Posteingang heraus: Suche, intelligente Filter und die KI-Funktionen erreichen sie
+weiterhin.
+
+<!-- claim:feat-organize-3 -->
+Setzen Sie das Häkchen am Anfang einer Zeile, um sie auszuwählen. Sobald eine oder mehrere ausgewählt
+sind, wirkt eine Leiste über der Liste auf alle zugleich — archivieren, zurückstellen, löschen,
+als gelesen oder ungelesen markieren, mit Stern markieren — und
+**Auswahl aufheben** beendet sie. Konten mit eigenen Ordnern bieten außerdem **In Ordner
+verschieben**.
+
+<!-- claim:feat-organize-4 -->
+Archivieren oder Löschen nimmt die Konversationen sofort aus der Liste und zeigt 6 Sekunden lang
+einen Hinweis mit **Rückgängig**. Ihr E-Mail-Anbieter erfährt erst davon, wenn diese Sekunden
+vorbei sind (oder früher, wenn Sie etwas anderes archivieren oder löschen oder eine andere
+Ansicht öffnen) — Rückgängig legt sie also einfach zurück.
+
+<!-- claim:feat-organize-5 -->
+Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,
+zurückgestellt oder in den Spam verschoben —, öffnet sich die nächste. **Einstellungen →
+Erscheinungsbild → Nach dem Archivieren oder Löschen** wählt zwischen der nächsten Konversation,
+der vorherigen oder der Rückkehr zur Liste. Eine Konversation als ungelesen zu markieren führt
+immer zurück zur Liste.
+
+## Zurückstellen {#snooze}
+
+<!-- claim:feat-snooze-1 -->
+**Zurückstellen** blendet eine Konversation bis zu einem Zeitpunkt Ihrer Wahl aus dem Posteingang
+aus: später heute, morgen, dieses Wochenende, nächste Woche oder ein selbst gewähltes Datum mit
+Uhrzeit. Es steht in der Leseansicht, im ⋮-Menü der Zeile und in der Auswahlleiste zur Verfügung.
+
+<!-- claim:feat-snooze-2 -->
+Zurückgestellte Konversationen stehen unter **Zurückgestellt** in der Seitenleiste, die nächste
+zuerst; **Nicht mehr zurückstellen** holt eine vorzeitig zurück. Ist der Zeitpunkt erreicht,
+erscheint die Konversation wieder ganz oben im Posteingang, als ungelesen markiert. Eine neue
+Nachricht in einer zurückgestellten Konversation holt sie sofort zurück.
+
+<!-- claim:feat-snooze-3 -->
+Das Zurückstellen wird nur auf diesem Computer gespeichert: andere E-Mail-Programme zeigen die
+Konversation weiter im Posteingang. Konversationen kommen zurück, solange EmailOps läuft; eine,
+deren Zeitpunkt bei geschlossener App verstrichen ist, kommt beim nächsten Öffnen zurück.
+
+## Senden rückgängig machen und geplantes Senden {#undo-send-and-scheduled-send}
+
+<!-- claim:feat-send-1 -->
+Nach einem Klick auf **Senden** wartet die Nachricht ein paar Sekunden mit einem Hinweis
+**Rückgängig**; Rückgängig holt sie zurück und öffnet sie wieder zum Bearbeiten. Die Wartezeit
+stellen Sie unter **Einstellungen → Erscheinungsbild → Senden rückgängig machen** ein: aus, 5, 10,
+20 oder 30 Sekunden, standardmäßig 10. EmailOps muss geöffnet bleiben, bis die Nachricht
+verschickt ist.
+
+<!-- claim:feat-send-2 -->
+Der Pfeil neben **Senden** öffnet **Senden planen**: morgen früh, morgen Nachmittag, Montag früh
+oder ein selbst gewähltes Datum mit Uhrzeit.
+
+<!-- claim:feat-send-3 -->
+Nachrichten, die noch verschickt werden sollen, stehen unter **Geplant** in der Seitenleiste, wo
+Sie jede einzelne **Jetzt senden**, **Bearbeiten** oder **Löschen** können. Eine geplante Nachricht
+geht nur raus, solange EmailOps geöffnet ist; eine, deren Zeitpunkt bei geschlossener App
+verstrichen ist, wird beim nächsten Öffnen gesendet. Eine Nachricht, die nicht gesendet werden
+konnte, bleibt dort als **Nicht gesendet** markiert, mit **Erneut versuchen**: EmailOps sendet
+nie von sich aus erneut.
+## Signaturen {#signatures}
+
+<!-- claim:feat-signatures-1 -->
+Jedes Konto hat seine eigene Signatur, festgelegt unter **Einstellungen → Signaturen**. Zwei
+Schalter bestimmen, wo sie erscheint: **In neue Nachrichten einfügen** und **In Antworten und
+Weiterleitungen einfügen**. In einer neuen Nachricht oder einer Antwort steht sie unter Ihrem
+Text, in einer Weiterleitung über der weitergeleiteten Nachricht. Sie ist Teil des
+Nachrichtentexts, Sie können sie also in jeder Nachricht vor dem Senden ändern oder löschen.
+
+<!-- claim:feat-signatures-2 -->
+**Bild hinzufügen** fügt ein Logo oder ein Bild Ihrer handschriftlichen Unterschrift ein. PNG,
+JPEG, GIF und WebP werden angenommen; SVG und andere Dateien werden mit Begründung abgelehnt. Ein
+breites Bild wird auf 600 px verkleinert, jedes Bild darf höchstens 200 KB groß sein und die ganze
+Signatur 512 KB. Gmail-Konten bieten außerdem **Aus Gmail importieren**, das die Signatur, die
+Gmail für diese Adresse hat, in den Editor übernimmt.
+
+<!-- claim:feat-signatures-3 -->
+In der Nur-Text-Fassung einer Nachricht steht vor einer abschließenden Signatur die übliche Zeile
+`-- `, damit andere E-Mail-Programme sie erkennen. Hat das Konto eine Signatur für diese Art von
+Nachricht, lassen KI-Entwürfe Ihren Namen und Ihre Kontaktdaten weg und überlassen das
+Unterschreiben der Signatur.
 
 ## Intelligente Filter
 
@@ -92,8 +191,8 @@ verwalten** (oder **Regel erstellen** in der leeren Ansicht) und füllen Sie aus
 <!-- claim:feat-attachments-view-7 -->
 Alle ausgefüllten Muster müssen zutreffen. Regeln greifen bei neuer Post während der
 Synchronisierung; setzen Sie **Nach dem Erstellen auf vorhandene E-Mails anwenden**, um auch aus
-der bereits vorhandenen Post zu sammeln. Regeln erfassen den Posteingang, Gesendete Elemente und
-Ihre eigenen Ordner, nie Spam oder Papierkorb. Markieren Sie Anhänge, um sie gemeinsam in Ihren
+der bereits vorhandenen Post zu sammeln. Regeln erfassen den Posteingang, Gesendete Elemente, das
+Archiv und Ihre eigenen Ordner, nie Spam oder Papierkorb. Markieren Sie Anhänge, um sie gemeinsam in Ihren
 Downloads-Ordner herunterzuladen.
 
 <!-- claim:feat-attachments-view-8 -->
@@ -139,8 +238,44 @@ Junk“) trainieren den Filter mit der Zeit. Sie entscheiden, was mit markierter
 
 <!-- claim:feat-junk-bulk-4 -->
 Keine der beiden Optionen verschiebt oder löscht etwas auf dem Server; das tut nur ein
-ausdrückliches **Als Spam bestätigen**. Eine optionale Warnung vor Identitätsmissbrauch/Phishing
+ausdrückliches **Als Spam bestätigen** oder **Absender blockieren**. Eine optionale Warnung vor Identitätsmissbrauch/Phishing
 ist verfügbar und standardmäßig aus.
+
+## Abbestellen und Absender blockieren {#unsubscribe-and-block-sender}
+
+<!-- claim:feat-unsubscribe-1 -->
+Ein Newsletter oder eine Nachricht einer Mailingliste, die angibt, wie man sich abmeldet, zeigt
+**Abbestellen** neben dem Absender. Bevor etwas verschickt wird, erklärt eine Bestätigung genau,
+was passiert: eine Anfrage direkt an den Server des Absenders (nicht über Ihren E-Mail-Anbieter),
+eine Abmelde-E-Mail von Ihrem Konto oder die Seite des Absenders in Ihrem Browser.
+
+<!-- claim:feat-block-sender-1 -->
+**Absender blockieren** im ⋮-Menü einer Konversation schickt neue Post dieses Absenders in diesem
+Konto in den Spam und meldet sie Ihrem E-Mail-Anbieter als Spam. **Vorhandene Nachrichten
+ebenfalls in den Spam verschieben** räumt auf, was schon da ist, und die Konversation zeigt an,
+dass der Absender blockiert ist, mit **Blockierung aufheben** gleich zur Hand.
+
+<!-- claim:feat-block-sender-2 -->
+**Einstellungen → Spam → Blockierte Absender** listet alle, die Sie blockiert haben, mit
+**Blockierung aufheben**, das ihre Nachrichten auch aus dem Spam zurück in den Posteingang holen
+kann. **Aus den intelligenten Filtern ausblenden** im ⋮-Menü ist etwas anderes: Es entfernt den
+Absender nur aus den intelligenten Filtern der Seitenleiste.
+
+## Benachrichtigungen für neue E-Mails {#new-mail-notifications}
+
+<!-- claim:feat-notifications-1 -->
+EmailOps zeigt eine Desktop-Benachrichtigung, wenn neue Post in Ihrem Posteingang ankommt und
+wenn eine zurückgestellte Konversation zurückkehrt — nie bei der ersten Synchronisierung eines
+Kontos, für ältere Post, bereits gelesene Post, Spam oder blockierte Absender. Mehr als drei neue
+Nachrichten auf einmal werden zu einer einzigen Zusammenfassung. Ein Klick auf eine
+Benachrichtigung holt EmailOps in den Vordergrund; die Nachricht öffnet er nicht.
+
+<!-- claim:feat-notifications-2 -->
+**Einstellungen → Benachrichtigungen** enthält den Hauptschalter, einen Schalter pro Konto, den
+**Inhalt der Benachrichtigung** (Absender und Betreff oder **Inhalt ausblenden**, das nur das Konto
+zeigt) und **Nur wenn EmailOps nicht im Vordergrund ist**; alles ist standardmäßig an, mit
+sichtbarem Absender und Betreff. Der Nachrichtentext wird nie gezeigt, und solange die App mit dem
+Hauptpasswort gesperrt ist, auch Absender und Betreff nicht.
 
 ## Datenschutz- und Sicherheitseinstellungen {#privacy-and-security-controls}
 
@@ -155,3 +290,26 @@ davon steht unter [Datenschutz und Sicherheit](../privacy-security/).
 Posteingang in geteilter Ansicht oder in voller Breite, und eine Oberfläche auf Deutsch,
 Englisch, Spanisch und Französisch. Die Ausgabesprache der KI wird separat eingestellt — Sie
 können die Oberfläche in einer Sprache lesen und Antworten in einer anderen entwerfen lassen.
+
+## Tastenkombinationen {#keyboard-shortcuts}
+
+<!-- claim:feat-shortcuts-1 -->
+Drücken Sie `?` irgendwo außerhalb eines Textfelds, um alle Tastenkombinationen zu sehen. Sie folgen
+denen von Gmail:
+
+| Tasten | Aktion |
+|---|---|
+| `j` / `k` | nächste / vorherige Konversation |
+| `Enter` oder `o`, `u` | Konversation öffnen, zurück zur Liste |
+| `x` | Konversation auswählen oder abwählen |
+| `e`, `#`, `s`, `b` | archivieren, löschen, mit Stern markieren, zurückstellen |
+| `Shift+U` / `Shift+I` | als ungelesen / gelesen markieren |
+| `c`, `r`, `a`, `f` | neue Nachricht, antworten, allen antworten, weiterleiten |
+| `g`, dann `i`, `s`, `b`, `a`, `l` | zu Posteingang, Mit Stern, Zurückgestellt, Archiv, Geplant |
+| `/` | suchen |
+
+<!-- claim:feat-shortcuts-2 -->
+Die Tastenkombinationen pausieren, während Sie tippen und solange ein Dialog oder Menü offen ist.
+Die Schaltflächen, für die sie stehen, nennen ihre Taste im Tooltip, etwa „Archivieren (E)".
+**Einstellungen → Erscheinungsbild → Tastenkombinationen** schaltet sie ab, und **Liste anzeigen**
+öffnet dieselbe Übersicht wie `?`.

@@ -7,14 +7,14 @@
 //! the same mapping the sync stores messages with
 //! ([`crate::sync::gmail::mailbox_from_labels`]).
 //!
-//! **Archive is not a move here.** That mapping files a message without
-//! `INBOX` under `inbox` — the app has no archive mailbox, and the sync
-//! already ingests archived mail there — so archiving, and adding or removing
-//! user labels, changes nothing locally. Only a message the user sent moves,
-//! between `sent` and `inbox`, when `INBOX` is removed or added.
+//! **Archive is a move here.** That mapping files a message without `INBOX`
+//! (and not in Sent, Trash or Spam) under `archive`, so archiving in Gmail's
+//! own clients takes it out of the inbox here too, and adding `INBOX` back
+//! returns it. A message the user sent moves between `sent` and `inbox`.
+//! `STARRED` is the star.
 //!
-//! **Conflict rule** (as in `state_refresh`): a row with a read-state change
-//! still owed to the provider is never touched. Unlike a poll, the log says
+//! **Conflict rule** (as in `state_refresh`): a row with a read-state or star
+//! change still owed to the provider is never touched. Unlike a poll, the log says
 //! each change once, so a page that had to skip such a row is not counted as
 //! applied: the cursor stays before it and the page is replayed on the next
 //! pass, after the pending push has been retried. Replaying is idempotent.
@@ -215,20 +215,21 @@ fn save_cursor(db: &Database, account: &Account, key: &str, cursor: &str) -> His
 #[derive(Default)]
 struct Applied {
     read_changes: u32,
+    star_changes: u32,
     moved: u32,
     removed: u32,
 }
 
 impl Applied {
     fn log(&self, account: &Account) {
-        if self.read_changes + self.moved + self.removed > 0 {
+        if self.read_changes + self.star_changes + self.moved + self.removed > 0 {
             emit_account_log(
                 "success",
                 "sync",
                 &account.email,
                 &format!(
-                    "Matched the account: {} read-state change(s), {} moved, {} deleted elsewhere",
-                    self.read_changes, self.moved, self.removed
+                    "Matched the account: {} read-state change(s), {} star change(s), {} moved, {} deleted elsewhere",
+                    self.read_changes, self.star_changes, self.moved, self.removed
                 ),
             );
         }
@@ -276,6 +277,9 @@ fn apply_changes(db: &Database, account: &Account, changes: Vec<LocalChange>, ap
                 (db.apply_server_read_state(id, *is_read), &mut applied.read_changes, id)
             }
             LocalChange::SetMailbox { id, mailbox } => (db.apply_server_mailbox(id, mailbox), &mut applied.moved, id),
+            LocalChange::SetStarred { id, is_starred } => {
+                (db.apply_server_starred(id, *is_starred), &mut applied.star_changes, id)
+            }
             LocalChange::Delete { id } => (db.apply_server_delete(id), &mut applied.removed, id),
         };
         match result {
@@ -303,6 +307,10 @@ pub(super) enum LocalChange {
     SetMailbox {
         id: String,
         mailbox: String,
+    },
+    SetStarred {
+        id: String,
+        is_starred: bool,
     },
     /// Deleted for good at the provider: soft-delete the row.
     Delete {
@@ -340,7 +348,7 @@ pub(super) fn plan_history_changes(stored: &[StoredMessageState], changes: &[Mes
             | MessageChange::Deleted { id } => id.as_str(),
         };
         let Some(row) = rows.get(id).copied() else { continue };
-        if row.read_push_pending {
+        if row.read_push_pending || row.star_push_pending {
             plan.held_back = true;
             continue;
         }
@@ -383,7 +391,7 @@ pub(super) fn plan_label_snapshot(
 ) -> Vec<LocalChange> {
     stored
         .iter()
-        .filter(|row| !row.read_push_pending)
+        .filter(|row| !row.read_push_pending && !row.star_push_pending)
         .flat_map(|row| match remote.get(&row.id) {
             Some(RemoteLabels::Present(labels)) => changes_for_labels(row, labels),
             Some(RemoteLabels::Missing) => vec![LocalChange::Delete { id: row.id.clone() }],
@@ -397,12 +405,17 @@ pub(super) fn plan_label_snapshot(
 fn implied_labels(row: &StoredMessageState) -> BTreeSet<String> {
     let mut labels = BTreeSet::new();
     let place = match row.mailbox.as_str() {
-        "trash" => "TRASH",
-        "spam" => "SPAM",
-        "sent" => "SENT",
-        _ => "INBOX",
+        "trash" => Some("TRASH"),
+        "spam" => Some("SPAM"),
+        "sent" => Some("SENT"),
+        // Archived: none of the labels the mapping reads.
+        "archive" => None,
+        _ => Some("INBOX"),
     };
-    labels.insert(place.to_string());
+    labels.extend(place.map(str::to_string));
+    if row.is_starred {
+        labels.insert("STARRED".to_string());
+    }
     if row.is_sent {
         labels.insert("SENT".to_string());
     }
@@ -420,6 +433,13 @@ fn changes_for_labels(row: &StoredMessageState, labels: &[String]) -> Vec<LocalC
         changes.push(LocalChange::SetRead {
             id: row.id.clone(),
             is_read,
+        });
+    }
+    let is_starred = labels.iter().any(|l| l == "STARRED");
+    if is_starred != row.is_starred {
+        changes.push(LocalChange::SetStarred {
+            id: row.id.clone(),
+            is_starred,
         });
     }
     // Spam, on either side, belongs to the spam reconciliation.
@@ -445,6 +465,8 @@ mod tests {
             is_read,
             is_sent: mailbox == "sent",
             read_push_pending: false,
+            is_starred: false,
+            star_push_pending: false,
         }
     }
 
@@ -486,6 +508,26 @@ mod tests {
 
     fn delete(id: &str) -> LocalChange {
         LocalChange::Delete { id: id.to_string() }
+    }
+
+    fn set_starred(id: &str, is_starred: bool) -> LocalChange {
+        LocalChange::SetStarred {
+            id: id.to_string(),
+            is_starred,
+        }
+    }
+
+    #[test]
+    fn a_row_with_a_pending_star_holds_its_page_back() {
+        let row = StoredMessageState {
+            is_starred: true,
+            star_push_pending: true,
+            ..stored("m-1", "inbox", true)
+        };
+        let plan = plan_history_changes(std::slice::from_ref(&row), &[removed("m-1", &["STARRED"])]);
+        assert!(plan.changes.is_empty());
+        assert!(plan.held_back);
+        assert!(plan_label_snapshot(&[row], &snapshot(&[("m-1", present(&["INBOX"]))])).is_empty());
     }
 
     // ── change log ────────────────────────────────────────────────────────
@@ -537,16 +579,43 @@ mod tests {
                 vec![set_mailbox("m-1", "sent")],
             ),
             (
-                "archived elsewhere: no archive mailbox, it stays where it is",
+                "archived elsewhere",
                 stored("m-1", "inbox", true),
                 vec![removed("m-1", &["INBOX"])],
+                vec![set_mailbox("m-1", "archive")],
+            ),
+            (
+                "moved to a user label elsewhere is archived too",
+                stored("m-1", "inbox", true),
+                vec![removed("m-1", &["INBOX"]), added("m-1", &["Label_7"])],
+                vec![set_mailbox("m-1", "archive")],
+            ),
+            (
+                "moved back to the inbox elsewhere",
+                stored("m-1", "archive", true),
+                vec![added("m-1", &["INBOX"])],
+                vec![set_mailbox("m-1", "inbox")],
+            ),
+            (
+                "a label added to archived mail keeps it archived",
+                stored("m-1", "archive", true),
+                vec![added("m-1", &["Label_7"])],
                 vec![],
             ),
             (
-                "moved to a user label elsewhere",
+                "starred elsewhere",
                 stored("m-1", "inbox", true),
-                vec![removed("m-1", &["INBOX"]), added("m-1", &["Label_7"])],
-                vec![],
+                vec![added("m-1", &["STARRED"])],
+                vec![set_starred("m-1", true)],
+            ),
+            (
+                "unstarred elsewhere",
+                StoredMessageState {
+                    is_starred: true,
+                    ..stored("m-1", "archive", true)
+                },
+                vec![removed("m-1", &["STARRED"])],
+                vec![set_starred("m-1", false)],
             ),
             (
                 "a message sent to oneself, archived, is only in Sent",
@@ -743,6 +812,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }
@@ -820,13 +890,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_message_archived_in_gmail_stays_where_it_is() {
+    async fn a_message_archived_in_gmail_is_archived_here() {
         let (db, provider) = synced(&[email("m-1", "inbox", true)]);
         provider.record_history(removed("m-1", &["INBOX"]));
 
         pass(&db, &provider, 0).await;
 
-        assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), true)));
+        assert_eq!(row(&db, "m-1"), Some(("archive".to_string(), true)));
         assert_eq!(cursor(&db), Some((START + 1).to_string()));
     }
 
@@ -1064,7 +1134,12 @@ mod tests {
         );
         assert_eq!(
             plan,
-            vec![set_read("read", true), set_mailbox("trashed", "trash"), delete("gone")]
+            vec![
+                set_read("read", true),
+                set_mailbox("trashed", "trash"),
+                set_mailbox("archived", "archive"),
+                delete("gone")
+            ]
         );
     }
     #[test]

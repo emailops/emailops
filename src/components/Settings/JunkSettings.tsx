@@ -7,6 +7,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useJunkStore } from '@/stores/junkStore';
 import { useLogStore } from '@/stores/logStore';
 import type { JunkConfig, JunkFlaggedAction, JunkStats } from '@/types';
+import { BlockedSendersSettings } from './BlockedSendersSettings';
 import { SettingsPanel } from './SettingsPanel';
 
 /** Axes with a trained model. Typed so a missing translation fails the build. */
@@ -200,6 +201,8 @@ export function JunkSettings() {
         label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.phishing')}</span>}
         description={<span className="text-xs text-gray-500">{t('settings:junk.phishingDesc')}</span>}
       />
+
+      <BlockedSendersSettings />
 
       {/* One card per account. Every figure below is per-mailbox, so a single
             merged block would be a number nobody could act on. "Status" is the

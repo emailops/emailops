@@ -591,6 +591,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }

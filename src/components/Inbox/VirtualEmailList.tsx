@@ -1,13 +1,14 @@
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useRef } from 'react';
+import { observeElementRect, type Rect, useVirtualizer } from '@tanstack/react-virtual';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { measuredRowHeight } from '@/lib/rowMeasure';
+import { measuredRowHeight, visibleScrollRect } from '@/lib/rowMeasure';
 import {
   INITIAL_SCROLL_RESTORE,
   planOffsetResync,
   planScrollRestore,
   type ScrollRestoreState,
 } from '@/lib/scrollRestore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import type { Email } from '@/types';
 import type { RulePrefill } from './EmailRow';
 import { EmailRow } from './EmailRow';
@@ -19,6 +20,10 @@ interface VirtualEmailListProps {
   emails: Email[];
   selectedEmailId: string | null;
   focusEmailId: string | null;
+  /** The keyboard cursor row (j/k): kept in view, and marked when `showCursor`. */
+  cursorEmailId?: string | null;
+  /** Mark the cursor row — the full-width list, where no row is "open". */
+  showCursor?: boolean;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   isLoadingMore: boolean;
   hasMore: boolean;
@@ -27,7 +32,7 @@ interface VirtualEmailListProps {
   onSelectEmail: (email: Email) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   onOpenInTab?: (email: Email) => void;
@@ -47,6 +52,8 @@ export function VirtualEmailList({
   emails,
   selectedEmailId,
   focusEmailId,
+  cursorEmailId = null,
+  showCursor = false,
   scrollContainerRef,
   isLoadingMore,
   hasMore,
@@ -55,7 +62,7 @@ export function VirtualEmailList({
   onSelectEmail,
   onLoadMore,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   onOpenInTab,
@@ -64,8 +71,40 @@ export function VirtualEmailList({
   getAccountBadge,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox']);
+
+  // Multi-select. The selection lives in a store (the bulk toolbar and
+  // keyboard shortcuts act on it too); rows that leave the list leave it.
+  const selectedIds = useSelectionStore((s) => s.ids);
+  const toggleSelected = useSelectionStore((s) => s.toggle);
+  const selectRange = useSelectionStore((s) => s.selectRange);
+  const pruneSelection = useSelectionStore((s) => s.prune);
+  const clearSelection = useSelectionStore((s) => s.clear);
+  const order = useMemo(() => emails.map((e) => e.id), [emails]);
+  const selectionActive = selectedIds.size > 0;
+  useEffect(() => pruneSelection(order), [order, pruneSelection]);
+  useEffect(() => {
+    if (!selectionActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      clearSelection();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectionActive, clearSelection]);
+
+  // Last real viewport of the scroll container — see `visibleScrollRect`.
+  const lastRectRef = useRef<Rect | null>(null);
+
   const virtualizer = useVirtualizer({
     count: emails.length,
+    // A hidden list (0x0) keeps its last real viewport, so a re-render while
+    // hidden does not drop every row — see src/lib/rowMeasure.ts.
+    observeElementRect: (instance, cb) =>
+      observeElementRect(instance, (rect) => {
+        const shown = visibleScrollRect(rect, lastRectRef.current);
+        if (shown.height > 0) lastRectRef.current = shown;
+        cb(shown);
+      }),
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => (compact ? ESTIMATED_COMPACT_ROW_HEIGHT : ESTIMATED_ROW_HEIGHT),
     // Key by email ID so the measurement cache survives list updates
@@ -173,6 +212,15 @@ export function VirtualEmailList({
     return () => cancelAnimationFrame(raf);
   }, [focusEmailId, emails, virtualizer]);
 
+  // Keep the keyboard cursor row in view as j/k move it. `auto` scrolls only
+  // when the row is off screen, so walking a visible page does not jump.
+  useEffect(() => {
+    if (!cursorEmailId) return;
+    const index = emails.findIndex((e) => e.id === cursorEmailId);
+    if (index === -1) return;
+    virtualizer.scrollToIndex(index, { align: 'auto' });
+  }, [cursorEmailId, emails, virtualizer]);
+
   // Infinite scroll: load more when near bottom
   const virtualItems = virtualizer.getVirtualItems();
   const lastVirtualItem = virtualItems[virtualItems.length - 1];
@@ -233,19 +281,29 @@ export function VirtualEmailList({
                 overflow: 'hidden',
                 transform: `translateY(${virtualRow.start}px)`,
               }}
+              data-cursor={showCursor && email.id === cursorEmailId ? 'true' : undefined}
             >
+              {showCursor && email.id === cursorEmailId && (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 z-10 ring-2 ring-inset ring-primary-400"
+                />
+              )}
               <EmailRow
                 email={email}
                 isSelected={email.id === selectedEmailId}
                 onClick={() => onSelectEmail(email)}
                 onAddSenderFilter={onAddSenderFilter}
-                onBlockSender={onBlockSender}
+                onHideSenderFromFilters={onHideSenderFromFilters}
                 onCreateAttachmentRule={onCreateAttachmentRule}
                 onCreateClassificationRule={onCreateClassificationRule}
                 onOpenInTab={onOpenInTab}
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
                 accountBadge={getAccountBadge?.(email)}
+                isChecked={selectedIds.has(email.id)}
+                selectionActive={selectionActive}
+                onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}
               />
             </div>
           );

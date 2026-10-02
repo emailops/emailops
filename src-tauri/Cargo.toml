@@ -386,6 +386,12 @@ required-features = ["eval"]
 name = "translation_eval"
 required-features = ["eval"]
 
+[[example]]
+# Synthetic draft eval: how a draft ends, with and without an account signature.
+#   cargo run --features eval --example draft_case_eval -- [--case <id>] [--repeat N]
+name = "draft_case_eval"
+required-features = ["eval"]
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-shell = { version = "2", optional = true }
 

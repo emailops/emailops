@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { addImapAccount, type ImapAccountConfig, testImapConnection } from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
 
 interface Preset {
@@ -35,6 +36,7 @@ interface Props {
 }
 
 export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
+  useOverlay();
   const { t } = useTranslation(['common', 'modal']);
   const [preset, setPreset] = useState<Preset>(PRESETS[0]);
   const [host, setHost] = useState('');

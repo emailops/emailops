@@ -6,6 +6,7 @@ import { accountColorClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Email } from '@/types';
 
 /** Detect an autocomplete trigger (`from:` or `to:` token) at the cursor position.
@@ -47,6 +48,7 @@ export function SearchBar({
   onApplySearchWithResults,
   onClose,
 }: SearchBarProps) {
+  useOverlay();
   const { t, i18n } = useTranslation(['common', 'inbox']);
   const locale = i18n.language || 'en';
   // `accountId === null` is the unified view (search all enabled accounts) —

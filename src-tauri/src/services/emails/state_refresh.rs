@@ -60,6 +60,8 @@ pub(crate) fn last_refresh_key(account_id: &str) -> String {
 pub(super) enum RefreshAction {
     /// Take the provider's read flag.
     SetRead { id: String, is_read: bool },
+    /// Take the provider's star.
+    SetStarred { id: String, is_starred: bool },
     /// The provider no longer has the message under this id: find out where it
     /// went, or mark it deleted.
     Vanished { id: String, message_id: Option<String> },
@@ -69,30 +71,44 @@ pub(super) enum RefreshAction {
 ///
 /// - A row the provider said nothing about is left alone — "could not check"
 ///   must never read as "gone".
-/// - A row with a pending local push is left alone, whatever the provider says.
+/// - A row with a pending local read push is left alone, whatever the
+///   provider says. A pending star push keeps only the star: the read state
+///   still follows the provider, but the row is not chased if it vanished.
 /// - Sent mail keeps its read flag: it is read by definition here, while the
 ///   provider's copy often carries no `\Seen`.
+/// - A provider answer that does not report the star leaves it alone.
 pub(super) fn plan_state_refresh(
     stored: &[StoredMessageState],
     remote: &HashMap<String, RemoteMessageState>,
 ) -> Vec<RefreshAction> {
-    stored
-        .iter()
-        .filter(|row| !row.read_push_pending)
-        .filter_map(|row| match remote.get(&row.id)? {
-            RemoteMessageState::Present { is_read } if !row.is_sent && *is_read != row.is_read => {
-                Some(RefreshAction::SetRead {
-                    id: row.id.clone(),
-                    is_read: *is_read,
-                })
+    let mut actions = Vec::new();
+    for row in stored.iter().filter(|row| !row.read_push_pending) {
+        match remote.get(&row.id) {
+            None => {}
+            Some(RemoteMessageState::Present { is_read, is_starred }) => {
+                if !row.is_sent && *is_read != row.is_read {
+                    actions.push(RefreshAction::SetRead {
+                        id: row.id.clone(),
+                        is_read: *is_read,
+                    });
+                }
+                if let Some(is_starred) = is_starred {
+                    if !row.star_push_pending && *is_starred != row.is_starred {
+                        actions.push(RefreshAction::SetStarred {
+                            id: row.id.clone(),
+                            is_starred: *is_starred,
+                        });
+                    }
+                }
             }
-            RemoteMessageState::Present { .. } => None,
-            RemoteMessageState::Missing => Some(RefreshAction::Vanished {
+            Some(RemoteMessageState::Missing) if !row.star_push_pending => actions.push(RefreshAction::Vanished {
                 id: row.id.clone(),
                 message_id: row.message_id.clone(),
             }),
-        })
-        .collect()
+            Some(RemoteMessageState::Missing) => {}
+        }
+    }
+    actions
 }
 
 /// Bring recent stored mail in line with the provider. Non-fatal: every
@@ -155,6 +171,7 @@ pub(super) async fn refresh_stored_mail_state(
     stamp_refresh(db, account, &last_key, now);
 
     let mut read_changes: u32 = 0;
+    let mut star_changes: u32 = 0;
     let mut moved: u32 = 0;
     let mut removed: u32 = 0;
     let mut chased: usize = 0;
@@ -164,6 +181,11 @@ pub(super) async fn refresh_stored_mail_state(
                 Ok(true) => read_changes += 1,
                 Ok(false) => {}
                 Err(e) => warn(account, &format!("Could not update the read state of {id}: {e}")),
+            },
+            RefreshAction::SetStarred { id, is_starred } => match db.apply_server_starred(&id, is_starred) {
+                Ok(true) => star_changes += 1,
+                Ok(false) => {}
+                Err(e) => warn(account, &format!("Could not update the star of {id}: {e}")),
             },
             RefreshAction::Vanished { id, message_id } => {
                 if chased >= MAX_VANISHED_PER_PASS {
@@ -180,13 +202,13 @@ pub(super) async fn refresh_stored_mail_state(
         }
     }
 
-    if read_changes + moved + removed > 0 {
+    if read_changes + star_changes + moved + removed > 0 {
         emit_account_log(
             "success",
             "sync",
             &account.email,
             &format!(
-                "Matched the account: {read_changes} read-state change(s), {moved} moved, {removed} deleted elsewhere"
+                "Matched the account: {read_changes} read-state change(s), {star_changes} star change(s), {moved} moved, {removed} deleted elsewhere"
             ),
         );
     }
@@ -261,11 +283,23 @@ mod tests {
             is_read,
             is_sent: false,
             read_push_pending: false,
+            is_starred: false,
+            star_push_pending: false,
         }
     }
 
     fn present(is_read: bool) -> RemoteMessageState {
-        RemoteMessageState::Present { is_read }
+        RemoteMessageState::Present {
+            is_read,
+            is_starred: None,
+        }
+    }
+
+    fn present_starred(is_read: bool, is_starred: bool) -> RemoteMessageState {
+        RemoteMessageState::Present {
+            is_read,
+            is_starred: Some(is_starred),
+        }
     }
 
     fn remote(entries: &[(&str, RemoteMessageState)]) -> HashMap<String, RemoteMessageState> {
@@ -293,6 +327,58 @@ mod tests {
                 .collect();
             assert_eq!(plan, expected, "{label}");
         }
+    }
+
+    #[test]
+    fn the_star_follows_the_server_in_both_directions() {
+        let cases = [
+            ("unstarred here, starred there", false, true, Some(true)),
+            ("starred here, unstarred there", true, false, Some(false)),
+            ("starred on both sides", true, true, None),
+        ];
+        for (label, local, server, expected) in cases {
+            let mut row = stored("m-1", true);
+            row.is_starred = local;
+            let plan = plan_state_refresh(&[row], &remote(&[("m-1", present_starred(true, server))]));
+            let expected: Vec<RefreshAction> = expected
+                .map(|is_starred| RefreshAction::SetStarred {
+                    id: "m-1".to_string(),
+                    is_starred,
+                })
+                .into_iter()
+                .collect();
+            assert_eq!(plan, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn a_server_answer_without_a_star_leaves_the_stored_star() {
+        let mut row = stored("m-1", true);
+        row.is_starred = true;
+        assert!(plan_state_refresh(&[row], &remote(&[("m-1", present(true))])).is_empty());
+    }
+
+    #[test]
+    fn a_pending_star_wins_but_the_read_state_still_follows_the_server() {
+        let mut row = stored("m-1", false);
+        row.is_starred = true;
+        row.star_push_pending = true;
+
+        let plan = plan_state_refresh(
+            std::slice::from_ref(&row),
+            &remote(&[("m-1", present_starred(true, false))]),
+        );
+        assert_eq!(
+            plan,
+            vec![RefreshAction::SetRead {
+                id: "m-1".to_string(),
+                is_read: true
+            }]
+        );
+        assert!(
+            plan_state_refresh(&[row], &remote(&[("m-1", RemoteMessageState::Missing)])).is_empty(),
+            "a row with a pending star is not chased either"
+        );
     }
 
     #[test]
@@ -413,6 +499,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }

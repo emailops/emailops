@@ -11,6 +11,7 @@ import { CalendarInviteCard } from './CalendarInviteCard';
 import { EmailAttachments } from './EmailAttachments';
 import { EmailBody } from './EmailBody';
 import { JunkBanner } from './JunkBanner';
+import { SenderBanner, UnsubscribeButton } from './SenderControls';
 import { TranslatedEmailBody, TranslationControls } from './TranslationControls';
 
 export interface ThreadEmailItemProps {
@@ -125,6 +126,9 @@ export function ThreadEmailItem({
               <div className="flex items-center gap-2">
                 <span className="font-medium text-gray-900">{senderName(email)}</span>
                 <span className="text-gray-400 text-sm">&lt;{email.senderEmail}&gt;</span>
+                {!email.isSent && (
+                  <UnsubscribeButton accountId={email.accountId} emailId={email.id} senderName={senderName(email)} />
+                )}
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{formattedDate}</div>
               {email.recipients.length > 0 && (
@@ -158,6 +162,7 @@ export function ThreadEmailItem({
             {/* Above everything else in the message: a warning about what the
                 message IS has to be read before the message itself. */}
             <JunkBanner emailId={email.id} accountId={email.accountId} />
+            {!email.isSent && <SenderBanner accountId={email.accountId} emailId={email.id} />}
             {translationEnabled && aiEnabled && <TranslationControls accountId={email.accountId} emailId={email.id} />}
             {showTranslated && translation ? (
               <TranslatedEmailBody

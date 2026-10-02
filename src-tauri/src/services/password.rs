@@ -121,11 +121,50 @@ pub fn verify_main_password(db: &Database, password: &str, now: i64) -> Result<b
     };
     if verify_password(password, &stored)? {
         db.set_preference(FAILED_ATTEMPTS_KEY, "0")?;
+        mark_session_unlocked();
         Ok(true)
     } else {
         db.set_preference(FAILED_ATTEMPTS_KEY, &failures.saturating_add(1).to_string())?;
         db.set_preference(LAST_FAILED_AT_KEY, &now.to_string())?;
         Ok(false)
+    }
+}
+
+/// Whether the user has proven, in this process, that they know the main
+/// password (unlocked the lock screen, or set/changed the password). The lock
+/// screen is only shown at start-up, so once true it stays true until quit.
+static SESSION_UNLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the lock screen was passed (or the password just set).
+pub fn mark_session_unlocked() {
+    SESSION_UNLOCKED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Pure rule: the app is locked when a main password exists and this session
+/// has not been unlocked with it.
+pub fn app_locked(has_main_password: bool, session_unlocked: bool) -> bool {
+    has_main_password && !session_unlocked
+}
+
+/// Whether the lock screen is (or would be) up right now. Background work that
+/// could reveal mail content outside the window — desktop notifications —
+/// checks this and hides the content while locked.
+pub fn is_app_locked(db: &Database) -> Result<bool> {
+    let has_password = db.get_preference(MAIN_PASSWORD_KEY)?.is_some_and(|v| !v.is_empty());
+    Ok(app_locked(
+        has_password,
+        SESSION_UNLOCKED.load(std::sync::atomic::Ordering::Relaxed),
+    ))
+}
+
+#[cfg(test)]
+mod lock_state_tests {
+    #[test]
+    fn locked_only_with_a_password_and_no_unlock_this_session() {
+        assert!(super::app_locked(true, false));
+        assert!(!super::app_locked(true, true));
+        assert!(!super::app_locked(false, false));
+        assert!(!super::app_locked(false, true));
     }
 }
 

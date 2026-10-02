@@ -70,6 +70,9 @@
     "skill_no_body": "The skill has no instructions after the frontmatter.",
     "skill_body_too_long": "The instructions are longer than {{max}} characters; shorten them so they fit the model's context.",
     "skill_changed_on_disk": "{{name}}/SKILL.md changed on disk since you opened it. Reload it before saving.",
-    "skill_already_exists": "A skill named {{name}} already exists. Pick another name."
+    "skill_already_exists": "A skill named {{name}} already exists. Pick another name.",
+    "no_archive_folder": "This account has no Archive folder. Create a folder named “Archive” to archive mail.",
+    "outbox_not_pending": "This message is already being sent and can no longer be changed.",
+    "no_spam_folder": "This account has no Junk folder to file spam in."
   }
 }

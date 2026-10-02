@@ -791,6 +791,7 @@ mod executor_tests {
             category: "primary".into(),
             mailbox: mailbox.into(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         };
         db.insert_email(&email).expect("insert email");

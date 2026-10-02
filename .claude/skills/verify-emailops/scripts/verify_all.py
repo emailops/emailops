@@ -247,7 +247,8 @@ def layer_contract():
         add(CLI, "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "fail", f"sin JSON: {e}", trace=(out + err)[-2000:])
         return
     # The binary `make cli-demo` just built, run directly: make would replace the exit code.
-    cli = REPO / "src-tauri/target/debug/emailops-cli"
+    # A worktree build may share another checkout's target dir through CARGO_TARGET_DIR.
+    cli = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or REPO / "src-tauri/target") / "debug/emailops-cli"
     def run_cli(*argv):
         p = subprocess.run([str(cli), *argv], cwd=REPO, capture_output=True, text=True, timeout=300, env=dict(ENV, EMAILOPS_DATA_DIR=str(DEMO_DIR)))
         try: return p.returncode, json.loads(p.stdout), p.stdout + p.stderr
@@ -321,7 +322,8 @@ def layer_evals():
     judge_model = os.environ.get("VERIFY_JUDGE_MODEL", model)
     flags = "--json --judge" + (f" --model {model}" if model else "") + (f" --judge-model {judge_model}" if judge_model else "")
     meta["evals"] = {"flags": flags, "model": model or "(preferencia ai_model de la BD demo)", "judge_model": judge_model or model or "(preferencia ai_model)"}
-    t0 = time.time(); rc, out, err = sh(f'make cli-eval ARGS="{flags}"', timeout=7200)
+    # The judged chat suite can outlast two hours on a laptop GPU; VERIFY_EVAL_TIMEOUT (seconds) raises the cap.
+    t0 = time.time(); rc, out, err = sh(f'make cli-eval ARGS="{flags}"', timeout=int(os.environ.get("VERIFY_EVAL_TIMEOUT", "7200")))
     body = out[out.find("{"):] if "{" in out else ""
     (LAYERS / "evals.raw.json").write_text(body or out + err)
     try: d = json.loads(body)

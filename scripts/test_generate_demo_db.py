@@ -11,6 +11,7 @@ a generic answer failure.
 """
 import ast
 import pathlib
+import sqlite3
 import unittest
 
 import generate_demo_db as gen
@@ -183,11 +184,15 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
             CREATE TABLE emails (id TEXT PRIMARY KEY, account_id TEXT, thread_id TEXT, message_id TEXT,
                 subject TEXT, sender TEXT, sender_email TEXT, sender_domain TEXT, recipients_json TEXT,
                 cc_json TEXT, snippet TEXT, timestamp INTEGER, is_read INTEGER, is_deleted INTEGER,
-                triage_status TEXT, category TEXT, mailbox TEXT, raw_json TEXT, created_at INTEGER);
+                triage_status TEXT, category TEXT, mailbox TEXT, raw_json TEXT, created_at INTEGER,
+                is_starred INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE email_bodies (email_id TEXT PRIMARY KEY, body TEXT);
             CREATE VIRTUAL TABLE emails_fts USING fts5(email_id UNINDEXED, subject, sender, body);
             CREATE TABLE email_tags (email_id TEXT, tag_type TEXT, tag_value TEXT, confidence REAL,
                 created_at INTEGER, PRIMARY KEY (email_id, tag_type));
+            CREATE TABLE email_headers (email_id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
+                from_raw TEXT, list_id TEXT, list_unsubscribe TEXT, list_unsubscribe_post TEXT,
+                precedence TEXT, received_count INTEGER NOT NULL DEFAULT 0, captured_at INTEGER NOT NULL);
             CREATE TABLE email_junk (email_id TEXT PRIMARY KEY, account_id TEXT, spam_score REAL,
                 phish_score REAL, gray_score REAL, band TEXT, primary_kind TEXT, reasons_json TEXT,
                 method TEXT, model_version INTEGER, scored_at INTEGER, user_override TEXT, overridden_at INTEGER);
@@ -250,7 +255,7 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         conn, demo_dir = self._seeded()
         rows = conn.execute(
             "SELECT filename, mime_type, provider_attachment_id, file_path, inline_data "
-            "FROM email_attachment_meta ORDER BY filename").fetchall()
+            "FROM email_attachment_meta WHERE mime_type NOT LIKE 'image/%' ORDER BY filename").fetchall()
         shortcut, page = rows
         self.assertEqual(shortcut[:3], ("larkspur-client-portal.webloc", "application/octet-stream", ""))
         self.assertFalse(pathlib.PurePosixPath(shortcut[3]).is_absolute(), "stored paths are relative to the data dir")
@@ -258,17 +263,137 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         self.assertEqual(page[:4], ("larkspur-renewal-terms.html", "text/html", "INLINE::larkspur-renewal-terms.html", None))
         self.assertIn("renewal terms", base64.b64decode(page[4]).decode("utf-8"))
 
+    def test_one_image_attachment_opens_in_the_lightbox(self):
+        # The sweep opens it to prove no conversation shortcut acts behind the
+        # image viewer. Kept inline, like a small IMAP part, and a real PNG.
+        import base64
+
+        conn, _ = self._seeded()
+        rows = conn.execute(
+            "SELECT filename, provider_attachment_id, inline_data FROM email_attachment_meta "
+            "WHERE mime_type = 'image/png'").fetchall()
+        self.assertEqual(len(rows), 1)
+        filename, provider_id, data = rows[0]
+        self.assertEqual(provider_id, f"INLINE::{filename}")
+        self.assertTrue(base64.b64decode(data).startswith(b"\x89PNG\r\n\x1a\n"))
+
     def test_one_draft_holds_a_table(self):
         conn, _ = self._seeded()
         subject, html, status, dirty = self._one(conn, "SELECT subject, body_html, status, dirty FROM drafts")
         self.assertEqual((subject, status, dirty), ("Milestone dates (table)", "draft", 0))
         self.assertEqual(html.count("<tr>"), 3)
 
+    def test_the_newsletter_offers_one_click_unsubscribe_to_a_reserved_host(self):
+        # The Unsubscribe dialog and its oracle need RFC 8058 headers; the URL
+        # is on `.example` (RFC 2606), so even a stray POST can reach no one.
+        conn, _ = self._seeded()
+        rows = conn.execute(
+            "SELECT e.subject, h.list_unsubscribe, h.list_unsubscribe_post FROM email_headers h "
+            "JOIN emails e ON e.id = h.email_id WHERE h.list_unsubscribe IS NOT NULL").fetchall()
+        self.assertEqual(len(rows), 1)
+        subject, header, post = rows[0]
+        self.assertEqual(subject, gen.FIXTURE_REMOTE_IMAGE_SUBJECT)
+        self.assertIn("<https://harborlight-weekly.example/", header)
+        self.assertIn("<mailto:", header)
+        self.assertEqual(post, "List-Unsubscribe=One-Click")
+
+    def test_one_thread_is_starred(self):
+        conn, _ = self._seeded()
+        starred = [s for (s,) in conn.execute("SELECT subject FROM emails WHERE is_starred = 1")]
+        self.assertEqual(starred, [gen.FIXTURE_STARRED_SUBJECT])
+
+    def test_one_email_is_archived(self):
+        conn, _ = self._seeded()
+        archived = conn.execute("SELECT subject, is_read FROM emails WHERE mailbox = 'archive'").fetchall()
+        self.assertEqual(archived, [(gen.FIXTURE_ARCHIVED_SUBJECT, 1)])
+
     def test_seeding_twice_changes_nothing(self):
         conn, demo_dir = self._seeded()
         counts = lambda: [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-                          for t in ("emails", "emails_fts", "email_junk", "email_attachment_meta", "drafts")]
+                          for t in ("emails", "emails_fts", "email_junk", "email_attachment_meta", "drafts",
+                                    "email_headers")]
         ids = lambda: sorted(r[0] for r in conn.execute("SELECT id FROM emails"))
         before, before_ids = counts(), ids()
         gen.insert_verification_fixtures(conn, gen.LOCALE_EN, demo_dir)
         self.assertEqual((counts(), ids()), (before, before_ids))
+
+
+class TheSchemaComesFromThisCheckoutsMigrations(unittest.TestCase):
+    """The demo DB used to copy its schema from the developer's production DB,
+    which lags behind any branch that adds a migration: the app then failed to
+    find the branch's new tables in the demo DB. The schema now comes from the
+    app's own migrations (the `init_db` example), and the production DB is read
+    only when `--prod-db` asks for it."""
+
+    def _fake_init_db(self, version):
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd)
+            data_dir = pathlib.Path(cmd[-1])
+            data_dir.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(data_dir / "emailops.db"))
+            conn.executescript(
+                "CREATE TABLE refinery_schema_history (version INTEGER PRIMARY KEY, name TEXT,"
+                " applied_on TEXT, checksum TEXT);"
+                "CREATE TABLE blocked_senders (address TEXT PRIMARY KEY);"
+            )
+            conn.execute("INSERT INTO refinery_schema_history VALUES (?, 'x', '', '')", (version,))
+            conn.commit()
+            conn.close()
+
+            class Done:
+                returncode = 0
+                stdout = f"{version}\n"
+
+            return Done()
+
+        return run, calls
+
+    def _demo_db(self):
+        import tempfile
+
+        return pathlib.Path(tempfile.mkdtemp()) / "out" / "emailops.db"
+
+    def test_the_production_db_is_not_read_unless_asked(self):
+        self.assertIsNone(gen.build_parser().parse_args([]).prod_db)
+
+    def test_the_latest_version_is_the_highest_migration_file(self):
+        import tempfile
+
+        d = pathlib.Path(tempfile.mkdtemp())
+        for name in ("V001__init.sql", "V012__later.sql", "V009__mid.sql", "README.md"):
+            (d / name).write_text("", encoding="utf-8")
+        self.assertEqual(gen.latest_migration_version(d), 12)
+
+    def test_the_repo_migrations_are_found(self):
+        self.assertGreaterEqual(gen.latest_migration_version(), 34)
+
+    def test_the_migrated_db_is_copied_into_place(self):
+        latest = gen.latest_migration_version()
+        run, calls = self._fake_init_db(latest)
+        demo_db = self._demo_db()
+        self.assertEqual(gen.migrate_schema(demo_db, run=run), latest)
+        self.assertIn("init_db", calls[0])
+        conn = sqlite3.connect(str(demo_db))
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertIn("blocked_senders", tables)
+        self.assertEqual(conn.execute("SELECT MAX(version) FROM refinery_schema_history").fetchone()[0], latest)
+
+    def test_an_existing_demo_db_is_replaced(self):
+        demo_db = self._demo_db()
+        demo_db.parent.mkdir(parents=True)
+        old = sqlite3.connect(str(demo_db))
+        old.execute("CREATE TABLE stale (x)")
+        old.commit()
+        old.close()
+        run, _ = self._fake_init_db(gen.latest_migration_version())
+        gen.migrate_schema(demo_db, run=run)
+        conn = sqlite3.connect(str(demo_db))
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertNotIn("stale", tables)
+
+    def test_a_db_behind_the_migrations_is_refused(self):
+        run, _ = self._fake_init_db(gen.latest_migration_version() - 1)
+        with self.assertRaises(SystemExit):
+            gen.migrate_schema(self._demo_db(), run=run)

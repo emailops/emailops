@@ -208,14 +208,17 @@ pub fn emit_error(err: &AppError, mode: OutputMode) {
 /// everything else (1).
 pub fn exit_code(err: &AppError) -> u8 {
     match err {
-        AppError::InvalidInput(_) | AppError::Skill(_) | AppError::AttachmentConfirmationRequired { .. } => 2,
+        AppError::InvalidInput(_)
+        | AppError::Skill(_)
+        | AppError::AttachmentConfirmationRequired { .. }
+        | AppError::OutboxNotPending => 2,
         AppError::NotFound(_) => 3,
         AppError::AuthError(_)
         | AppError::OAuthError(_)
         | AppError::KeyringError(_)
         | AppError::NeedsReauth { .. }
         | AppError::CalendarPermissionDenied { .. } => 4,
-        AppError::HttpError(_) | AppError::SyncError(_) => 5,
+        AppError::HttpError(_) | AppError::SyncError(_) | AppError::NoArchiveFolder | AppError::NoSpamFolder => 5,
         AppError::AiError(_) | AppError::AiDisabled | AppError::AiDataPolicy { .. } | AppError::BudgetExceeded(_) => 6,
         AppError::Cancelled => 130,
         AppError::DbError(_) | AppError::JsonError(_) | AppError::IoError(_) => 1,

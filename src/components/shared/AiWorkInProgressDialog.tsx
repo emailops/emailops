@@ -9,6 +9,7 @@ import { type AiChange, affectedKinds, affectedWork, sendsMailToOpenRouter, summ
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { AiProviderActivity } from '@/types';
 
 /** How often the dialog re-reads the queue while stopping or waiting. */
@@ -31,6 +32,7 @@ export function AiWorkInProgressDialog({
   onProceed,
   onCancel,
 }: AiWorkInProgressDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   const addLog = useLogStore((s) => s.addLog);
   const [activity, setActivity] = useState(initial);

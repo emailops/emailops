@@ -355,9 +355,16 @@ pub async fn sync_account_with_provider(
     // whose UID matches a stale id. Fatal on purpose — see the function docs.
     super::uid_validity::reconcile_uid_validity(db, account, email_provider.as_ref()).await?;
 
-    // Read-state changes a previous push could not deliver (offline, a 5xx)
-    // go out before anything is read back from the provider.
+    // Read-state and star changes a previous push could not deliver
+    // (offline, a 5xx) go out before anything is read back from the provider.
     super::mailbox_state::retry_pending_read_pushes(
+        db,
+        account,
+        email_provider.as_ref(),
+        crate::services::clock::now_secs(),
+    )
+    .await;
+    super::mailbox_state::retry_pending_star_pushes(
         db,
         account,
         email_provider.as_ref(),
@@ -453,6 +460,9 @@ pub async fn sync_account_with_provider(
     let mut synced_count: u32 = 0;
     let mut all_new_ids: Vec<String> = Vec::new();
     let mut ai_followups_kicked = false;
+    // New mail the incremental pass stored, judged for desktop notifications
+    // once the whole sync has ingested it (see `mail_notifications`).
+    let mut notify_candidates: Vec<crate::services::mail_notifications::MailCandidate> = Vec::new();
 
     // Load attachment rules for this account (empty vec if none defined)
     let attachment_rules = db.get_attachment_rules(account_id)?;
@@ -800,6 +810,28 @@ pub async fn sync_account_with_provider(
                         }
                     }
 
+                    // Also before the batch is announced: mail from a blocked
+                    // sender goes to Spam without ever showing in the inbox.
+                    crate::services::sender_controls::file_blocked_arrivals(
+                        db,
+                        account,
+                        email_provider.as_ref(),
+                        &emails_only,
+                    )
+                    .await;
+
+                    // Only the incremental pass brings genuinely new mail: a
+                    // first sync has none, and backfill slices are history.
+                    if incremental_after_timestamp.is_some() {
+                        notify_candidates.extend(emails_only.iter().map(|e| {
+                            crate::services::mail_notifications::MailCandidate::from_email(
+                                e,
+                                &account.email,
+                                backfill_ref_ids.contains(&e.id),
+                            )
+                        }));
+                    }
+
                     all_new_ids.extend(ids_to_remove);
                     synced_count += chunk_emails.len() as u32;
 
@@ -869,6 +901,17 @@ pub async fn sync_account_with_provider(
             break;
         }
     }
+
+    // After junk scoring and the blocked-sender hook ran on every chunk, so
+    // junk and blocked mail never notify.
+    crate::services::mail_notifications::notify_new_mail(
+        db,
+        crate::services::notifier::current().as_ref(),
+        account,
+        incremental_after_timestamp,
+        notify_candidates,
+        crate::services::clock::now_secs(),
+    );
 
     // The incremental window was listed to its end and every chunk of it went
     // through the download loop: the next sync can start from the newest
@@ -3289,6 +3332,7 @@ mod extra_mailbox_window_tests {
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            is_starred: false,
             headers: None,
         }
     }
@@ -3952,6 +3996,7 @@ mod sync_anchor_tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }
@@ -4083,6 +4128,7 @@ mod backfill_watermark_persistence_tests {
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         };
         db.insert_email(&existing).expect("seed inbox email");
@@ -4224,6 +4270,7 @@ mod spam_reconcile_tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: false,
+            is_starred: false,
             headers: None,
         }
     }

@@ -114,7 +114,10 @@ export default (h) => async function demoCases() {
     const after = await rowTexts();
     await clickTopic();
     await sleep(1200);
-    const narrowed = after.length > 0 && after.join('|') !== before.join('|') && after.length <= before.length;
+    // A filter reaches archived mail too (DECISIONS 2026-10-02), so the
+    // filtered list can hold threads the plain inbox does not show: what
+    // matters is that it changes to a non-empty subset of the mailbox.
+    const narrowed = after.length > 0 && after.join('|') !== before.join('|');
     return ok(groups.length === 3 && narrowed,
       `filtrar por «${picked}» cambia la lista a ${after.length} hilos; hay filtros por empresa, intención y tema`,
       `grupos: ${groups.join(', ')}; filtrar por «${picked}» no cambia la lista (${after.length} de ${before.length})`);
@@ -142,13 +145,14 @@ export default (h) => async function demoCases() {
   }, async ({ doc }) => {
     doc.match(/narrowed with operators/);
     await view('Inbox');
-    const all = (await rowTexts()).length;
+    const allRows = await rowTexts();
+    const all = allRows.length;
     // The list is virtualised, so a filtered result set is not a subset of the
     // rows on screen: check what each operator promises instead.
     const probes = [
       ['from:nadia', (rows) => rows.length > 0 && rows.every((t) => /nadia/i.test(t))],
       ['subject:ollama', (rows) => rows.length > 0 && rows.every((t) => /ollama/i.test(t))],
-      ['tag:intent=request', (rows) => rows.length > 0 && rows.length < all],
+      ['tag:intent=request', (rows) => rows.length > 0 && rows.join('|') !== allRows.join('|')],
       ['after:2030-01-01', (rows) => rows.length === 0],
     ];
     const results = [];
@@ -580,6 +584,576 @@ export default (h) => async function demoCases() {
     return ok(perAccountSwitches > 0 && /Notification lead time/.test(calSettings), `${perAccountSwitches} interruptor(es) por cuenta y antelación de avisos`, `interruptores por cuenta: ${perAccountSwitches}; antelación: ${/Notification lead time/.test(calSettings)}`);
   });
   await closeSettings();
+
+  // ── organizing, snooze, send, signatures, shortcuts, sender controls ──────
+  // Everything here is undone before the next case: stars are removed again,
+  // archives are undone (or refused by the credential-less demo account and
+  // rolled back), snoozes are lifted, the block is unblocked, the signature
+  // is emptied and the composer is cancelled without a draft.
+  const toastText = () => js(() => document.querySelector('[data-testid="toast-stack"]')?.innerText.replace(/\s+/g, ' ') || '');
+  const closeToasts = async () => { await js(() => document.querySelectorAll('[data-testid="toast-stack"] button[aria-label="Close"]').forEach((x) => x.click())); await sleep(300); };
+  const toastAction = (label) => js((l) => { const x = [...document.querySelectorAll('[data-testid="toast-stack"] button')].find((y) => y.textContent.trim() === l); x?.click(); return !!x; }, label);
+  const waitToast = async (re, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const t = await toastText(); if (re.test(t)) return t; await sleep(400); } return null; };
+  const listRows = () => js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.offsetParent && r.querySelector('[data-testid="row-select"]')).map((r) => r.innerText.replace(/\s+/g, ' ')));
+  const hasRow = async (t) => (await listRows()).some((r) => r.includes(t));
+  const inRow = (text, sel, act = false) => js((s, q, a) => { const r = [...document.querySelectorAll('div[role="button"]')].find((x) => x.offsetParent && x.innerText.includes(s) && x.querySelector('[data-testid="row-select"]')); const el = r?.querySelector(q); if (!el) return null; if (a) el.click(); return el.getAttribute('aria-pressed') ?? true; }, text, sel, act);
+  const rowMenu = async (text) => { const r = await inRow(text, '[aria-label="More actions"]', true); await sleep(700); return r; };
+  const menuLabels = () => js(() => [...document.querySelectorAll('button,[role=menuitem]')].filter((x) => x.offsetParent && !x.closest('[data-testid="bulk-toolbar"], nav, aside, [data-testid="toast-stack"], div[role="button"]')).map((x) => x.textContent.trim()).filter(Boolean));
+  const blur = () => js(() => document.activeElement?.blur());
+  const h1 = () => js(() => document.querySelector('header h1')?.textContent.trim() || '');
+  const headerTitles = () => js(() => [...document.querySelectorAll('header button')].map((x) => x.title).filter(Boolean));
+  const sidebar = async (label) => {
+    await js((l) => {
+      const all = [...document.querySelectorAll('nav button, aside button')].filter((e) => e.offsetParent);
+      (all.find((e) => e.innerText.trim() === l) || all.find((e) => e.innerText.trim().startsWith(l)))?.click();
+    }, label);
+    await sleep(1500);
+  };
+  const heading = () => js(() => document.querySelector('h2')?.textContent.trim() || '');
+  const dialogText = (re) => js((r) => [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .fixed')].map((d) => d.innerText.trim()).find((t) => new RegExp(r).test(t)) || null, re);
+  const dialogButton = (re, label) => js((r, l) => { const d = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .fixed')].find((x) => new RegExp(r).test(x.innerText.trim())); const x = d && [...d.querySelectorAll('button')].filter((y) => y.textContent.trim() === l).pop(); x?.click(); return !!x; }, re, label);
+
+  await account(DEMO[0]);
+  await view('Inbox');
+  await closeToasts();
+
+  // Star from the row, and back.
+  await claim('feat-organize-1', 'estrella en la fila', {
+    covers: ['the star also sits on every row of the list'],
+    how: 'En la bandeja demo pulsa la estrella de la fila de Nadia Brunner: debe quedar pulsada; la vuelve a pulsar y debe soltarse.',
+  }, async ({ doc }) => {
+    doc.match(/the star also sits on every row/);
+    const start = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
+    if (start === null) return 'FAIL: la fila de Nadia Brunner no tiene estrella';
+    await inRow('Nadia Brunner', '[data-testid="star-toggle"]', true); await sleep(1200);
+    const on = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
+    await inRow('Nadia Brunner', '[data-testid="star-toggle"]', true); await sleep(1200);
+    const off = await inRow('Nadia Brunner', '[data-testid="star-toggle"]');
+    return ok(on !== start && off === start, `estrella ${start} → ${on} → ${off}`, `estrella ${start} → ${on} → ${off}`);
+  });
+
+  // The ⋮ menu and the reading pane offer the actions the docs name.
+  await rowMenu('Nadia Brunner');
+  const rowMenuItems = await menuLabels();
+  await b.keys('Escape'); await sleep(500);
+  await openThread('Nadia Brunner');
+  const paneTitles = await headerTitles();
+  await press('Back').catch(() => {});
+  await sleep(1000);
+  await claim('feat-organize-1', 'menú y panel', {
+    covers: ['Both, along with Mark as unread and Star, are in the reading pane and in each conversation\'s More actions (⋮) menu'],
+    proof: 'label',
+    how: 'Abre el menú ⋮ («More actions») de una fila y el hilo en el panel de lectura, y comprueba que ofrecen Archive, Mark as unread y Star (Move to Inbox se comprueba en la vista Archive).',
+  }, async () => {
+    const [archive, , unread, star, more] = bold('feat-organize-1');
+    const inMenu = [archive, unread, star].filter((l) => !rowMenuItems.includes(l));
+    const inPane = [archive, unread, star].filter((l) => !paneTitles.some((x) => x.startsWith(l)));
+    const moreOk = await js((l) => !!document.querySelector(`[aria-label="${l}"]`), more);
+    return ok(!inMenu.length && !inPane.length && moreOk, `menú «${more}» y panel de lectura ofrecen ${[archive, unread, star].join(', ')}`,
+      `faltan en el menú: ${inMenu.join(', ') || '—'}; en el panel: ${inPane.join(', ') || '—'} (títulos: ${paneTitles.join(', ')}); botón «${more}»: ${moreOk}`);
+  });
+
+  // Starred and Archive views.
+  await view('All accounts');
+  await sidebar('Starred');
+  const starredHead = await heading();
+  const starredRows = await listRows();
+  await sidebar('Archive');
+  const archiveHead = await heading();
+  const archiveRows = await listRows();
+  await rowMenu('Studio key handover confirmed');
+  const archiveMenu = await menuLabels();
+  await b.keys('Escape'); await sleep(500);
+  await account(DEMO[0]);
+  const imapArchive = await js(() => [...document.querySelectorAll('nav button, aside button')].some((e) => e.offsetParent && e.innerText.trim() === 'Archive'));
+  await view('Inbox');
+  await claim('feat-organize-2', 'vistas Starred y Archive', {
+    covers: ['Starred in the sidebar lists your starred conversations.', 'Archive lists archived mail for Gmail and Outlook accounts and in All accounts', 'an IMAP account archives into its own Archive folder'],
+    partial: 'la demo no tiene cuentas Gmail ni Outlook; que IMAP archive en su carpeta lo prueban tests',
+    how: 'Con «All accounts», abre Starred (debe listar la conversación destacada de la demo) y Archive (debe listar el correo archivado de la demo); con la cuenta IMAP de la demo, la entrada Archive no aparece.',
+  }, async () => {
+    const [starred, archive] = bold('feat-organize-2');
+    const s = starredHead.startsWith(starred) && starredRows.some((r) => r.includes('Corrected Larkspur Freight renewal quote'));
+    const a = archiveHead.startsWith(archive) && archiveRows.some((r) => r.includes('Studio key handover confirmed'));
+    return ok(s && a && !imapArchive, `«${starredHead}» lista la destacada; «${archiveHead}» lista la archivada; la cuenta IMAP no tiene ${archive}`,
+      `Starred=${s} («${starredHead}»), Archive=${a} («${archiveHead}»), IMAP con Archive=${imapArchive}`);
+  });
+  await claim('feat-organize-1', 'Move to Inbox', {
+    covers: ['Move to Inbox brings it back'], proof: 'label',
+    how: 'En la vista Archive, el menú ⋮ de la conversación archivada ofrece «Move to Inbox». No se ejecuta: la cuenta demo no tiene credenciales.',
+  }, async () => {
+    const [, back] = bold('feat-organize-1');
+    return ok(archiveMenu.includes(back), `«${back}» en el menú de la conversación archivada`, `menú: ${archiveMenu.join(', ')}`);
+  });
+  await claim('feat-organize-2', 'búsqueda', {
+    covers: ['Archived mail is only out of the inbox: search'],
+    partial: 'los filtros inteligentes los prueban tests; las funciones de IA no se prueban',
+    how: 'Desde la bandeja, busca el asunto del correo archivado de la demo: la búsqueda debe encontrarlo aunque la bandeja no lo liste.',
+  }, async ({ doc }) => {
+    doc.match(/only out of the inbox/);
+    const inInbox = await hasRow('Studio key handover confirmed');
+    await search('Studio key handover');
+    const hits = await rowTexts();
+    await search('');
+    const found = hits.some((t) => t.includes('Studio key handover confirmed'));
+    return ok(!inInbox && found, 'fuera de la bandeja, pero la búsqueda lo encuentra', `en bandeja=${inInbox}, encontrado=${found}`);
+  });
+
+  // Multi-select, the bulk toolbar and Clear selection.
+  await account(DEMO[0]);
+  await view('Inbox');
+  await inRow('Kwame Boateng', '[data-testid="row-select"]', true);
+  await inRow('GlitchTip', '[data-testid="row-select"]', true);
+  await sleep(600);
+  const bar = await js(() => { const t = document.querySelector('[data-testid="bulk-toolbar"]'); return t ? { text: t.innerText.replace(/\s+/g, ' '), buttons: [...t.querySelectorAll('button')].map((x) => x.getAttribute('aria-label') || x.title || x.textContent.trim()) } : null; });
+  await claim('feat-organize-3', 'barra de selección', {
+    covers: ['Tick the box at the start of a row to select it.', 'With one or more selected, a toolbar above the list acts on all of them at once — archive, snooze, delete, mark as read or unread, star'],
+    how: 'Marca la casilla de dos filas de la demo: aparece la barra con «2 selected» y botones para archivar, posponer, eliminar, marcar leído/no leído y destacar.',
+  }, async ({ doc }) => {
+    const acts = doc.match(/at once — (.+?) — and/)[1].split(', ');
+    const want = { archive: 'Archive', snooze: 'Snooze', delete: 'Delete', 'mark as read or unread': /Mark as (un)?read/, star: 'Star' };
+    if (!bar) return 'FAIL: no aparece la barra de acciones al marcar dos filas';
+    const missing = acts.filter((a) => { const w = want[a]; return !w || !bar.buttons.some((x) => (w instanceof RegExp ? w.test(x) : x === w)); });
+    return ok(/2 selected/.test(bar.text) && !missing.length, `${bar.text.slice(0, 40)}; ${bar.buttons.join(', ')}`, `texto «${bar.text}»; sin botón para: ${missing.join(', ')}`);
+  });
+
+  // Bulk archive + Undo: nothing reaches the (credential-less) provider.
+  const bulkArchive = () => js(() => { const x = [...document.querySelectorAll('[data-testid="bulk-toolbar"] button')].find((y) => (y.getAttribute('aria-label') || y.title || y.textContent.trim()) === 'Archive'); x?.click(); return !!x; });
+  const archived = await bulkArchive();
+  await sleep(800);
+  const goneAfterArchive = !(await hasRow('Kwame Boateng')) && !(await hasRow('GlitchTip'));
+  const undoToast = await toastText();
+  const undone = await toastAction('Undo');
+  await sleep(1500);
+  const backAfterUndo = (await hasRow('Kwame Boateng')) && (await hasRow('GlitchTip'));
+  await sleep(7000);
+  const lateAfterUndo = await toastText();
+  await closeToasts();
+  await claim('feat-organize-4', 'deshacer', {
+    covers: ['Archiving or deleting removes the conversations from the list at once and shows a notice with Undo', 'so Undo simply puts them back'],
+    partial: 'eliminar y la duración de 6 segundos no se miden aquí',
+    how: 'Archiva dos filas desde la barra: salen de la lista al momento con un aviso «Archived 2 conversations · Undo»; Undo las devuelve y, pasados 7 s, ningún error del proveedor (la cuenta demo no tiene credenciales: cualquier llamada fallaría a la vista).',
+  }, async () => {
+    const [undo] = bold('feat-organize-4');
+    return ok(archived && goneAfterArchive && /Archived 2 conversations/.test(undoToast) && undoToast.includes(undo) && undone && backAfterUndo && !/Could not archive/.test(lateAfterUndo),
+      `aviso «${undoToast}»; ${undo} las devuelve; ningún error del proveedor después`,
+      `archivadas=${archived}/${goneAfterArchive}, aviso «${undoToast}», undo=${undone}, de vuelta=${backAfterUndo}, aviso tardío «${lateAfterUndo}»`);
+  });
+  await js(() => document.querySelector('[data-testid="bulk-clear"]')?.click());
+  await sleep(600);
+  const barAfterClear = await js(() => !!document.querySelector('[data-testid="bulk-toolbar"]'));
+  await claim('feat-organize-3', 'Clear selection', {
+    covers: ['Clear selection ends it.'],
+    how: 'Con dos filas marcadas, pulsa «Clear selection»: la barra de acciones desaparece.',
+  }, async () => {
+    const [clear] = bold('feat-organize-3');
+    const label = await js(() => document.querySelector('[data-testid="bulk-clear"]')?.getAttribute('aria-label') || '');
+    return ok(!barAfterClear && (label === '' || label === clear), `«${clear}» quita la barra`, `barra tras limpiar=${barAfterClear}`);
+  });
+
+  // An archive left to run: the provider is called only after the window.
+  await rowMenu('GlitchTip');
+  const archivedOne = await js(() => { const x = [...document.querySelectorAll('button')].find((y) => y.offsetParent && y.textContent.trim() === 'Archive' && !y.closest('[data-testid="bulk-toolbar"], nav, aside, header')); x?.click(); return !!x; });
+  const t0 = Date.now();
+  await sleep(2500);
+  const earlyToast = await toastText();
+  const providerError = await waitToast(/Could not archive 1 conversation/, 25000);
+  const errorAfter = (Date.now() - t0) / 1000;
+  await sleep(1000);
+  const rolledBack = await hasRow('GlitchTip');
+  await closeToasts();
+  await claim('feat-organize-4', 'proveedor al acabar la ventana', {
+    covers: ['Your mail provider is only told when those seconds are up'],
+    how: 'Archiva una fila y no deshace: la cuenta demo no tiene credenciales, así que el error del proveedor delata cuándo se le llama. No debe llegar en los primeros segundos y sí después de la ventana; la fila vuelve.',
+  }, async ({ doc }) => {
+    const secs = doc.number(/for (\d+) seconds/);
+    return ok(archivedOne && !/Could not archive/.test(earlyToast) && !!providerError && errorAfter >= secs - 1 && rolledBack,
+      `el proveedor no se llama hasta ~${errorAfter.toFixed(0)} s (ventana de ${secs} s); el error devuelve la fila`,
+      `archivada=${archivedOne}, aviso temprano «${earlyToast}», error=${providerError} a los ${errorAfter.toFixed(1)} s, fila de vuelta=${rolledBack}`);
+  });
+
+  // Keyboard: ? overlay, the table's keys, j/k, e + auto-advance + Undo.
+  await blur(); await b.keys('?'); await sleep(900);
+  const help = await js(() => {
+    const h = document.querySelector('[data-testid="shortcut-help"]');
+    if (!h) return null;
+    return [...h.querySelectorAll('li[data-shortcut-id]')].map((li) => ({
+      label: li.querySelector('span')?.textContent.trim() || '',
+      seqs: (() => {
+        // Alternatives are separated by an "or" span, presses by a "then" span.
+        const parts = [...li.querySelectorAll('span:last-child > *')];
+        const alts = []; let cur = [];
+        for (const n of parts) {
+          if (n.tagName === 'KBD') cur.push(n.textContent.trim());
+          else if (n.textContent.trim() === 'or') { alts.push(cur.join(' ')); cur = []; }
+        }
+        if (cur.length) alts.push(cur.join(' '));
+        return alts;
+      })(),
+    }));
+  });
+  await b.keys('Escape'); await sleep(600);
+  const helpClosed = !(await js(() => !!document.querySelector('[data-testid="shortcut-help"]')));
+  await claim('feat-shortcuts-1', 'tabla de atajos', {
+    covers: ['Press ? anywhere outside a text field to see every shortcut.',
+      '| j / k | next / previous conversation |', '| Enter or o, u | open the conversation, back to the list |',
+      '| x | select or deselect the conversation |', '| e, #, s, b | archive, delete, star, snooze |',
+      '| Shift+U / Shift+I | mark as unread / read |', '| c, r, a, f | new message, reply, reply all, forward |',
+      '| g then i, s, b, a, l | go to Inbox, Starred, Snoozed, Archive, Scheduled |', '| / | search |'],
+    how: 'Pulsa «?» fuera de un campo: se abre la lista de atajos. Para cada fila de la tabla de la doc, cada tecla (o secuencia «g …») debe estar en la lista con una acción cuyo nombre empiece como el de la doc.',
+  }, async ({ doc }) => {
+    if (!help) return 'FAIL: «?» no abre la lista de atajos';
+    const rows = doc.text.split('| Keys | Action |')[1].split('|---|---|')[1].split(/\|\s*\|/).join('|\n|').split('\n')
+      .map((r) => r.trim().replace(/^\|\s*|\s*\|$/g, '').split(' | ')).filter((r) => r.length === 2);
+    const bad = [];
+    for (const [keysCol, actCol] of rows) {
+      let groups = keysCol === '/' ? ['/'] : keysCol.split(', ');
+      let acts = actCol.split(', ');
+      let prefix = '';
+      if (/^g then /.test(groups[0])) { prefix = 'g '; groups[0] = groups[0].replace(/^g then /, ''); acts = acts.map((a) => a.replace(/^go to /, '')); }
+      groups.forEach((g, i) => {
+        const keys = g === '/' ? ['/'] : g.split(/ or | \/ /);
+        const act = acts[Math.min(i, acts.length - 1)];
+        const alts = act.split(' / ');
+        keys.forEach((k, j) => {
+          const want = (keys.length === alts.length ? alts[j] : alts[0]).replace(/^mark as /, '');
+          const seq = prefix + k;
+          const hit = help.find((h) => h.seqs.includes(seq));
+          const word = want.split(' ')[0].toLowerCase();
+          if (!hit || !hit.label.toLowerCase().includes(word)) bad.push(`${seq} → ${want} (app: ${hit ? hit.label : 'sin tecla'})`);
+        });
+      });
+    }
+    return ok(helpClosed && !bad.length && rows.length >= 8, `${rows.length} filas: cada tecla está en la lista de «?» con su acción; Escape la cierra`, `no casan: ${bad.join('; ') || '—'}; filas leídas ${rows.length}; cerrada=${helpClosed}`);
+  });
+
+  const cursorRow = () => js(() => document.querySelector('[data-cursor="true"]')?.innerText.replace(/\s+/g, ' ').slice(0, 80) ?? null);
+  await blur();
+  const c0 = await cursorRow(); await b.keys('j'); await sleep(400); const c1 = await cursorRow(); await b.keys('k'); await sleep(400); const c2 = await cursorRow();
+  await claim('feat-shortcuts-1', 'j y k', {
+    covers: ['| j / k | next / previous conversation |'],
+    how: 'Pulsa j y k en la lista: el cursor de teclado baja a la fila siguiente y vuelve.',
+  }, async () => ok(c1 && c1 !== c0 && c2 === c0, `${String(c0).slice(0, 30)} → ${String(c1).slice(0, 30)} → de vuelta`, `cursor ${c0} → ${c1} → ${c2}`));
+
+  // e on an open conversation: archive, the next one opens, Undo.
+  const list = await listRows();
+  await js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.offsetParent && r.querySelector('[data-testid="row-select"]'))[1]?.click());
+  await sleep(1500);
+  const first = await h1();
+  await blur(); await b.keys('e'); await sleep(1500);
+  const next = await h1();
+  const eToast = await toastText();
+  await toastAction('Undo'); await sleep(1200);
+  await closeToasts();
+  await press('Back').catch(() => {});
+  await sleep(1000);
+  const firstBack = (await listRows()).some((r) => r.includes(first));
+  await claim('feat-organize-5', 'abre la siguiente', {
+    covers: ['When the conversation you are reading leaves the list — archived, deleted, snoozed, or moved to Spam — the next one opens.'],
+    partial: 'solo se prueba al archivar',
+    how: 'Abre la segunda fila, pulsa «e» (archivar): debe abrirse la tercera; Undo devuelve la archivada a la lista.',
+  }, async ({ doc }) => {
+    doc.match(/the next one opens/);
+    return ok(first && next && next !== first && list[2]?.includes(next) && /Archived 1 conversation/.test(eToast) && firstBack,
+      `«${first.slice(0, 30)}» archivada con e → abierta «${next.slice(0, 30)}»; Undo la devuelve`,
+      `antes «${first}», después «${next}», tercera fila «${String(list[2]).slice(0, 50)}», aviso «${eToast}», de vuelta=${firstBack}`);
+  });
+
+  // Nothing acts behind a menu; nothing acts while typing; tooltips name the key.
+  await blur();
+  const before = await listRows(); const cur0 = await cursorRow();
+  await js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.offsetParent && r.querySelector('[data-testid="row-select"]'))[2]?.querySelector('[aria-label="More actions"]')?.click());
+  await sleep(700);
+  for (const k of ['#', 'e', 'j']) { await b.keys(k); await sleep(300); }
+  await sleep(800);
+  const afterMenu = await listRows(); const menuToast = await toastText(); const cur1 = await cursorRow();
+  await b.keys('Escape'); await sleep(500);
+  await js(() => { const i = document.querySelector('input[placeholder^="Search"]'); i.focus(); });
+  await b.keys('e'); await sleep(600);
+  const typed = await js(() => document.querySelector('input[placeholder^="Search"]')?.value || '');
+  const afterTyping = await listRows();
+  await search('');
+  await blur();
+  await openThread('Nadia Brunner');
+  const titlesOn = await headerTitles();
+  await press('Back').catch(() => {});
+  await sleep(800);
+  await claim('feat-shortcuts-2', 'pausa y pistas', {
+    covers: ['Shortcuts pause while you type and while a dialog or menu is open.', 'The buttons they stand for name their key in the tooltip, as in "Archive (E)".'],
+    partial: 'con un diálogo abierto no se prueba aquí (lo hace make verify)',
+    how: 'Con el menú ⋮ de una fila abierto pulsa «#», «e» y «j»: ninguna fila sale y el cursor no se mueve. Con el foco en el buscador, «e» se escribe y no archiva. En un hilo abierto, el botón de archivar se titula como cita la doc.',
+  }, async ({ doc }) => {
+    const hint = doc.match(/as in "([^"]+)"/)[1];
+    const left = before.filter((r) => !afterMenu.includes(r));
+    const leftTyping = before.filter((r) => !afterTyping.includes(r));
+    return ok(!left.length && !/Deleted|Archived/.test(menuToast) && cur1 === cur0 && typed === 'e' && !leftTyping.length && titlesOn.includes(hint),
+      `menú abierto: nada actúa; escribiendo: «e» va al buscador; tooltip «${hint}»`,
+      `salieron con el menú: ${left.length}, aviso «${menuToast}», cursor ${cur0} → ${cur1}; buscador «${typed}», salieron escribiendo ${leftTyping.length}; títulos: ${titlesOn.join(', ')}`);
+  });
+
+  // Settings → Appearance: the shortcuts switch and Show the list.
+  const appearance = await tab('Appearance');
+  await js(() => document.querySelector('[data-testid="keyboard-shortcuts-show"]')?.click());
+  await sleep(800);
+  const listFromSettings = await js(() => !!document.querySelector('[data-testid="shortcut-help"]'));
+  await b.keys('Escape'); await sleep(600);
+  await tab('Appearance');
+  await flip('Keyboard shortcuts');
+  await closeSettings();
+  await blur(); await b.keys('?'); await sleep(800);
+  const helpWhenOff = await js(() => !!document.querySelector('[data-testid="shortcut-help"]'));
+  if (helpWhenOff) { await b.keys('Escape'); await sleep(500); }
+  await openThread('Nadia Brunner');
+  const titlesOff = await headerTitles();
+  await press('Back').catch(() => {});
+  await sleep(800);
+  await tab('Appearance');
+  await flip('Keyboard shortcuts');
+  const shortcutsBack = (await toggles())['Keyboard shortcuts'];
+  await claim('feat-shortcuts-2', 'interruptor', {
+    covers: ['Settings → Appearance → Keyboard shortcuts turns them off, and Show the list opens the same overview as ?.'],
+    how: 'En Ajustes → Appearance, «Show the list» abre la lista de atajos. Apaga el interruptor: «?» ya no abre nada y los botones pierden la tecla del tooltip; después lo vuelve a encender.',
+  }, async () => {
+    const [path, show] = bold('feat-shortcuts-2');
+    const label = path.split(' → ').pop();
+    return ok(appearance.includes(label) && appearance.includes(show) && listFromSettings && !helpWhenOff && !titlesOff.some((x) => /\(E\)$/.test(x)) && shortcutsBack === true,
+      `«${show}» abre la lista; con «${label}» apagado «?» no hace nada y los tooltips no nombran tecla; vuelto a encender`,
+      `lista desde ajustes=${listFromSettings}, ? con atajos apagados=${helpWhenOff}, títulos=${titlesOff.join(', ')}, encendido de nuevo=${shortcutsBack}`);
+  });
+
+  // Undo send and After archiving or deleting, as Settings shows them.
+  const undoSend = await js(() => { const s = document.querySelector('[data-testid="undo-send-setting"] select'); return s ? { value: s.value, options: [...s.options].map((o) => o.textContent.trim()) } : null; });
+  const afterLeave = await js(() => { const s = document.querySelector('[data-testid="auto-advance-setting"] select'); return s ? { value: s.value, options: [...s.options].map((o) => o.textContent.trim()) } : null; });
+  await closeSettings();
+  await claim('feat-send-1', 'opciones', {
+    covers: ['The wait is set in Settings → Appearance → Undo send: off, 5, 10, 20 or 30 seconds'],
+    how: 'Lee el desplegable «Undo send» de Ajustes → Appearance y compara sus opciones con la lista de la doc.',
+  }, async ({ doc }) => {
+    const [, want] = doc.match(/Undo send: (.+?) seconds/);
+    const nums = want.replace(/ or /, ', ').split(', ').filter((x) => x !== 'off');
+    const got = (undoSend?.options || []).map((o) => (o.match(/^(\d+)/) || [])[1]).filter(Boolean);
+    return ok(undoSend && /off/i.test(undoSend.options[0]) && nums.join() === got.join(), `opciones: ${undoSend?.options.join(', ')}`, `doc: off, ${nums.join(', ')}; app: ${undoSend?.options.join(', ')}`);
+  });
+  await claim('feat-organize-5', 'ajuste', {
+    covers: ['Settings → Appearance → After archiving or deleting chooses between the next conversation, the previous one, or going back to the list.'],
+    proof: 'label',
+    how: 'Lee el desplegable «After archiving or deleting» de Ajustes → Appearance: debe ofrecer la siguiente, la anterior y volver a la lista.',
+  }, async () => {
+    const opts = afterLeave?.options || [];
+    return ok(opts.length === 3 && /next/i.test(opts[0]) && /previous/i.test(opts[1]) && /list/i.test(opts[2]), opts.join(' / '), `opciones: ${opts.join(' / ') || 'sin desplegable'}`);
+  });
+
+  // Snooze: the row menu's presets, the Snoozed view, Unsnooze.
+  await view('Inbox');
+  await rowMenu('Kwame Boateng');
+  await js(() => document.querySelector('[data-testid="row-snooze"]')?.click());
+  await sleep(600);
+  const presets = await js(() => [...document.querySelectorAll('[data-testid^="snooze-preset-"]')].map((x) => x.getAttribute('data-testid').replace('snooze-preset-', '')));
+  const presetLabels = await js(() => document.querySelector('[data-testid="snooze-options"]')?.innerText.replace(/\s+/g, ' ') || '');
+  await js(() => document.querySelector('[data-testid^="snooze-preset-"]')?.click());
+  await sleep(1500);
+  const snoozeToast = await toastText();
+  const snoozedOut = !(await hasRow('Kwame Boateng'));
+  await closeToasts();
+  await openThread('Nadia Brunner');
+  const paneSnooze = (await headerTitles()).some((x) => x.startsWith('Snooze'));
+  await press('Back').catch(() => {});
+  await sleep(800);
+  await claim('feat-snooze-1', 'momentos y dónde', {
+    covers: ['Snooze hides a conversation from the inbox until a time you choose: later today, tomorrow, this weekend, next week, or a date and time you pick.', 'It is offered in the reading pane, the row\'s ⋮ menu and the selection toolbar.'],
+    how: 'En el menú ⋮ de una fila, Snooze ofrece los momentos de la doc (los del día: «later today» y «this weekend» dependen de la hora y el día) y una fecha a elegir; el primero saca la fila de la bandeja. El panel de lectura y la barra de selección también tienen Snooze.',
+  }, async ({ doc }) => {
+    const named = doc.match(/until a time you choose: (.+?)\./)[1].replace(/, or /, ', ').split(', ');
+    const ids = { 'later today': 'laterToday', tomorrow: 'tomorrow', 'this weekend': 'thisWeekend', 'next week': 'nextWeek' };
+    const unknown = presets.filter((p) => !named.some((n) => ids[n] === p));
+    const always = ['tomorrow', 'nextWeek'].filter((p) => !presets.includes(p));
+    const pick = /Pick date/.test(presetLabels);
+    const inBar = bar?.buttons.includes('Snooze');
+    return ok(!unknown.length && !always.length && pick && snoozedOut && /Snoozed until/.test(snoozeToast) && paneSnooze && inBar,
+      `momentos: ${presets.join(', ')} + fecha; la fila sale («${snoozeToast.slice(0, 40)}»); también en el panel y la barra`,
+      `momentos ${presets.join(', ')} (desconocidos ${unknown.join(', ')}, faltan ${always.join(', ')}), fecha=${pick}, fuera=${snoozedOut}, panel=${paneSnooze}, barra=${inBar}`);
+  });
+  await sidebar('Snoozed');
+  const snoozedHead = await heading();
+  const inSnoozed = await hasRow('Kwame Boateng');
+  const badge = await inRow('Kwame Boateng', '[data-testid="snooze-badge"]');
+  await rowMenu('Kwame Boateng');
+  await js(() => document.querySelector('[data-testid="row-unsnooze"]')?.click());
+  await sleep(1500);
+  const leftSnoozed = !(await hasRow('Kwame Boateng'));
+  await closeToasts();
+  await view('Inbox');
+  const backInInbox = await hasRow('Kwame Boateng');
+  await claim('feat-snooze-2', 'vista y Unsnooze', {
+    covers: ['Snoozed conversations are listed under Snoozed in the sidebar', 'where Unsnooze brings one back early.'],
+    how: 'Tras posponer una fila, la vista Snoozed la lista con su marca de hora; Unsnooze en su menú ⋮ la saca de Snoozed y la devuelve a la bandeja.',
+  }, async () => {
+    const [snoozed] = bold('feat-snooze-2');
+    return ok(snoozedHead.startsWith(snoozed) && inSnoozed && badge !== null && leftSnoozed && backInInbox,
+      `«${snoozedHead}» la lista con su hora; Unsnooze la devuelve a la bandeja`, `cabecera «${snoozedHead}», listada=${inSnoozed}, marca=${badge}, fuera=${leftSnoozed}, en bandeja=${backInInbox}`);
+  });
+
+  // Schedule send needs a recipient, a subject and a body before its arrow
+  // enables, and the composer would autosave that as a draft in the shared
+  // demo DB: make verify (Envío/programar envío) drives it instead.
+  await js(() => document.querySelector('[data-testid="sidebar-scheduled"]')?.click());
+  await sleep(1500);
+  const scheduledHead = await js(() => document.querySelector('[data-testid="scheduled-app-open-note"]')?.previousElementSibling?.textContent.trim() || '');
+  const scheduledNote = await js(() => document.querySelector('[data-testid="scheduled-app-open-note"]')?.innerText || '');
+  await claim('feat-send-3', 'vista Scheduled', {
+    covers: ['Messages waiting to go out are listed under Scheduled in the sidebar', 'A scheduled message only goes out while EmailOps is open'],
+    proof: 'label',
+    how: 'Abre la vista Scheduled desde la barra lateral y lee su cabecera y la nota sobre que la app debe estar abierta. No se programa nada: la demo es compartida.',
+  }, async () => {
+    const [scheduled] = bold('feat-send-3');
+    return ok(scheduledHead.startsWith(scheduled) && /only while EmailOps is open/.test(scheduledNote), `«${scheduledHead}»: ${scheduledNote}`, `cabecera «${scheduledHead}», nota «${scheduledNote}»`);
+  });
+  await view('Inbox');
+
+  // Signatures: save one, see it in a new message, try two images, empty it again.
+  const SIGNATURE = 'Ulises Demo · docs check signature';
+  const sigTab = await tab('Signatures');
+  const sigSwitches = await toggles();
+  const editor = await js(() => { const ed = document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]'); if (!ed) return false; ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); return true; });
+  if (editor) await js((t) => document.execCommand('insertText', false, t), SIGNATURE);
+  await sleep(400);
+  const saveSig = () => js(() => { const x = [...document.querySelectorAll('[data-testid="signatures-settings"] button')].find((y) => y.textContent.trim() === 'Save signature'); x?.click(); return !!x; });
+  await saveSig(); await sleep(1500);
+  await closeSettings();
+  await press('Compose').catch(() => {});
+  await sleep(1800);
+  const inserted = await js(() => { const s = document.querySelector('[contenteditable="true"] [data-emailops-signature]'); return s ? { text: s.innerText.trim(), editable: !!s.closest('[contenteditable="true"]') } : null; });
+  await press('Cancel').catch(() => {});
+  await sleep(800);
+  if (await js(() => !!document.querySelector('input[placeholder^="Email subject"]'))) { await b.keys('Escape'); await sleep(600); }
+  await claim('feat-signatures-1', 'guardar e insertar', {
+    covers: ['Each account has its own signature, set in Settings → Signatures.', 'Two switches decide where it goes: Insert in new messages and Insert in replies and forwards.', 'It is part of the message body, so you can change or delete it in any message before sending.'],
+    how: 'En Ajustes → Signatures escribe una firma para la cuenta demo y la guarda; Compose abre con ella dentro del cuerpo editable. Comprueba que están los dos interruptores que nombra la doc. Al final la firma se vacía.',
+  }, async () => {
+    const [, forNew, forReplies] = bold('feat-signatures-1');
+    const sw = [forNew, forReplies].filter((l) => !Object.keys(sigSwitches).some((k) => k.startsWith(l)));
+    return ok(editor && inserted?.text === SIGNATURE && inserted.editable && !sw.length && /account/i.test(sigTab),
+      `firma insertada en el cuerpo editable de un mensaje nuevo; interruptores ${forNew} / ${forReplies}`,
+      `editor=${editor}, insertada=${JSON.stringify(inserted)}, faltan interruptores: ${sw.join(', ') || '—'}`);
+  });
+
+  await tab('Signatures');
+  const pickImage = (kind) => js((k) => {
+    const input = document.querySelector('[data-testid="signature-image-input"]'); if (!input) return false;
+    const deliver = (file) => { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true })); };
+    if (k === 'svg') { deliver(new File(['<svg xmlns="http://www.w3.org/2000/svg"></svg>'], 'docs-logo.svg', { type: 'image/svg+xml' })); return true; }
+    const c = document.createElement('canvas'); c.width = 1600; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#2b6cb0'; g.fillRect(0, 0, 1600, 200);
+    c.toBlob((blob) => deliver(new File([blob], 'docs-wide-logo.png', { type: 'image/png' })), 'image/png'); return true;
+  }, kind);
+  const addImage = await js(() => document.querySelector('[data-testid="signature-add-image"]')?.innerText.trim() || '');
+  await pickImage('svg'); await sleep(1200);
+  const svgRefused = await js(() => document.querySelector('[data-testid="signatures-settings"]')?.innerText.replace(/\s+/g, ' ') || '');
+  await pickImage('png'); await sleep(2500);
+  const imgWidth = await js(() => document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"] img')?.naturalWidth ?? null);
+  await js(() => { const ed = document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]'); ed.focus(); document.execCommand('selectAll'); document.execCommand('delete'); });
+  await sleep(400);
+  await saveSig(); await sleep(1500);
+  const emptied = await js(() => (document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]')?.innerText || '').trim() === '');
+  await closeSettings();
+  await claim('feat-signatures-2', 'imágenes', {
+    covers: ['Add image puts a logo or a picture of your handwritten signature into it.', 'SVG and other files are refused with the reason.', 'A wide image is scaled down to 600 px'],
+    how: 'En Ajustes → Signatures, «Add image» con un SVG muestra el motivo (solo PNG, JPEG, GIF o WebP); con un PNG de 1600 px entra en la firma reducido al ancho que dice la doc. Después la firma se vacía y se guarda vacía.',
+  }, async ({ doc }) => {
+    const [add] = bold('feat-signatures-2');
+    const px = doc.number(/scaled down\s+to (\d+) px/);
+    return ok(addImage === add && /PNG, JPEG, GIF or WebP/.test(svgRefused) && imgWidth === px && emptied,
+      `«${add}»: SVG rechazado con el motivo; PNG de 1600 px → ${imgWidth} px; firma vaciada`,
+      `botón «${addImage}», motivo SVG=${/PNG, JPEG, GIF or WebP/.test(svgRefused)}, ancho=${imgWidth}, vaciada=${emptied}`);
+  });
+
+  // Unsubscribe: the confirmation names what will be contacted. Never confirmed.
+  await search('Harborlight');
+  await openThread('Harborlight Weekly');
+  await js(() => document.querySelector('[data-testid="unsubscribe-button"]')?.click());
+  await sleep(1000);
+  const unsubButton = await js(() => document.querySelector('[data-testid="unsubscribe-button"]')?.innerText.trim() || '');
+  const unsubDialog = await dialogText('^Unsubscribe from');
+  await dialogButton('^Unsubscribe from', 'Cancel');
+  await sleep(800);
+  const unsubClosed = !(await js(() => !!document.querySelector('[data-testid="unsubscribe-confirm"]')));
+  await press('Back').catch(() => {});
+  await sleep(800);
+  await claim('feat-unsubscribe-1', 'confirmación', {
+    covers: ['shows Unsubscribe next to its sender', 'Before anything is sent, a confirmation says exactly what will happen: a request sent straight to the sender\'s server (not through your mail provider)'],
+    partial: 'el boletín demo es de un clic; el correo de baja y la página del remitente los prueban tests',
+    how: 'Abre el boletín demo con List-Unsubscribe de un clic, pulsa Unsubscribe y lee la confirmación: debe nombrar el servidor del remitente y decir que no pasa por el proveedor. Pulsa Cancel; nunca confirma.',
+  }, async () => {
+    const [label] = bold('feat-unsubscribe-1');
+    return ok(unsubButton === label && /harborlight-weekly\.example/.test(unsubDialog || '') && /not your mail provider/.test(unsubDialog || '') && unsubClosed,
+      `«${label}» → «${(unsubDialog || '').replace(/\s+/g, ' ').slice(0, 140)}»; Cancel la cierra`, `botón «${unsubButton}», diálogo «${unsubDialog}», cerrado=${unsubClosed}`);
+  });
+
+  // Block sender, the banner, Settings → Junk → Blocked senders, Unblock.
+  await rowMenu('Harborlight Weekly');
+  const hideItem = (await menuLabels());
+  await js(() => document.querySelector('[data-testid="menu-block-sender"]')?.click());
+  await sleep(1000);
+  const blockDialog = await dialogText('^Block news@harborlight-weekly');
+  const moveExisting = await js(() => { const d = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .fixed')].find((x) => /^Block /.test(x.innerText.trim())); const c = d?.querySelector('input[type="checkbox"]'); return c ? c.checked : null; });
+  await js(() => document.querySelector('[data-testid="sender-block-confirm"]')?.click());
+  const blockToast = await waitToast(/Blocked news@harborlight-weekly\.example/, 10000);
+  await closeToasts();
+  await openThread('Harborlight Weekly');
+  const banner = await js(() => document.querySelector('[data-testid="blocked-sender-banner"]')?.innerText.replace(/\s+/g, ' ') || null);
+  await press('Back').catch(() => {});
+  await sleep(800);
+  await search('');
+  const junkTab = await tab('Junk');
+  const blockedList = await js(() => document.querySelector('[data-testid="blocked-senders"]')?.innerText.replace(/\s+/g, ' ') || '');
+  await js(() => [...document.querySelectorAll('[data-testid="blocked-senders"] button')].find((x) => x.textContent.trim() === 'Unblock')?.click());
+  await sleep(1000);
+  const unblockDialog = await dialogText('^Unblock news@harborlight-weekly');
+  await dialogButton('^Unblock news@harborlight-weekly', 'Unblock');
+  const unblockToast = await waitToast(/Unblocked/, 10000);
+  await sleep(600);
+  const listAfter = await js(() => document.querySelector('[data-testid="blocked-senders"]')?.innerText || '');
+  await closeToasts();
+  await closeSettings();
+  await claim('feat-block-sender-1', 'bloquear', {
+    covers: ['Block sender, in a conversation\'s ⋮ menu', 'Also move their existing messages to Spam files what is already there, and the conversation shows that the sender is blocked, with Unblock at hand.'],
+    partial: 'la demo no tiene credenciales: mover a Spam en el servidor lo prueban tests',
+    how: 'En el menú ⋮ del boletín demo pulsa Block sender: el diálogo ofrece mover sus mensajes a Spam (marcado); al confirmar, el hilo muestra el aviso de remitente bloqueado con Unblock. Después se desbloquea.',
+  }, async () => {
+    const [blk, move, unblock] = bold('feat-block-sender-1');
+    return ok(hideItem.includes(blk) && (blockDialog || '').includes(move) && moveExisting === true && !!blockToast && /Unblock/.test(banner || '') && (banner || '').includes(unblock),
+      `«${blk}» → diálogo con «${move}» marcado; aviso «${banner}»`, `menú=${hideItem.includes(blk)}, diálogo «${blockDialog}», casilla=${moveExisting}, aviso tostada «${blockToast}», banner «${banner}»`);
+  });
+  await claim('feat-block-sender-2', 'Ajustes → Junk', {
+    covers: ['Settings → Junk → Blocked senders lists everyone you blocked, with Unblock, which can also bring their messages back from Spam to the inbox.', 'The ⋮ menu\'s Hide from smart filters is a different thing'],
+    proof: 'label',
+    how: 'Tras bloquear el boletín demo, Ajustes → Junk → Blocked senders lo lista; Unblock pide confirmación con la opción de devolver su correo de Spam y lo quita de la lista. El menú ⋮ tiene además «Hide from smart filters».',
+  }, async () => {
+    const [path, , hide] = bold('feat-block-sender-2');
+    const title = path.split(' → ').pop();
+    return ok(junkTab.includes(title) && blockedList.includes('news@harborlight-weekly.example') && /back to the inbox/.test(unblockDialog || '') && !!unblockToast && !listAfter.includes('news@harborlight-weekly.example') && hideItem.includes(hide),
+      `«${title}» lista el bloqueo; Unblock con «devolver a la bandeja» lo quita; «${hide}» en el menú`,
+      `lista «${blockedList.slice(0, 80)}», diálogo «${unblockDialog}», aviso «${unblockToast}», después «${listAfter.slice(0, 60)}», menú: ${hideItem.join(', ')}`);
+  });
+
+  // Settings → Notifications on the demo accounts.
+  const notif = await tab('Notifications');
+  const notifToggles = await toggles();
+  const notifRadio = await js(() => [...document.querySelectorAll('input[name="notification-content"]')].map((r) => `${r.value}:${r.checked}`));
+  const notifyFor = await js(() => [...document.querySelectorAll('[aria-label^="Notify for "]')].map((e) => e.getAttribute('aria-label')));
+  await closeSettings();
+  await claim('feat-notifications-2', 'ajustes', {
+    covers: ['Settings → Notifications has the main switch, one switch per account, the Notification content (sender and subject, or Hide content, which shows only the account) and Only when EmailOps is not focused'],
+    proof: 'label',
+    how: 'Abre Ajustes → Notifications con las dos cuentas demo y comprueba el interruptor general, uno por cuenta, las dos opciones de contenido y «Only when EmailOps is not focused». No se cambia nada (los valores de fábrica se leen en la fase fresh).',
+  }, async () => {
+    const [, content, hidden, unfocused] = bold('feat-notifications-2');
+    const accounts = DEMO.filter((m) => notifyFor.includes(`Notify for ${m}`));
+    return ok(notif.includes(content) && notif.includes(hidden) && notif.includes(unfocused) && accounts.length === DEMO.length && notifRadio.length === 2 && Object.keys(notifToggles).some((k) => /^New mail notifications/.test(k)),
+      `interruptor general, ${accounts.length} por cuenta, contenido (${notifRadio.join(', ')}) y «${unfocused}»`,
+      `por cuenta ${accounts.join(', ')}, contenido ${notifRadio.join(', ')}, interruptores ${Object.keys(notifToggles).join(' | ')}`);
+  });
+  await view('Inbox');
+  await closeToasts();
 
   // ── the same mailbox with AI switched off, then back on ──────────────────
   await tab('AI Backend & Models');

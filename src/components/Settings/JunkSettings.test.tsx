@@ -69,6 +69,8 @@ vi.mock('@/lib/api', () => ({
   backfillJunkScores: vi.fn(() => Promise.resolve()),
   getJunkVerdicts: vi.fn(() => Promise.resolve({})),
   setJunkFeedback: vi.fn(() => Promise.resolve()),
+  // The tab also renders the blocked-senders list (BlockedSendersSettings).
+  listBlockedSenders: vi.fn(() => Promise.resolve([])),
   currentPlatform: vi.fn(() => ''),
 }));
 

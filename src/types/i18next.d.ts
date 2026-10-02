@@ -25,6 +25,7 @@ import type memory from '../locales/en/memory.json';
 import type modal from '../locales/en/modal.json';
 import type notifications from '../locales/en/notifications.json';
 import type settings from '../locales/en/settings.json';
+import type shortcuts from '../locales/en/shortcuts.json';
 import type sidebar from '../locales/en/sidebar.json';
 import type tagboard from '../locales/en/tagboard.json';
 import type tasks from '../locales/en/tasks.json';
@@ -51,6 +52,7 @@ declare module 'i18next' {
       dashboard: typeof dashboard;
       attachments: typeof attachments;
       tagboard: typeof tagboard;
+      shortcuts: typeof shortcuts;
     };
     returnNull: false;
   }

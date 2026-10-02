@@ -17,6 +17,25 @@ export interface AccountSettings {
   autoDownloadAttachmentCategories: string[];
 }
 
+/** An account's email signature (Rust `AccountSignature`). `html` is the
+ *  sanitized signature; empty means none. `updatedAt` is null until saved. */
+export interface AccountSignature {
+  accountId: string;
+  html: string;
+  /** Insert it when composing a new message. */
+  useForNew: boolean;
+  /** Insert it when replying to or forwarding a message. */
+  useForReplies: boolean;
+  updatedAt: number | null;
+}
+
+/** What the signature editor saves (Rust `SignatureInput`). */
+export interface SignatureInput {
+  html: string;
+  useForNew: boolean;
+  useForReplies: boolean;
+}
+
 export interface EmailAttachmentMeta {
   id: string;
   emailId: string;
@@ -45,12 +64,15 @@ export interface Email {
   isRead: boolean;
   triageStatus: TriageStatus | null;
   category: EmailCategory;
-  /** 'inbox' | 'sent' | 'spam' | 'trash' | `folder:<serverPath>` — which
+  /** 'inbox' | 'sent' | 'spam' | 'trash' | 'archive' | `folder:<serverPath>` — which
    *  mailbox this email lives in (drives move-to-folder eligibility). */
   mailbox: string;
   /** The provider filed this under Sent. Independent of `mailbox`: Gmail
    *  labels self-sent mail INBOX *and* SENT, so `mailbox` reads 'inbox'. */
   isSent: boolean;
+  /** Starred (Gmail STARRED, Outlook flag, IMAP \Flagged). Per message; in
+   *  the thread-deduped inbox list it means "any message of the thread". */
+  isStarred: boolean;
 }
 
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
@@ -1419,4 +1441,45 @@ export interface JunkStats {
   markedJunk: number;
   markedNotJunk: number;
   models: JunkModelInfo[];
+}
+
+// ── Sender controls (block sender, one-click unsubscribe) ───────────────────
+
+/** How a list can be left: RFC 8058 one-click POST, an email, or the
+ *  sender's unsubscribe page (opened in the system browser). */
+export type UnsubscribeKind = 'oneClick' | 'mailto' | 'link';
+
+/** Derived from the message's `List-Unsubscribe` headers by the backend; the
+ *  raw headers never reach the webview. */
+export interface UnsubscribeOption {
+  kind: UnsubscribeKind;
+  /** The host a one-click or link contacts, or the mailto address. */
+  target: string;
+  /** The validated https page to open; only set for `link`. */
+  url: string | null;
+}
+
+/** What the reading pane shows about a message's sender. */
+export interface SenderStatus {
+  /** Lowercase sender address. */
+  address: string;
+  blocked: boolean;
+  unsubscribe: UnsubscribeOption | null;
+  /** Unix seconds of the user's last unsubscribe request for this sender. */
+  unsubscribedAt: number | null;
+}
+
+/** Outcome of moving a sender's existing mail on block (to Spam) or unblock
+ *  (back to the inbox). */
+export interface SenderMoveReport {
+  moved: number;
+  /** Marked junk but left in place: the server has no Junk folder. */
+  localOnly: number;
+  failed: number;
+}
+
+export interface BlockedSender {
+  accountId: string;
+  address: string;
+  createdAt: number;
 }

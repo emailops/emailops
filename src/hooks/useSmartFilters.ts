@@ -135,12 +135,12 @@ export function useSmartFilters() {
     [activeAccountId, addSenderAsFilter, addLog, formatAccountLog],
   );
 
-  const handleBlockSender = useCallback(
+  const handleHideSenderFromFilters = useCallback(
     (senderEmail: string) => {
       if (activeAccountId) {
-        addLog('info', 'system', formatAccountLog(`Blocking sender: ${senderEmail}`));
+        addLog('info', 'system', formatAccountLog(`Hiding sender from smart filters: ${senderEmail}`));
         removeFilter(activeAccountId, { type: 'sender', value: senderEmail }).catch((error) => {
-          addLog('error', 'system', formatAccountLog(`Failed to block sender: ${error}`));
+          addLog('error', 'system', formatAccountLog(`Failed to hide sender from smart filters: ${error}`));
         });
       }
     },
@@ -179,7 +179,7 @@ export function useSmartFilters() {
     removeFilter: handleRemove,
     restoreFilter: handleRestore,
     addSenderAsFilter: handleAddSenderAsFilter,
-    blockSender: handleBlockSender,
+    hideSenderFromFilters: handleHideSenderFromFilters,
     forceRefresh: handleForceRefresh,
     isPinned,
   };

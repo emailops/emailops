@@ -13,7 +13,7 @@ provider.
 - `compose.discard` Discard asks "Discard this draft?" and removes it.
 - `compose.tables` a draft or a reply that holds a table keeps it in the editor (sections, captions, cell styles) and in the HTML that is saved and sent.
 - `compose.conflict` a draft edited locally is never dropped by a sync: the dirty marker (V028) makes the local version win and be pushed.
-- `compose.send` Send with the demo account fails with "Failed to send" (no credentials); nothing leaves the machine.
+- `compose.send` Send queues the message in the local outbox for the undo window (see [Undo send and scheduled send](./outbox-undo-schedule.md)); on the demo account it then fails with "A message could not be sent: … Authentication required" (no credentials) and the outbox row is `failed`; nothing leaves the machine.
 
 ## How to get to it (user POV)
 
@@ -27,7 +27,7 @@ Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed pres
 - Fill → `$V wd type 'input[placeholder^="To"], input[aria-label="To"]' 'someone@example.com'`, `$V wd type 'input[placeholder="Subject"], input[placeholder^="Email subject"]' 'Verification run'`, then the body field → the PNG shows the text.
 - Draft side effect → close with `$V wd click 'aria/Close'` (or `Minimize`), `$V wd click 'button=Drafts'` → `$V wd find '*=Verification run'` prints the draft row; `sqlite3 .emailops-demo-data/emailops.db "select count(*) from drafts where subject='Verification run'"` prints `1`.
 - Discard → reopen the draft (`Continue editing`), `$V wd click 'button=Discard'`, confirm the dialog → the drafts row and DB row are gone.
-- Send path → fill To/Subject, `$V wd click 'button=Send'` → `$V wd find '*=Failed to send'` prints the error banner (expected: the demo account has no SMTP credentials).
+- Send path → fill To/Subject, `$V wd click '[data-testid=compose-send]'` → the composer closes with a *Sending… · Undo* toast; ~10 s later the toast *A message could not be sent: … Authentication required …* appears and **Scheduled** lists the message as *Not sent* (expected: the demo account has no SMTP credentials). Delete it there. Confirmed live on 02/10/2026.
 - Table draft → Views → **Drafts**, row *Milestone dates (table)* → **Continue editing** opens it in a compose tab: `$V wd js 'document.querySelectorAll("[contenteditable=true] table tr").length'` prints `3`. Put the caret at the end of a cell and `document.execCommand('insertText', false, ' (tbc)')` → the cell text changes, the table keeps its 3 rows, and within ~2 s `sqlite3 .emailops-demo-data/emailops.db "select body_html from drafts where subject='Milestone dates (table)'"` holds the edited cell inside the same `<table>`. Delete the typed text again and close with the tab's `aria-label="Close tab"` button (hidden until hover: click it through the DOM). Confirmed live on 30/09/2026.
 
 ## Gotchas

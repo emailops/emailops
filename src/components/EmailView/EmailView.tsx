@@ -1,18 +1,25 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
+import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import { useFormatters } from '@/hooks/useFormatters';
-import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment } from '@/lib/api';
+import { useShortcutHint } from '@/hooks/useShortcutHint';
+import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { findThreadReplyDraft } from '@/lib/composeDraft';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { formatShortcut } from '@/lib/platform';
+import type { PaneCommand } from '@/lib/shortcutPlan';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
-import { useEmailStore } from '@/stores/emailStore';
+import { beginLeave, finishLeave } from '@/stores/autoAdvanceStore';
+import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
+import { useOutboxStore } from '@/stores/outboxStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Draft, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
@@ -107,12 +114,20 @@ export function EmailView({
 }: EmailViewProps) {
   const { t } = useTranslation(['inbox', 'compose']);
   const fmt = useFormatters();
+  const hint = useShortcutHint();
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
   const [threadExpanded, setThreadExpanded] = useState(false);
   const [lightboxMeta, setLightboxMeta] = useState<EmailAttachmentMeta | null>(null);
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
   const searchQuery = useEmailStore((s) => s.searchQuery);
-  const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const deleteThreads = useEmailStore((s) => s.deleteThreads);
+  const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const archiveThreads = useEmailStore((s) => s.archiveThreads);
+  const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
+  const snoozeThreads = useEmailStore((s) => s.snoozeThreads);
+  const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
+  const threadSnoozed = useEmailStore((s) => threadEmails.length > 0 && isSnoozed(s.snoozes, threadEmails[0]));
   const openAttachmentTab = useEmailStore((s) => s.openAttachmentTab);
   // Chat-generated reply draft waiting for its thread to mount. The chat
   // dispatcher seeds this before navigating; consuming it here is what
@@ -138,7 +153,6 @@ export function EmailView({
   // continues the same draft instead of starting a second one.
   const [threadDraft, setThreadDraft] = useState<Draft | null>(null);
   const [replyBody, setReplyBody] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
   // (registered once on mount) can match incoming events without re-binding
@@ -361,6 +375,21 @@ export function EmailView({
     consumePendingChatDraft();
   }, [pendingChatDraft, threadEmails, consumePendingChatDraft]);
 
+  // Keyboard shortcuts (r, a, f, e, #, s, Shift+U/I, b) arrive as pane
+  // commands and run through the same handlers as the toolbar buttons.
+  // Only commands issued while this view is shown count: one from before it
+  // mounted must not be replayed onto a different conversation.
+  const [snoozeSignal, setSnoozeSignal] = useState(0);
+  const paneCommand = useShortcutStore((s) => s.paneCommand);
+  const seenPaneCommandRef = useRef(paneCommand?.nonce ?? 0);
+  const runPaneCommandRef = useRef<(command: PaneCommand) => void>(() => {});
+  runPaneCommandRef.current = () => {};
+  useEffect(() => {
+    if (!paneCommand || paneCommand.nonce <= seenPaneCommandRef.current) return;
+    seenPaneCommandRef.current = paneCommand.nonce;
+    runPaneCommandRef.current(paneCommand.command);
+  }, [paneCommand]);
+
   // A reply the user started and left is saved as a draft of this thread:
   // opening the thread again brings it back in the reply panel. Runs after
   // the reset above; a reply already opened meanwhile (e.g. a chat draft) wins.
@@ -423,6 +452,88 @@ export function EmailView({
   }
 
   const latestEmail = latestEmailForEffect!;
+
+  const openReply = (mode: 'reply' | 'reply-all', toggle: boolean) => {
+    setReplyMode(mode);
+    setReplyBody('');
+    setForwardAttachments(EMPTY_ATTACHMENTS);
+    setIsReplyOpen((value) => (toggle ? !value : true));
+  };
+  const openForward = async () => {
+    const body = await loadForwardBody(
+      latestEmail,
+      () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
+      (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
+    );
+    setReplyMode('forward');
+    setReplyBody(
+      forwardQuote(
+        { ...latestEmail, body },
+        {
+          header: t('compose:forwarded.header'),
+          from: t('compose:forwarded.from'),
+          date: t('compose:forwarded.date'),
+          subject: t('compose:forwarded.subject'),
+          to: t('compose:forwarded.to'),
+          cc: t('compose:forwarded.cc'),
+        },
+        (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
+      ),
+    );
+    setForwardAttachments(EMPTY_ATTACHMENTS);
+    setIsReplyOpen(true);
+    void loadForwardAttachments();
+  };
+  const thread = [threadRefOf(latestEmail)];
+  const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
+  /** The conversation leaves the list: open the next one (or the previous,
+   *  or go back to the list — Settings → Appearance). */
+  const leave = (run: () => void) => {
+    const ticket = beginLeave();
+    run();
+    finishLeave(ticket, { close: onClose });
+  };
+  const archive = () => leave(() => void archiveThreads(thread));
+  const markUnread = () => {
+    // Back to the list, like Gmail: staying on the thread would read it again
+    // at once.
+    void setThreadsRead(thread, false);
+    onClose();
+  };
+  // Leaves at once; the provider call waits out the undo window and a
+  // refusal brings the thread back (emailStore.deleteThreads).
+  const deleteThread = () => leave(() => void deleteThreads(thread));
+  runPaneCommandRef.current = (command) => {
+    switch (command) {
+      case 'reply':
+        openReply('reply', false);
+        return;
+      case 'replyAll':
+        openReply('reply-all', false);
+        return;
+      case 'forward':
+        void openForward();
+        return;
+      case 'archive':
+        if (inInbox) archive();
+        return;
+      case 'delete':
+        deleteThread();
+        return;
+      case 'star':
+        void setThreadsStarred(thread, !isThreadStarred(threadEmails));
+        return;
+      case 'markRead':
+        void setThreadsRead(thread, true);
+        return;
+      case 'markUnread':
+        markUnread();
+        return;
+      case 'snooze':
+        if (inInbox && !threadSnoozed) setSnoozeSignal((n) => n + 1);
+        return;
+    }
+  };
 
   /** Pull the message's own attachments in so the forward carries them.
    *
@@ -505,55 +616,23 @@ export function EmailView({
           {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <button
-              onClick={() => {
-                setReplyMode('reply');
-                setReplyBody('');
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen((value) => !value);
-              }}
+              onClick={() => openReply('reply', true)}
               className="px-3 py-1 bg-primary-600 text-white text-sm font-medium rounded hover:bg-primary-700 transition-colors"
+              title={hint(t('compose:reply'), 'compose.reply')}
             >
-              Reply
+              {t('compose:reply')}
             </button>
             <button
-              onClick={() => {
-                setReplyMode('reply-all');
-                setReplyBody('');
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen((value) => !value);
-              }}
+              onClick={() => openReply('reply-all', true)}
               className="px-3 py-1 bg-primary-500 text-white text-sm font-medium rounded hover:bg-primary-600 transition-colors"
+              title={hint(t('compose:replyAll'), 'compose.replyAll')}
             >
               {t('inbox:emailView.replyAll')}
             </button>
             <button
-              onClick={async () => {
-                const body = await loadForwardBody(
-                  latestEmail,
-                  () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
-                  (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
-                );
-                setReplyMode('forward');
-                setReplyBody(
-                  forwardQuote(
-                    { ...latestEmail, body },
-                    {
-                      header: t('compose:forwarded.header'),
-                      from: t('compose:forwarded.from'),
-                      date: t('compose:forwarded.date'),
-                      subject: t('compose:forwarded.subject'),
-                      to: t('compose:forwarded.to'),
-                      cc: t('compose:forwarded.cc'),
-                    },
-                    (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
-                  ),
-                );
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen(true);
-                void loadForwardAttachments();
-              }}
+              onClick={() => void openForward()}
               className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 text-gray-700 text-sm font-medium rounded border border-gray-300 hover:bg-gray-200 transition-colors"
-              title={t('compose:forwardTitle')}
+              title={hint(t('compose:forward'), 'compose.forward')}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M4 5l7 7-7 7" />
@@ -633,26 +712,28 @@ export function EmailView({
                 </svg>
               </button>
             )}
-            <button
-              onClick={async () => {
-                if (!latestEmail) return;
-                setIsDeleting(true);
-                addLog('info', 'sync', `Deleting thread "${latestEmail.subject.slice(0, 50)}"...`);
-                try {
-                  for (const email of threadEmails) {
-                    await deleteEmailFromStore(email.accountId, email.id);
-                  }
-                  addLog('success', 'sync', 'Thread deleted');
-                  onClose();
-                } catch (err) {
-                  addLog('error', 'sync', `Delete failed: ${err}`);
-                } finally {
-                  setIsDeleting(false);
-                }
+            <ThreadToolbarActions
+              threadEmails={threadEmails}
+              onArchive={archive}
+              onMoveToInbox={() => {
+                void moveThreadsToInbox([threadRefOf(latestEmail)]);
+                onClose();
               }}
-              disabled={isDeleting}
+              onMarkUnread={markUnread}
+              onMarkRead={() => void setThreadsRead([threadRefOf(latestEmail)], true)}
+              onToggleStar={(starred) => void setThreadsStarred([threadRefOf(latestEmail)], starred)}
+              snoozed={threadSnoozed}
+              onSnooze={(until) => {
+                // Out of the inbox until then, like archive.
+                leave(() => void snoozeThreads([threadRefOf(latestEmail)], until));
+              }}
+              onUnsnooze={() => void unsnoozeThreads([threadRefOf(latestEmail)])}
+              snoozeSignal={snoozeSignal}
+            />
+            <button
+              onClick={deleteThread}
               className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-              title={t('inbox:emailView.deleteThread')}
+              title={hint(t('inbox:emailView.deleteThread'), 'thread.delete')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -718,54 +799,88 @@ export function EmailView({
                 bodyHtml,
                 inlineImages,
                 attachments,
+                scheduleAt,
                 draftId,
               }) => {
                 const isForward = replyMode === 'forward';
-                addLog('info', 'sync', `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`);
-                if (isForward) {
-                  // A forward is a NEW message, not a reply: it must not carry
-                  // In-Reply-To/References, or the recipient's client files it
-                  // into a conversation they were never part of.
-                  await api.sendNewEmail(
-                    fromAccountId,
-                    toEmails,
-                    ccEmails,
-                    forwardSubject(latestEmail.subject),
-                    replyText,
-                    attachments,
-                    bodyHtml,
-                    inlineImages,
-                  );
-                } else {
-                  await api.sendReply(
-                    latestEmail.id,
-                    replyText,
-                    fromAccountId,
-                    toEmails,
-                    ccEmails,
-                    bodyHtml,
-                    inlineImages,
-                    attachments,
-                  );
+                // A forward is a NEW message, not a reply: it must not carry
+                // In-Reply-To/References, or the recipient's client files it
+                // into a conversation they were never part of.
+                const message: OutgoingMessage = {
+                  accountId: fromAccountId,
+                  replyToEmailId: isForward ? null : latestEmail.id,
+                  to: toEmails,
+                  cc: ccEmails,
+                  // A reply takes its parent's subject ("Re: …") backend-side.
+                  subject: isForward ? forwardSubject(latestEmail.subject) : '',
+                  body: replyText,
+                  bodyHtml: bodyHtml ?? null,
+                  inlineImages: inlineImages ?? [],
+                  attachments: attachments ?? [],
+                };
+                const closeReply = () => {
+                  setThreadDraft(null);
+                  setForwardAttachments(EMPTY_ATTACHMENTS);
+                  setIsReplyOpen(false);
+                };
+                const outbox = useOutboxStore.getState();
+                if (scheduleAt) {
+                  await outbox.schedule(message, scheduleAt, draftId);
+                  closeReply();
+                  return;
                 }
-                // The reply is out: its draft goes now, before the thread
-                // refresh below would find and reopen it.
-                if (draftId) {
-                  await api
-                    .deleteDraft(draftId, latestEmail.accountId)
-                    .catch((err) =>
-                      addLog('error', 'sync', `Could not delete the sent reply's draft: ${errorText(err)}`),
+                await outbox.send(message, {
+                  // A queued reply's draft leaves Drafts with the queueing.
+                  draftId,
+                  sendDirect: async () => {
+                    addLog(
+                      'info',
+                      'sync',
+                      `${isForward ? 'Forwarding' : 'Sending reply'} to ${toEmails.join(', ')}...`,
                     );
-                }
-                setThreadDraft(null);
-                // The backend inserted the optimistic Sent row before the send
-                // command returned (and already enqueued the follow-up account
-                // sync) — refetching the thread shows the reply instantly.
-                await refreshThread(latestEmail.accountId, latestEmail.threadId);
-                bumpSentRefresh();
-                addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
-                setForwardAttachments(EMPTY_ATTACHMENTS);
-                setIsReplyOpen(false);
+                    if (isForward) {
+                      await api.sendNewEmail(
+                        fromAccountId,
+                        toEmails,
+                        ccEmails,
+                        message.subject,
+                        replyText,
+                        attachments,
+                        bodyHtml,
+                        inlineImages,
+                      );
+                    } else {
+                      await api.sendReply(
+                        latestEmail.id,
+                        replyText,
+                        fromAccountId,
+                        toEmails,
+                        ccEmails,
+                        bodyHtml,
+                        inlineImages,
+                        attachments,
+                      );
+                    }
+                    // The reply is out: its draft goes now, before the thread
+                    // refresh below would find and reopen it.
+                    if (draftId) {
+                      await api
+                        .deleteDraft(draftId, latestEmail.accountId)
+                        .catch((err) =>
+                          addLog('error', 'sync', `Could not delete the sent reply's draft: ${errorText(err)}`),
+                        );
+                    }
+                    // The backend inserted the optimistic Sent row before the send
+                    // command returned (and already enqueued the follow-up account
+                    // sync) — refetching the thread shows the reply instantly.
+                    await refreshThread(latestEmail.accountId, latestEmail.threadId);
+                    bumpSentRefresh();
+                    addLog('success', 'sync', `${isForward ? 'Forwarded' : 'Reply sent'} to ${toEmails.join(', ')}`);
+                  },
+                });
+                // Queued or sent, the panel closes; a queued reply refreshes the
+                // thread when the dispatcher reports it sent (App listener).
+                closeReply();
               }}
             />
           </div>
@@ -906,5 +1021,112 @@ export function EmailView({
         </div>
       </div>
     </div>
+  );
+}
+
+interface ThreadToolbarActionsProps {
+  threadEmails: Email[];
+  onArchive: () => void;
+  onMoveToInbox: () => void;
+  onMarkUnread: () => void;
+  onMarkRead: () => void;
+  onToggleStar: (starred: boolean) => void;
+  /** The conversation is snoozed (opened from the Snoozed view or search). */
+  snoozed: boolean;
+  onSnooze: (until: number) => void;
+  onUnsnooze: () => void;
+  /** Opens the snooze picker when it changes (keyboard `b`). */
+  snoozeSignal: number;
+}
+
+/** Archive (or move back to the inbox), snooze (or unsnooze), read/unread and
+ *  star for the open conversation. Failures are reported by the store (toast
+ *  + log). */
+function ThreadToolbarActions({
+  threadEmails,
+  onArchive,
+  onMoveToInbox,
+  onMarkUnread,
+  onMarkRead,
+  onToggleStar,
+  snoozed,
+  onSnooze,
+  onUnsnooze,
+  snoozeSignal,
+}: ThreadToolbarActionsProps) {
+  const { t } = useTranslation(['inbox']);
+  const hint = useShortcutHint();
+  const starred = isThreadStarred(threadEmails);
+  const unread = isThreadUnread(threadEmails);
+  const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
+  const archived = !inInbox && threadEmails.some((e) => e.mailbox === 'archive');
+  const buttonClass = 'p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors';
+  return (
+    <>
+      {inInbox && (
+        <button
+          onClick={onArchive}
+          className={buttonClass}
+          title={hint(t('inbox:emailView.archive'), 'thread.archive')}
+        >
+          <ArchiveIcon className="w-4 h-4" />
+        </button>
+      )}
+      {archived && (
+        <button onClick={onMoveToInbox} className={buttonClass} title={t('inbox:emailView.moveToInbox')}>
+          <InboxIcon className="w-4 h-4" />
+        </button>
+      )}
+      {snoozed ? (
+        <button
+          data-testid="thread-unsnooze"
+          onClick={onUnsnooze}
+          className={buttonClass}
+          title={t('inbox:snooze.unsnooze')}
+          aria-label={t('inbox:snooze.unsnooze')}
+        >
+          <ClockIcon className="w-4 h-4 text-primary-600" />
+        </button>
+      ) : (
+        inInbox && (
+          <SnoozeMenuButton
+            testId="thread-snooze"
+            onPick={onSnooze}
+            className={buttonClass}
+            align="right"
+            openSignal={snoozeSignal}
+            title={hint(t('inbox:snooze.button'), 'thread.snooze')}
+          />
+        )
+      )}
+      <button
+        onClick={unread ? onMarkRead : onMarkUnread}
+        className={buttonClass}
+        title={
+          unread
+            ? hint(t('inbox:emailView.markAsRead'), 'thread.markRead')
+            : hint(t('inbox:emailView.markAsUnread'), 'thread.markUnread')
+        }
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          />
+        </svg>
+      </button>
+      <button
+        onClick={() => onToggleStar(!starred)}
+        className={`p-1.5 rounded transition-colors hover:bg-gray-100 ${
+          starred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-400 hover:text-gray-600'
+        }`}
+        title={hint(starred ? t('inbox:emailView.unstar') : t('inbox:emailView.star'), 'thread.star')}
+        aria-pressed={starred}
+      >
+        <StarIcon filled={starred} className="w-4 h-4" />
+      </button>
+    </>
   );
 }

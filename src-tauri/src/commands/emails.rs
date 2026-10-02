@@ -138,6 +138,26 @@ pub async fn move_email(
     services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target_mailbox).await
 }
 
+/// Move several messages of one account to the inbox or a custom folder
+/// (IMAP accounts only) — the bulk-selection variant of [`move_email`]. Never
+/// fails for one message: the report lists the ones that could not be moved.
+#[tauri::command]
+pub async fn move_emails(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    account_id: String,
+    email_ids: Vec<String>,
+    target_mailbox: String,
+) -> Result<services::emails::MoveReport, AppError> {
+    if email_ids.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} messages per move"
+        )));
+    }
+    let (account, provider) = account_and_provider(&state, app, &account_id).await?;
+    Ok(services::emails::move_emails(&state.db, &account, provider.as_ref(), &email_ids, &target_mailbox).await)
+}
+
 #[tauri::command]
 pub async fn get_thread(
     state: State<'_, AppState>,
@@ -168,6 +188,70 @@ pub async fn mark_as_read(
     services::emails::mark_as_read(&state.db, &email_id, Some(app)).await?;
     services::tasks::on_email_read(&state.db, &email_id);
     Ok(())
+}
+
+/// Most threads one action call takes — a bulk selection is bounded by the
+/// loaded list, so this only guards against a malformed call.
+const MAX_THREADS_PER_ACTION: usize = 1_000;
+
+/// Mark read/unread, star/unstar, archive, move back to the inbox or delete — for one
+/// thread or many. Never fails as a whole: the report lists the threads that
+/// could not be changed, so the UI rolls back exactly those.
+#[tauri::command]
+pub async fn apply_thread_action(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    threads: Vec<services::emails::ThreadRef>,
+    action: services::emails::ThreadAction,
+) -> Result<services::emails::ThreadActionReport, AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    Ok(services::emails::apply_thread_action(&state.db, &threads, action, Some(app)).await)
+}
+
+/// Snooze conversations until `until` (unix seconds): they leave the inbox
+/// and come back, unread and on top, at that time. Local state. The report
+/// lists conversations that no longer exist.
+#[tauri::command]
+pub async fn snooze_threads(
+    state: State<'_, AppState>,
+    threads: Vec<services::emails::ThreadRef>,
+    until: i64,
+) -> Result<services::emails::ThreadActionReport, AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    services::emails::snooze_threads(&state.db, &threads, until, crate::services::clock::now_secs())
+}
+
+/// Bring snoozed conversations back to the inbox now (the inverse of
+/// `snooze_threads`, and its undo).
+#[tauri::command]
+pub async fn unsnooze_threads(
+    state: State<'_, AppState>,
+    threads: Vec<services::emails::ThreadRef>,
+) -> Result<(), AppError> {
+    if threads.len() > MAX_THREADS_PER_ACTION {
+        return Err(AppError::InvalidInput(format!(
+            "at most {MAX_THREADS_PER_ACTION} conversations per action"
+        )));
+    }
+    services::emails::unsnooze_threads(&state.db, &threads)
+}
+
+/// Snooze records (snoozed and woken) of one account, or of every enabled
+/// account when `account_id` is omitted.
+#[tauri::command]
+pub async fn list_thread_snoozes(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+) -> Result<Vec<crate::models::ThreadSnooze>, AppError> {
+    services::emails::list_thread_snoozes(&state.db, account_id.as_deref())
 }
 
 #[tauri::command]
@@ -255,47 +339,14 @@ pub async fn send_new_email(
     Ok(())
 }
 
-/// Construct an `EmailBody` from the wire payload. When `body_html` is present
-/// we sanitize it server-side via `crate::services::emails::sanitize_outgoing_html`
-/// — frontends are not trusted to produce safe HTML, even though the compose
-/// editor only emits an allowlisted subset.
-///
-/// `inline_images` entries are normalized: anything passed via this parameter
-/// is forced to `is_inline = true` and must carry a non-empty `content_id`,
-/// otherwise the `cid:` references in the HTML body would dangle.
+/// Construct an `EmailBody` from the wire payload (sanitized, inline images
+/// normalized) — see [`services::emails::outgoing_body`].
 fn build_email_body(
     body: String,
     body_html: Option<String>,
     inline_images: Option<Vec<crate::sync::provider::EmailAttachment>>,
 ) -> Result<crate::sync::provider::EmailBody, AppError> {
-    use crate::sync::provider::EmailBody;
-    let html = body_html.and_then(|h| {
-        let trimmed = h.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(crate::services::emails::sanitize_outgoing_html(trimmed))
-        }
-    });
-    let mut inline = inline_images.unwrap_or_default();
-    for att in &mut inline {
-        att.is_inline = true;
-        if att.content_id.as_deref().map(str::is_empty).unwrap_or(true) {
-            return Err(AppError::InvalidInput("Inline image is missing contentId".to_string()));
-        }
-    }
-    if html.is_none() && !inline.is_empty() {
-        return Err(AppError::InvalidInput("Inline images require an HTML body".to_string()));
-    }
-    Ok(EmailBody {
-        text: body,
-        html,
-        inline_images: inline,
-        // Footer language is resolved from the user's UI preference in the send
-        // service; default here keeps this builder free of DB access.
-        language: crate::services::i18n::Language::default(),
-        append_footer: true,
-    })
+    services::emails::outgoing_body(body, body_html, inline_images.unwrap_or_default())
 }
 
 /// Frontend-facing payload for `draft-generated`. Sent once the AI finishes
@@ -672,7 +723,7 @@ pub async fn start_resync_mailbox(
 /// (see `send_reply` / `send_new_email`), so a just-sent message — which IMAP
 /// must `APPEND` to the Sent folder itself — shows up in the Sent view without
 /// waiting for the next periodic sync.
-async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
+pub(crate) async fn enqueue_account_sync(app: &AppHandle, state: &AppState, account_id: String) {
     enqueue_account_sync_with_contention(app, state, account_id, services::emails::SyncContention::Skip).await;
 }
 

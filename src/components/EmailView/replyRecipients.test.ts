@@ -23,6 +23,7 @@ function email(overrides: Partial<Email>): Email {
     category: 'primary',
     mailbox: 'inbox',
     isSent: false,
+    isStarred: false,
     ...overrides,
   };
 }
@@ -45,6 +46,7 @@ describe('computeReplyRecipients', () => {
       senderEmail: ME,
       recipients: ['alice@example.test', 'bob@example.test'],
       isSent: true,
+      isStarred: false,
     });
     expect(computeReplyRecipients(mine, [mine], [ME])).toEqual(['alice@example.test', 'bob@example.test']);
   });

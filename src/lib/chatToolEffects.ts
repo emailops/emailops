@@ -117,8 +117,16 @@ export type FillableFormId = (typeof FILLABLE_FORM_IDS)[number];
 
 export interface ChatToolEffectHandlers {
   /** Open the composer tab pre-loaded with these fields. Pass `bodyHtml`
-   *  (already HTML-converted) so the rich-text editor renders correctly. */
-  openComposeTab: (accountId: string, toAddresses: string[], subject: string, bodyHtml: string) => void;
+   *  (already HTML-converted) so the rich-text editor renders correctly.
+   *  `draftId` keeps the tab editing the row the chat saved; `insertSignature`
+   *  adds the From account's signature (the chat draft carries none). */
+  openComposeTab: (
+    accountId: string,
+    toAddresses: string[],
+    subject: string,
+    bodyHtml: string,
+    opts?: { draftId?: string; insertSignature?: boolean },
+  ) => void;
   /** Open the thread of `emailId` and seed an inline reply with `body`.
    *  Mirrors clicking Reply on the thread — the wired implementation
    *  stashes the body on `emailStore.pendingChatDraft` and calls
@@ -180,7 +188,13 @@ export function handleChatToolEffect(payload: ChatToolEffectPayload, handlers: C
       // otherwise the tab is appended but the user only sees the chat
       // panel and the draft looks like a no-op.
       handlers.navigateToInbox();
-      handlers.openComposeTab(p.accountId, p.toAddresses ?? [], p.subject, plainTextToHtml(p.body));
+      // The draft text has no signature: the backend told the model to leave
+      // it out when the account has one for new messages (sign-off planner in
+      // `services/emails/drafts.rs`), so the composer adds it, once.
+      handlers.openComposeTab(p.accountId, p.toAddresses ?? [], p.subject, plainTextToHtml(p.body), {
+        draftId: p.draftId,
+        insertSignature: true,
+      });
       log('success', 'ai', `Composer opened from chat (draft ${p.draftId ?? '?'})`);
       return;
     }

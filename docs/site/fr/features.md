@@ -1,6 +1,6 @@
 ---
 title: 'Fonctions standard'
-description: "Le client e-mail lui-même : comptes, boîte unifiée, calendrier, pièces jointes, recherche et filtrage des indésirables."
+description: "Le client e-mail lui-même : comptes, boîte unifiée, archives, mise en attente, envoi programmé, signatures, calendrier, pièces jointes, recherche, filtrage des indésirables, notifications et raccourcis clavier."
 weight: 30
 nav:
   unified-inbox: view/inbox
@@ -9,6 +9,9 @@ nav:
   junk-and-bulk-mail: settings/junk
   privacy-and-security-controls: settings/privacy
   interface: settings/appearance
+  undo-send-and-scheduled-send: settings/appearance
+  unsubscribe-and-block-sender: settings/junk
+  keyboard-shortcuts: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -47,6 +50,102 @@ lecture. Le brouillon s'ouvre sans destinataire et contient le message d'origine
 en-tête *Message transféré* avec son expéditeur, sa date et ses destinataires, ainsi que les
 pièces jointes d'origine (jusqu'à 20 Mo au total). Il part comme un nouveau message et ne
 rejoint donc pas les conversations existantes du destinataire.
+
+## Organiser les conversations {#organizing-conversations}
+
+<!-- claim:feat-organize-1 -->
+**Archiver** sort une conversation de la boîte de réception sans la supprimer, et **Déplacer vers
+la boîte de réception** l'y remet. Ces deux actions, ainsi que **Marquer comme non lu** et
+**Ajouter aux favoris**, se trouvent dans le volet de lecture et dans le menu **Plus d'actions**
+(⋮) de chaque conversation ; l'étoile figure aussi sur chaque ligne de la liste. Le changement est
+également appliqué chez votre fournisseur de messagerie, si bien que Gmail ou Outlook affichent la
+même chose.
+
+<!-- claim:feat-organize-2 -->
+**Favoris**, dans la barre latérale, liste vos conversations marquées d'une étoile. **Archives**
+liste le courrier archivé des comptes Gmail et Outlook, ainsi que dans **Tous les comptes** ; un
+compte IMAP archive dans son propre dossier d'archives, qui apparaît avec ses autres dossiers. Le
+courrier archivé quitte seulement la boîte de réception : la recherche, les filtres intelligents
+et les fonctions d'IA y ont toujours accès.
+
+<!-- claim:feat-organize-3 -->
+Cochez la case au début d'une ligne pour la sélectionner. Dès qu'une ou plusieurs lignes sont
+sélectionnées, une barre au-dessus de la liste agit sur toutes à la fois — archiver, mettre en
+attente, supprimer, marquer comme lu ou non lu, ajouter aux favoris — et
+**Effacer la sélection** y met fin. Les comptes qui ont leurs propres dossiers proposent aussi
+**Déplacer vers un dossier**.
+
+<!-- claim:feat-organize-4 -->
+Archiver ou supprimer retire aussitôt les conversations de la liste et affiche un avis avec
+**Annuler** pendant 6 secondes. Votre fournisseur de messagerie n'est prévenu qu'une fois ces
+secondes écoulées (ou plus tôt, si vous archivez ou supprimez autre chose ou ouvrez une autre
+vue) : Annuler se contente donc de les remettre en place.
+
+<!-- claim:feat-organize-5 -->
+Quand la conversation que vous lisez quitte la liste — archivée, supprimée, mise en attente ou
+déplacée dans les spams —, la suivante s'ouvre. **Paramètres → Apparence → Après l’archivage ou
+la suppression** permet de choisir entre la conversation suivante, la précédente ou le retour à
+la liste. Marquer une conversation comme non lue ramène toujours à la liste.
+
+## Mettre en attente {#snooze}
+
+<!-- claim:feat-snooze-1 -->
+**Mettre en attente** masque une conversation de la boîte de réception jusqu'au moment choisi :
+plus tard aujourd'hui, demain, ce week-end, la semaine prochaine, ou la date et l'heure de votre
+choix. L'action est proposée dans le volet de lecture, dans le menu ⋮ de la ligne et dans la barre
+de sélection.
+
+<!-- claim:feat-snooze-2 -->
+Les conversations en attente sont listées sous **En attente** dans la barre latérale, la plus
+proche en premier, où **Annuler la mise en attente** en fait revenir une plus tôt. Le moment venu,
+la conversation revient en haut de la boîte de réception, marquée comme non lue. Un nouveau
+message dans une conversation en attente la fait revenir immédiatement.
+
+<!-- claim:feat-snooze-3 -->
+La mise en attente n'est conservée que sur cet ordinateur : les autres applications de messagerie
+continuent d'afficher la conversation dans la boîte de réception. Les conversations reviennent
+tant qu'EmailOps est ouvert ; une conversation dont l'heure est passée pendant que l'application
+était fermée revient à sa prochaine ouverture.
+
+## Annuler l'envoi et envoi programmé {#undo-send-and-scheduled-send}
+
+<!-- claim:feat-send-1 -->
+Après un clic sur **Envoyer**, le message attend quelques secondes avec un avis **Annuler** ;
+Annuler le reprend et le rouvre pour modification. Le délai se règle dans **Paramètres →
+Apparence → Annuler l’envoi** : désactivé, 5, 10, 20 ou 30 secondes, 10 par défaut. EmailOps doit
+rester ouvert jusqu'à ce que le message soit parti.
+
+<!-- claim:feat-send-2 -->
+La flèche à côté d'**Envoyer** ouvre **Programmer l’envoi** : demain matin, demain après-midi,
+lundi matin, ou la date et l'heure de votre choix.
+
+<!-- claim:feat-send-3 -->
+Les messages en attente d'envoi sont listés sous **Programmés** dans la barre latérale, où vous
+pouvez **Envoyer maintenant**, **Modifier** ou **Supprimer** chacun d'eux. Un message programmé ne
+part que si EmailOps est ouvert ; un message dont l'heure est passée pendant que l'application
+était fermée est envoyé à sa prochaine ouverture. Un message qui n'a pas pu être envoyé y reste,
+marqué **Non envoyé**, avec **Réessayer** : EmailOps ne le renvoie jamais de lui-même.
+## Signatures {#signatures}
+
+<!-- claim:feat-signatures-1 -->
+Chaque compte a sa propre signature, définie dans **Paramètres → Signatures**. Deux interrupteurs
+décident où elle va : **Insérer dans les nouveaux messages** et **Insérer dans les réponses et
+transferts**. Dans un nouveau message ou une réponse, elle se place sous votre texte ; dans un
+transfert, au-dessus du message transféré. Elle fait partie du corps du message : vous pouvez donc
+la modifier ou la supprimer dans n'importe quel message avant l'envoi.
+
+<!-- claim:feat-signatures-2 -->
+**Ajouter une image** y insère un logo ou une image de votre signature manuscrite. PNG, JPEG, GIF
+et WebP sont acceptés ; SVG et les autres fichiers sont refusés, avec la raison. Une image large
+est réduite à 600 px, chaque image peut peser 200 Ko au plus et la signature entière 512 Ko. Les
+comptes Gmail proposent aussi **Importer depuis Gmail**, qui copie dans l'éditeur la signature que
+Gmail a pour cette adresse.
+
+<!-- claim:feat-signatures-3 -->
+Dans la version texte brut d'un message, une signature qui le termine est précédée de la ligne
+standard `-- `, pour que les autres applications de messagerie la reconnaissent. Quand le compte a
+une signature pour ce type de message, les brouillons de l'IA omettent votre nom et vos
+coordonnées et laissent la signature signer.
 
 ## Filtres intelligents
 
@@ -96,7 +195,7 @@ sur **Gérer les règles** (ou **Créer une règle** dans la vue vide) et rempli
 Tous les motifs renseignés doivent correspondre. Les règles s'appliquent au nouveau courrier au
 fil de la synchronisation ; cochez **Appliquer aux e-mails existants après la création** pour
 collecter aussi dans le courrier déjà présent. Les règles s'appliquent à la boîte de réception, aux
-Éléments envoyés et à vos propres dossiers, jamais au Spam ni à la Corbeille. Sélectionnez des
+Éléments envoyés, aux archives et à vos propres dossiers, jamais au Spam ni à la Corbeille. Sélectionnez des
 pièces jointes pour les télécharger ensemble dans votre dossier Téléchargements.
 
 <!-- claim:feat-attachments-view-8 -->
@@ -143,8 +242,45 @@ non désiré. Aucun modèle ni appel réseau n'intervient, et vos corrections (�
 
 <!-- claim:feat-junk-bulk-4 -->
 Aucune des deux options ne déplace ni ne supprime quoi que ce soit sur le serveur ; seul un
-**Confirmer** explicite le fait. Un avertissement d'usurpation d'identité /
+**Confirmer** ou un **Bloquer l'expéditeur** explicite le fait. Un avertissement d'usurpation d'identité /
 hameçonnage est proposé en option, désactivé par défaut.
+
+## Se désabonner et bloquer un expéditeur {#unsubscribe-and-block-sender}
+
+<!-- claim:feat-unsubscribe-1 -->
+Une newsletter ou un message de liste de diffusion qui indique comment se désinscrire affiche **Se
+désabonner** à côté de son expéditeur. Avant tout envoi, une confirmation explique exactement ce
+qui va se passer : une requête envoyée directement au serveur de l'expéditeur (et non via votre
+fournisseur de messagerie), un e-mail de désinscription envoyé depuis votre compte, ou la page de
+l'expéditeur ouverte dans votre navigateur.
+
+<!-- claim:feat-block-sender-1 -->
+**Bloquer l'expéditeur**, dans le menu ⋮ d'une conversation, envoie dans les spams le nouveau
+courrier de cet expéditeur sur ce compte et le signale comme spam à votre fournisseur de
+messagerie. **Déplacer aussi ses messages existants dans les spams** range ce qui est déjà là, et
+la conversation indique que l'expéditeur est bloqué, avec **Débloquer** à portée de main.
+
+<!-- claim:feat-block-sender-2 -->
+**Paramètres → Indésirables → Expéditeurs bloqués** liste toutes les personnes bloquées, avec
+**Débloquer**, qui peut aussi remettre leurs messages des spams dans la boîte de réception.
+**Masquer des filtres intelligents**, dans le menu ⋮, est autre chose : cela retire seulement
+l'expéditeur des filtres intelligents de la barre latérale.
+
+## Notifications de nouveau courrier {#new-mail-notifications}
+
+<!-- claim:feat-notifications-1 -->
+EmailOps affiche une notification de bureau quand du nouveau courrier arrive dans votre boîte de
+réception, et quand une conversation en attente revient — jamais pour la première synchronisation
+d'un compte, le courrier ancien, le courrier déjà lu, les indésirables ou les expéditeurs bloqués.
+Plus de trois nouveaux messages à la fois sont regroupés en un seul résumé. Cliquer sur une
+notification met EmailOps au premier plan ; cela n'ouvre pas le message.
+
+<!-- claim:feat-notifications-2 -->
+**Paramètres → Notifications** contient l'interrupteur principal, un interrupteur par compte, le
+**Contenu de la notification** (expéditeur et objet, ou **Masquer le contenu**, qui n'affiche que
+le compte) et **Seulement quand EmailOps n'est pas au premier plan** ; tout est activé par défaut,
+avec l'expéditeur et l'objet affichés. Le texte du message n'est jamais affiché et, tant que
+l'application est verrouillée par le mot de passe principal, l'expéditeur et l'objet non plus.
 
 ## Contrôles de confidentialité et de sécurité {#privacy-and-security-controls}
 
@@ -160,3 +296,26 @@ trousseau du système. Tout est détaillé dans
 Boîte en vue divisée ou pleine largeur, et une interface disponible en français, anglais,
 espagnol et allemand. La langue de sortie de l'IA se règle séparément : vous pouvez lire
 l'interface dans une langue et faire rédiger les réponses dans une autre.
+
+## Raccourcis clavier {#keyboard-shortcuts}
+
+<!-- claim:feat-shortcuts-1 -->
+Appuyez sur `?` n'importe où en dehors d'un champ de texte pour voir tous les raccourcis. Ils
+reprennent ceux de Gmail :
+
+| Touches | Action |
+|---|---|
+| `j` / `k` | conversation suivante / précédente |
+| `Enter` ou `o`, `u` | ouvrir la conversation, revenir à la liste |
+| `x` | sélectionner ou désélectionner la conversation |
+| `e`, `#`, `s`, `b` | archiver, supprimer, ajouter aux favoris, mettre en attente |
+| `Shift+U` / `Shift+I` | marquer comme non lu / lu |
+| `c`, `r`, `a`, `f` | nouveau message, répondre, répondre à tous, transférer |
+| `g` puis `i`, `s`, `b`, `a`, `l` | aller à Boîte de réception, Favoris, En attente, Archives, Programmés |
+| `/` | rechercher |
+
+<!-- claim:feat-shortcuts-2 -->
+Les raccourcis sont suspendus pendant la saisie et tant qu'une boîte de dialogue ou un menu est
+ouvert. Les boutons qu'ils remplacent indiquent leur touche dans l'info-bulle, comme dans
+« Archiver (E) ». **Paramètres → Apparence → Raccourcis clavier** les désactive, et **Afficher la
+liste** ouvre le même récapitulatif que `?`.

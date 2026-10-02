@@ -75,6 +75,7 @@ fn case_email(case: &LensCase, account_id: &str) -> Email {
         category: "primary".into(),
         mailbox: "inbox".into(),
         is_sent: false,
+        is_starred: false,
         headers: None,
     }
 }

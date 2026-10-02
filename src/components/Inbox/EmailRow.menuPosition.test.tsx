@@ -30,6 +30,7 @@ const email: Email = {
   category: 'primary',
   mailbox: 'inbox',
   isSent: false,
+  isStarred: false,
 };
 
 let container: HTMLDivElement;
@@ -56,7 +57,8 @@ function openMenuWithAnchor(anchor: { top: number; bottom: number }) {
   act(() => {
     root.render(<EmailRow email={email} isSelected={false} onClick={() => {}} />);
   });
-  const button = container.querySelector('button');
+  // The first button that is not the row's star toggle is the kebab.
+  const button = container.querySelector<HTMLButtonElement>('button:not([data-testid="star-toggle"])');
   if (!button) throw new Error('kebab button not rendered');
   button.getBoundingClientRect = () =>
     ({ ...anchor, left: 980, right: 1000, width: 20, height: anchor.bottom - anchor.top }) as DOMRect;

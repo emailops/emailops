@@ -3,6 +3,10 @@
   "tabs": {
     "appearance": "Appearance",
     "appearanceDesc": "Inbox layout",
+    "signatures": "Signatures",
+    "signaturesDesc": "Per-account email signatures",
+    "notifications": "Notifications",
+    "notificationsDesc": "New mail desktop notifications",
     "calendar": "Calendar",
     "calendarDesc": "Accounts & meeting notifications",
     "ai": "AI Backend & Models",
@@ -39,7 +43,19 @@
     "layoutSplitLabel": "Split view",
     "layoutSplitDesc": "Email list on the left, email content on the right",
     "layoutFullWidthLabel": "Full-width list",
-    "layoutFullWidthDesc": "Email list takes full width; open email to read it"
+    "layoutFullWidthDesc": "Email list takes full width; open email to read it",
+    "undoSend": "Undo send",
+    "undoSendHelp": "After you press Send, the message waits this long so you can take it back. EmailOps must stay open until it goes out.",
+    "undoSendOff": "Off",
+    "undoSendSeconds": "{{count}} seconds",
+    "keyboardShortcuts": "Keyboard shortcuts",
+    "keyboardShortcutsHelp": "Navigate, act on conversations and compose from the keyboard. Press ? to see every shortcut.",
+    "keyboardShortcutsShowList": "Show the list",
+    "afterLeave": "After archiving or deleting",
+    "afterLeaveHelp": "When the open conversation leaves the list (archive, delete, snooze, block or junk), what to show next. Marking as unread always goes back to the list.",
+    "afterLeaveNext": "Open the next conversation",
+    "afterLeavePrevious": "Open the previous conversation",
+    "afterLeaveList": "Go back to the list"
   },
   "dialog": {
     "closeTitle": "Close settings",
@@ -529,7 +545,7 @@
       "dim": "Still in place, just easier for the eye to skip. Fully recoverable at a glance.",
       "hide": "Removed from the inbox list. Still reachable through search and your provider’s own folders."
     },
-    "neverMoves": "Neither option ever moves or deletes mail on the server. Only the “Confirm junk” button does that, and only when you press it.",
+    "neverMoves": "Neither option ever moves or deletes mail on the server. Only “Confirm junk” and “Block sender” do that, and only when you use them.",
     "phishing": "Warn about impersonation attempts",
     "phishingDesc": "Off by default. This is the only check that accuses a message of fraud, and it has far less evidence behind it than the other two — a wrong red banner costs more trust than a correct one earns.",
     "statusTitle": "Status",
@@ -547,7 +563,14 @@
     "modelNotYet": "not enough labels yet — {{pos}} junk / {{neg}} legitimate",
     "backfill": "Score {{count}} older messages",
     "backfillStarted": "Scoring older messages in the background",
-    "backfillRunning": "Scoring… {{count}} left"
+    "backfillRunning": "Scoring… {{count}} left",
+    "blocked": {
+      "title": "Blocked senders",
+      "desc": "Mail from these senders is moved to Spam as it arrives.",
+      "empty": "You haven’t blocked anyone. Block a sender from a message’s ⋮ menu.",
+      "since": "blocked {{date}}",
+      "unblock": "Unblock"
+    }
   },
   "skills": {
     "enable": "Enable skills",
@@ -577,5 +600,51 @@
       "deleteYes": "Delete",
       "deleteNo": "Cancel"
     }
+  },
+  "signatures": {
+    "title": "Signatures",
+    "help": "Added to the messages you write from each account. You can still change or delete it in any message.",
+    "account": "Account",
+    "editorPlaceholder": "Your name, role, phone…",
+    "useForNew": "Insert in new messages",
+    "useForReplies": "Insert in replies and forwards",
+    "placementHelp": "In a reply the signature goes below your text; in a forward, above the forwarded message.",
+    "imagesHelp": "Images travel inside each message. Wide images are scaled down to 600 px; each may be 200 KB at most, the whole signature 512 KB.",
+    "save": "Save signature",
+    "saving": "Saving…",
+    "saved": "Signature saved",
+    "discard": "Discard changes",
+    "importGmail": "Import from Gmail",
+    "importing": "Importing…",
+    "imported": "Gmail's signature is in the editor. Save to use it here.",
+    "importNone": "This address has no signature in Gmail.",
+    "noAccounts": "Connect an account to set its signature.",
+    "loadFailed": "The signature could not be loaded. Details are in the output panel.",
+    "addImage": "Add image",
+    "addImageHint": "Add a logo or a picture of your handwritten signature (PNG, JPEG, GIF or WebP)",
+    "imageAdded": "Image added. Save to keep it.",
+    "imageErrors": {
+      "unsupportedType": "Use a PNG, JPEG, GIF or WebP image (SVG and other files are not supported).",
+      "fileTooLarge": "That file is too large to use (10 MB at most).",
+      "tooLarge": "That image is still over 200 KB after resizing. Use a smaller or simpler image.",
+      "unreadable": "That image could not be read."
+    }
+  },
+  "notifications": {
+    "enabledLabel": "New mail notifications",
+    "enabledDesc": "Show a desktop notification when new mail arrives in your inbox, and when a snoozed conversation comes back. Never for the first sync of an account, older mail, mail you already read, junk, or blocked senders.",
+    "accountsLabel": "Accounts",
+    "accountsDesc": "Choose which accounts notify.",
+    "accountToggleAria": "Notify for {{email}}",
+    "noAccounts": "No accounts connected yet.",
+    "contentLabel": "Notification content",
+    "contentDesc": "What a notification may show on your screen. The message text is never shown.",
+    "contentPreview": "Show sender and subject",
+    "contentPreviewDesc": "The sender as the title and the subject as the text.",
+    "contentHidden": "Hide content",
+    "contentHiddenDesc": "Only \"New message in\" and the account.",
+    "onlyUnfocusedLabel": "Only when EmailOps is not focused",
+    "onlyUnfocusedDesc": "Stay quiet while you are working in EmailOps.",
+    "footnote": "More than three new messages at once become a single summary. While the app is locked with the main password, notifications never show the sender or subject."
   }
 }

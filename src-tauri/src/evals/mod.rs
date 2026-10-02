@@ -16,6 +16,7 @@
 pub mod agent_search;
 pub mod case_loader;
 pub mod db_source;
+pub mod draft_cases;
 pub mod email_classification;
 pub mod extraction;
 pub mod forms;

@@ -3,6 +3,10 @@
   "tabs": {
     "appearance": "Apparence",
     "appearanceDesc": "Disposition de la boîte de réception",
+    "signatures": "Signatures",
+    "signaturesDesc": "Signature de chaque compte",
+    "notifications": "Notifications",
+    "notificationsDesc": "Notifications de bureau pour le nouveau courrier",
     "calendar": "Calendrier",
     "calendarDesc": "Comptes et notifications de réunion",
     "ai": "IA : backend et modèles",
@@ -39,7 +43,19 @@
     "layoutSplitLabel": "Vue divisée",
     "layoutSplitDesc": "Liste des courriels à gauche, contenu du courriel à droite",
     "layoutFullWidthLabel": "Liste en pleine largeur",
-    "layoutFullWidthDesc": "La liste occupe toute la largeur ; ouvrez un courriel pour le lire"
+    "layoutFullWidthDesc": "La liste occupe toute la largeur ; ouvrez un courriel pour le lire",
+    "undoSend": "Annuler l’envoi",
+    "undoSendHelp": "Après avoir cliqué sur Envoyer, le message attend ce délai pour que vous puissiez le reprendre. EmailOps doit rester ouvert jusqu’à son départ.",
+    "undoSendOff": "Désactivé",
+    "undoSendSeconds": "{{count}} secondes",
+    "keyboardShortcuts": "Raccourcis clavier",
+    "keyboardShortcutsHelp": "Naviguez, agissez sur les conversations et rédigez au clavier. Appuyez sur ? pour voir tous les raccourcis.",
+    "keyboardShortcutsShowList": "Afficher la liste",
+    "afterLeave": "Après l’archivage ou la suppression",
+    "afterLeaveHelp": "Ce qui s’affiche quand la conversation ouverte quitte la liste (archiver, supprimer, mettre en attente, bloquer ou signaler comme indésirable). Marquer comme non lu revient toujours à la liste.",
+    "afterLeaveNext": "Ouvrir la conversation suivante",
+    "afterLeavePrevious": "Ouvrir la conversation précédente",
+    "afterLeaveList": "Revenir à la liste"
   },
   "dialog": {
     "closeTitle": "Fermer les paramètres",
@@ -529,7 +545,7 @@
       "dim": "Toujours à leur place, simplement plus faciles à ignorer.",
       "hide": "Retirés de la liste. Toujours accessibles par la recherche et les dossiers de votre fournisseur."
     },
-    "neverMoves": "Aucune de ces options ne déplace ni ne supprime quoi que ce soit sur le serveur. Seul le bouton « Confirmer » le fait, et seulement si vous le pressez.",
+    "neverMoves": "Aucune de ces options ne déplace ni ne supprime de courrier sur le serveur. Seuls les boutons « Confirmer » d’un message indésirable et « Bloquer l'expéditeur » le font, et seulement quand vous les utilisez.",
     "phishing": "Avertir des tentatives d'usurpation",
     "phishingDesc": "Désactivé par défaut. C'est la seule vérification qui accuse un message de fraude, et elle repose sur beaucoup moins de preuves que les deux autres.",
     "statusTitle": "État",
@@ -547,7 +563,14 @@
     "modelNotYet": "pas assez d'étiquettes — {{pos}} / {{neg}}",
     "backfill": "Analyser {{count}} anciens messages",
     "backfillStarted": "Analyse des anciens messages en arrière-plan",
-    "backfillRunning": "Analyse… {{count}} restants"
+    "backfillRunning": "Analyse… {{count}} restants",
+    "blocked": {
+      "title": "Expéditeurs bloqués",
+      "desc": "Le courrier de ces expéditeurs est déplacé dans les spams dès son arrivée.",
+      "empty": "Vous n’avez bloqué personne. Bloquez un expéditeur depuis le menu ⋮ d’un message.",
+      "since": "bloqué le {{date}}",
+      "unblock": "Débloquer"
+    }
   },
   "skills": {
     "enable": "Activer les skills",
@@ -577,5 +600,51 @@
       "deleteYes": "Supprimer",
       "deleteNo": "Annuler"
     }
+  },
+  "signatures": {
+    "title": "Signatures",
+    "help": "Ajoutée aux messages que vous écrivez depuis chaque compte. Vous pouvez toujours la modifier ou la supprimer dans un message.",
+    "account": "Compte",
+    "editorPlaceholder": "Votre nom, fonction, téléphone…",
+    "useForNew": "Insérer dans les nouveaux messages",
+    "useForReplies": "Insérer dans les réponses et transferts",
+    "placementHelp": "Dans une réponse, la signature se place sous votre texte ; dans un transfert, au-dessus du message transféré.",
+    "imagesHelp": "Les images voyagent dans chaque message. Les images larges sont réduites à 600 px ; chacune peut peser 200 Ko au maximum, la signature entière 512 Ko.",
+    "save": "Enregistrer la signature",
+    "saving": "Enregistrement…",
+    "saved": "Signature enregistrée",
+    "discard": "Annuler les modifications",
+    "importGmail": "Importer depuis Gmail",
+    "importing": "Importation…",
+    "imported": "La signature Gmail est dans l’éditeur. Enregistrez-la pour l’utiliser ici.",
+    "importNone": "Cette adresse n’a pas de signature dans Gmail.",
+    "noAccounts": "Connectez un compte pour définir sa signature.",
+    "loadFailed": "Impossible de charger la signature. Les détails sont dans le panneau de sortie.",
+    "addImage": "Ajouter une image",
+    "addImageHint": "Ajoutez un logo ou une image de votre signature manuscrite (PNG, JPEG, GIF ou WebP)",
+    "imageAdded": "Image ajoutée. Enregistrez pour la conserver.",
+    "imageErrors": {
+      "unsupportedType": "Utilisez une image PNG, JPEG, GIF ou WebP (SVG et les autres fichiers ne sont pas pris en charge).",
+      "fileTooLarge": "Ce fichier est trop volumineux (10 Mo au maximum).",
+      "tooLarge": "L’image dépasse encore 200 Ko après réduction. Utilisez une image plus petite ou plus simple.",
+      "unreadable": "Impossible de lire cette image."
+    }
+  },
+  "notifications": {
+    "enabledLabel": "Notifications de nouveau courrier",
+    "enabledDesc": "Affiche une notification de bureau quand un nouveau message arrive dans la boîte de réception et quand une conversation mise en attente revient. Jamais lors de la première synchronisation d'un compte, ni pour le courrier ancien, déjà lu, indésirable ou d'expéditeurs bloqués.",
+    "accountsLabel": "Comptes",
+    "accountsDesc": "Choisissez les comptes qui envoient des notifications.",
+    "accountToggleAria": "Notifier pour {{email}}",
+    "noAccounts": "Aucun compte connecté pour le moment.",
+    "contentLabel": "Contenu de la notification",
+    "contentDesc": "Ce qu'une notification peut afficher à l'écran. Le texte du message n'est jamais affiché.",
+    "contentPreview": "Afficher l'expéditeur et l'objet",
+    "contentPreviewDesc": "L'expéditeur en titre et l'objet en texte.",
+    "contentHidden": "Masquer le contenu",
+    "contentHiddenDesc": "Seulement « Nouveau message dans » et le compte.",
+    "onlyUnfocusedLabel": "Seulement quand EmailOps n'est pas au premier plan",
+    "onlyUnfocusedDesc": "Reste silencieux pendant que vous travaillez dans EmailOps.",
+    "footnote": "Plus de trois nouveaux messages à la fois sont regroupés en un seul résumé. Tant que l'application est verrouillée par le mot de passe principal, les notifications n'affichent jamais l'expéditeur ni l'objet."
   }
 }

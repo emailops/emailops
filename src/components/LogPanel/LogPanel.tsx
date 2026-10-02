@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { AiWorkInProgressDialog } from '@/components/shared/AiWorkInProgressDialog';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
+import { usePublishedHeight } from '@/hooks/usePublishedHeight';
 import { type AiChange, affectedWork } from '@/lib/aiProviderWork';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
@@ -208,6 +209,9 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
   const [sourceFilter, setSourceFilter] = useState<LogSource | 'all'>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const wasAtBottomRef = useRef(true);
+  // Toasts stack above this bar (see ToastHost); it changes height when expanded.
+  const panelRef = useRef<HTMLDivElement>(null);
+  usePublishedHeight(panelRef, '--log-panel-height');
 
   const visibleEntries = sourceFilter === 'all' ? entries : entries.filter((e) => e.source === sourceFilter);
 
@@ -230,7 +234,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
   }, [visibleEntries.length]);
 
   return (
-    <div className="flex flex-col border-t border-gray-700 bg-[#1e1e1e] text-gray-300 text-xs font-mono">
+    <div ref={panelRef} className="flex flex-col border-t border-gray-700 bg-[#1e1e1e] text-gray-300 text-xs font-mono">
       {/* Header bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-gray-700 select-none">
         <div className="flex min-w-0 items-center gap-3">

@@ -9,6 +9,7 @@
   "trash": "Papierkorb",
   "spam": "Spam",
   "starred": "Mit Stern",
+  "snoozed": "Zurückgestellt",
   "search": "E-Mails durchsuchen…",
   "compose": "Verfassen",
   "accounts": "Konten",
@@ -81,5 +82,7 @@
   "allAccounts": "Alle Konten",
   "allAccountsFooter": "Alle Konten werden angezeigt",
   "newLens": "Neue Linse",
-  "skills": "Skills"
+  "skills": "Skills",
+  "archive": "Archiv",
+  "scheduled": "Geplant"
 }

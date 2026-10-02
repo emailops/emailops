@@ -4,23 +4,31 @@ import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
 import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account, InboxLayout } from '@/types';
 import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
 import { AiSettings } from './AiSettings';
 import { AiTranslationSettings } from './AiTranslationSettings';
+import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
 import { JunkSettings } from './JunkSettings';
+import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
 import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
+import { NotificationsSettings } from './NotificationsSettings';
 import { PrivacySettings } from './PrivacySettings';
+import { SignaturesSettings } from './SignaturesSettings';
 import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
+import { UndoSendSetting } from './UndoSendSetting';
 
 export type SettingsTab =
   | 'appearance'
+  | 'signatures'
+  | 'notifications'
   | 'calendar'
   | 'ai'
   | 'classification'
@@ -61,6 +69,8 @@ type TabSpec = { id: SettingsTab; experimental?: boolean; needsAi?: boolean };
 // the dialog.
 const ALL_TABS: TabSpec[] = [
   { id: 'appearance' },
+  { id: 'signatures' },
+  { id: 'notifications' },
   { id: 'calendar' },
   { id: 'ai' },
   { id: 'classification', needsAi: true },
@@ -90,6 +100,7 @@ export function SettingsDialog({
   onChangeLensesEnabled,
   onClose,
 }: SettingsDialogProps) {
+  useOverlay();
   // Both AI Tasks and AI Memory are always visible in Settings now: each tab
   // owns its experimental enable toggle in its own panel. The underlying
   // sidebar visibility flags (`tasksEnabled` / `memoriesEnabled`) are still
@@ -210,6 +221,8 @@ export function SettingsDialog({
           </div>
 
           {tab === 'appearance' && <AppearancePanel currentLayout={currentLayout} onChangeLayout={onChangeLayout} />}
+          {tab === 'signatures' && <SignaturesSettings accounts={accounts} />}
+          {tab === 'notifications' && <NotificationsSettings accounts={accounts} />}
           {tab === 'calendar' && <CalendarSettings />}
           {tab === 'ai' && <AiSettings />}
           {tab === 'classification' && (
@@ -311,6 +324,9 @@ function AppearancePanel({
           />
         </div>
       </section>
+      <UndoSendSetting />
+      <AutoAdvanceSetting />
+      <KeyboardShortcutsSetting />
     </div>
   );
 }

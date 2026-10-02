@@ -8,6 +8,7 @@ import { type CalendarRecurrence, isValidInviteeEmail, recurrenceOptions } from 
 import { extractEmail } from '@/lib/composeRecipients';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { CalendarEvent } from '@/types';
 
 /** Start/end pickers move in 30-minute steps. */
@@ -55,6 +56,7 @@ export function NewEventDialog({
   onCreated,
   onAuthError,
 }: NewEventDialogProps) {
+  useOverlay();
   const { t, i18n } = useTranslation(['calendar', 'common']);
   const { time } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);

@@ -64,6 +64,7 @@ impl Database {
         excluded_senders: &[String],
     ) -> Result<QuickFilterStats> {
         let conn = self.reader();
+        let live = crate::db::live_mailboxes_sql!();
 
         // Scope-dependent SQL fragments. The account id (when present) binds
         // as ?1; exclusion placeholders start after it.
@@ -105,7 +106,7 @@ impl Database {
              FROM emails WHERE {scope_cond}
                AND sender_domain != ''
                AND is_deleted = 0
-               AND mailbox IN ('inbox', 'sent') {domain_exclude_clause}
+               AND mailbox IN {live} {domain_exclude_clause}
              GROUP BY domain
              ORDER BY cnt DESC LIMIT 10"
         );
@@ -148,7 +149,7 @@ impl Database {
             "SELECT MIN(sender_email), {thread_cnt} AS cnt
              FROM emails WHERE {scope_cond}
                AND is_deleted = 0
-               AND mailbox IN ('inbox', 'sent')
+               AND mailbox IN {live}
                AND {own_address_cond} {sender_exclude_clause}
              GROUP BY sender_email COLLATE NOCASE
              ORDER BY cnt DESC LIMIT 10"
@@ -206,16 +207,20 @@ impl Database {
     /// `timestamp DESC, id DESC` order, so two emails of one thread stamped in
     /// the same second still yield exactly one row (a `timestamp = MAX(...)`
     /// join returned both).
-    const THREAD_LATEST_CTE: &'static str = "thread_latest AS (
+    const THREAD_LATEST_CTE: &'static str = concat!(
+        "thread_latest AS (
                  SELECT mt.aid AS aid, mt.tid AS tid,
                         (SELECT e3.id
                          FROM emails e3 INDEXED BY idx_emails_thread_latest
                          WHERE e3.account_id = mt.aid AND e3.thread_id = mt.tid
-                           AND e3.is_deleted = 0 AND e3.mailbox IN ('inbox', 'sent')
+                           AND e3.is_deleted = 0 AND e3.mailbox IN ",
+        crate::db::live_mailboxes_sql!(),
+        "
                          ORDER BY e3.timestamp DESC, e3.id DESC
                          LIMIT 1) AS rep_id
                  FROM matched_threads mt
-             )";
+             )"
+    );
 
     /// Representative-row SELECT paired with [`Self::THREAD_LATEST_CTE`].
     /// CROSS JOIN pins the join order (SQLite never reorders CROSS JOIN) so
@@ -288,8 +293,8 @@ impl Database {
             // CTE, then a per-thread latest lookup DRIVEN FROM matched_threads
             // (see `thread_latest_cte`) so cost stays O(matching_threads).
             //
-            // `mailbox IN ('inbox', 'sent')` keeps Spam/Trash copies out of Inbox-level
-            // filtered views.
+            // `mailbox IN live_mailboxes_sql!()` keeps Spam/Trash copies out of the
+            // filtered views while reaching archived mail.
             // `INDEXED BY idx_email_tags_type_value` is critical: without it SQLite
             // picks the inverted plan — scan all ~87k emails of the account and
             // probe email_tags by email_id — instead of starting from the tag
@@ -299,6 +304,7 @@ impl Database {
             // Window binds land after limit/offset so the fixed indices above
             // keep their positions.
             let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
+            let live = crate::db::live_mailboxes_sql!();
             // The board asks for `latest_tag_only`; the sidebar filter never
             // does, so the "ANY email in the thread" rule above is untouched.
             let latest_sql = crate::db::latest_tagged_in_thread_sql("e2", first_idx, window.latest_tag_only);
@@ -311,7 +317,7 @@ impl Database {
                      JOIN emails e2 ON e2.id = et.email_id
                      WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
                        AND {scope_e2} AND e2.is_deleted = 0
-                       AND e2.mailbox IN ('inbox', 'sent')
+                       AND e2.mailbox IN {live}
                        {junk_sql}
                        {latest_sql}
                        {window_sql}
@@ -366,7 +372,10 @@ impl Database {
 
         // Inbox-level filtered view: exclude Spam/Trash copies so they don't
         // leak into the main filter UI. Soft-deleted rows are also excluded.
-        let mut match_conditions = vec!["is_deleted = 0".to_string(), "mailbox IN ('inbox', 'sent')".to_string()];
+        let mut match_conditions = vec![
+            "is_deleted = 0".to_string(),
+            concat!("mailbox IN ", crate::db::live_mailboxes_sql!()).to_string(),
+        ];
         match scope {
             crate::db::AccountScope::Account(id) => {
                 match_conditions.push(format!("account_id = ?{param_idx}"));
@@ -3810,6 +3819,145 @@ mod tests {
             results.iter().map(|e| &e.id).collect::<Vec<_>>()
         );
     }
+
+    // ── archive is live mail ─────────────────────────────────────────────────────
+    // Archived mail left the Inbox view only: sender/domain/tag filters and their
+    // suggestion counts reach it, as Gmail and Outlook search and labels do.
+
+    #[test]
+    fn quick_filter_stats_count_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+        insert_contact_email(
+            &db,
+            "a1",
+            account,
+            "t-a1",
+            "Ana",
+            "ana@archived.example",
+            "[]",
+            "archive",
+            100,
+        );
+
+        let stats = db
+            .get_quick_filter_stats(crate::db::AccountScope::Account(account), &[], &[])
+            .unwrap();
+        let domains: Vec<&str> = stats.top_domains.iter().map(|d| d.value.as_str()).collect();
+        let senders: Vec<&str> = stats.top_senders.iter().map(|s| s.value.as_str()).collect();
+        assert_eq!(domains, vec!["archived.example"]);
+        assert_eq!(senders, vec!["ana@archived.example"]);
+    }
+
+    #[test]
+    fn filtered_emails_sender_filter_includes_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+        insert_contact_email(&db, "in", account, "t1", "Ana", "ana@example.com", "[]", "inbox", 100);
+        insert_contact_email(
+            &db,
+            "arch",
+            account,
+            "t2",
+            "Ana",
+            "ana@example.com",
+            "[]",
+            "archive",
+            200,
+        );
+        insert_contact_email(&db, "junk", account, "t3", "Ana", "ana@example.com", "[]", "spam", 300);
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                Some("ana@example.com"),
+                None,
+                None,
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["arch", "in"]);
+    }
+
+    #[test]
+    fn filtered_emails_tag_filter_includes_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+        insert_contact_email(
+            &db,
+            "arch",
+            account,
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "[]",
+            "archive",
+            100,
+        );
+        tag_email(&db, "arch", "company", "Acme");
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                None,
+                None,
+                Some("company"),
+                Some("Acme"),
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["arch"]);
+    }
+
+    // A thread whose newest message was archived shows that message, not an
+    // older inbox one, as the filtered list's row for the thread.
+    #[test]
+    fn filtered_emails_thread_row_is_the_newest_live_message_even_when_archived() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_account(&db, account, "me@mymail.com");
+        insert_contact_email(&db, "old", account, "t1", "Ana", "ana@example.com", "[]", "inbox", 100);
+        insert_contact_email(
+            &db,
+            "new",
+            account,
+            "t1",
+            "Ana",
+            "ana@example.com",
+            "[]",
+            "archive",
+            200,
+        );
+
+        let result = db
+            .get_filtered_emails(
+                crate::db::AccountScope::Account(account),
+                Some("example.com"),
+                None,
+                None,
+                None,
+                None,
+                &crate::models::EmailWindow::default(),
+                50,
+                0,
+            )
+            .unwrap();
+        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["new"]);
+    }
+
     // The tag path skips COUNT(*) for the infinite-scroll list and says so
     // with -1, which the frontend reads as "unknown", not as a count.
     #[test]

@@ -21,6 +21,7 @@ import deMemory from '../locales/de/memory.json';
 import deModal from '../locales/de/modal.json';
 import deNotifications from '../locales/de/notifications.json';
 import deSettings from '../locales/de/settings.json';
+import deShortcuts from '../locales/de/shortcuts.json';
 import deSidebar from '../locales/de/sidebar.json';
 import deTagboard from '../locales/de/tagboard.json';
 import deTasks from '../locales/de/tasks.json';
@@ -39,6 +40,7 @@ import enMemory from '../locales/en/memory.json';
 import enModal from '../locales/en/modal.json';
 import enNotifications from '../locales/en/notifications.json';
 import enSettings from '../locales/en/settings.json';
+import enShortcuts from '../locales/en/shortcuts.json';
 import enSidebar from '../locales/en/sidebar.json';
 import enTagboard from '../locales/en/tagboard.json';
 import enTasks from '../locales/en/tasks.json';
@@ -57,6 +59,7 @@ import esMemory from '../locales/es/memory.json';
 import esModal from '../locales/es/modal.json';
 import esNotifications from '../locales/es/notifications.json';
 import esSettings from '../locales/es/settings.json';
+import esShortcuts from '../locales/es/shortcuts.json';
 import esSidebar from '../locales/es/sidebar.json';
 import esTagboard from '../locales/es/tagboard.json';
 import esTasks from '../locales/es/tasks.json';
@@ -75,6 +78,7 @@ import frMemory from '../locales/fr/memory.json';
 import frModal from '../locales/fr/modal.json';
 import frNotifications from '../locales/fr/notifications.json';
 import frSettings from '../locales/fr/settings.json';
+import frShortcuts from '../locales/fr/shortcuts.json';
 import frSidebar from '../locales/fr/sidebar.json';
 import frTagboard from '../locales/fr/tagboard.json';
 import frTasks from '../locales/fr/tasks.json';
@@ -113,6 +117,7 @@ export const NAMESPACES = [
   'dashboard',
   'attachments',
   'tagboard',
+  'shortcuts',
 ] as const;
 
 export type Namespace = (typeof NAMESPACES)[number];
@@ -137,6 +142,7 @@ export const resources = {
     lenses: enLenses,
     dashboard: enDashboard,
     attachments: enAttachments,
+    shortcuts: enShortcuts,
   },
   es: {
     common: esCommon,
@@ -157,6 +163,7 @@ export const resources = {
     lenses: esLenses,
     dashboard: esDashboard,
     attachments: esAttachments,
+    shortcuts: esShortcuts,
   },
   fr: {
     common: frCommon,
@@ -177,6 +184,7 @@ export const resources = {
     lenses: frLenses,
     dashboard: frDashboard,
     attachments: frAttachments,
+    shortcuts: frShortcuts,
   },
   de: {
     common: deCommon,
@@ -197,6 +205,7 @@ export const resources = {
     lenses: deLenses,
     dashboard: deDashboard,
     attachments: deAttachments,
+    shortcuts: deShortcuts,
   },
 } as const;
 

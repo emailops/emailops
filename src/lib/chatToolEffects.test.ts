@@ -58,6 +58,25 @@ describe('handleChatToolEffect', () => {
     expect(log).toHaveBeenCalledWith('success', 'ai', expect.stringContaining('d1'));
   });
 
+  it('opens a chat new-mail draft on its saved row with the account signature inserted', () => {
+    // The backend told the model not to sign (the account signature applies),
+    // so the composer must add it — once — and keep editing the draft the
+    // chat saved instead of starting a second one.
+    const openComposeTab = vi.fn();
+    handleChatToolEffect(
+      {
+        kind: 'openComposer',
+        draftId: 'd1',
+        accountId: 'acc1',
+        toAddresses: ['a@x.com'],
+        subject: 'Hi',
+        body: 'hello there',
+      },
+      { openComposeTab, openThreadReply: vi.fn(), navigateToInbox: vi.fn() },
+    );
+    expect(openComposeTab.mock.calls[0][4]).toEqual({ draftId: 'd1', insertSignature: true });
+  });
+
   it('navigates to inbox BEFORE opening the compose tab so the new tab is visible', () => {
     // Order matters — the tab bar only renders for the inbox-family views.
     // If openComposeTab fires while viewMode is "chat", the tab is appended

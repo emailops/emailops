@@ -34,6 +34,7 @@ function email(overrides: Partial<Email> = {}): Email {
     category: 'primary',
     mailbox: 'inbox',
     isSent: false,
+    isStarred: false,
     ...overrides,
   };
 }

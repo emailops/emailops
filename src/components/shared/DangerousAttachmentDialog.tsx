@@ -3,6 +3,7 @@
 // carries the confirmation this dialog collects.
 
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 
 /** The kinds the backend reports (`DangerKind` in attachment_safety.rs). */
 const KNOWN_KINDS = ['program', 'script', 'installer', 'shortcut', 'web_page'] as const;
@@ -26,6 +27,7 @@ export function DangerousAttachmentDialog({
   onConfirm,
   onCancel,
 }: DangerousAttachmentDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'attachments']);
   const kindKey = KNOWN_KINDS.find((known) => known === kind) ?? 'other';
 

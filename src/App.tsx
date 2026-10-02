@@ -16,6 +16,7 @@ import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
+import { ShortcutHelpModal } from '@/components/common/ShortcutHelpModal';
 import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
 import { DraftsView } from '@/components/DraftsView';
@@ -29,6 +30,7 @@ import { LogPanel } from '@/components/LogPanel/LogPanel';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { OnboardingWizard } from '@/components/Onboarding/OnboardingWizard';
+import { ScheduledView } from '@/components/ScheduledView';
 import { SearchBar } from '@/components/Search/SearchBar';
 import type { ClassificationRulePrefill } from '@/components/Settings/ClassificationSettings';
 import { SettingsDialog, type SettingsTab } from '@/components/Settings/SettingsDialog';
@@ -37,16 +39,18 @@ import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
 import { SkillsView } from '@/components/Skills/SkillsView';
+import { SenderDialogs } from '@/components/shared/SenderDialogs';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
 import { useEmails } from '@/hooks/useEmails';
+import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
-import type { MailboxView } from '@/lib/api';
+import type { OutboxUpdated } from '@/lib/api';
 import * as api from '@/lib/api';
 import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
@@ -58,8 +62,15 @@ import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { mailboxTitle } from '@/lib/mailboxTitle';
+import { restoredBodyHtml } from '@/lib/outbox';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
-import { baseViewToken, isEmailListView, planAccountSwitchView, planViewChange } from '@/lib/viewNavigation';
+import {
+  baseViewToken,
+  isEmailListView,
+  planAccountSwitchView,
+  planViewChange,
+  viewModeToMailbox,
+} from '@/lib/viewNavigation';
 import {
   isUnifiedMode,
   planChatAccountChange,
@@ -68,10 +79,11 @@ import {
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { pendingThreadActions, useEmailStore } from '@/stores/emailStore';
 import {
   useHelpDocsEnabledStore,
   useLensesEnabledStore,
@@ -86,7 +98,10 @@ import { useLensStore } from '@/stores/lensStore';
 import type { LogLevel, LogSource } from '@/stores/logStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useOutboxStore } from '@/stores/outboxStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { useReminderStore } from '@/stores/reminderStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
@@ -119,12 +134,6 @@ const LOG_SOURCES: LogSource[] = [
   'lens',
 ];
 
-function viewModeToMailbox(mode: ViewMode): MailboxView {
-  if (mode === 'sent' || mode === 'spam' || mode === 'deleted') return mode;
-  if (mode.startsWith('folder:')) return mode as MailboxView;
-  return 'inbox';
-}
-
 function isLogLevel(value: string): value is LogLevel {
   return LOG_LEVELS.includes(value as LogLevel);
 }
@@ -136,6 +145,15 @@ function isLogSource(value: string): value is LogSource {
 function App() {
   const [isLocked, setIsLocked] = useState(false);
   const [lockChecked, setLockChecked] = useState(false);
+
+  // An archive/delete still inside its undo window is sent before the page
+  // goes away (reload, window close where the webview fires it). A quit that
+  // skips the event drops the action: it simply never happened.
+  useEffect(() => {
+    const flush = () => void pendingThreadActions.flushAll();
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   useEffect(() => {
     api.hasMainPassword().then((has) => {
@@ -237,6 +255,7 @@ function AppInner() {
   const [pendingOAuthProvider, setPendingOAuthProvider] = useState<'gmail' | 'outlook'>('gmail');
   const [addAccountError, setAddAccountError] = useState<string | null>(null);
   const [isAddAccountPickerOpen, setIsAddAccountPickerOpen] = useState(false);
+  useOverlay(isAddAccountPickerOpen);
   const [isAddImapAccountOpen, setIsAddImapAccountOpen] = useState(false);
   const [accountSettingsAccountId, setAccountSettingsAccountId] = useState<string | null>(null);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
@@ -289,6 +308,27 @@ function AppInner() {
   const setActiveTab = useEmailStore((s) => s.setActiveTab);
   const openComposeTab = useEmailStore((s) => s.openComposeTab);
   const setPendingChatDraft = useEmailStore((s) => s.setPendingChatDraft);
+
+  // A message taken back from the outbox (Undo, or Edit in the Scheduled
+  // view) reopens in a compose tab with everything it had — recipients,
+  // subject, body with its inline images, attachments, and the message a
+  // reply answers. Failures announced by the outbox link to the Scheduled view.
+  useEffect(() => {
+    const outbox = useOutboxStore.getState();
+    outbox.setRestoreHandler((message) => {
+      setViewMode('inbox');
+      openComposeTab(message.accountId, message.to, message.subject, restoredBodyHtml(message), {
+        ccAddresses: message.cc,
+        fileAttachments: message.attachments,
+        replyToEmailId: message.replyToEmailId ?? undefined,
+      });
+    });
+    outbox.setShowScheduledHandler(() => setViewMode('scheduled'));
+    return () => {
+      outbox.setRestoreHandler(null);
+      outbox.setShowScheduledHandler(null);
+    };
+  }, [openComposeTab]);
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const previousSyncStatusRef = useRef<string | null>(null);
 
@@ -431,7 +471,7 @@ function AppInner() {
     removeFilter: handleRemoveFilter,
     forceRefresh: forceRefreshFilters,
     addSenderAsFilter,
-    blockSender: handleBlockSender,
+    hideSenderFromFilters: handleHideSenderFromFilters,
     isPinned: isFilterPinned,
   } = useSmartFilters();
 
@@ -692,17 +732,61 @@ function AppInner() {
     }
   }, [effectiveAccountId]);
 
-  // Keyboard shortcut to open search (Cmd/Ctrl + K)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setIsSearchOpen(true);
+  // Sidebar view switch, also used by the `g` go-to shortcuts.
+  const handleSetViewMode = useCallback(
+    (mode: ViewMode) => {
+      const plan = planViewChange(mode, inboxLayout);
+      if (plan.resetInboxFilters) {
+        clearSearchQuery();
+        clearActiveFilter();
+        setSelectedCategories(new Set<EmailCategory>(['primary']));
       }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+      if (plan.closeOpenEmail) {
+        setActiveTab(null);
+        void selectEmail(null);
+      }
+      setViewMode(mode);
+    },
+    [inboxLayout, clearSearchQuery, clearActiveFilter, setSelectedCategories, setActiveTab, selectEmail],
+  );
+
+  // Keyboard shortcuts (src/lib/shortcuts.ts; `?` lists them). One handler
+  // for the whole app, honouring the Settings → Appearance switch.
+  useEffect(() => {
+    void useShortcutStore.getState().loadEnabled();
+    void useAutoAdvanceStore.getState().loadMode();
   }, []);
+  const listView = isEmailListView(viewMode);
+  const conversationShown =
+    (listView || viewMode === 'tagboard') && (activeTab ? activeTab.type === 'thread' : selectedEmail !== null);
+  useGlobalShortcuts({
+    listView,
+    layout: inboxLayout,
+    openConversation: conversationShown,
+    openEmailId: activeTab ? null : (selectedEmail?.id ?? null),
+    openEmail: (email) => {
+      setActiveTab(null);
+      void selectEmail(email, undefined, { markRead: true });
+    },
+    closeConversation: () => {
+      if (activeTab) closeTab(activeTab.id);
+      void selectEmail(null);
+    },
+    compose: () => {
+      if (effectiveAccountId) setIsComposeOpen(true);
+    },
+    focusSearch: () => {
+      // Full-width list: the inline search box; elsewhere the search overlay.
+      const inline =
+        listView && inboxLayout === 'full-width' && !conversationShown
+          ? document.querySelector<HTMLInputElement>('input[data-shortcut-search]')
+          : null;
+      if (inline) inline.focus();
+      else setIsSearchOpen(true);
+    },
+    openSearchPalette: () => setIsSearchOpen(true),
+    goTo: handleSetViewMode,
+  });
 
   // Route translation events (language-detected / email-translated /
   // translation-failed) into the translation store. Idempotent.
@@ -769,6 +853,42 @@ function AppInner() {
           },
           onAvailable: useUpdateStore.getState().setAvailable,
         });
+      }),
+    );
+
+    // Snoozed conversations came back (the backend wake-up ticker): refresh
+    // the list in place so they appear at the top, unread, with their marker.
+    unlisteners.push(
+      listen<{ threads: unknown }>('snoozes-woken', (event) => {
+        if (Array.isArray(event.payload?.threads)) {
+          silentRefetchEmailsRef.current();
+        } else {
+          console.error('Ignoring malformed snoozes-woken payload', event.payload);
+        }
+      }),
+    );
+
+    // The outbox dispatcher sent or failed queued messages (undo send /
+    // scheduled send): update the Scheduled view, announce failures, show the
+    // Sent copy and refresh an open conversation a queued reply landed in.
+    unlisteners.push(
+      listen<OutboxUpdated>('outbox-updated', (event) => {
+        const update = event.payload;
+        if (!Array.isArray(update?.sent) || !Array.isArray(update?.failed)) {
+          console.error('Ignoring malformed outbox-updated payload', update);
+          return;
+        }
+        useOutboxStore.getState().applyUpdate(update);
+        if (update.sent.length === 0) return;
+        const emails = useEmailStore.getState();
+        emails.bumpSentRefresh();
+        for (const sent of update.sent) {
+          if (!sent.threadId) continue;
+          const open =
+            emails.selectedEmail?.threadId === sent.threadId ||
+            emails.tabs.some((t) => t.type === 'thread' && t.threadId === sent.threadId);
+          if (open) void emails.refreshThread(sent.accountId, sent.threadId);
+        }
       }),
     );
 
@@ -1355,19 +1475,7 @@ function AppInner() {
           isSyncing={isSyncing}
           viewMode={viewMode}
           onOpenChatView={() => setViewMode('chat')}
-          onSetViewMode={(mode) => {
-            const plan = planViewChange(mode, inboxLayout);
-            if (plan.resetInboxFilters) {
-              clearSearchQuery();
-              clearActiveFilter();
-              setSelectedCategories(new Set<EmailCategory>(['primary']));
-            }
-            if (plan.closeOpenEmail) {
-              setActiveTab(null);
-              void selectEmail(null);
-            }
-            setViewMode(mode);
-          }}
+          onSetViewMode={handleSetViewMode}
           smartFilters={smartFilters}
           activeFilter={activeFilter}
           isLoadingFilters={isLoadingFilters}
@@ -1435,10 +1543,21 @@ function AppInner() {
                     fresh.toAddresses,
                     fresh.subject,
                     fresh.bodyHtml ?? plainTextToHtml(fresh.body),
-                    { draftId: fresh.id, ccAddresses: fresh.ccAddresses, attachments: fresh.attachments },
+                    {
+                      draftId: fresh.id,
+                      ccAddresses: fresh.ccAddresses,
+                      attachments: fresh.attachments,
+                      // A reply draft is sent as a reply, threaded on its message.
+                      replyToEmailId: fresh.emailId ?? undefined,
+                    },
                   );
                 }}
               />
+            </div>
+          ) : viewMode === 'scheduled' ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <ScheduledView accountId={queryAccountId} accounts={accounts} />
             </div>
           ) : viewMode === 'chat' ? (
             // Chat conversations are hard-scoped to one account; in unified
@@ -1490,7 +1609,7 @@ function AppInner() {
                 onChangeDensity={setTagBoardDensity}
                 cardActions={{
                   onAddSenderFilter: addSenderAsFilter,
-                  onBlockSender: handleBlockSender,
+                  onHideSenderFromFilters: handleHideSenderFromFilters,
                   onCreateAttachmentRule: handleCreateAttachmentRule,
                   onCreateClassificationRule: (prefill) => {
                     setClassificationRulePrefill(prefill);
@@ -1590,7 +1709,7 @@ function AppInner() {
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onAddSenderFilter={addSenderAsFilter}
-                    onBlockSender={handleBlockSender}
+                    onHideSenderFromFilters={handleHideSenderFromFilters}
                     onCreateAttachmentRule={handleCreateAttachmentRule}
                     onCreateClassificationRule={(prefill) => {
                       setClassificationRulePrefill(prefill);
@@ -1716,6 +1835,8 @@ function AppInner() {
 
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
       <ToastHost />
+      <ShortcutHelpModal />
+      <SenderDialogs />
 
       {isSearchOpen && (
         <SearchBar

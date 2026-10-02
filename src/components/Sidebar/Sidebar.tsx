@@ -1,6 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
 import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
@@ -15,6 +16,7 @@ import { useFolderStore } from '@/stores/folderStore';
 import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
+import { useOverlay } from '@/stores/overlayStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
@@ -45,6 +47,10 @@ export type ViewMode =
   | 'sent'
   | 'spam'
   | 'deleted'
+  | 'starred'
+  | 'snoozed'
+  | 'scheduled'
+  | 'archive'
   | 'calendar'
   | 'chat'
   | 'tasks'
@@ -187,6 +193,7 @@ export function Sidebar({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
+  useOverlay(confirmDeleteFolder !== null);
   const [folderBusy, setFolderBusy] = useState(false);
   /** Folder id (or 'inbox') currently hovered by an email drag. */
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
@@ -513,9 +520,32 @@ export function Sidebar({
               </li>
               <li>
                 <button
+                  data-testid="sidebar-scheduled"
+                  onClick={() => onSetViewMode('scheduled')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'scheduled' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <ScheduledSendIcon className="w-4 h-4" />
+                  {t('sidebar:scheduled')}
+                </button>
+              </li>
+              <li>
+                <button
                   onClick={() => onSetViewMode('sent')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
                     viewMode === 'sent' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <SentIcon className="w-4 h-4" />
+                  {t('sidebar:sent')}
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => onSetViewMode('starred')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'starred' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -523,12 +553,46 @@ export function Sidebar({
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                      d="M11.48 3.5a.56.56 0 011.04 0l2.13 5.11a.56.56 0 00.47.35l5.52.44c.5.04.7.66.32.99l-4.2 3.6a.56.56 0 00-.18.56l1.28 5.38a.56.56 0 01-.84.61l-4.73-2.89a.56.56 0 00-.58 0l-4.73 2.89a.56.56 0 01-.84-.61l1.28-5.38a.56.56 0 00-.18-.56l-4.2-3.6a.56.56 0 01.32-.99l5.52-.44a.56.56 0 00.47-.35l2.13-5.11z"
                     />
                   </svg>
-                  {t('sidebar:sent')}
+                  {t('sidebar:starred')}
                 </button>
               </li>
+              <li>
+                <button
+                  data-testid="sidebar-snoozed"
+                  onClick={() => onSetViewMode('snoozed')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                    viewMode === 'snoozed' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                  }`}
+                >
+                  <ClockIcon className="w-4 h-4" />
+                  {t('sidebar:snoozed')}
+                </button>
+              </li>
+              {/* An IMAP account archives into its Archive folder, listed
+                  under Folders; Gmail and Outlook archive here. */}
+              {(isUnifiedActive || activeAccount?.provider !== 'imap') && (
+                <li>
+                  <button
+                    onClick={() => onSetViewMode('archive')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'archive' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+                      />
+                    </svg>
+                    {t('sidebar:archive')}
+                  </button>
+                </li>
+              )}
               {calendarEnabled && (
                 <li>
                   <button

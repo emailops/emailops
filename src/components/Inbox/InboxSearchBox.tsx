@@ -185,6 +185,7 @@ export function InboxSearchBox({ accountId, externalQuery, onSubmit, onClear }: 
           </svg>
           <input
             ref={searchInputRef}
+            data-shortcut-search=""
             value={localQuery}
             onChange={(e) => handleSearchChange(e.target.value)}
             onKeyDown={handleSearchKeyDown}

@@ -23,6 +23,9 @@ pub mod folders;
 pub mod help_docs;
 pub mod lenses;
 pub mod memory;
+pub mod outbox;
+pub mod sender_controls;
+pub mod signatures;
 pub mod tags;
 pub mod trusted_senders;
 
@@ -44,6 +47,18 @@ pub enum AccountScope<'a> {
     /// Every enabled account, merged. Backs the unified inbox.
     AllEnabled,
 }
+
+/// SQL list of the mailboxes that hold the user's live mail outside custom
+/// folders: the inbox, Sent and the Archive (`mailbox IN live_mailboxes_sql!()`).
+/// Archived mail left only the Inbox view; every sender/domain/tag filter and
+/// count reaches it, as Gmail and Outlook search and labels do (DECISIONS
+/// 2026-10-02). A macro so `concat!` can build constant SQL with it.
+macro_rules! live_mailboxes_sql {
+    () => {
+        "('inbox', 'sent', 'archive')"
+    };
+}
+pub(crate) use live_mailboxes_sql;
 
 /// Number of read connections in the pool. SQLite WAL mode supports unlimited
 /// concurrent readers; 4 is enough to keep the UI responsive while background
@@ -109,7 +124,7 @@ pub(crate) fn exclude_junk_sql(alias: &str, hide_graymail: bool) -> String {
 
 /// Keeps only tagged messages that are the newest classified message (for the
 /// tag type bound at `?{tag_type_idx}`) of their thread, so a thread lands under
-/// exactly one tag value. Messages that are deleted or outside inbox/sent do not
+/// exactly one tag value. Messages that are deleted or outside the live mailboxes do not
 /// count as "newer": a trashed or spam-foldered reply is not what the thread is
 /// about. Empty when `enabled` is false.
 ///
@@ -127,10 +142,11 @@ pub(crate) fn latest_tagged_in_thread_sql(alias: &str, tag_type_idx: usize, enab
              WHERE n.account_id = {alias}.account_id
                AND n.thread_id = {alias}.thread_id
                AND n.is_deleted = 0
-               AND n.mailbox IN ('inbox', 'sent')
+               AND n.mailbox IN {live}
                AND (n.timestamp > {alias}.timestamp
                     OR (n.timestamp = {alias}.timestamp AND n.id > {alias}.id))
-         )"
+         )",
+        live = live_mailboxes_sql!()
     )
 }
 
@@ -1245,6 +1261,10 @@ mod schema_parity_tests {
             "help_doc_chunks",
             "attachment_rule_suggestions",
             "folder_uid_validity",
+            "thread_snoozes",
+            "account_signatures",
+            "blocked_senders",
+            "sender_unsubscribes",
         ] {
             assert!(
                 tables.iter().any(|t| t == required),

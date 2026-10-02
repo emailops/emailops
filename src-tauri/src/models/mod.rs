@@ -8,6 +8,7 @@ use ts_rs::TS;
 pub mod error;
 pub mod headers;
 pub mod lens;
+pub mod outbox;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
@@ -70,6 +71,11 @@ pub struct Email {
     /// in the Sent view.
     #[serde(default)]
     pub is_sent: bool,
+    /// Starred (Gmail `STARRED`, Outlook flag, IMAP `\Flagged`). Per message,
+    /// like the providers keep it; in the thread-deduped inbox list it is
+    /// widened to "any message of the thread is starred".
+    #[serde(default)]
+    pub is_starred: bool,
     /// Captured RFC 5322 headers, when the provider supplied them.
     ///
     /// Transport only: carried from the provider parse to `insert_emails_batch`,
@@ -84,6 +90,60 @@ pub struct Email {
 
 fn default_mailbox() -> String {
     "inbox".to_string()
+}
+
+/// A snoozed conversation (V031 `thread_snoozes`). Local state: no provider
+/// exposes a portable snooze.
+///
+/// `woke_at` is `None` while the thread is snoozed (hidden from the Inbox,
+/// listed in the Snoozed view) and the wake-up time once it came back; a
+/// woken thread sorts in the Inbox by that time instead of its latest
+/// message's date.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSnooze {
+    pub account_id: String,
+    pub thread_id: String,
+    pub snoozed_until: i64,
+    pub created_at: i64,
+    pub woke_at: Option<i64>,
+}
+
+/// An account's email signature (V033 `account_signatures`). `html` is
+/// sanitized with the outgoing-mail allowlist on save; empty means none.
+/// `updated_at` is `None` until the user saves one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSignature {
+    pub account_id: String,
+    pub html: String,
+    /// Insert it when composing a new message.
+    pub use_for_new: bool,
+    /// Insert it when replying to or forwarding a message.
+    pub use_for_replies: bool,
+    pub updated_at: Option<i64>,
+}
+
+/// A sender the user blocked in one account (V034 `blocked_senders`):
+/// their mail is filed as spam on arrival. `address` is lowercase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedSender {
+    pub account_id: String,
+    pub address: String,
+    pub created_at: i64,
+}
+
+/// What the signature editor saves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignatureInput {
+    pub html: String,
+    pub use_for_new: bool,
+    pub use_for_replies: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
