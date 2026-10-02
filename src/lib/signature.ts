@@ -15,7 +15,8 @@
  * below the text; in a forward it sits above the forwarded message.
  */
 
-import type { AccountSignature } from '@/types';
+import { plainTextToHtml } from '@/lib/composeHtml';
+import type { AccountSignature, Draft } from '@/types';
 
 export const SIGNATURE_ATTR = 'data-emailops-signature';
 
@@ -113,4 +114,19 @@ export function withoutSignature(bodyHtml: string): string {
   if (!block) return bodyHtml;
   block.remove();
   return body.innerHTML;
+}
+
+/**
+ * How a saved draft opens in a compose tab. A draft a composer saved holds
+ * HTML with its signature block already in it (edits included), so it opens
+ * as it is. A plain-text draft has none: the chat's `generate_email_draft`
+ * saves the model's text only, after telling the model to leave the sign-off
+ * to the app when the account has a signature, so the composer inserts it.
+ */
+export function draftComposeBody(draft: Pick<Draft, 'body' | 'bodyHtml'>): {
+  bodyHtml: string;
+  insertSignature: boolean;
+} {
+  if (draft.bodyHtml) return { bodyHtml: draft.bodyHtml, insertSignature: false };
+  return { bodyHtml: plainTextToHtml(draft.body), insertSignature: true };
 }

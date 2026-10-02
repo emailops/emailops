@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AccountSignature } from '@/types';
 import {
   applyAccountSignature,
+  draftComposeBody,
   hasSignature,
   insertSignature,
   replaceBodyKeepingSignature,
@@ -148,5 +149,21 @@ describe('withoutSignature', () => {
   it('drops the signature block, so it is not read as part of the text', () => {
     expect(withoutSignature(insertSignature('<p>brief</p>', ANA, 'new'))).toBe('<p>brief</p><p></p>');
     expect(withoutSignature('<p>brief</p>')).toBe('<p>brief</p>');
+  });
+});
+
+describe('draftComposeBody (reopening a saved draft in a compose tab)', () => {
+  it('opens a plain-text draft (saved by the chat) with the signature inserted', () => {
+    const out = draftComposeBody({ body: 'Thursday works.', bodyHtml: null });
+    expect(out.bodyHtml).toContain('Thursday works.');
+    expect(out.insertSignature).toBe(true);
+  });
+
+  it('opens a draft the composer saved as it is: its signature is already in it', () => {
+    const html = `<p>Thursday works.</p>${block(ANA)}`;
+    expect(draftComposeBody({ body: 'Thursday works.', bodyHtml: html })).toEqual({
+      bodyHtml: html,
+      insertSignature: false,
+    });
   });
 });

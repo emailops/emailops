@@ -3109,3 +3109,38 @@ separator in plain text.
 **Rejected:** Deriving the plain text in the backend — the marker is gone after
 sanitizing, and the text is already produced by the composer. A separator in the HTML too
 — Gmail and Outlook show none, and it would look like stray dashes.
+
+## 2026-10-02 — AI drafts leave the sign-off to the account signature when one applies
+
+**Decision:** The backend decides, per draft, whether the model may sign: a pure planner
+(`plan_sign_off` in `services/emails/drafts.rs`) returns "app signature" when the sending
+account has a non-empty signature that applies to the draft's kind (`use_for_new` for a new
+message, `use_for_replies` for a reply or a forward), and "unchanged" otherwise. In the
+first case one rule is added to the per-draft part of the prompt: a short closing line is
+fine, the sender's name (the account's display name, written out: with only "the sender's
+name" the 9B model still signed one English reply in three), a title, contact details or a
+"[Your name]" placeholder are not, because the app adds the signature. In the second case the prompt is byte-for-byte what it was.
+Both draft paths (the composer's "Generate draft" and the chat's `generate_email_draft`)
+go through the same service, so they get the same decision. The rule lives where the
+`{instructions}` placeholder is (the reply prompt's cached prefix is identical with and
+without it — a test pins this); a custom reply template without `{instructions}` gets the
+rule appended at its end so it is not dropped. A chat draft (plain text, saved without a
+composer) opens in a compose tab on its own draft row with the signature inserted once;
+a draft a composer saved opens as it is.
+**Context:** Signatures landed (2026-10-01 entry) and AI drafts still ended with
+"Best regards,\nName" above the inserted signature, signing twice: the template's
+"no signature" wording did not stop it (synthetic eval: 3/3 drafts signed on the demo
+model). Idea from contributor PR #127; its review asked for the rule to stay out of the
+cached prefix, for no change to accounts without a signature (a bare "Best regards," with
+no name would be a regression) and for custom templates not to drop it silently.
+Measured with `make eval-draft-cases` (synthetic, 3 drafts per case): drafts that sign
+before → after — qwen3.5-9b 9/9 → 0/9, qwen3.5-4b 9/9 → 4/9 (new messages 0/3; replies
+still sign most of the time on the 4B model, which follows the inbound message's sign-off
+over the instruction). A deterministic strip of a trailing name line is the candidate
+follow-up if the 4B replies matter; not done here.
+**Rejected:** A user setting for the sign-off ("name / none / signature") — the account's
+signature options already say whether the app signs, so a second switch could only
+contradict them. Stripping the name from the generated text afterwards — names and
+closings vary by language and the draft can legitimately end with a name (a P.S., a
+mention). Putting the rule in the system/prefix part — it varies per account and kind and
+would bust the KV-prefix cache.
