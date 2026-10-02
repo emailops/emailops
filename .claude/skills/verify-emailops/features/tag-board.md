@@ -16,11 +16,39 @@ search, hide/restore per block, two block widths and drag-to-reorder.
 - `tagboard.open` a card opens the thread in the middle pane.
 - `tagboard.density` Narrow / Wide blocks change the columns per row.
 - `tagboard.reorder` drag a block header to reorder; the order is remembered.
+- `tagboard.groupBy` Company / Intent / Topic / Priority picks the tag type the board groups by; the choice is remembered.
+- `tagboard.categories` Gmail/Outlook category chips narrow the board; IMAP-only scopes hide the row.
+- `tagboard.inbox` a block title or "Open in inbox" applies the tag as the inbox filter and switches to the list.
+- `tagboard.pin` Pin keeps a tag at the top of the sidebar list; persists.
+- `tagboard.cardActions` every card carries the inbox row's ⋮ actions (filter sender, block, attachment rule, classification rule, open in tab, chat about thread).
+- `tagboard.scope` the selected account scopes the board; All accounts shows one block per account.
 
 ## How to get to it (user POV)
 
-- Sidebar → Views → **Tag Board** (only shown when AI is enabled).
-- The selected account (or All accounts) scopes the board; categories behave as in the inbox.
+Two entry points to the same ranked tags, the columns of `## Parity`:
+
+- **Tag Board view** — Sidebar → Views → **Tag Board** (only shown when AI is enabled): blocks per (account, tag) with a toolbar for group by, search, density, range, categories and hide junk.
+- **Sidebar tag filters** — the Smart Filters section of the sidebar (Companies / priority / intent / topic), at most 10 per type; a click filters the inbox list, hover gives Pin and ✕ Hide.
+
+## Parity
+
+| Capability | Tag Board view | Sidebar tag filters |
+|---|---|---|
+| tagboard.blocks | e2e:Tag Board/bloques | gap: untested — sidebar tag groups come from the same stats, 10 per type; only the store helper is tested, no SmartFilters/Sidebar test |
+| tagboard.rows | gap: untested — Show more paging is proven only by the oracle and the lib helper; Tag Board/bloques only counts rows | gap: untested — a tag click lists its threads; no test clicks a sidebar tag |
+| tagboard.range | e2e:Tag Board/rango Today | gap: missing — the tag-filtered inbox has no date window and the sidebar counts use no window |
+| tagboard.search | e2e:Tag Board/buscar tag | gap: missing — no tag search in the sidebar and each type is cut to 10, so a capped tag is unreachable there |
+| tagboard.junk | gap: untested — the Hide junk checkbox is proven only by the oracle and a backend stats test | gap: missing — hide-junk is bypassed while a smart filter is active and the sidebar counts ignore it |
+| tagboard.hide | gap: untested — Hide this tag / Show N hidden tags have no component test or sweep step | gap: missing — the sidebar ✕ hides a tag but nothing restores it: restoreFilter is never wired |
+| tagboard.open | e2e:Tag Board/abrir hilo desde un bloque | gap: untested — opening a thread from the tag-filtered list; Inbox/abrir hilo runs with no filter |
+| tagboard.density | gap: untested — Narrow/Wide is checked only by the tagboard oracle | n/a: the sidebar is a single list, there are no blocks to widen |
+| tagboard.reorder | gap: untested — drag-to-reorder is not automated anywhere | gap: missing — the sidebar order is the ranking with pinned first; the board's saved order is not applied and there is no drag |
+| tagboard.groupBy | gap: untested — the group-by switch is never switched; the toolbar step only checks layout | n/a: the sidebar lists all four tag types at once, each under its own heading |
+| tagboard.categories | gap: untested — category chips only appear for Gmail/Outlook scopes and no test selects one | gap: untested — inbox category tabs narrow the tag-filtered list; no test |
+| tagboard.inbox | gap: untested — block title / ⋮ Open in inbox has no test | gap: untested — this is the sidebar tag click itself; no Sidebar/SmartFilters test |
+| tagboard.pin | gap: missing — the block menu offers only Hide this tag and Open in inbox; pinned tags get no place on the board | gap: untested — Pin/Unpin on hover; only the store test puts pinned filters first |
+| tagboard.cardActions | gap: untested — cards carry EmailActionsMenu; TagEmailCard.testids only checks data attributes | gap: untested — filtered inbox rows carry the same ⋮ menu; Inbox/menú ⋮ de una fila runs with no tag filter |
+| tagboard.scope | gap: untested — per-account blocks and All accounts are proven only by the oracle and a backend stats test | gap: untested — under All accounts the sidebar merges a value across accounts and sums its counts; only store tests |
 
 ## Driving it with verify.sh
 
