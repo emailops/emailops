@@ -247,7 +247,8 @@ def layer_contract():
         add(CLI, "contract", "emailops-cli doctor --json: envelope {ok,data,error}", "fail", f"sin JSON: {e}", trace=(out + err)[-2000:])
         return
     # The binary `make cli-demo` just built, run directly: make would replace the exit code.
-    cli = REPO / "src-tauri/target/debug/emailops-cli"
+    # A worktree build may share another checkout's target dir through CARGO_TARGET_DIR.
+    cli = pathlib.Path(os.environ.get("CARGO_TARGET_DIR") or REPO / "src-tauri/target") / "debug/emailops-cli"
     def run_cli(*argv):
         p = subprocess.run([str(cli), *argv], cwd=REPO, capture_output=True, text=True, timeout=300, env=dict(ENV, EMAILOPS_DATA_DIR=str(DEMO_DIR)))
         try: return p.returncode, json.loads(p.stdout), p.stdout + p.stderr
