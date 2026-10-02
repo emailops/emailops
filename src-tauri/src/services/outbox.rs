@@ -174,8 +174,17 @@ pub async fn queue_outgoing(
     let (send_at, origin) = plan_send_at(now, schedule)?;
     let mut message = prepare_message(db, message)?;
 
+    // A draft already gone is no reason not to send; one of another account
+    // is refused, since it is deleted below.
     let draft = match draft_id {
-        Some(id) => db.get_draft(id)?,
+        Some(id) => match db.get_draft(id)? {
+            Some(_) => Some(crate::services::ownership::draft_in_account(
+                db,
+                &message.account_id,
+                id,
+            )?),
+            None => None,
+        },
         None => None,
     };
     if let Some(draft) = &draft {
@@ -728,6 +737,45 @@ mod tests {
         let restored = cancel_outbox_message(&db, &entry.id, NOW).unwrap();
         assert_eq!(restored.attachments[1].filename, "agenda.txt");
         assert_eq!(restored.attachments[1].data, "YWdlbmRh");
+    }
+
+    // A draft is a per-account record: a message of one account must not
+    // take (and delete) a draft of another.
+    #[tokio::test]
+    async fn a_draft_of_another_account_is_refused_and_kept() {
+        let (db, _fake) = setup();
+        db.seed_test_account("acc-2");
+        let draft = db
+            .save_user_draft(&crate::models::SaveDraftRequest {
+                id: None,
+                email_id: None,
+                account_id: "acc-2".into(),
+                to_addresses: vec!["ben@example.com".into()],
+                cc_addresses: vec![],
+                subject: "Lunch".into(),
+                body: "Friday?".into(),
+                body_html: None,
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .unwrap();
+
+        let result = queue_outgoing(
+            &db,
+            new_message(),
+            OutboxSchedule::At { send_at: NOW + 60 },
+            Some(&draft.id),
+            None,
+            NOW,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
+        assert!(
+            db.get_draft(&draft.id).unwrap().is_some(),
+            "the other account's draft stays"
+        );
+        assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
     }
 
     // ── Dispatch ──
