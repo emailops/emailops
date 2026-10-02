@@ -232,3 +232,48 @@ mod participant_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+
+    fn inbox_message(id: &str, timestamp: i64, is_starred: bool) -> Email {
+        Email {
+            id: id.into(),
+            account_id: "acc-1".into(),
+            thread_id: "t-1".into(),
+            message_id: None,
+            references: None,
+            subject: "Project update".into(),
+            sender: "Sender".into(),
+            sender_email: "sender@example.com".into(),
+            recipients: vec![],
+            cc: vec![],
+            body: String::new(),
+            snippet: String::new(),
+            timestamp,
+            is_read: false,
+            triage_status: None,
+            category: "primary".into(),
+            mailbox: "inbox".into(),
+            is_sent: false,
+            is_starred,
+            headers: None,
+        }
+    }
+
+    #[test]
+    fn the_inbox_lists_a_conversation_once_starred_when_any_message_is() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[inbox_message("old", 100, true), inbox_message("new", 200, false)])
+            .unwrap();
+        let db = Arc::new(db);
+
+        let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None).unwrap();
+
+        assert_eq!(listed.len(), 1, "{listed:?}");
+        assert_eq!(listed[0].id, "new");
+        assert!(listed[0].is_starred, "the thread's star");
+    }
+}
