@@ -512,6 +512,139 @@ mod tests {
     }
 
     #[test]
+    fn an_image_of_exactly_the_size_cap_is_accepted() {
+        // MAX bytes need one `=` of padding, so the length-based estimate is
+        // 3 bytes over the cap: the pre-check must leave that room.
+        let src = data_url("image/png", &png(300, 80, MAX_SIGNATURE_IMAGE_BYTES));
+        assert_eq!(check_signature_image(&src), Ok(()));
+    }
+
+    #[test]
+    fn an_image_of_exactly_the_width_cap_is_accepted() {
+        let src = data_url("image/png", &png(MAX_SIGNATURE_IMAGE_WIDTH, 10, 100));
+        assert_eq!(check_signature_image(&src), Ok(()));
+    }
+
+    #[test]
+    fn a_huge_payload_is_refused_as_too_large_before_decoding() {
+        // Not valid base64 (one char past a 4-char group), so only the
+        // length-based estimate can call it too large.
+        let groups = (MAX_SIGNATURE_IMAGE_BYTES + 3) / 3 + 1;
+        let payload = "A".repeat(groups * 4 + 1);
+        assert_eq!(
+            check_signature_image(&format!("data:image/png;base64,{payload}")),
+            Err(SignatureImageProblem::TooLarge { bytes: groups * 3 })
+        );
+    }
+
+    #[test]
+    fn a_payload_just_under_the_estimate_cap_is_decoded_not_refused() {
+        // Estimated at MAX + 1 bytes (within the padding allowance): it is
+        // decoded, and being invalid base64 it is a bad encoding.
+        let groups = (MAX_SIGNATURE_IMAGE_BYTES + 1) / 3;
+        let payload = "A".repeat(groups * 4 + 1);
+        assert_eq!(
+            check_signature_image(&format!("data:image/png;base64,{payload}")),
+            Err(SignatureImageProblem::BadEncoding)
+        );
+    }
+
+    #[test]
+    fn base64_plus_and_slash_are_valid_payload_characters() {
+        // png() is 33 bytes (a whole number of 3-byte groups), so the extra
+        // bytes encode to exactly "++++////".
+        let mut bytes = png(300, 80, 0);
+        bytes.extend_from_slice(&[0xFB, 0xEF, 0xBE, 0xFF, 0xFF, 0xFF]);
+        let src = data_url("image/png", &bytes);
+        assert!(src.ends_with("++++////"), "{src}");
+        assert_eq!(check_signature_image(&src), Ok(()));
+    }
+
+    fn webp_vp8(raw_width: u16) -> Vec<u8> {
+        let mut b = b"RIFF\0\0\0\0WEBPVP8 \0\0\0\0".to_vec();
+        b.extend_from_slice(&[0x9D, 0x01, 0x2A, 0x9D, 0x01, 0x2A]); // frame tag + start code
+        b.extend_from_slice(&raw_width.to_le_bytes());
+        b.extend_from_slice(&[0x50, 0x00]);
+        b
+    }
+
+    fn webp_vp8l(width: u32, height: u32) -> Vec<u8> {
+        let mut b = b"RIFF\0\0\0\0WEBPVP8L\0\0\0\0\x2F".to_vec();
+        let bits = (width - 1) | ((height - 1) << 14);
+        b.extend_from_slice(&bits.to_le_bytes());
+        b
+    }
+
+    #[test]
+    fn the_width_is_read_from_each_formats_header() {
+        // VP8 keeps a 2-bit scale above its 14-bit width; VP8L packs the
+        // height's low bits next to the width.
+        let cases: [(&str, Vec<u8>, u32); 6] = [
+            ("image/png", png(321, 80, 0), 321),
+            ("image/gif", gif(123, 40), 123),
+            ("image/jpeg", jpeg(456, 100), 456),
+            ("image/webp", webp_vp8x(500, 120), 500),
+            ("image/webp", webp_vp8((1 << 14) | 640), 640),
+            ("image/webp", webp_vp8l(500, 120), 500),
+        ];
+        for (mime, bytes, width) in cases {
+            assert_eq!(image_width(mime, &bytes), Some(width), "{mime} {width}");
+        }
+    }
+
+    #[test]
+    fn a_jpeg_frame_header_after_several_segments_is_found() {
+        let mut b = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
+        b.extend_from_slice(&[0xFF, 0xE1, 0x00, 0x06, 0xAA, 0xAA, 0xBB, 0xBB]);
+        b.extend_from_slice(&jpeg(456, 100)[8..]);
+        assert_eq!(image_width("image/jpeg", &b), Some(456));
+    }
+
+    #[test]
+    fn headers_that_only_half_match_their_type_are_unreadable() {
+        let mut png_without_ihdr = png(300, 80, 0);
+        png_without_ihdr[12..16].copy_from_slice(b"tEXt");
+        let mut png_bad_signature = png(300, 80, 0);
+        png_bad_signature[1] = b'X';
+        let mut riff_not_webp = webp_vp8x(500, 120);
+        riff_not_webp[8..12].copy_from_slice(b"WAVE");
+        for (mime, bytes) in [
+            ("image/png", png_without_ihdr),
+            ("image/png", png_bad_signature),
+            ("image/webp", riff_not_webp),
+        ] {
+            assert_eq!(
+                check_signature_image(&data_url(mime, &bytes)),
+                Err(SignatureImageProblem::Unreadable),
+                "{mime}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_image_tells_the_user_why() {
+        let db = db_with_account("acc1");
+        let svg = data_url("image/svg+xml", b"<svg/>");
+        let err = save_signature(&db, "acc1", input(&img(&svg)), NOW).unwrap_err();
+        let AppError::InvalidInput(message) = err else {
+            panic!("{err:?}");
+        };
+        assert!(
+            message.contains("image/svg+xml") && message.contains("PNG, JPEG, GIF or WebP"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_signature_of_exactly_the_size_cap_is_saved() {
+        let db = db_with_account("acc1");
+        let html = format!("<p>{}</p>", "a".repeat(MAX_SIGNATURE_BYTES - "<p></p>".len()));
+        assert_eq!(html.len(), MAX_SIGNATURE_BYTES);
+        let saved = save_signature(&db, "acc1", input(&html), NOW).unwrap();
+        assert_eq!(saved.html, html);
+    }
+
+    #[test]
     fn remote_and_cid_images_are_not_data_urls_and_pass() {
         assert_eq!(check_signature_image("https://example.com/logo.png"), Ok(()));
         assert_eq!(check_signature_image("cid:logo"), Ok(()));
