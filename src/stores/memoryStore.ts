@@ -67,6 +67,14 @@ const INITIAL_FACT_COUNTS: MemoryCountsSummary = {
   candidate: 0,
 };
 
+/** The account a fact or task belongs to: its own record, else the account
+ *  whose memory is loaded. The backend refuses an id from another account. */
+function ownerAccount(items: { id: string; accountId: string }[], id: string, loaded: string | null): string {
+  const accountId = items.find((item) => item.id === id)?.accountId ?? loaded;
+  if (!accountId) throw new Error('No account is selected');
+  return accountId;
+}
+
 export const useMemoryStore = create<MemoryStore>((set, get) => ({
   accountId: null,
   tasks: [],
@@ -157,7 +165,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
     const updated = status === 'open' ? previous : previous.filter((t) => t.id !== taskId);
     set({ tasks: updated });
     try {
-      await api.updatePendingTaskStatus(taskId, status);
+      await api.updatePendingTaskStatus(ownerAccount(previous, taskId, get().accountId), taskId, status);
       void get().refreshCounts();
     } catch (e) {
       // Revert on failure.
@@ -220,7 +228,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
       facts: previous.map((f) => (f.id === factId ? { ...f, status: 'promoted' } : f)),
     });
     try {
-      await api.promoteMemoryFact(factId);
+      await api.promoteMemoryFact(ownerAccount(previous, factId, get().accountId), factId);
       void get().refreshFactCounts();
       // If filtering by 'candidate', the promoted row no longer belongs; refresh.
       if (get().factStatusFilter !== 'all' && get().factStatusFilter !== 'promoted') {
@@ -238,7 +246,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
       facts: previous.map((f) => (f.id === factId ? { ...f, status: 'retired' } : f)),
     });
     try {
-      await api.retireMemoryFact(factId);
+      await api.retireMemoryFact(ownerAccount(previous, factId, get().accountId), factId);
       void get().refreshFactCounts();
       if (get().factStatusFilter !== 'all' && get().factStatusFilter !== 'retired') {
         void get().refreshFacts();
@@ -255,7 +263,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
       facts: previous.map((f) => (f.id === factId ? { ...f, fact } : f)),
     });
     try {
-      await api.updateMemoryFact(factId, fact);
+      await api.updateMemoryFact(ownerAccount(previous, factId, get().accountId), factId, fact);
     } catch (e) {
       set({ facts: previous, error: errorText(e) });
       throw e;
@@ -266,7 +274,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
     const previous = get().facts;
     set({ facts: previous.filter((f) => f.id !== factId) });
     try {
-      await api.deleteMemoryFact(factId);
+      await api.deleteMemoryFact(ownerAccount(previous, factId, get().accountId), factId);
       void get().refreshFactCounts();
     } catch (e) {
       set({ facts: previous, error: errorText(e) });

@@ -2617,6 +2617,99 @@ smaller file), ranges under 4 MB, and a request limit of about 4 MB.
 **Limit:** a draft with large attachments is uploaded again on every push of that draft; the
 base64 text itself is still built in memory by the compose layer.
 
+## 2026-09-30 — Coverage with cargo-llvm-cov and vitest v8; mutation testing for Rust only
+
+**Decision:** Test-suite quality is measured with three local tools, run by hand and not in CI
+or the gates: `cargo-llvm-cov` for Rust coverage (`make coverage-rust`, measured with
+`--no-default-features`, the feature set CI tests), `@vitest/coverage-v8` for TypeScript
+coverage (`make coverage-ts`), and `cargo-mutants` for Rust mutation testing
+(`make mutants`, run `--in-place` in dedicated detached worktrees, each with its own target
+dir). Mutation testing of TypeScript is deferred. Equivalent mutants are recorded in
+`docs/testing/MUTANTS-LEDGER.md`; the workflow is in `docs/testing/COVERAGE-AND-MUTATION.md`.
+**Context:** Line coverage alone overstates how well the planners are guarded: a covered line
+can have no assertion on it. Mutation testing measures that directly, and the pure
+planner/executor split makes most planners cheap to mutate. A full-crate run is about 14,000
+mutants, so it is run per module with a test-name filter, then the misses are re-checked
+against the whole suite.
+**Rejected:**
+- *Stryker for TypeScript now*: its Vitest runner reports false survivors on Vitest 5, which
+  would bury real gaps in noise. Revisit when the runner supports Vitest 5.
+- *cargo-mutants' default scratch copies*: each copy builds every dependency cold.
+- *Running mutants in the main checkout's target dir*: cargo names the crate's artifacts
+  without the checkout path, so two checkouts overwrite each other's incremental cache
+  (43 s per mutant build instead of 4–6 s).
+- *cargo-nextest*: not needed at this scale, and no new tool beyond the three above.
+
+## 2026-10-01 — Commands check that a record belongs to the account; Outlook grants are removed by the user
+
+**Decision:** Every command that acts on a per-account record named by id (email, draft,
+attachment rule, chat conversation, memory fact, task) takes the account the UI is working
+in and refuses a record of another account with `NotFound`, through
+`services::ownership`. Removing an Outlook account deletes its local tokens and tells the
+user, in the delete confirmation and the removal log, where to remove EmailOps' access at
+Microsoft (account.live.com/consent/Manage, or My Apps for work and school accounts).
+**Context:** The CASA review (control 3.1.4) found commands that looked records up by id
+alone. EmailOps is single-user, so this is not a barrier between people, but several were
+real cross-account bugs: saving or deleting a draft could reach another account's draft and
+its provider copy, deleting an attachment rule removed another account's files, and junk
+feedback or a new task could point at another account's email. Google revokes a grant
+through an RFC 7009 endpoint; Microsoft has no per-application revocation.
+**Rejected:**
+- *Microsoft Graph `revokeSignInSessions`*: it revokes every refresh token of the user, signing
+  them out of all apps and devices — far more than removing one account here should do.
+- *Scoping the batch reads (`get_email_tags_batch`, `get_junk_verdicts`)*: the unified inbox
+  asks for many accounts at once and the `email-junk-scored` event carries no account; they
+  return only tags and verdicts, so they stay keyed by email id.
+- *Lens commands*: lenses can span every account (`account_id` NULL), so there is no single
+  account to check against.
+
+## 2026-10-01 — The macOS app ships with no Hardened Runtime entitlements
+
+**Decision:** `src-tauri/entitlements.plist` is empty: the Developer ID build carries no
+`com.apple.security.cs.*` exceptions, and `make verify-mac` (`scripts/verify_mac.sh`) fails
+when one comes back. `make build-mac` also notarizes and staples the DMG, not only the app.
+**Context:** The CASA desktop checklist (DASA 3.3.2) asks for a justification of every
+entitlement that weakens the Hardened Runtime. `cs.allow-jit` and
+`cs.allow-unsigned-executable-memory` had been added defensively with llama.cpp. A release
+build signed with `--options runtime` and no entitlements completed an embedded-model chat
+turn: Metal compiles shaders in the GPU driver's process, and llama.cpp maps no JIT or
+writable-executable pages in ours. The DMG was signed but not notarized, so Gatekeeper
+rejected the download itself (DASA 3.2.1).
+**Rejected:**
+- *Keep `cs.allow-jit` "just in case"*: it is an exception assessors ask to justify, with
+  nothing to justify it today. If a llama.cpp upgrade ever needs it, the verify guard
+  surfaces that as a deliberate decision.
+
+## 2026-10-01 — Raw library and OS error text stays out of the webview
+
+**Decision:** `AppError`'s `Serialize` (the Tauri boundary) sends `database`, `http`,
+`json`, `io` and `keyring` errors with a generic message and no `detail` param; the full
+error goes to the output panel through the logger. The CLI `--json` envelope uses
+`AppError::diagnostic_json()` and keeps the detail. Codes whose detail is written for the
+user (`invalid_input`, `auth`, `sync`, `ai`, …) are unchanged.
+**Context:** The CASA desktop checklist (DASA 1.8.1) forbids user-visible errors that show
+file paths, SQL, stack traces or other internals. Those five variants carry rusqlite,
+reqwest, serde and keyring messages, or `format!`ed text with absolute paths.
+**Rejected:**
+- *Stripping detail in the frontend only*: the raw text would still cross IPC and be shown
+  by any component that renders `message` directly.
+- *Redacting the CLI too*: the CLI is a developer surface; agents debugging a failure need
+  the raw cause.
+
+## 2026-10-01 — Meeting-reminder OS notifications hide the title by default
+
+**Decision:** The OS notification for an upcoming meeting reads "Upcoming meeting · Starts in
+N min" unless the user turns on **Settings → Calendar → Show the meeting title in
+notifications** (`calendar_notification_show_title`, default off). The in-app reminder
+banner always shows the full event.
+**Context:** The CASA desktop checklist (DASA 1.10.2) asks that sensitive data not be
+exposed through notifications. Meeting titles often name people, deals or medical
+appointments, and OS notifications reach the lock screen and Notification Center even
+while EmailOps' main password lock is up.
+**Rejected:**
+- *Hide the title only when a main password is set*: the lock screen is outside EmailOps'
+  lock either way, so the main password is no signal; one plain switch is easier to explain.
+
 ## 2026-10-01 — Archive is a mailbox of its own; IMAP archives into its Archive folder, or refuses
 
 **Decision:** Archiving takes a conversation's inbox messages out of the inbox at the

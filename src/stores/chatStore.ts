@@ -235,6 +235,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
   /** Drop a research awaiting confirmation and give its question back to
    *  the input. Its estimate belongs to the conversation (and account) it was
    *  made in: left on screen elsewhere, it reads as that account's answer. */
+  /** The account a conversation belongs to: its own record, else the account
+   *  whose conversations are loaded. The backend refuses another account's id. */
+  const conversationAccount = (id: string): string => {
+    const { conversations, currentAccountId } = get();
+    const accountId = conversations.find((c) => c.id === id)?.accountId ?? currentAccountId;
+    if (!accountId) throw new Error('No account is selected for this conversation');
+    return accountId;
+  };
+
   const dropPendingResearch = () => {
     const pending = get().pendingResearch;
     if (!pending) return;
@@ -372,7 +381,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const conv = await api.createChatConversationWithThread(accountId, threadId);
       // Hydrate messages immediately so the system message (the thread context)
       // is available for the UI to render as a context card.
-      const messages = await api.getChatMessages(conv.id);
+      const messages = await api.getChatMessages(accountId, conv.id);
       dropPendingResearch();
       set((s) => ({
         ...leaveOpenConversation(s),
@@ -418,7 +427,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         backgroundTurns: parked,
       });
       try {
-        const messages = await api.getChatMessages(id);
+        const messages = await api.getChatMessages(conversationAccount(id), id);
         // If the user switched conversations again before this resolved, ignore.
         if (get().activeConversationId !== id) return;
 
@@ -452,14 +461,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
     },
 
     renameConversation: async (id, title) => {
-      await api.renameChatConversation(id, title);
+      await api.renameChatConversation(conversationAccount(id), id, title);
       set((s) => ({
         conversations: s.conversations.map((c) => (c.id === id ? { ...c, title } : c)),
       }));
     },
 
     deleteConversation: async (id) => {
-      await api.deleteChatConversation(id);
+      await api.deleteChatConversation(conversationAccount(id), id);
       if (get().activeConversationId === id) dropPendingResearch();
       set((s) => {
         const remaining = s.conversations.filter((c) => c.id !== id);

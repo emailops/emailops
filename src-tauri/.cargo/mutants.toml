@@ -1,0 +1,44 @@
+# cargo-mutants settings for this crate. Run through `make mutants` (scripts/mutants.sh),
+# which adds --in-place, --no-default-features, the worktree and the output dir.
+# Guide and equivalent-mutant ledger: docs/testing/COVERAGE-AND-MUTATION.md.
+
+# Files with no logic worth mutating, or not compiled in the --no-default-features
+# build (a mutant in uncompiled code would be reported as missed).
+exclude_globs = [
+    "src/main.rs",
+    "src/cli_main.rs",
+    "src/lib.rs",                 # desktop wiring: run(), plugin setup
+    "src/commands/**",            # thin Tauri wrappers; desktop feature only
+    "src/cli/**",                 # CLI argument plumbing and terminal rendering; cli feature only
+    "src/evals/**",               # eval harness; eval feature only
+    "src/webdriver.rs",           # dev-only WebDriver server
+    "src/docs_sourcegen.rs",      # test-only docs generator
+    "src/**/test_helpers.rs",
+    "src/**/tests.rs",
+    "src/**/architecture_tests.rs",
+    "src/sync/mock/**",           # test fakes
+    "src/ai/tracing.rs",          # OpenTelemetry export; tracing feature only
+    "src/services/logger.rs",     # log fan-out to the UI
+    "src/services/events.rs",     # event emission seam
+    "src/services/app_handle.rs", # AppHandle stub/seam
+    "src/runtime/spawn.rs",       # task spawning glue
+    "src/util/startup_dialog.rs", # native dialog at startup
+]
+
+# Mutations whose only effect is diagnostic output.
+exclude_re = [
+    "<impl (std::)?(fmt::)?Debug for ",
+]
+
+# Build and test the library's unit tests only. Integration tests (tests/) and
+# doctests would add a second link of the crate and a doctest pass to every
+# mutant. A mutant missed here is re-checked with `--iterate --cargo-test-arg=--tests`
+# (lib + integration suite) before it is recorded (see the guide).
+additional_cargo_args = ["--lib"]
+
+# Timeouts: baseline test time x3, never under 60 s. Builds get x10 of the baseline
+# build: with a warm target the baseline is a 3-6 s incremental rebuild, and a
+# mutant in a large or generic function can take several times that.
+timeout_multiplier = 3.0
+minimum_test_timeout = 60.0
+build_timeout_multiplier = 10.0

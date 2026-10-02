@@ -192,7 +192,7 @@ describe('selectEmail without marking read', () => {
 
   it('marks an unread email read by default', async () => {
     await useEmailStore.getState().selectEmail({ ...a, isRead: false });
-    expect(api.markAsRead).toHaveBeenCalledWith('a');
+    expect(api.markAsRead).toHaveBeenCalledWith('acc', 'a');
   });
 });
 

@@ -291,6 +291,7 @@ pub async fn train_models(db: &Arc<Database>, account_id: &str) -> Result<Vec<(&
 /// correction reaches the model on the next `train_models` pass instead, where
 /// it carries `FEEDBACK_WEIGHT`.
 pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, is_junk: bool) -> Result<()> {
+    crate::services::ownership::email_in_account(db, account_id, email_id)?;
     let verdict = if is_junk { "junk" } else { "not_junk" };
     db.set_junk_override(email_id, account_id, Some(verdict), now_secs())?;
     if is_junk {
@@ -392,6 +393,7 @@ mod suppression_tests {
 #[cfg(test)]
 mod feedback_tests {
     use super::*;
+    use crate::models::error::AppError;
 
     fn seed_email(db: &Database) {
         let conn = db.connection();
@@ -410,6 +412,24 @@ mod feedback_tests {
             [],
         )
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn feedback_on_another_accounts_email_is_refused() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('other', 'gmail', 'other@example.com', 'Other', 0)",
+                [],
+            )
+            .unwrap();
+
+        let result = set_feedback(&db, "other", "e1", true).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        assert_eq!(junk_chip(&db), None, "no chip written on the email");
     }
 
     fn junk_chip(db: &Database) -> Option<String> {
@@ -441,6 +461,207 @@ mod feedback_tests {
         db.set_preference("ai_max_email_age_days", "30").unwrap();
 
         assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 1);
+    }
+
+    fn has_verdict(db: &Database, id: &str) -> bool {
+        db.get_junk_verdicts_batch(&[id.to_string()]).unwrap().contains_key(id)
+    }
+
+    #[tokio::test]
+    async fn scoring_writes_a_verdict_for_each_new_message() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        db.set_preference("junk_enabled", "true").unwrap();
+
+        assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 1);
+        assert!(has_verdict(&db, "e1"));
+        assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 0, "already scored");
+    }
+
+    #[tokio::test]
+    async fn nothing_is_scored_while_junk_detection_is_off() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+
+        assert_eq!(score_new_emails(&db, "acct").await.unwrap(), 0);
+        assert!(!has_verdict(&db, "e1"));
+    }
+
+    #[tokio::test]
+    async fn scoring_one_message_by_id_writes_its_verdict() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+
+        assert_eq!(score_email_by_id(&db, "acct", "e1").await.unwrap(), 1);
+        assert!(has_verdict(&db, "e1"));
+    }
+
+    // More than one scoring batch (SCORE_BATCH = 500), so the loop has to go
+    // round again, and nothing when the feature is off.
+    #[tokio::test]
+    async fn backfill_scores_every_unscored_message_across_batches() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        {
+            let conn = db.connection();
+            for i in 0..SCORE_BATCH {
+                conn.execute(
+                    "INSERT INTO emails
+                     (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                      recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                     VALUES (?1,'acct',?1,'Hello','Friend','friend@example.net','example.net',
+                             '[]','[]','snip',200,0,'primary',0)",
+                    rusqlite::params![format!("bulk-{i}")],
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(backfill_account(&db, "acct").await.unwrap(), 0, "off by default");
+
+        db.set_preference("junk_enabled", "true").unwrap();
+        assert_eq!(backfill_account(&db, "acct").await.unwrap(), SCORE_BATCH + 1);
+        assert!(has_verdict(&db, "e1"));
+        assert_eq!(backfill_account(&db, "acct").await.unwrap(), 0, "nothing left");
+    }
+
+    // The sync scores each chunk with a context it loaded once.
+    #[tokio::test]
+    async fn scoring_with_a_loaded_context_writes_the_verdicts() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        let ctx = signals::AccountContext::load(&db, "acct").unwrap();
+
+        let scored = score_ids_with_context(&db, "acct", &ctx, &["e1".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(scored, 1);
+        assert!(has_verdict(&db, "e1"));
+    }
+
+    fn mail(id: &str, thread: &str, sender: &str, is_sent: bool, raw_headers: &str) -> crate::models::Email {
+        let pairs = crate::sync::header_capture::parse_header_block(raw_headers);
+        crate::models::Email {
+            id: id.to_string(),
+            account_id: "acct".to_string(),
+            thread_id: thread.to_string(),
+            message_id: None,
+            references: None,
+            subject: "Remittance".to_string(),
+            sender: "Billing".to_string(),
+            sender_email: sender.to_string(),
+            recipients: vec!["me@example.com".to_string()],
+            cc: vec![],
+            body: "Please update our remittance account.".to_string(),
+            snippet: "Please update our remittance account.".to_string(),
+            timestamp: now_secs() - 60,
+            is_read: false,
+            is_starred: false,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: if is_sent { "sent" } else { "inbox" }.to_string(),
+            is_sent,
+            headers: (!pairs.is_empty()).then(|| crate::sync::header_capture::capture(&pairs)),
+        }
+    }
+
+    /// A known correspondent (acme.example, a thread the user replied in) and a
+    /// message imitating it: failing authentication from the account's own
+    /// MTA, a lookalike domain and a Reply-To elsewhere — phishing by `judge`.
+    fn db_with_an_impersonation() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        db.set_preference("junk_enabled", "true").unwrap();
+        db.insert_emails_batch(&[
+            mail("known", "t-acme", "billing@acme.example", false, ""),
+            mail("reply", "t-acme", "me@example.com", true, ""),
+            mail(
+                "fake",
+                "t-fake",
+                "billing@acme-payments.example",
+                false,
+                "Authentication-Results: mx.google.com; spf=fail; dkim=none; dmarc=fail\n\
+                 From: Billing <billing@acme-payments.example>\n\
+                 Reply-To: ap@mail-secure.example\n",
+            ),
+        ])
+        .unwrap();
+        db
+    }
+
+    // Phishing is off by default: the axis is scored but must never reach the
+    // user as a verdict or a chip until it is switched on.
+    #[tokio::test]
+    async fn a_phishing_verdict_reaches_the_user_only_when_the_axis_is_on() {
+        let db = db_with_an_impersonation();
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+        let chip = db
+            .get_email_tags("fake")
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_type == "junk");
+        assert_ne!(chip.map(|t| t.tag_value).as_deref(), Some("phishing"));
+
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+        let chip = db
+            .get_email_tags("fake")
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_type == "junk");
+        assert_eq!(chip.map(|t| t.tag_value).as_deref(), Some("phishing"));
+    }
+
+    fn chip(db: &Database, id: &str) -> Option<String> {
+        db.get_email_tags(id)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.tag_type == "junk")
+            .map(|t| t.tag_value)
+    }
+
+    #[tokio::test]
+    async fn marking_a_scored_message_as_junk_keeps_the_kind_it_was_scored_as() {
+        let db = db_with_an_impersonation();
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+
+        set_feedback(&db, "acct", "fake", true).await.unwrap();
+
+        assert_eq!(chip(&db, "fake").as_deref(), Some("phishing"));
+    }
+
+    #[tokio::test]
+    async fn a_message_marked_not_junk_stays_clear_when_it_is_scored_again() {
+        let db = db_with_an_impersonation();
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        set_feedback(&db, "acct", "fake", false).await.unwrap();
+
+        score_email_by_id(&db, "acct", "fake").await.unwrap();
+
+        assert_eq!(chip(&db, "fake"), None);
+    }
+
+    #[tokio::test]
+    async fn training_saves_a_model_for_each_axis() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+
+        let trained = train_models(&db, "acct").await.unwrap();
+
+        let axes: Vec<&str> = trained.iter().map(|(axis, _, _)| *axis).collect();
+        assert_eq!(axes, vec!["spam", "graymail"]);
+        for axis in model::ModelAxis::ALL {
+            assert!(db.load_junk_model("acct", axis).unwrap().is_some(), "{axis:?} saved");
+        }
+    }
+
+    #[test]
+    fn the_phishing_axis_follows_its_own_switch() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        assert!(!is_phishing_enabled(&db), "off by default");
+        db.set_preference("junk_phishing_enabled", "true").unwrap();
+        assert!(is_phishing_enabled(&db));
     }
 
     /// Marking a message as junk must show the junk chip right away, as

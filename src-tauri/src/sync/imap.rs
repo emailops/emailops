@@ -217,8 +217,9 @@ impl<S: imap::extensions::idle::SetReadTimeout> imap::extensions::idle::SetReadT
     }
 }
 
-/// Credentials for an IMAP account (stored in keychain as JSON).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+/// Credentials for an IMAP account (stored in keychain as JSON). Wiped from
+/// memory on drop, so the password does not linger in freed heap.
+#[derive(Clone, serde::Serialize, serde::Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct ImapCredentials {
     pub host: String,
     pub port: u16,

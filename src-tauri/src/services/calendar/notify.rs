@@ -46,6 +46,32 @@ pub fn notification_lead_secs(db: &Database) -> Result<Option<i64>> {
     Ok(Some(minutes * 60))
 }
 
+/// Preference: show the meeting title in the OS notification (`"true"`).
+/// Off by default — OS notifications appear on the lock screen and in
+/// Notification Center, outside the app's main-password lock (CASA/DASA
+/// 1.10.2). The in-app reminder banner always shows the full event.
+pub const SHOW_TITLE_PREF: &str = "calendar_notification_show_title";
+
+pub fn notification_shows_title(db: &Database) -> Result<bool> {
+    Ok(db
+        .get_preference(SHOW_TITLE_PREF)?
+        .is_some_and(|v| v.eq_ignore_ascii_case("true")))
+}
+
+/// Pure planner: the (title, body) of the OS notification for `event`.
+pub fn notification_text(event: &CalendarEvent, minutes_left: i64, show_title: bool) -> (String, String) {
+    let body = match &event.meeting_platform {
+        Some(platform) => format!("Starts in {minutes_left} min · join via {platform}"),
+        None => format!("Starts in {minutes_left} min"),
+    };
+    let title = if show_title && !event.title.is_empty() {
+        event.title.clone()
+    } else {
+        "Upcoming meeting".to_string()
+    };
+    (title, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +204,44 @@ mod tests {
         let db = Database::new_for_testing().expect("db");
         db.set_preference("calendar_notify_minutes", "soon™").expect("set");
         assert_eq!(notification_lead_secs(&db).expect("read"), Some(600));
+    }
+
+    #[test]
+    fn notification_hides_the_meeting_title_by_default() {
+        let db = Database::new_for_testing().expect("db");
+        assert!(!notification_shows_title(&db).expect("read"));
+    }
+
+    #[test]
+    fn notification_shows_the_title_when_the_user_opts_in() {
+        let db = Database::new_for_testing().expect("db");
+        db.set_preference(SHOW_TITLE_PREF, "true").expect("set");
+        assert!(notification_shows_title(&db).expect("read"));
+    }
+
+    #[test]
+    fn hidden_title_notification_carries_no_event_text() {
+        let mut e = event("e1", NOW + 300);
+        e.title = "Board review: acquisition terms".to_string();
+        e.meeting_platform = Some("Zoom".to_string());
+        let (title, body) = notification_text(&e, 5, false);
+        assert_eq!(title, "Upcoming meeting");
+        assert_eq!(body, "Starts in 5 min · join via Zoom");
+    }
+
+    #[test]
+    fn shown_title_notification_uses_the_event_title() {
+        let mut e = event("e1", NOW + 300);
+        e.title = "Design sync".to_string();
+        let (title, body) = notification_text(&e, 5, true);
+        assert_eq!(title, "Design sync");
+        assert_eq!(body, "Starts in 5 min");
+    }
+
+    #[test]
+    fn shown_title_falls_back_when_the_event_has_none() {
+        let mut e = event("e1", NOW + 300);
+        e.title = String::new();
+        assert_eq!(notification_text(&e, 5, true).0, "Upcoming meeting");
     }
 }

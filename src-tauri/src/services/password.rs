@@ -11,6 +11,22 @@ use argon2::{
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
+/// Shortest main password accepted, in characters. The Settings dialog checks
+/// the same number for an immediate message; this is the rule that holds.
+pub const MIN_MAIN_PASSWORD_CHARS: usize = 6;
+
+/// Reject a new main password shorter than [`MIN_MAIN_PASSWORD_CHARS`].
+/// Counts characters, not bytes, so non-ASCII passwords are measured the way
+/// the user typed them.
+pub fn validate_new_password(password: &str) -> Result<()> {
+    if password.chars().count() < MIN_MAIN_PASSWORD_CHARS {
+        return Err(AppError::InvalidInput(format!(
+            "Password must be at least {MIN_MAIN_PASSWORD_CHARS} characters."
+        )));
+    }
+    Ok(())
+}
+
 /// Hash `password` with Argon2id (random salt). Returns a PHC-format string.
 pub fn hash_password(password: &str) -> Result<String> {
     // password-hash 0.6 generates the salt itself (getrandom, on by default in
@@ -224,6 +240,27 @@ mod tests {
         assert_ne!(h1, h2, "random salt means different PHC strings");
         assert!(verify_password("pass", &h1).unwrap());
         assert!(verify_password("pass", &h2).unwrap());
+    }
+
+    #[test]
+    fn a_new_main_password_needs_at_least_six_characters() {
+        for (password, accepted) in [
+            ("", false),
+            ("abc", false),
+            ("abcde", false),
+            ("abcdef", true),
+            ("a much longer passphrase", true),
+            // Characters, not bytes: five accented letters are ten UTF-8 bytes
+            // and still too short; six are enough.
+            ("ééééé", false),
+            ("éééééé", true),
+        ] {
+            let result = super::validate_new_password(password);
+            assert_eq!(result.is_ok(), accepted, "{password:?}");
+            if !accepted {
+                assert!(matches!(result, Err(super::AppError::InvalidInput(_))), "{password:?}");
+            }
+        }
     }
 
     #[test]

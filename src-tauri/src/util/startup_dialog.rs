@@ -167,7 +167,7 @@ pub fn write_crash_report(app_data_dir: Option<&Path>, message: &str) -> std::io
             continue;
         }
         let path = crash_report_path(dir);
-        match std::fs::write(&path, message) {
+        match crate::util::owner_only::write_owner_only(&path, message) {
             Ok(()) => return Ok(path),
             Err(e) => last_err = Some(e),
         }

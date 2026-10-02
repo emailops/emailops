@@ -304,19 +304,30 @@ pub(crate) fn plan_tool_result_cap(result_chars: &[usize], excess_chars: usize) 
     Some(lo)
 }
 
+/// How the note [`cut_tool_result`] appends starts.
+const CUT_NOTE_START: &str = "\n[… cut here: ";
+
 /// A tool result cut to `cap` chars, ending with a note that tells the model
 /// it is incomplete. Unchanged when it already fits.
+///
+/// No tool reads part of a result, so the note does not send the model for
+/// the rest: it keeps the model from calling the unseen part absent.
 pub(crate) fn cut_tool_result(text: &str, cap: usize) -> String {
     if text.len() <= cap + TOOL_NOTE_CHARS {
         return text.to_string();
     }
     let kept = crate::util::text::truncate_utf8(text, cap);
     format!(
-        "{kept}\n[… cut here: {} of {} characters omitted to fit the context window. \
-Ask for less at once if you need the rest.]",
+        "{kept}{CUT_NOTE_START}{} of {} characters omitted to fit the context window; fetching it again \
+gives the same. If the answer may be in the rest, tell the user it was cut, never that it is absent.]",
         text.len() - kept.len(),
         text.len()
     )
+}
+
+/// Whether `content` is a tool result [`cut_tool_result`] cut.
+pub(crate) fn is_cut_tool_result(content: &str) -> bool {
+    content.contains(CUT_NOTE_START)
 }
 
 /// Tokens a prompt of `chars_now` takes: what the provider counted on the
@@ -429,7 +440,7 @@ impl TurnBudget {
                         m.content = shorter;
                     }
                 }
-                self.record_tool_cut(cut, dropped as u32);
+                self.record_tool_cut(cut, dropped as u32, cap as u32);
                 chars = prompt_chars(messages) + self.extra_chars;
                 tokens = estimate_prompt_tokens(self.est, chars, self.last_call);
             }
@@ -439,17 +450,28 @@ impl TurnBudget {
         chars
     }
 
-    fn record_tool_cut(&mut self, cut: u32, dropped: u32) {
+    fn record_tool_cut(&mut self, cut: u32, dropped: u32, cap: u32) {
+        let kept = (cut > 0).then_some(cap);
         for entry in &mut self.cuts {
-            if let BudgetCut::ToolResults { results, chars_dropped } = entry {
+            if let BudgetCut::ToolResults {
+                results,
+                chars_dropped,
+                kept_chars,
+            } = entry
+            {
                 *results += cut;
                 *chars_dropped += dropped;
+                *kept_chars = match (*kept_chars, kept) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
                 return;
             }
         }
         self.cuts.push(BudgetCut::ToolResults {
             results: cut,
             chars_dropped: dropped,
+            kept_chars: kept,
         });
     }
 
@@ -502,7 +524,9 @@ pub(crate) fn describe_cut(cut: &BudgetCut) -> String {
         BudgetCut::OpenThread { chars } => format!("open thread cut to {chars} chars"),
         BudgetCut::SourceExcerpts { chars_per_email } => format!("excerpts cut to {chars_per_email} chars per email"),
         BudgetCut::SourcesDropped { emails } => format!("{emails} retrieved email(s) left out"),
-        BudgetCut::ToolResults { results, chars_dropped } => {
+        BudgetCut::ToolResults {
+            results, chars_dropped, ..
+        } => {
             format!("{results} tool result(s) cut by {chars_dropped} chars")
         }
     }
@@ -823,6 +847,21 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_tool_result_asks_to_tell_the_user_instead_of_promising_the_rest() {
+        // No tool reads part of a result, so the note cannot send the model
+        // for the rest; it must keep the model from calling the unseen part
+        // absent, which is how "#87 does not mention max_wal_size" happened.
+        let cut = cut_tool_result(&"x".repeat(5_000), 2_000);
+        let note = &cut[2_000..];
+        assert!(!note.contains("Ask for less"), "{note}");
+        assert!(note.contains("tell the user"), "{note}");
+        // The model re-read the same body hoping for more and got the same cut.
+        assert!(note.contains("again"), "{note}");
+        assert!(is_cut_tool_result(&cut));
+        assert!(!is_cut_tool_result("short"));
+    }
+
+    #[test]
     fn a_cut_tool_result_never_splits_a_character() {
         let text = "ñ".repeat(3_000);
         let cut = cut_tool_result(&text, 2_001);
@@ -904,7 +943,7 @@ mod tests {
         assert_eq!(trace.reply_reserve, 1024);
         assert!(matches!(
             trace.cuts.as_slice(),
-            [BudgetCut::ToolResults { results: 1, chars_dropped }] if *chars_dropped > 3_000
+            [BudgetCut::ToolResults { results: 1, chars_dropped, .. }] if *chars_dropped > 3_000
         ));
     }
 
@@ -920,6 +959,31 @@ mod tests {
             trace.cuts.as_slice(),
             [BudgetCut::ToolResults { results: 3, .. }]
         ));
+    }
+
+    #[test]
+    fn the_trace_keeps_the_shortest_length_a_tool_result_was_cut_to() {
+        // The eval judge re-cuts each tool result to this length, so it scores
+        // the answer against what the model saw rather than the whole result.
+        let mut budget = TurnBudget::new(8192, Estimator::uncalibrated(), 0);
+        let mut messages = vec![msg("system", 9_000), msg("tool", 16_000)];
+        budget.fit(&mut messages);
+        let first = messages[1].content.len();
+        messages.push(msg("tool", 16_000));
+        budget.fit(&mut messages);
+        let shortest = messages
+            .iter()
+            .filter(|m| m.role == "tool")
+            .map(|m| m.content.len())
+            .min();
+        let trace = budget.trace().expect("trace");
+        let kept = match trace.cuts.as_slice() {
+            [BudgetCut::ToolResults { kept_chars, .. }] => kept_chars.expect("kept chars recorded"),
+            other => panic!("{other:?}"),
+        };
+        assert!((kept as usize) < first);
+        // Kept chars count the text before the note the cut appends.
+        assert!(kept as usize + TOOL_NOTE_CHARS >= shortest.expect("tool results"));
     }
 
     #[test]

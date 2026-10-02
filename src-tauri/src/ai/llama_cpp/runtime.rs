@@ -68,7 +68,7 @@ use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{params::LlamaModelParams, AddBos, LlamaChatMessage, LlamaModel},
+    model::{params::LlamaModelParams, LlamaChatMessage, LlamaModel},
 };
 
 use super::actor::{GenOutcome, InferenceActorHandle, OnToken};
@@ -1381,9 +1381,7 @@ impl LlamaCppRuntime {
                 .new_context(backend(), ctx_params)
                 .map_err(|e| format!("Embedding context creation failed: {}", e))?;
 
-            let tokens = model
-                .str_to_token(&text_owned, AddBos::Always)
-                .map_err(|e| format!("Tokenisation failed: {}", e))?;
+            let tokens = model.vocab().tokenize(text_owned.as_bytes(), true, true);
 
             if tokens.is_empty() {
                 return Ok(vec![]);
@@ -1509,16 +1507,11 @@ impl LlamaCppRuntime {
 fn control_token_strings(model: &LlamaModel) -> Vec<String> {
     use llama_cpp_2::token::LlamaToken;
     use llama_cpp_2::token_type::LlamaTokenAttr;
+    let vocab = model.vocab();
     (0..model.n_vocab())
         .map(LlamaToken::new)
-        .filter(|&token| model.token_attr(token).0.contains(LlamaTokenAttr::Control))
-        .filter_map(|token| match super::actor::token_bytes(model, token) {
-            Ok(bytes) => String::from_utf8(bytes).ok(),
-            Err(e) => {
-                crate::services::logger::log("debug", "ai", format!("llamacpp: control token skipped: {e}"));
-                None
-            }
-        })
+        .filter(|&token| vocab.attr(token).0.contains(LlamaTokenAttr::Control))
+        .filter_map(|token| String::from_utf8(super::actor::token_bytes(model, token)).ok())
         .collect()
 }
 
@@ -1894,7 +1887,6 @@ mod tests {
             true
         };
         assert!(forward_answer_piece(&mut gate, &mut cb, "Hello"));
-        drop(cb);
         assert_eq!(seen.concat(), "Hello");
     }
 

@@ -2,7 +2,7 @@ export type InboxLayout = 'split' | 'full-width';
 
 export interface Account {
   id: string;
-  provider: 'gmail' | 'imap';
+  provider: 'gmail' | 'outlook' | 'imap';
   email: string;
   name: string;
   createdAt: number;
@@ -863,7 +863,7 @@ export type BudgetCut =
   | { kind: 'openThread'; chars: number }
   | { kind: 'sourceExcerpts'; charsPerEmail: number }
   | { kind: 'sourcesDropped'; emails: number }
-  | { kind: 'toolResults'; results: number; charsDropped: number };
+  | { kind: 'toolResults'; results: number; charsDropped: number; keptChars?: number };
 
 /** Mirrors `BudgetTrace`: how a turn's prompt was fitted to the window. */
 export interface BudgetTrace {

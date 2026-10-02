@@ -156,7 +156,8 @@ pub struct SyncStatus {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+/// Wiped from memory on drop, so a token does not linger in freed heap.
+#[derive(Clone, Serialize, Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -719,6 +720,12 @@ pub struct ProviderDraft {
     /// `None` for providers that don't report one.
     #[serde(default)]
     pub provider_message_id: Option<String>,
+    /// RFC 5322 `Message-ID` of the email this draft replies to, as the
+    /// provider copy records it. Lets a draft that comes back from the
+    /// provider (a re-import, another device) find its thread again. `None`
+    /// for a new message, or a provider that does not report it.
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
 }
 
 // AI config and usage types
@@ -1282,9 +1289,16 @@ pub enum BudgetCut {
     /// Retrieved emails left out of this turn's prompt.
     #[serde(rename_all = "camelCase")]
     SourcesDropped { emails: u32 },
-    /// Tool results of this turn, shortened.
+    /// Tool results of this turn, shortened. `kept_chars` is the shortest
+    /// length a result was cut to (before its note); `None` on traces written
+    /// before it was recorded.
     #[serde(rename_all = "camelCase")]
-    ToolResults { results: u32, chars_dropped: u32 },
+    ToolResults {
+        results: u32,
+        chars_dropped: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kept_chars: Option<u32>,
+    },
 }
 
 impl BudgetCut {

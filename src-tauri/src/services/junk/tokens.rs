@@ -213,4 +213,14 @@ mod tests {
         };
         assert_eq!(features(&with).len(), 1);
     }
+    // Buckets are persisted inside trained models: if the hash changes, every
+    // stored model silently scores against the wrong buckets. Pinned to the
+    // values it produces today. (The multiplier is 0x1000_0000_01b3, not the
+    // standard FNV-1a prime 0x100_0000_01b3, so "a" does not hash to the
+    // published 0xaf63dc4c8601ec8c — changing that now would need a retrain.)
+    #[test]
+    fn the_token_hash_does_not_change() {
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf74_d84c_8601_ec8c);
+    }
 }

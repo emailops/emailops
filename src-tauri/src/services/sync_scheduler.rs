@@ -730,6 +730,11 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
             }
         };
 
+        let show_title = crate::services::calendar::notify::notification_shows_title(&db).unwrap_or_else(|e| {
+            crate::services::logger::log("error", "sync", format!("meeting notifier: pref read failed: {e}"));
+            false
+        });
+
         let now = chrono::Utc::now().timestamp();
         let accounts =
             plan_calendar_enabled_accounts(&enabled_accounts(db.list_accounts().unwrap_or_default()), &|id| {
@@ -749,16 +754,9 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
             };
             for event in crate::services::calendar::notify::plan_meeting_notifications(&events, now, lead_secs) {
                 let minutes_left = ((event.start_time - now) as f64 / 60.0).ceil() as i64;
-                let body = match &event.meeting_platform {
-                    Some(platform) => format!("Starts in {minutes_left} min · join via {platform}"),
-                    None => format!("Starts in {minutes_left} min"),
-                };
-                let title = if event.title.is_empty() {
-                    "Upcoming meeting"
-                } else {
-                    &event.title
-                };
-                if let Err(e) = app.notification().builder().title(title).body(&body).show() {
+                let (title, body) =
+                    crate::services::calendar::notify::notification_text(event, minutes_left, show_title);
+                if let Err(e) = app.notification().builder().title(&title).body(&body).show() {
                     crate::services::logger::log(
                         "error",
                         "sync",

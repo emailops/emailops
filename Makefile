@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -52,8 +52,9 @@ dev-trace: fetch-bundled-models
 EMAILOPS_DEMO_DIR ?= $(CURDIR)/.emailops-demo-data
 
 # Generate a fresh synthetic demo DB. Idempotent: overwrites any existing demo DB.
+# The schema comes from this checkout's migrations, not the installed app's DB.
 demo-db:
-	uv run scripts/generate_demo_db.py --demo-db "$(EMAILOPS_DEMO_DIR)/emailops.db"
+	bash scripts/demo_db.sh "$(EMAILOPS_DEMO_DIR)/emailops.db"
 
 # Generate embeddings for every email in the demo DB so chat retrieval works.
 # Calls the app's own services::embeddings::generate_embeddings via a small
@@ -74,7 +75,7 @@ demo:
 EMAILOPS_DEMO_DIR_ES ?= $(CURDIR)/.emailops-demo-data-es
 
 demo-db-es:
-	uv run scripts/generate_demo_db.py --lang es --demo-db "$(EMAILOPS_DEMO_DIR_ES)/emailops.db"
+	bash scripts/demo_db.sh "$(EMAILOPS_DEMO_DIR_ES)/emailops.db" --lang es
 
 demo-embed-es:
 	cargo run --release --manifest-path src-tauri/Cargo.toml --example embed_demo_db -- \
@@ -397,6 +398,22 @@ docs-gen:
 model-memory:
 	bash scripts/measure_model_memory.sh $(ARGS)
 
+# Coverage: Rust (cargo-llvm-cov, CI feature set) + TS (vitest v8) + per-feature ranking.
+# Reports under src-tauri/reports/coverage/. See docs/testing/COVERAGE-AND-MUTATION.md.
+coverage:
+	bash scripts/coverage.sh all
+
+coverage-rust:
+	bash scripts/coverage.sh rust
+
+coverage-ts:
+	bash scripts/coverage.sh ts
+
+# Mutation testing (cargo-mutants, Rust only) in a detached worktree, never in this checkout.
+# ARGS are passed to cargo mutants, e.g. ARGS="--file src/sync/http_retry.rs" or ARGS="--in-diff x.diff".
+mutants:
+	bash scripts/mutants.sh $(ARGS)
+
 # Private evals (private data) against the `make eval-snapshot` copy; report stays local.
 verify-private:
 	bash scripts/verify_private.sh $(ARGS)
@@ -472,29 +489,11 @@ build-mac: fetch-bundled-models
 	if [ -z "$$APPLE_TEAM_ID" ]; then echo "ERROR: APPLE_TEAM_ID not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE" ]; then echo "ERROR: APPLE_CERTIFICATE not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE_PASSWORD" ]; then echo "ERROR: APPLE_CERTIFICATE_PASSWORD not set in .env.signing"; exit 1; fi; \
-	npm run tauri -- build --target universal-apple-darwin
+	npm run tauri -- build --target universal-apple-darwin && \
+	bash scripts/notarize_mac_dmg.sh
 
 verify-mac:
-	@APP=$$(ls -d src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app 2>/dev/null | head -1); \
-	if [ -z "$$APP" ]; then echo "ERROR: no .app found. Run 'make build-mac' first."; exit 1; fi; \
-	echo "Verifying $$APP"; \
-	echo "── codesign ──"; codesign -dv --verbose=4 "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── architectures ──"; file "$$APP/Contents/MacOS/"* 2>&1 | sed 's/^/  /'; \
-	echo "── spctl ──"; spctl -a -t exec -vv "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── stapler ──"; xcrun stapler validate "$$APP" 2>&1 | sed 's/^/  /'; \
-	echo "── universal-slice guard ──"; \
-	SLICES=$$(file "$$APP/Contents/MacOS/"* 2>/dev/null); \
-	MISSING=""; \
-	echo "$$SLICES" | grep -q "arm64"  || MISSING="$$MISSING arm64"; \
-	echo "$$SLICES" | grep -q "x86_64" || MISSING="$$MISSING x86_64"; \
-	if [ -n "$$MISSING" ]; then \
-		echo "  ❌ FAIL: this is not a universal bundle — missing:$$MISSING"; \
-		echo "  One macOS DMG has to launch on every Mac; a dropped slice silently strands"; \
-		echo "  that half of users on a download that will not open."; \
-		exit 1; \
-	else \
-		echo "  ✅ universal (arm64 + x86_64); embedded AI is gated off Intel at runtime"; \
-	fi
+	bash scripts/verify_mac.sh
 
 # Copy the freshly built universal DMG to a stable, versionless name under
 # release/. Tauri always embeds the version in the bundle filename

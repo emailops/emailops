@@ -693,6 +693,52 @@ mod tests {
         assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), true)));
     }
 
+    // The window and the interval are pinned in days and minutes here: the
+    // tests above express them through the constants, so they would still
+    // pass if a constant were miscomputed.
+    #[tokio::test]
+    async fn mail_from_three_weeks_ago_is_still_refreshed() {
+        let mut recent = email("m-3w", "inbox", false);
+        recent.timestamp = NOW - 21 * 86_400;
+        let (db, provider) = synced(&[recent]);
+        provider.set_remote_read("m-3w", true);
+
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW).await;
+
+        assert_eq!(row(&db, "m-3w"), Some(("inbox".to_string(), true)));
+    }
+
+    #[tokio::test]
+    async fn a_pass_ninety_seconds_after_the_last_one_is_skipped() {
+        let (db, provider) = synced(&[email("m-1", "inbox", false)]);
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW).await;
+        provider.set_remote_read("m-1", true);
+
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW + 90).await;
+
+        assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), false)));
+    }
+
+    #[tokio::test]
+    async fn refreshing_one_account_does_not_hold_back_another() {
+        let (db, provider) = synced(&[email("m-1", "inbox", false)]);
+        db.seed_test_account("acc-2");
+        let mut other = email("m-2", "inbox", false);
+        other.account_id = "acc-2".to_string();
+        db.insert_emails_batch(std::slice::from_ref(&other)).unwrap();
+        let other_provider = FakeEmailProvider::new("other@example.com", "Other");
+        other_provider.report_message_states();
+        other_provider.add_message(other, EmailCategory::Primary, vec![]);
+        other_provider.set_remote_read("m-2", true);
+        let mut other_account = account("imap");
+        other_account.id = "acc-2".to_string();
+
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW).await;
+        refresh_stored_mail_state(&db, &other_account, &other_provider, NOW + 1).await;
+
+        assert_eq!(row(&db, "m-2"), Some(("inbox".to_string(), true)));
+    }
+
     #[tokio::test]
     async fn one_pass_checks_a_bounded_number_of_rows_and_chases_a_bounded_number_of_vanished_ones() {
         let emails: Vec<Email> = (0..MAX_REFRESH_ROWS + 50)

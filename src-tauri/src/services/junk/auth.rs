@@ -536,4 +536,106 @@ mod tests {
         assert_eq!(expected_authserv("imap"), None);
         assert_eq!(expected_authserv("gmail"), Some("mx.google.com"));
     }
+    #[test]
+    fn every_result_keyword_parses_to_its_own_state() {
+        let parsed: Vec<AuthResult> = [
+            "pass",
+            "FAIL",
+            " softfail ",
+            "neutral",
+            "none",
+            "temperror",
+            "permerror",
+            "bogus",
+        ]
+        .iter()
+        .map(|t| AuthResult::parse(t))
+        .collect();
+        assert_eq!(
+            parsed,
+            vec![
+                AuthResult::Pass,
+                AuthResult::Fail,
+                AuthResult::SoftFail,
+                AuthResult::Neutral,
+                AuthResult::None,
+                AuthResult::Error,
+                AuthResult::Error,
+                AuthResult::Unknown,
+            ]
+        );
+    }
+    #[test]
+    fn a_trusted_spf_fail_is_a_hard_spf_failure() {
+        let a = assess(Some(&headers("mx.example.com; spf=fail; dkim=pass; dmarc=pass")), OURS);
+        assert!(a.spf_hard_fail());
+        let a = assess(
+            Some(&headers("mx.example.com; spf=softfail; dkim=pass; dmarc=pass")),
+            OURS,
+        );
+        assert!(!a.spf_hard_fail());
+    }
+
+    #[test]
+    fn one_trusted_result_is_enough_to_not_be_unknown() {
+        for auth in [
+            "mx.example.com; spf=pass",
+            "mx.example.com; dkim=pass",
+            "mx.example.com; dmarc=pass",
+        ] {
+            assert!(!assess(Some(&headers(auth)), OURS).is_unknown(), "{auth}");
+        }
+    }
+
+    #[test]
+    fn each_provider_names_the_mta_whose_results_count() {
+        assert_eq!(expected_authserv("gmail"), Some("mx.google.com"));
+        assert_eq!(expected_authserv("Outlook"), Some("protection.outlook.com"));
+        assert_eq!(expected_authserv("imap"), None);
+    }
+
+    // The margin is the score as a fraction of the server's own threshold.
+    #[test]
+    fn a_comfortable_clearance_is_measured_against_the_threshold() {
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: No, score=1.0 required=5.0")),
+            ServerSpamVerdict::Cleared
+        );
+        assert_eq!(
+            parse_server_spam(Some(
+                "x-spam-status: No\nx-spam-report: Content analysis details: (1.0 points, 5.0 required)"
+            )),
+            ServerSpamVerdict::Cleared
+        );
+    }
+
+    #[test]
+    fn a_zero_threshold_is_ignored_rather_than_divided_by() {
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: No, score=1.0 required=0.0")),
+            ServerSpamVerdict::Cleared
+        );
+        assert_eq!(
+            parse_server_spam(Some(
+                "x-spam-status: No\nx-spam-report: Content analysis details: (1.0 points, 0.0 required)"
+            )),
+            ServerSpamVerdict::Cleared
+        );
+    }
+    #[test]
+    fn a_flag_at_exactly_the_marginal_ratio_is_decisive() {
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: Yes, score=6.25 required=5.0")),
+            ServerSpamVerdict::Flagged
+        );
+    }
+
+    #[test]
+    fn decimals_in_the_score_count() {
+        // 2.6 / 5.0 = 0.52: past half the threshold, a marginal clearance.
+        assert_eq!(
+            parse_server_spam(Some("x-spam-status: No, score=2.6 required=5.0")),
+            ServerSpamVerdict::BarelyCleared
+        );
+    }
 }

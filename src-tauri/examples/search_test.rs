@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!(
                 "   Snippet: {}...",
-                &email.email.snippet.chars().take(80).collect::<String>()
+                email.email.snippet.chars().take(80).collect::<String>()
             );
         }
         println!();

@@ -388,4 +388,38 @@ mod tests {
         // Reading one anyway would silently score against garbage.
         assert!(from_blob(&[0u8; 16], 100, 100).is_none());
     }
+    // With a 0.5 prior the score is ratio / (1 + ratio) of the smoothed
+    // per-class frequencies: token 7 in 10 of 40 positives and 5 of 40
+    // negatives gives (11/42) / (6/42) = 11/6, so 11/17.
+    #[test]
+    fn a_token_scores_by_its_laplace_smoothed_class_ratio() {
+        let mut samples = Vec::new();
+        for i in 0..40 {
+            samples.push(sample(if i < 10 { &[7] } else { &[8] }, true));
+            samples.push(sample(if i < 5 { &[7] } else { &[9] }, false));
+        }
+        let model = train(&samples);
+        assert!(model.is_usable());
+        let p = score(&model, &[7], 0.5);
+        assert!((p - 11.0 / 17.0).abs() < 1e-4, "got {p}");
+    }
+
+    #[test]
+    fn a_model_needs_the_floor_on_both_classes() {
+        let samples: Vec<Sample> = (0..60)
+            .map(|_| sample(&[1], true))
+            .chain((0..10).map(|_| sample(&[2], false)))
+            .collect();
+        assert!(!train(&samples).is_usable());
+    }
+
+    #[test]
+    fn each_axis_round_trips_through_its_stored_name() {
+        for axis in ModelAxis::ALL {
+            assert_eq!(ModelAxis::parse(axis.as_str()), Some(axis));
+        }
+        assert_eq!(ModelAxis::Spam.as_str(), "spam");
+        assert_eq!(ModelAxis::Graymail.as_str(), "graymail");
+        assert_eq!(ModelAxis::parse("phishing"), None);
+    }
 }

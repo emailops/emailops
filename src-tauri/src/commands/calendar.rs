@@ -1,4 +1,5 @@
 use crate::models::{Calendar, CalendarEvent};
+use crate::services;
 use crate::{AppError, AppState};
 use tauri::State;
 
@@ -125,8 +126,10 @@ pub async fn delete_calendar_event(
 #[tauri::command]
 pub async fn get_calendar_invite(
     state: State<'_, AppState>,
+    account_id: String,
     email_id: String,
 ) -> Result<Option<crate::services::calendar::invite::CalendarInvite>, AppError> {
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     crate::services::calendar::invite::get_calendar_invite(&state.db, &state.app_data_dir, &email_id).await
 }
 

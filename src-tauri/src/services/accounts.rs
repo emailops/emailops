@@ -282,6 +282,24 @@ pub async fn revoke_removed_account_grant(token: &str) {
     }
 }
 
+/// What to tell the user after removing an account whose grant EmailOps
+/// cannot revoke itself. Microsoft has no per-application revocation: its only
+/// API, `revokeSignInSessions`, signs the user out of every app and device,
+/// which is far more than removing one account here should do. So for Outlook
+/// the user is pointed at the pages where they remove EmailOps' access.
+/// `None` for Gmail (revoked through Google's endpoint) and IMAP (no grant).
+pub fn manual_revocation_notice(provider: &str) -> Option<String> {
+    match provider {
+        "outlook" => Some(
+            "Account removed from EmailOps. Microsoft does not let an app revoke its own access, so remove \
+             EmailOps from your Microsoft account yourself: https://account.live.com/consent/Manage \
+             (personal accounts) or https://myapps.microsoft.com (work or school accounts)."
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 /// Re-authenticate an existing account by triggering OAuth flow and updating tokens.
 /// Only valid for OAuth providers (gmail, outlook). IMAP accounts must update
 /// credentials via `update_imap_credentials` instead — this function rejects
@@ -694,7 +712,7 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
     // Try keychain first — if it succeeds we have everything *and* can
     // opportunistically backfill the DB for next time.
     match get_imap_credentials(account_id) {
-        Ok(creds) => {
+        Ok(mut creds) => {
             // Backfill DB so future loads don't depend on the keychain entry.
             // A failure here is not fatal (the settings are already in hand) but
             // must not be silent — a mirror that never gets written is exactly
@@ -714,10 +732,10 @@ pub fn load_imap_settings_for_edit(db: &Arc<Database>, account_id: &str) -> Resu
                 );
             }
             Ok(ImapEditSettings {
-                host: creds.host,
+                host: std::mem::take(&mut creds.host),
                 port: creds.port,
-                username: creds.username,
-                smtp_host: creds.smtp_host,
+                username: std::mem::take(&mut creds.username),
+                smtp_host: std::mem::take(&mut creds.smtp_host),
                 smtp_port: creds.smtp_port,
                 has_password: true,
                 keychain_error: None,
@@ -765,7 +783,7 @@ pub fn resolve_update_password(account_id: &str, provided: &str) -> Result<Strin
         return Ok(provided.to_string());
     }
     match get_imap_credentials(account_id) {
-        Ok(creds) if !creds.password.is_empty() => Ok(creds.password),
+        Ok(mut creds) if !creds.password.is_empty() => Ok(std::mem::take(&mut creds.password)),
         Ok(_) | Err(AppError::NeedsReauth { .. }) => Err(AppError::InvalidInput(
             "No password is stored for this account — enter one to continue.".to_string(),
         )),
@@ -1036,6 +1054,20 @@ mod tests {
     #[test]
     fn revocable_token_falls_back_to_the_gmail_access_token() {
         assert_eq!(revocable_token("gmail", &tokens(None)), Some("access-1".to_string()));
+    }
+
+    #[test]
+    fn an_outlook_account_gets_manual_revocation_links() {
+        let notice = manual_revocation_notice("outlook").expect("outlook has a notice");
+        assert!(notice.contains("https://account.live.com/consent/Manage"), "{notice}");
+        assert!(notice.contains("https://myapps.microsoft.com"), "{notice}");
+    }
+
+    #[test]
+    fn providers_without_a_grant_to_remove_by_hand_get_no_notice() {
+        // Gmail is revoked through Google's endpoint; IMAP has no OAuth grant.
+        assert_eq!(manual_revocation_notice("gmail"), None);
+        assert_eq!(manual_revocation_notice("imap"), None);
     }
 
     #[test]
@@ -1596,10 +1628,8 @@ mod tests {
         bind_credential_db(&db);
 
         let account = imap_account("imap-split", "alex@example.de");
-        let creds = ImapCredentials {
-            username: "alex".into(),
-            ..imap_creds()
-        };
+        let mut creds = imap_creds();
+        creds.username = "alex".into();
 
         persist_imap_account(&db, &account, &creds).expect("persist should succeed");
 

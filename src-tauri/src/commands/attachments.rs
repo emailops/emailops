@@ -45,15 +45,6 @@ fn ensure_meta_in_account(
 
 /// Confirm an email belongs to `account_id`. Mirrors the helper in
 /// `commands::emails` so we can scope email-keyed attachment lookups too.
-fn ensure_email_in_account(db: &Arc<Database>, account_id: &str, email_id: &str) -> Result<(), AppError> {
-    let email = db
-        .get_email(email_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Email {email_id} not found")))?;
-    if email.account_id != account_id {
-        return Err(AppError::NotFound(format!("Email {email_id} not found")));
-    }
-    Ok(())
-}
 
 #[tauri::command]
 pub async fn create_attachment_rule(
@@ -79,6 +70,7 @@ pub async fn create_attachment_rule(
 #[tauri::command]
 pub async fn update_attachment_rule(
     state: State<'_, AppState>,
+    account_id: String,
     rule_id: String,
     name: String,
     sender_email_pattern: Option<String>,
@@ -92,6 +84,7 @@ pub async fn update_attachment_rule(
     state.rule_applies.cancel(&rule_id);
     services::attachments::update_rule(
         &state.db,
+        &account_id,
         &rule_id,
         &name,
         sender_email_pattern.as_deref(),
@@ -114,8 +107,12 @@ pub async fn delete_attachment_rule(
 }
 
 #[tauri::command]
-pub async fn count_attachments_for_rule(state: State<'_, AppState>, rule_id: String) -> Result<i32, AppError> {
-    state.db.count_attachments_for_rule(&rule_id)
+pub async fn count_attachments_for_rule(
+    state: State<'_, AppState>,
+    account_id: String,
+    rule_id: String,
+) -> Result<i32, AppError> {
+    services::attachments::count_rule_attachments(&state.db, &account_id, &rule_id)
 }
 
 #[tauri::command]
@@ -220,7 +217,7 @@ pub async fn get_attachments_for_email(
     account_id: String,
     email_id: String,
 ) -> Result<Vec<Attachment>, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     state.db.get_attachments_for_email(&email_id)
 }
 
@@ -418,7 +415,7 @@ pub async fn get_email_attachment_metas(
     account_id: String,
     email_id: String,
 ) -> Result<Vec<EmailAttachmentMeta>, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     state.db.get_email_attachment_metas(&email_id)
 }
 
@@ -434,7 +431,7 @@ pub async fn reextract_email_attachments(
     account_id: String,
     email_id: String,
 ) -> Result<Vec<EmailAttachmentMeta>, AppError> {
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
     let account = state
         .db
         .get_account(&account_id)?
@@ -457,7 +454,7 @@ pub async fn fetch_email_attachment_bytes(
 
     // Verify the email belongs to this account before exposing any of its
     // attachment data — both the cached inline path and the provider fetch.
-    ensure_email_in_account(&state.db, &account_id, &email_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
 
     // IMAP attachments are stored inline in the DB (no provider fetch needed).
     // When provider_attachment_id is empty, look up the inline_data by email+filename.

@@ -177,7 +177,9 @@ pub fn ok_envelope<T: Serialize>(data: T) -> Value {
 /// `error` is the same shape `AppError` serializes to at the Tauri boundary, so
 /// agents see one error schema across CLI and app.
 pub fn error_envelope(err: &AppError) -> Value {
-    serde_json::json!({ "ok": false, "data": Value::Null, "error": err })
+    // Unredacted: `AppError`'s `Serialize` (the webview shape) drops raw
+    // library/OS detail; agents driving the CLI need it.
+    serde_json::json!({ "ok": false, "data": Value::Null, "error": err.diagnostic_json() })
 }
 
 /// Print the success envelope wrapping `data` as pretty JSON on stdout.
@@ -1355,6 +1357,15 @@ mod tests {
         assert!(v["data"].is_null());
         assert_eq!(v["error"]["code"], "not_found");
         assert!(v["error"]["message"].as_str().unwrap().contains("email x"));
+    }
+
+    #[test]
+    fn error_envelope_keeps_internal_detail_for_agents() {
+        // The webview gets a redacted error; the CLI is a developer surface and
+        // keeps the raw detail so an agent can diagnose the failure.
+        let v = error_envelope(&AppError::IoError("cannot open /tmp/x.db".into()));
+        assert_eq!(v["error"]["code"], "io");
+        assert_eq!(v["error"]["params"]["detail"], "cannot open /tmp/x.db");
     }
 
     #[test]

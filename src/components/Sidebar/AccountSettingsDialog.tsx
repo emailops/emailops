@@ -1,9 +1,16 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
+
+// Microsoft has no per-app revocation, so removing an Outlook account cannot
+// revoke EmailOps' access the way Google's endpoint does. These are the pages
+// where the user removes it (mirrored in the backend's removal log message).
+const MICROSOFT_PERSONAL_CONSENT_URL = 'https://account.live.com/consent/Manage';
+const MICROSOFT_WORK_APPS_URL = 'https://myapps.microsoft.com';
 
 type SyncPreset = '7d' | '30d' | '90d' | '365d' | 'all' | 'custom';
 
@@ -648,6 +655,33 @@ export function AccountSettingsDialog({
                   <div className="rounded-lg border border-red-800 bg-red-900/20 p-4 space-y-3">
                     <p className="text-sm font-medium text-red-200">{t('modal:accountSettings.dangerWarning')}</p>
                     <p className="text-xs text-red-300">{t('modal:accountSettings.deleteWarning')}</p>
+                    {account.provider === 'outlook' && (
+                      <div className="text-xs text-red-300 space-y-1">
+                        <p>{t('modal:accountSettings.microsoftRevokeNotice')}</p>
+                        <ul className="list-disc pl-4">
+                          <li>
+                            {t('modal:accountSettings.microsoftPersonalAccounts')}{' '}
+                            <button
+                              type="button"
+                              onClick={() => void openExternal(MICROSOFT_PERSONAL_CONSENT_URL)}
+                              className="underline break-all"
+                            >
+                              {MICROSOFT_PERSONAL_CONSENT_URL}
+                            </button>
+                          </li>
+                          <li>
+                            {t('modal:accountSettings.microsoftWorkAccounts')}{' '}
+                            <button
+                              type="button"
+                              onClick={() => void openExternal(MICROSOFT_WORK_APPS_URL)}
+                              className="underline break-all"
+                            >
+                              {MICROSOFT_WORK_APPS_URL}
+                            </button>
+                          </li>
+                        </ul>
+                      </div>
+                    )}
                     <p className="font-mono text-xs text-red-400 bg-red-900/30 rounded px-2 py-1 select-all">
                       {account.email}
                     </p>

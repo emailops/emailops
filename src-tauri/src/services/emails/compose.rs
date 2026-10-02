@@ -125,6 +125,71 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
     ComposePlan { save_req, attachments }
 }
 
+#[cfg(test)]
+mod ipc_attachment_guard_tests {
+    use super::*;
+
+    fn input(path: &str) -> DraftAttachmentInput {
+        DraftAttachmentInput {
+            file_path: path.to_string(),
+            filename: None,
+            mime_type: None,
+        }
+    }
+
+    fn stored(path: &str) -> DraftAttachment {
+        DraftAttachment {
+            id: "att-1".to_string(),
+            draft_id: "draft-1".to_string(),
+            file_path: path.to_string(),
+            filename: "report.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+        }
+    }
+
+    #[test]
+    fn accepts_paths_the_draft_already_has() {
+        let existing = [stored("/home/user/report.pdf")];
+        assert!(check_webview_draft_attachments(&[input("/home/user/report.pdf")], &existing).is_ok());
+    }
+
+    #[test]
+    fn accepts_an_empty_list_which_clears_the_attachments() {
+        assert!(check_webview_draft_attachments(&[], &[stored("/home/user/report.pdf")]).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_path_the_draft_does_not_have() {
+        let existing = [stored("/home/user/report.pdf")];
+        let err = check_webview_draft_attachments(&[input("/home/user/.ssh/id_ed25519")], &existing)
+            .expect_err("a new path from the webview must be refused");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn rejects_any_path_on_a_new_draft() {
+        assert!(check_webview_draft_attachments(&[input("/etc/hosts")], &[]).is_err());
+    }
+}
+
+/// Guard for draft saves that come from the webview (the `save_draft` IPC
+/// command). The GUI composer sends new attachments as inline bytes, never as
+/// paths; file-path attachments are added only by the CLI. So the webview may
+/// only re-submit — or drop — the paths the draft already has. Without this,
+/// script running in the webview could name any local file and have it read
+/// and uploaded to the provider as an attachment (CASA/DASA 1.4.3).
+pub fn check_webview_draft_attachments(requested: &[DraftAttachmentInput], existing: &[DraftAttachment]) -> Result<()> {
+    match requested
+        .iter()
+        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path))
+    {
+        Some(_) => Err(AppError::InvalidInput(
+            "draft attachments can only keep files the draft already has".to_string(),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Read a resolved attachment's bytes and base64-encode them for the provider
 /// send/draft payloads.
 fn load_attachment(att: &DraftAttachment) -> Result<EmailAttachment> {
@@ -185,6 +250,17 @@ async fn push_draft(
     let body = draft_body(&draft.body, draft.body_html.as_deref());
     let from = account.email.as_str();
     let (to, cc, subject) = (&draft.to_addresses, &draft.cc_addresses, draft.subject.as_str());
+    // A reply draft goes up as a reply, so the provider copy keeps its thread.
+    let parent = match draft.email_id.as_deref() {
+        Some(email_id) => db.get_email(email_id)?,
+        None => None,
+    };
+    let reply = parent.as_ref().map(|email| crate::sync::provider::ReplyTarget {
+        provider_message_id: &email.id,
+        thread_id: &email.thread_id,
+        message_id: email.message_id.as_deref(),
+        references: email.references.as_deref(),
+    });
 
     let linked = draft
         .provider_draft_id
@@ -192,7 +268,7 @@ async fn push_draft(
         .filter(|id| Some(*id) != gone_upstream);
     let updated = match linked {
         Some(existing) => match provider
-            .update_draft(existing, from, to, cc, subject, &body, &attachments)
+            .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
             .await
         {
             Ok(id) => Some(id),
@@ -205,7 +281,7 @@ async fn push_draft(
         Some(id) => id,
         None => {
             provider
-                .create_draft(from, to, cc, subject, &body, &attachments)
+                .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
                 .await?
         }
     };
@@ -226,6 +302,16 @@ pub async fn compose_draft(
     input: ComposeInput,
     provider: Option<&dyn EmailProvider>,
 ) -> Result<Draft> {
+    // An existing draft id must be this account's draft, or the upsert would
+    // overwrite another account's draft and push it through this provider.
+    if let Some(draft_id) = input.draft_id.as_deref() {
+        if db.get_draft(draft_id)?.is_some() {
+            crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
+        }
+    }
+    if let Some(email_id) = input.email_id.as_deref() {
+        crate::services::ownership::email_in_account(db, &account.id, email_id)?;
+    }
     let plan = plan_compose(&input);
     let saved = db.save_user_draft(&plan.save_req)?;
 
@@ -351,7 +437,11 @@ pub async fn delete_draft(
     draft_id: &str,
     provider: Option<&dyn EmailProvider>,
 ) -> Result<()> {
-    if let Some(draft) = db.get_draft(draft_id)? {
+    // A draft that is already gone deletes as a no-op; one that belongs to
+    // another account is refused before its provider id reaches this
+    // account's provider.
+    if db.get_draft(draft_id)?.is_some() {
+        let draft = crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
         if let (Some(provider_id), Some(provider)) = (draft.provider_draft_id.as_deref(), provider) {
             if provider_supports_drafts(&account.provider) {
                 if let Err(e) = provider.delete_draft(provider_id).await {
@@ -731,6 +821,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compose_draft_refuses_another_accounts_draft_id() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "imap");
+        let other = seed_account(&db, "a2", "imap");
+        let theirs = compose_draft(&db, &other, input("a2", "Theirs", "kept"), None)
+            .await
+            .expect("compose");
+
+        let mut overwrite = input("a1", "Mine", "replaced");
+        overwrite.draft_id = Some(theirs.id.clone());
+        let result = compose_draft(&db, &owner, overwrite, None).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        let kept = db.get_draft(&theirs.id).expect("get").expect("still there");
+        assert_eq!((kept.account_id.as_str(), kept.body.as_str()), ("a2", "kept"));
+    }
+
+    #[tokio::test]
+    async fn compose_draft_refuses_a_reply_to_another_accounts_email() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "imap");
+        seed_account(&db, "a2", "imap");
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, recipients_json, snippet, timestamp, created_at) \
+                 VALUES ('their-email', 'a2', 't', 's', 'S', 's@example.com', '[]', '', 0, 0)",
+                [],
+            )
+            .expect("seed email");
+
+        let mut reply = input("a1", "Re: s", "body");
+        reply.email_id = Some("their-email".to_string());
+        let result = compose_draft(&db, &owner, reply, None).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_draft_leaves_another_accounts_draft_alone() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let owner = seed_account(&db, "a1", "gmail");
+        let other = seed_account(&db, "a2", "gmail");
+        let owner_provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let other_provider = FakeEmailProvider::new("a2@example.com", "A Two");
+        let theirs = compose_draft(&db, &other, input("a2", "Theirs", "body"), Some(&other_provider))
+            .await
+            .expect("compose");
+
+        let result = delete_draft(&db, &owner, &theirs.id, Some(&owner_provider)).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
+        assert!(db.get_draft(&theirs.id).expect("get").is_some(), "local copy kept");
+        assert_eq!(other_provider.provider_drafts().len(), 1, "provider copy kept");
+    }
+
+    fn seed_parent_email(db: &Database) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, message_id, subject, sender, sender_email, \
+                 recipients_json, snippet, timestamp, created_at) \
+                 VALUES ('parent', 'a1', 'th-1', '<parent@example.com>', 's', 'S', 's@example.com', '[]', '', 0, 0)",
+                [],
+            )
+            .expect("seed parent email");
+    }
+
+    fn reply_input() -> ComposeInput {
+        let mut reply = input("a1", "Re: s", "hola");
+        reply.email_id = Some("parent".to_string());
+        reply
+    }
+
+    /// The provider copy of a reply draft is itself a reply, so it knows which
+    /// email it answers even if the local row is lost.
+    #[tokio::test]
+    async fn a_reply_draft_is_pushed_as_a_reply() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        seed_parent_email(&db);
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+
+        compose_draft(&db, &account, reply_input(), Some(&provider))
+            .await
+            .expect("compose");
+
+        let pushed = provider.provider_drafts();
+        assert_eq!(pushed.len(), 1);
+        assert_eq!(pushed[0].in_reply_to.as_deref(), Some("<parent@example.com>"));
+    }
+
+    /// Regression: a reply draft whose local row was replaced by its provider
+    /// copy came back unlinked, so the thread no longer showed it.
+    #[tokio::test]
+    async fn a_re_imported_reply_draft_is_linked_to_its_email_again() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        seed_parent_email(&db);
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, reply_input(), Some(&provider))
+            .await
+            .expect("compose");
+
+        // Lose the local row (a prune, a reinstall), keeping the provider copy.
+        db.delete_draft(&draft.id, "a1").expect("drop local row");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].email_id.as_deref(), Some("parent"));
+    }
+
+    #[tokio::test]
     async fn pull_provider_drafts_upserts_and_prunes() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
         let account = seed_account(&db, "a1", "gmail");
@@ -744,6 +946,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         let pulled = pull_provider_drafts(&db, &account, &provider).await.expect("pull");
@@ -780,6 +983,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(
@@ -837,6 +1041,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(
@@ -856,6 +1061,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_100),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
         assert_eq!(
             refresh_provider_drafts(&db, &account, &provider, 1_001)
@@ -891,6 +1097,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
 
         refresh_provider_drafts(&db, &account_a, &provider, 2_000)
@@ -934,6 +1141,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
@@ -959,6 +1167,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
+            in_reply_to: None,
         });
         pull_provider_drafts(&db, &account, &provider).await.expect("first");
 
@@ -972,6 +1181,7 @@ mod tests {
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
+            in_reply_to: None,
         });
 
         assert_eq!(

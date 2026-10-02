@@ -520,6 +520,8 @@
     "accountToggleAria": "Activar o desactivar la integración de calendario de {{email}}",
     "notificationsLabel": "Notificaciones de reuniones",
     "notificationsDesc": "Recibe un aviso antes de cada reunión, con enlace directo para unirte.",
+    "showTitleLabel": "Mostrar el título de la reunión en las notificaciones",
+    "showTitleDesc": "Desactivado por defecto: las notificaciones pueden verse en la pantalla de bloqueo y en el centro de notificaciones, fuera del bloqueo de la app. El aviso dentro de EmailOps siempre muestra la reunión completa.",
     "leadTimeLabel": "Antelación del aviso",
     "leadTimeDesc": "Cuánto tiempo antes del inicio de la reunión se envía el aviso.",
     "minutesOption": "{{n}} minutos",

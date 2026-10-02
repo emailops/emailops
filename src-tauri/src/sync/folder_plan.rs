@@ -879,4 +879,17 @@ mod tests {
         assert_eq!(folders[3].raw_name, "Container");
         assert_eq!(folders[3].delimiter, None);
     }
+    // The strings are the `mailbox` values stored on every synced row.
+    #[test]
+    fn each_well_known_folder_maps_to_its_mailbox_key() {
+        assert_eq!(WellKnownFolder::Sent.as_str(), "sent");
+        assert_eq!(WellKnownFolder::Spam.as_str(), "spam");
+        assert_eq!(WellKnownFolder::Trash.as_str(), "trash");
+    }
+
+    #[test]
+    fn a_bare_inbox_prefix_is_not_a_folder_under_inbox() {
+        let existing = vec!["INBOX".to_string(), "INBOX.".to_string()];
+        assert_eq!(compose_folder_path("Work", Some("."), &existing), "Work");
+    }
 }

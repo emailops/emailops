@@ -99,9 +99,11 @@ pub async fn create_pending_task(state: State<'_, AppState>, req: CreateTaskRequ
 #[tauri::command]
 pub async fn update_pending_task_status(
     state: State<'_, AppState>,
+    account_id: String,
     task_id: String,
     status: String,
 ) -> Result<(), AppError> {
+    services::ownership::pending_task_in_account(&state.db, &account_id, &task_id)?;
     services::tasks::update_task_status(&state.db, &task_id, &status)
 }
 
@@ -132,21 +134,37 @@ pub async fn list_memory_facts(
 }
 
 #[tauri::command]
-pub async fn promote_memory_fact(state: State<'_, AppState>, fact_id: String) -> Result<(), AppError> {
+pub async fn promote_memory_fact(
+    state: State<'_, AppState>,
+    account_id: String,
+    fact_id: String,
+) -> Result<(), AppError> {
+    services::ownership::memory_fact_in_account(&state.db, &account_id, &fact_id)?;
     state
         .db
         .set_memory_fact_status(&fact_id, "promoted", chrono::Utc::now().timestamp())
 }
 
 #[tauri::command]
-pub async fn retire_memory_fact(state: State<'_, AppState>, fact_id: String) -> Result<(), AppError> {
+pub async fn retire_memory_fact(
+    state: State<'_, AppState>,
+    account_id: String,
+    fact_id: String,
+) -> Result<(), AppError> {
+    services::ownership::memory_fact_in_account(&state.db, &account_id, &fact_id)?;
     state
         .db
         .set_memory_fact_status(&fact_id, "retired", chrono::Utc::now().timestamp())
 }
 
 #[tauri::command]
-pub async fn update_memory_fact(state: State<'_, AppState>, fact_id: String, fact: String) -> Result<(), AppError> {
+pub async fn update_memory_fact(
+    state: State<'_, AppState>,
+    account_id: String,
+    fact_id: String,
+    fact: String,
+) -> Result<(), AppError> {
+    services::ownership::memory_fact_in_account(&state.db, &account_id, &fact_id)?;
     let trimmed = fact.trim();
     if trimmed.is_empty() {
         return Err(AppError::InvalidInput("fact cannot be empty".into()));
@@ -157,7 +175,12 @@ pub async fn update_memory_fact(state: State<'_, AppState>, fact_id: String, fac
 }
 
 #[tauri::command]
-pub async fn delete_memory_fact(state: State<'_, AppState>, fact_id: String) -> Result<(), AppError> {
+pub async fn delete_memory_fact(
+    state: State<'_, AppState>,
+    account_id: String,
+    fact_id: String,
+) -> Result<(), AppError> {
+    services::ownership::memory_fact_in_account(&state.db, &account_id, &fact_id)?;
     state.db.delete_memory_fact(&fact_id)
 }
 

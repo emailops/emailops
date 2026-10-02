@@ -256,14 +256,14 @@ impl OutlookClient {
             ));
         };
         let config = crate::sync::oauth::OAuthConfig::for_provider("outlook");
-        let new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
+        let mut new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
         crate::services::accounts::store_tokens(account_id, &new_tokens)?;
         // Recover from mutex poisoning rather than panicking — the protected
         // value is a single String, no invariant to violate.
         *self
             .access_token
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_tokens.access_token;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = std::mem::take(&mut new_tokens.access_token);
         Ok(())
     }
 
@@ -1009,6 +1009,7 @@ impl OutlookClient {
                     // Graph returns full draft bodies in the listing itself, so
                     // there is no per-draft read to skip and no token to track.
                     provider_message_id: None,
+                    in_reply_to: None,
                 });
             }
             // `@odata.nextLink` is a complete URL carrying $skiptoken state —
@@ -1692,6 +1693,10 @@ impl EmailProvider for OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        // Graph has no way to set In-Reply-To on a plain draft; a threaded
+        // draft needs `createReply`, which is not wired yet. Outlook reply
+        // drafts are therefore linked to their thread on this device only.
+        _reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
         self.create_draft(to_emails, cc_emails, subject, body, attachments)
             .await
@@ -1706,6 +1711,7 @@ impl EmailProvider for OutlookClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        _reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
         self.update_draft(provider_draft_id, to_emails, cc_emails, subject, body, attachments)
             .await

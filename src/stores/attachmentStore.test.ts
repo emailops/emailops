@@ -344,7 +344,9 @@ describe('rules', () => {
     useAttachmentStore.setState({ rules: [rule('r1', 'Old name')] });
     vi.mocked(api.updateAttachmentRule).mockResolvedValueOnce(rule('r1', 'New name'));
 
-    await useAttachmentStore.getState().updateRule('r1', 'New name', 'billing@acme.com', null, null, [], true);
+    await useAttachmentStore
+      .getState()
+      .updateRule('acct-1', 'r1', 'New name', 'billing@acme.com', null, null, [], true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.name)).toEqual(['New name']);
   });

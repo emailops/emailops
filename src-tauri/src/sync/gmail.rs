@@ -427,14 +427,14 @@ impl GmailClient {
             ));
         };
         let config = crate::sync::oauth::OAuthConfig::for_provider("gmail");
-        let new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
+        let mut new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
         crate::services::accounts::store_tokens(account_id, &new_tokens)?;
         // Recover from a poisoned mutex — the protected value is a single
         // String, so a previous panic can't have left it in an invalid state.
         *self
             .access_token
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_tokens.access_token;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = std::mem::take(&mut new_tokens.access_token);
         Ok(())
     }
 
@@ -735,6 +735,10 @@ impl GmailClient {
 
     /// Build the base64url-encoded MIME + `{message:{raw}}` payload shared by
     /// draft create and update.
+    /// A reply draft carries the same threading a sent reply does —
+    /// `In-Reply-To`, `References` and Gmail's `threadId` — so Gmail files it
+    /// in its thread and a later pull can tell which email it answers.
+    #[allow(clippy::too_many_arguments)]
     fn draft_payload(
         &self,
         from_email: &str,
@@ -743,20 +747,26 @@ impl GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<serde_json::Value> {
+        let in_reply_to = reply.and_then(|r| r.message_id).filter(|v| !v.trim().is_empty());
+        let references = reply.and_then(|r| r.references).filter(|v| !v.trim().is_empty());
         let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             from_name: None,
             to_emails,
             cc_emails,
             subject,
-            in_reply_to: None,
-            references: None,
+            in_reply_to,
+            references,
             body,
             attachments,
         })?;
         let raw = base64_url_encode(mime.as_bytes());
-        Ok(serde_json::json!({ "message": { "raw": raw } }))
+        Ok(match reply {
+            Some(target) => serde_json::json!({ "message": { "raw": raw, "threadId": target.thread_id } }),
+            None => serde_json::json!({ "message": { "raw": raw } }),
+        })
     }
 
     async fn create_draft(
@@ -767,8 +777,9 @@ impl GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
+        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
         let url = format!("{}/users/me/drafts", self.base_url);
         let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let draft: GmailDraftId = response.json().await?;
@@ -784,8 +795,9 @@ impl GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments)?;
+        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
         let url = format!("{}/users/me/drafts/{}", self.base_url, provider_draft_id);
         let response = self
             .send_request_with_retry("update draft", |client, token| {
@@ -903,6 +915,7 @@ impl GmailClient {
             // The parsed body is HTML; split it so the composer renders the rich
             // source instead of escaping it as literal text.
             let (body, body_html) = crate::util::html::split_draft_body(&email.body);
+            let in_reply_to = crate::sync::mime_builder::answered_message_id(email.references.as_deref());
             changed.push(crate::models::ProviderDraft {
                 provider_draft_id: draft_id.clone(),
                 to_addresses: email.recipients,
@@ -914,6 +927,7 @@ impl GmailClient {
                 // for a draft that's when it was last saved.
                 updated_at: Some(email.timestamp),
                 provider_message_id: message_id,
+                in_reply_to,
             });
         }
         Ok(crate::sync::draft_plan::ProviderDraftPull {
@@ -1965,8 +1979,9 @@ impl EmailProvider for GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        self.create_draft(from_email, to_emails, cc_emails, subject, body, attachments)
+        self.create_draft(from_email, to_emails, cc_emails, subject, body, attachments, reply)
             .await
     }
 
@@ -1979,6 +1994,7 @@ impl EmailProvider for GmailClient {
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
+        reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
         self.update_draft(
             provider_draft_id,
@@ -1988,6 +2004,7 @@ impl EmailProvider for GmailClient {
             subject,
             body,
             attachments,
+            reply,
         )
         .await
     }

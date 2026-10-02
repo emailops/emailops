@@ -14,7 +14,7 @@ import type { Draft } from '@/types';
 export async function freshDraftToOpen(draft: Draft): Promise<Draft> {
   try {
     await api.refreshDrafts(draft.accountId);
-    return (await api.getDraft(draft.id)) ?? draft;
+    return (await api.getDraft(draft.accountId, draft.id)) ?? draft;
   } catch {
     return draft;
   }

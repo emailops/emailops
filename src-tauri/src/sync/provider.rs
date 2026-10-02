@@ -772,6 +772,10 @@ pub trait EmailProvider: Send + Sync {
 
     /// Create a draft in the provider's Drafts folder. Returns the provider's
     /// draft id, which the caller stores locally to keep the two in sync.
+    /// `reply` is the email a reply draft answers: the provider copy is then a
+    /// reply itself (threading headers, the provider's thread), so it can be
+    /// matched back to its thread if the local row is lost.
+    #[allow(clippy::too_many_arguments)]
     async fn create_draft(
         &self,
         _from_email: &str,
@@ -780,6 +784,7 @@ pub trait EmailProvider: Send + Sync {
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
+        _reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         Err(AppError::InvalidInput(
             "drafts are not supported by this provider".to_string(),
@@ -787,7 +792,8 @@ pub trait EmailProvider: Send + Sync {
     }
 
     /// Update an existing provider draft in place. Returns the (possibly new)
-    /// provider draft id.
+    /// provider draft id. `reply` as in [`EmailProvider::create_draft`].
+    #[allow(clippy::too_many_arguments)]
     async fn update_draft(
         &self,
         _provider_draft_id: &str,
@@ -797,6 +803,7 @@ pub trait EmailProvider: Send + Sync {
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
+        _reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         Err(AppError::InvalidInput(
             "drafts are not supported by this provider".to_string(),
@@ -1963,6 +1970,7 @@ impl EmailProvider for FakeEmailProvider {
         subject: &str,
         body: &EmailBody,
         _attachments: &[EmailAttachment],
+        reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         self.draft_write_result()?;
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -1976,6 +1984,7 @@ impl EmailProvider for FakeEmailProvider {
             body_html: body.html.clone(),
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
+            in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
         };
         self.drafts
             .write()
@@ -1993,6 +2002,7 @@ impl EmailProvider for FakeEmailProvider {
         subject: &str,
         body: &EmailBody,
         _attachments: &[EmailAttachment],
+        reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         self.draft_write_result()?;
         // A draft sent or deleted from another device is gone: real providers
@@ -2017,6 +2027,7 @@ impl EmailProvider for FakeEmailProvider {
             body_html: body.html.clone(),
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
+            in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
         };
         self.drafts
             .write()

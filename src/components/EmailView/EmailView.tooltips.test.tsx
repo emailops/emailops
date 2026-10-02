@@ -8,6 +8,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock('@/lib/api', () => ({
   getPref: vi.fn(async () => null),
+  // No reply draft saved for the thread.
+  listDrafts: vi.fn(async () => []),
   currentPlatform: () => 'macos',
 }));
 vi.mock('./ThreadEmailItem', () => ({ ThreadEmailItem: () => null }));

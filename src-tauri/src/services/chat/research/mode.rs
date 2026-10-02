@@ -199,6 +199,39 @@ mod tests {
         );
     }
 
+    // Every sentence of the coded answer is written in the user's language —
+    // with matches, without, and with batches that failed.
+    #[test]
+    fn the_list_answer_is_written_in_each_supported_language() {
+        let cases = [
+            (
+                "es",
+                "1 conversación (1 correo) responde a tu pregunta.",
+                "Ninguna conversación de los 5 correos leídos responde a tu pregunta.",
+                "Leídos 5 correos en 1 lotes. 2 lotes no se pudieron leer.",
+            ),
+            (
+                "fr",
+                "1 conversation (1 e-mail) répond à votre question.",
+                "Aucune conversation parmi les 5 e-mails lus ne répond à votre question.",
+                "5 e-mails lus en 1 lots. 2 lots n'ont pas pu être lus.",
+            ),
+            (
+                "de",
+                "1 Unterhaltung (1 E-Mail) beantwortet deine Frage.",
+                "Keine Unterhaltung unter den 5 E-Mails gelesenen beantwortet deine Frage.",
+                "5 E-Mails in 1 Durchgängen gelesen. 2 Durchgänge konnten nicht gelesen werden.",
+            ),
+        ];
+        for (lang, found, none, read) in cases {
+            let answer = list_answer(ReportMode::List, &[a_match("a", 1)], 5, 1, 2, lang);
+            assert!(answer.starts_with(found), "{lang}: {answer}");
+            assert!(answer.ends_with(read), "{lang}: {answer}");
+            let answer = list_answer(ReportMode::List, &[], 5, 1, 2, lang);
+            assert_eq!(answer, format!("{none}\n\n{read}"), "{lang}");
+        }
+    }
+
     #[test]
     fn no_match_says_so_and_what_was_read() {
         let answer = list_answer(ReportMode::List, &[], 40, 4, 1, "en");

@@ -315,6 +315,31 @@ mod tests {
         }
     }
 
+    // Below the 15,000-char cap the batch is what the window leaves after the
+    // prompt, the reply and the safety margin: 4096 - 700 - 1200 - 256 = 1940
+    // tokens, 5820 chars, three 1500-char emails.
+    #[test]
+    fn a_small_window_sizes_its_batches_from_what_is_left() {
+        let b = plan_research_budget(4096);
+        assert_eq!(b.batch_chars, 5820);
+        assert_eq!(b.max_emails_per_batch, 3);
+    }
+
+    // 8192 - 700 (prompt) - 2048 (report) - 256 (safety) = 5188 tokens of
+    // notes; a window too small for any keeps a 256-token floor.
+    #[test]
+    fn the_notes_get_what_the_reduce_prompt_leaves_with_a_floor() {
+        assert_eq!(plan_research_budget(8192).notes_chars, 5188 * CHARS_PER_TOKEN);
+        assert_eq!(plan_research_budget(2048).notes_chars, 256 * CHARS_PER_TOKEN);
+    }
+
+    #[test]
+    fn a_short_reduce_prompt_leaves_the_rest_of_the_window_to_the_report() {
+        let b = plan_research_budget(8192);
+        // 8192 - 4000 (prompt) - 256 (safety) = 3936, inside [1536, 4096].
+        assert_eq!(plan_report_tokens(&b, 4000 * CHARS_PER_TOKEN), 3936);
+    }
+
     #[test]
     fn the_report_reserve_is_a_quarter_of_the_window_within_bounds() {
         assert_eq!(plan_research_budget(4096).report_tokens, MIN_REPORT_TOKENS);
@@ -354,6 +379,20 @@ mod tests {
             })
             .collect();
         assert_eq!(froms, me);
+    }
+
+    #[test]
+    fn a_recipient_filter_on_the_user_searches_every_address_the_user_receives_at() {
+        let me = addrs(&["me@mail.example", "me@work.example"]);
+        let steps = plan_gather(Some(&plan(|p| p.to = Some("me@work.example".into()))), "q");
+        let tos: Vec<String> = for_every_user_address(steps, &me)
+            .into_iter()
+            .filter_map(|s| match s {
+                GatherStep::Filter(p) => p.to,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tos, me);
     }
 
     #[test]
@@ -461,6 +500,30 @@ mod tests {
         assert_eq!(plan_gather(Some(&p), "q"), vec![GatherStep::Filter(expected)]);
     }
 
+    // Recipient, correspondent and subject name the mail as much as the sender
+    // does: each one alone drops a meaning query from the filter.
+    #[test]
+    fn any_who_or_subject_filter_drops_a_meaning_query() {
+        let setters: [fn(&mut SearchPlan); 3] = [
+            |p| p.to = Some("team@example.com".into()),
+            |p| p.with = Some("partner@example.com".into()),
+            |p| p.subject = Some("weekly report".into()),
+        ];
+        for set in setters {
+            let p = plan(|p| {
+                set(p);
+                p.since = Some("2026-03-28".into());
+                p.query = Some("main metrics".into());
+                p.mode = Some("semantic".into());
+            });
+            let expected = plan(|p| {
+                set(p);
+                p.since = Some("2026-03-28".into());
+            });
+            assert_eq!(plan_gather(Some(&p), "q"), vec![GatherStep::Filter(expected)]);
+        }
+    }
+
     #[test]
     fn a_keyword_query_still_narrows_a_sender_filter() {
         let p = plan(|p| {
@@ -517,6 +580,16 @@ mod tests {
     }
 
     #[test]
+    fn an_oversized_first_item_does_not_leave_an_empty_batch_before_it() {
+        assert_eq!(plan_batches(&[5000, 100], 1000, 10), vec![0..1, 1..2]);
+    }
+
+    #[test]
+    fn items_that_exactly_fill_the_budget_share_a_batch() {
+        assert_eq!(plan_batches(&[500, 500, 1], 1000, 10), vec![0..2, 2..3]);
+    }
+
+    #[test]
     fn an_oversized_item_gets_its_own_batch() {
         assert_eq!(plan_batches(&[100, 5000, 100], 1000, 10), vec![0..1, 1..2, 2..3]);
     }
@@ -552,5 +625,10 @@ mod tests {
         assert_eq!(plan_estimate(1000, Some(1500)), 1500);
         assert_eq!(plan_estimate(1000, None), 1800);
         assert_eq!(plan_estimate(0, None), 0);
+        assert_eq!(
+            plan_estimate(1000, Some(0)),
+            1800,
+            "a zero measurement is no measurement"
+        );
     }
 }

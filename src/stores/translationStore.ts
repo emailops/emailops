@@ -44,9 +44,9 @@ export interface TranslationStoreState {
 
 interface TranslationStore extends TranslationStoreState {
   /** Fire-and-forget lazy detection; no-op when already detected or pending. */
-  detect: (emailId: string) => Promise<void>;
+  detect: (accountId: string, emailId: string) => Promise<void>;
   /** Translate to the preferred language; shows the cached result when present. */
-  translate: (emailId: string) => Promise<void>;
+  translate: (accountId: string, emailId: string) => Promise<void>;
   toggle: (emailId: string) => void;
 }
 
@@ -113,13 +113,13 @@ export const useTranslationStore = create<TranslationStore>((set, get) => ({
   pendingTranslate: {},
   errorByEmail: {},
 
-  detect: async (emailId: string) => {
+  detect: async (accountId: string, emailId: string) => {
     const s = get();
     if (emailId in s.detectedByEmail || emailId in s.pendingDetect) return;
     // Reserve the slot before awaiting so a re-render can't double-fire.
     set((st) => ({ pendingDetect: { ...st.pendingDetect, [emailId]: '' } }));
     try {
-      const requestId = await api.detectEmailLanguage(emailId);
+      const requestId = await api.detectEmailLanguage(accountId, emailId);
       set((st) => ({ pendingDetect: { ...st.pendingDetect, [emailId]: requestId } }));
     } catch (err) {
       // AI or translation disabled, or the command failed — no button appears.
@@ -132,7 +132,7 @@ export const useTranslationStore = create<TranslationStore>((set, get) => ({
     }
   },
 
-  translate: async (emailId: string) => {
+  translate: async (accountId: string, emailId: string) => {
     const s = get();
     if (emailId in s.pendingTranslate) return;
     if (emailId in s.translations) {
@@ -144,7 +144,7 @@ export const useTranslationStore = create<TranslationStore>((set, get) => ({
       errorByEmail: { ...st.errorByEmail, [emailId]: null },
     }));
     try {
-      const requestId = await api.translateEmail(emailId);
+      const requestId = await api.translateEmail(accountId, emailId);
       set((st) => ({ pendingTranslate: { ...st.pendingTranslate, [emailId]: requestId } }));
     } catch (err) {
       const message = errorText(err);

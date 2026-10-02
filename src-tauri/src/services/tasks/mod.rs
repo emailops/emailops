@@ -33,6 +33,12 @@ pub fn create_task(db: &Arc<Database>, req: CreateTaskRequest) -> Result<Pending
     if title.is_empty() {
         return Err(AppError::InvalidInput("task title cannot be empty".into()));
     }
+    if let Some(email_id) = req.source_email_id.as_deref() {
+        crate::services::ownership::email_in_account(db, &req.account_id, email_id)?;
+    }
+    if let Some(thread_id) = req.source_thread_id.as_deref() {
+        crate::services::ownership::thread_in_account(db, &req.account_id, thread_id)?;
+    }
     let now = chrono::Utc::now().timestamp();
     let company = match req.company.as_ref().map(|s| s.trim().to_string()) {
         Some(c) if !c.is_empty() => Some(c),
@@ -221,6 +227,33 @@ mod tests {
         assert_eq!(task.priority, "high");
         assert_eq!(task.status, "open");
         assert_eq!(task.source, "user");
+    }
+
+    #[test]
+    fn create_task_refuses_a_source_from_another_account() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        insert_email(&db, "their-email", "a2", "their-thread", "s@example.com");
+        db.seed_test_account("a1");
+        let request = |email: Option<&str>, thread: Option<&str>| CreateTaskRequest {
+            account_id: "a1".into(),
+            title: "follow up".into(),
+            detail: None,
+            priority: None,
+            due_at: None,
+            source_email_id: email.map(Into::into),
+            source_thread_id: thread.map(Into::into),
+            source: None,
+            company: None,
+        };
+
+        for (email, thread) in [(Some("their-email"), None), (None, Some("their-thread"))] {
+            let result = create_task(&db, request(email, thread));
+            assert!(
+                matches!(result, Err(AppError::NotFound(_))),
+                "{email:?} {thread:?}: {result:?}"
+            );
+        }
+        assert_eq!(db.count_pending_tasks("a1").unwrap().0, 0, "no task created");
     }
 
     #[test]

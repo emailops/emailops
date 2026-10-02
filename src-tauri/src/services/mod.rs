@@ -30,6 +30,7 @@ pub mod mail_notifications;
 pub mod memory;
 pub mod notifier;
 pub mod outbox;
+pub mod ownership;
 pub mod password;
 pub mod prompts;
 pub mod retrieval;

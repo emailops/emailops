@@ -81,7 +81,10 @@ Show the user the summary's "Since …" and "Failing" sections. A test that is
 (product bug, test drift, or model/judge flake — see the `maintain-verification`
 skill) and ask the user whether to fix it first or release anyway. Tests that
 were already failing in the previous run are reported, not blocking, unless the
-user says otherwise. The summary file stays uncommitted until Phase 6.
+user says otherwise. Tests under "New, failing" did not exist in the previous run,
+so they are not regressions: report them as a feature that shipped with its own
+test red, and ask the user whether that blocks. The summary file stays
+uncommitted until Phase 6.
 
 ## Phase 2 — Version bump
 

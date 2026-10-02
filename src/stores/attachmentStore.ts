@@ -74,6 +74,7 @@ interface AttachmentStore {
     tags: string[],
   ) => Promise<AttachmentRule>;
   updateRule: (
+    accountId: string,
     ruleId: string,
     name: string,
     senderEmailPattern: string | null,
@@ -235,8 +236,9 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     return rule;
   },
 
-  updateRule: async (ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled) => {
+  updateRule: async (accountId, ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled) => {
     const rule = await api.updateAttachmentRule(
+      accountId,
       ruleId,
       name,
       senderEmailPattern,

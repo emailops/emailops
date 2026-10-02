@@ -36,11 +36,18 @@ pub async fn remove_account(state: State<'_, AppState>, account_id: String) -> R
     state.scheduler.unwatch_account(&account_id);
     // Read the Google grant before the tokens are deleted, revoke it after.
     let revocable = services::accounts::revocable_token_for_account(&state.db, &account_id);
+    let provider = state.db.get_account(&account_id)?.map(|account| account.provider);
     services::accounts::remove_account(&state.db, &account_id, &state.app_data_dir)?;
     // Drop the per-account queue/lock/abort-flag entries the sync paths created.
     state.forget_account(&account_id);
     if let Some(token) = revocable {
         services::accounts::revoke_removed_account_grant(&token).await;
+    }
+    if let Some(notice) = provider
+        .as_deref()
+        .and_then(services::accounts::manual_revocation_notice)
+    {
+        services::logger::log("warn", "account", notice);
     }
     Ok(())
 }

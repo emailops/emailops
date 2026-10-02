@@ -26,9 +26,10 @@ use tauri::Emitter;
 
 /// Endpoint to probe. Picked because it is globally anycasted, returns small
 /// responses, and is unaffected by individual provider outages (e.g. Gmail
-/// down does not imply we're offline). 1.1.1.1 also responds to plain HTTP so
-/// we don't pay a TLS handshake on every probe.
-const PROBE_URL: &str = "http://1.1.1.1/";
+/// down does not imply we're offline). HTTPS even though the probe carries no
+/// data: the app sends nothing over a plaintext protocol (CASA/DASA 1.1.1),
+/// and a successful handshake also rules out a captive portal answering for it.
+const PROBE_URL: &str = "https://1.1.1.1/";
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -119,6 +120,18 @@ fn publish(online: &AtomicBool, now_online: bool, app: &AppHandle) {
     online.store(now_online, Ordering::Relaxed);
     if let Err(e) = app.emit("app-connectivity-changed", ConnectivityEvent { online: now_online }) {
         crate::services::logger::log("error", "system", format!("connectivity: failed to emit event: {e}"));
+    }
+}
+
+#[cfg(test)]
+mod probe_url_tests {
+    use super::PROBE_URL;
+
+    #[test]
+    fn probe_goes_over_tls() {
+        // CASA/DASA 1.1.1: no application traffic may use a plaintext protocol,
+        // even a payload-free reachability check.
+        assert!(PROBE_URL.starts_with("https://"), "probe must use TLS, got {PROBE_URL}");
     }
 }
 

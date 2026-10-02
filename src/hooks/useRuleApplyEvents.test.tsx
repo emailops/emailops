@@ -70,9 +70,16 @@ describe('useRuleApplyEvents', () => {
   it('a finished scan records every attachment of the rule and refreshes the list', async () => {
     const runId = useAttachmentStore.getState().beginRuleApply('r1');
 
-    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'done', saved: 2, error: null });
+    await emit('attachment-rule-apply-finished', {
+      ruleId: 'r1',
+      accountId: 'acct-1',
+      runId,
+      status: 'done',
+      saved: 2,
+      error: null,
+    });
 
-    expect(api.countAttachmentsForRule).toHaveBeenCalledWith('r1');
+    expect(api.countAttachmentsForRule).toHaveBeenCalledWith('acct-1', 'r1');
     expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({ status: 'done', saved: 2, collected: 7 });
     expect(onApplied).toHaveBeenCalled();
   });
@@ -82,6 +89,7 @@ describe('useRuleApplyEvents', () => {
 
     await emit('attachment-rule-apply-finished', {
       ruleId: 'r1',
+      accountId: 'acct-1',
       runId,
       status: 'failed',
       saved: 0,
@@ -95,7 +103,14 @@ describe('useRuleApplyEvents', () => {
   it('a scan cancelled by a newer one is not reported as failed', async () => {
     const runId = useAttachmentStore.getState().beginRuleApply('r1');
 
-    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'cancelled', saved: 0, error: null });
+    await emit('attachment-rule-apply-finished', {
+      ruleId: 'r1',
+      accountId: 'acct-1',
+      runId,
+      status: 'cancelled',
+      saved: 0,
+      error: null,
+    });
 
     expect(useAttachmentStore.getState().ruleApplies.r1).toBeUndefined();
     expect(logs.addLog).not.toHaveBeenCalledWith('error', expect.anything(), expect.anything());
@@ -122,7 +137,14 @@ describe('useRuleApplyEvents', () => {
     vi.mocked(api.countAttachmentsForRule).mockRejectedValueOnce(new Error('db locked'));
     const runId = useAttachmentStore.getState().beginRuleApply('r1');
 
-    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'done', saved: 2, error: null });
+    await emit('attachment-rule-apply-finished', {
+      ruleId: 'r1',
+      accountId: 'acct-1',
+      runId,
+      status: 'done',
+      saved: 2,
+      error: null,
+    });
 
     expect(useAttachmentStore.getState().ruleApplies.r1).toMatchObject({ status: 'done', saved: 2 });
     expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
@@ -141,7 +163,14 @@ describe('useRuleApplyEvents', () => {
   it('a failed scan without an error payload is still reported', async () => {
     const runId = useAttachmentStore.getState().beginRuleApply('r1');
 
-    await emit('attachment-rule-apply-finished', { ruleId: 'r1', runId, status: 'failed', saved: 0, error: null });
+    await emit('attachment-rule-apply-finished', {
+      ruleId: 'r1',
+      accountId: 'acct-1',
+      runId,
+      status: 'failed',
+      saved: 0,
+      error: null,
+    });
 
     expect(useAttachmentStore.getState().ruleApplies.r1.status).toBe('failed');
     expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('unknown error'));

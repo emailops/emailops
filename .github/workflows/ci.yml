@@ -96,6 +96,12 @@ jobs:
       - name: Check
         run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
 
+      # `make cli-fast` builds the CLI without `eval`, which compiles the
+      # `cli/eval.rs` stub instead of the harness; no other step builds it, so
+      # a signature change that skipped the stub reached main (v0.6.13).
+      - name: Check (cli without eval)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --features cli --bin emailops-cli
+
   test:
     name: Tests
     runs-on: ubuntu-latest
@@ -187,6 +193,8 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -210,11 +218,14 @@ jobs:
           mkdir -p src-tauri/resources/models
           touch src-tauri/resources/models/nomic-embed-text-v1.5-q4_k_m.gguf
 
-      # `cargo check` still runs llama-cpp-sys-2's build script, so the CMake /
+      # `cargo clippy` still runs llama-cpp-sys-2's build script, so the CMake /
       # C++ compile is genuinely exercised; only the final Rust codegen and
       # link are skipped. That is the expensive part we can afford to omit.
-      - name: Check with default features (llamacpp)
-        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+      # Clippy rather than check: the lint jobs build without default
+      # features, so this is the only place the llamacpp code and the
+      # examples are linted.
+      - name: Clippy with default features (llamacpp)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
   # Validates the per-platform bundle configuration (tauri.linux.conf.json /
   # tauri.windows.conf.json) and the packaging step itself. Built WITHOUT

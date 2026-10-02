@@ -16,13 +16,19 @@ const LEAD_TIME_OPTIONS = [1, 5, 10, 15, 30, 60] as const;
 
 const DEFAULT_LEAD_MINUTES = 10;
 
+/** Show the meeting title in the OS notification. Off by default: OS
+ *  notifications reach the lock screen, outside the app's main-password lock.
+ *  Mirrors `SHOW_TITLE_PREF` in `services/calendar/notify.rs`. */
+const SHOW_TITLE_PREF = 'calendar_notification_show_title';
+
 /**
  * Calendar settings panel: per-account calendar-integration toggles (the
  * master switch for all calendar features — sidebar view, invite cards, chat
  * tool, sync and meeting notifications), plus the meeting-notification enable
  * toggle and lead-time selector. Everything is stored via the backend prefs
  * commands (`calendar.enabled:<account_id>`, `calendar_notifications_enabled`,
- * `calendar_notify_minutes` — the backend validates the values).
+ * `calendar_notification_show_title`, `calendar_notify_minutes` — the backend
+ * validates the values).
  */
 export function CalendarSettings() {
   const { t } = useTranslation(['common', 'settings', 'calendar']);
@@ -33,6 +39,7 @@ export function CalendarSettings() {
   const setIntegrationEnabled = useCalendarIntegrationStore((s) => s.setEnabled);
   const capableAccounts = calendarCapableAccounts(accounts);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [showTitle, setShowTitle] = useState(false);
   const [leadMinutes, setLeadMinutes] = useState<number>(DEFAULT_LEAD_MINUTES);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,12 +111,14 @@ export function CalendarSettings() {
     let cancelled = false;
     void (async () => {
       try {
-        const [enabledRaw, minutesRaw] = await Promise.all([
+        const [enabledRaw, minutesRaw, showTitleRaw] = await Promise.all([
           api.getPref('calendar_notifications_enabled'),
           api.getPref('calendar_notify_minutes'),
+          api.getPref(SHOW_TITLE_PREF),
         ]);
         if (cancelled) return;
         setNotificationsEnabled(enabledRaw !== 'false'); // default: on
+        setShowTitle(showTitleRaw === 'true'); // default: off
         const parsed = minutesRaw != null ? Number.parseInt(minutesRaw, 10) : Number.NaN;
         setLeadMinutes(Number.isFinite(parsed) && parsed >= 1 && parsed <= 120 ? parsed : DEFAULT_LEAD_MINUTES);
         setIsLoaded(true);
@@ -162,6 +171,17 @@ export function CalendarSettings() {
     api.setPref('calendar_notifications_enabled', next ? 'true' : 'false').catch((e) => {
       // Revert the optimistic flip and surface the failure.
       setNotificationsEnabled(previous);
+      setError(errorText(e));
+      addLog('error', 'system', `Failed to save calendar notification pref: ${errorText(e)}`);
+    });
+  };
+
+  const persistShowTitle = (next: boolean) => {
+    const previous = showTitle;
+    setShowTitle(next);
+    setError(null);
+    api.setPref(SHOW_TITLE_PREF, next ? 'true' : 'false').catch((e) => {
+      setShowTitle(previous);
       setError(errorText(e));
       addLog('error', 'system', `Failed to save calendar notification pref: ${errorText(e)}`);
     });
@@ -323,6 +343,32 @@ export function CalendarSettings() {
             <span
               className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
                 notificationsEnabled ? 'translate-x-5' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-gray-100">{t('settings:calendar.showTitleLabel')}</span>
+            <p className="text-xs text-gray-400 mt-1">{t('settings:calendar.showTitleDesc')}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showTitle}
+            aria-label={t('settings:calendar.showTitleLabel')}
+            disabled={!isLoaded || !notificationsEnabled}
+            onClick={() => persistShowTitle(!showTitle)}
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 disabled:opacity-50 ${
+              showTitle ? 'bg-primary-600' : 'bg-neutral-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                showTitle ? 'translate-x-5' : 'translate-x-1'
               }`}
             />
           </button>

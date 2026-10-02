@@ -461,7 +461,7 @@ export function EmailActionsMenu({
                     setMenuOpen(false);
                     onStatus('Downloading...');
                     try {
-                      const updated = await api.redownloadEmail(email.id);
+                      const updated = await api.redownloadEmail(email.accountId, email.id);
                       updateEmail(updated);
                       onStatus('Downloaded');
                     } catch {
