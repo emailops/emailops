@@ -504,6 +504,8 @@
     "accountToggleAria": "Kalender-Integration für {{email}} umschalten",
     "notificationsLabel": "Meeting-Benachrichtigungen",
     "notificationsDesc": "Werde vor einem anstehenden Meeting benachrichtigt, mit direktem Teilnahme-Link.",
+    "showTitleLabel": "Meeting-Titel in Benachrichtigungen anzeigen",
+    "showTitleDesc": "Standardmäßig aus: Benachrichtigungen können auf dem Sperrbildschirm und in der Mitteilungszentrale erscheinen, außerhalb der App-Sperre. Die Erinnerung in EmailOps zeigt immer das vollständige Meeting.",
     "leadTimeLabel": "Vorlaufzeit der Benachrichtigung",
     "leadTimeDesc": "Wie lange vor Beginn des Meetings die Benachrichtigung erscheint.",
     "minutesOption": "{{n}} Minuten",

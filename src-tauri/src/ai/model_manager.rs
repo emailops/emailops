@@ -150,7 +150,7 @@ pub fn seed_bundled_model(src: &Path, app_data_dir: &Path, kind: ModelKind, id: 
 pub fn delete_local_model(app_data_dir: &Path, kind: ModelKind, id: &str) -> Result<()> {
     let path = model_path(app_data_dir, kind, id);
     if !path.exists() {
-        return Err(AppError::NotFound(format!("Model file not found: {}", path.display())));
+        return Err(AppError::NotFound(format!("model {id} is not downloaded")));
     }
     std::fs::remove_file(&path).map_err(|e| AppError::IoError(format!("Failed to delete model '{}': {}", id, e)))
 }
@@ -958,6 +958,16 @@ mod tests {
             assert!(listed, "a hard link outlives the removal of its target");
             assert_eq!(std::fs::read(&link_path).unwrap(), b"content");
         }
+    }
+
+    #[test]
+    fn deleting_a_missing_model_names_the_model_not_its_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let err = delete_local_model(tmp.path(), ModelKind::Chat, "absent-model").expect_err("missing model");
+        let text = err.to_string();
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+        assert!(text.contains("absent-model"), "{text}");
+        assert!(!text.contains(&tmp.path().display().to_string()), "path leaked: {text}");
     }
 
     // ── delete_local_model on a linked entry ─────────────────────────────────

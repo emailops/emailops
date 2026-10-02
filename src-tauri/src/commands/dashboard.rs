@@ -57,10 +57,10 @@ pub async fn refresh_server_total(
             // we don't need to pre-refresh through services::emails::build_provider.
             // We construct it directly because `get_messages_total` is a
             // Gmail-only method that isn't exposed on the EmailProvider trait.
-            let tokens = crate::services::accounts::get_tokens(&account.id)?;
+            let mut tokens = crate::services::accounts::get_tokens(&account.id)?;
             let client = crate::sync::gmail::GmailClient::new(
-                tokens.access_token,
-                tokens.refresh_token,
+                std::mem::take(&mut tokens.access_token),
+                tokens.refresh_token.take(),
                 Some(app.clone()),
                 Some(account.id.clone()),
             );

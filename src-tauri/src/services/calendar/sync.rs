@@ -183,16 +183,16 @@ pub fn build_calendar_provider(account_id: &str, provider_name: &str) -> Result<
             "Provider {provider_name} has no calendar support"
         )));
     }
-    let tokens = crate::services::accounts::get_tokens(account_id)?;
+    let mut tokens = crate::services::accounts::get_tokens(account_id)?;
     match provider_name {
         "gmail" => Ok(Box::new(crate::sync::gmail_calendar::GoogleCalendarClient::new(
-            tokens.access_token,
-            tokens.refresh_token,
+            std::mem::take(&mut tokens.access_token),
+            tokens.refresh_token.take(),
             Some(account_id.to_string()),
         ))),
         _ => Ok(Box::new(crate::sync::outlook_calendar::OutlookCalendarClient::new(
-            tokens.access_token,
-            tokens.refresh_token,
+            std::mem::take(&mut tokens.access_token),
+            tokens.refresh_token.take(),
             Some(account_id.to_string()),
         ))),
     }

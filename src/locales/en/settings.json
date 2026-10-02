@@ -504,6 +504,8 @@
     "accountToggleAria": "Toggle calendar integration for {{email}}",
     "notificationsLabel": "Meeting notifications",
     "notificationsDesc": "Get notified before an upcoming meeting, with a direct join link.",
+    "showTitleLabel": "Show the meeting title in notifications",
+    "showTitleDesc": "Off by default: notifications can appear on the lock screen and in Notification Center, outside the app's lock. The reminder inside EmailOps always shows the full meeting.",
     "leadTimeLabel": "Notification lead time",
     "leadTimeDesc": "How long before the meeting starts the notification fires.",
     "minutesOption": "{{n}} minutes",

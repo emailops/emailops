@@ -125,6 +125,71 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
     ComposePlan { save_req, attachments }
 }
 
+#[cfg(test)]
+mod ipc_attachment_guard_tests {
+    use super::*;
+
+    fn input(path: &str) -> DraftAttachmentInput {
+        DraftAttachmentInput {
+            file_path: path.to_string(),
+            filename: None,
+            mime_type: None,
+        }
+    }
+
+    fn stored(path: &str) -> DraftAttachment {
+        DraftAttachment {
+            id: "att-1".to_string(),
+            draft_id: "draft-1".to_string(),
+            file_path: path.to_string(),
+            filename: "report.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+        }
+    }
+
+    #[test]
+    fn accepts_paths_the_draft_already_has() {
+        let existing = [stored("/home/user/report.pdf")];
+        assert!(check_webview_draft_attachments(&[input("/home/user/report.pdf")], &existing).is_ok());
+    }
+
+    #[test]
+    fn accepts_an_empty_list_which_clears_the_attachments() {
+        assert!(check_webview_draft_attachments(&[], &[stored("/home/user/report.pdf")]).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_path_the_draft_does_not_have() {
+        let existing = [stored("/home/user/report.pdf")];
+        let err = check_webview_draft_attachments(&[input("/home/user/.ssh/id_ed25519")], &existing)
+            .expect_err("a new path from the webview must be refused");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn rejects_any_path_on_a_new_draft() {
+        assert!(check_webview_draft_attachments(&[input("/etc/hosts")], &[]).is_err());
+    }
+}
+
+/// Guard for draft saves that come from the webview (the `save_draft` IPC
+/// command). The GUI composer sends new attachments as inline bytes, never as
+/// paths; file-path attachments are added only by the CLI. So the webview may
+/// only re-submit — or drop — the paths the draft already has. Without this,
+/// script running in the webview could name any local file and have it read
+/// and uploaded to the provider as an attachment (CASA/DASA 1.4.3).
+pub fn check_webview_draft_attachments(requested: &[DraftAttachmentInput], existing: &[DraftAttachment]) -> Result<()> {
+    match requested
+        .iter()
+        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path))
+    {
+        Some(_) => Err(AppError::InvalidInput(
+            "draft attachments can only keep files the draft already has".to_string(),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Read a resolved attachment's bytes and base64-encode them for the provider
 /// send/draft payloads.
 fn load_attachment(att: &DraftAttachment) -> Result<EmailAttachment> {

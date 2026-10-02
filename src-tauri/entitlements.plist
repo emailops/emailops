@@ -3,14 +3,15 @@
 <plist version="1.0">
 <dict>
     <!--
-        Hardened Runtime entitlements for the notarized Developer ID build.
-        Required by llama-cpp-2's runtime (executable JIT pages, unsigned exec
-        memory). NOT for the Mac App Store sandbox build — see
-        entitlements.mas.plist (Phase 3) when that ships.
+        Hardened Runtime entitlements for the notarized Developer ID build:
+        deliberately none. The embedded llama.cpp runtime (Metal + Accelerate)
+        maps no JIT or writable-executable pages in our process — Metal shader
+        compilation happens in the GPU driver's process — so
+        `cs.allow-jit` and `cs.allow-unsigned-executable-memory` are not
+        needed. Verified 2026-10-01 on a release build (llama-cpp-sys-2
+        0.1.158): a binary signed with `--options runtime` and no entitlements
+        completed an embedded-model chat turn. `make verify-mac` fails if a
+        Hardened Runtime exception entitlement comes back (CASA/DASA 3.3.2).
     -->
-    <key>com.apple.security.cs.allow-jit</key>
-    <true/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
 </dict>
 </plist>

@@ -403,14 +403,14 @@ impl GmailClient {
             ));
         };
         let config = crate::sync::oauth::OAuthConfig::for_provider("gmail");
-        let new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
+        let mut new_tokens = crate::sync::oauth::refresh_oauth_token(&config, refresh_token).await?;
         crate::services::accounts::store_tokens(account_id, &new_tokens)?;
         // Recover from a poisoned mutex — the protected value is a single
         // String, so a previous panic can't have left it in an invalid state.
         *self
             .access_token
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_tokens.access_token;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = std::mem::take(&mut new_tokens.access_token);
         Ok(())
     }
 

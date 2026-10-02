@@ -85,9 +85,11 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
                 "calendar_notify_minutes must be between {NOTIFY_MIN} and {NOTIFY_MAX}, got: {parsed}"
             )));
         }
-    } else if key == "calendar_notifications_enabled" && !matches!(value, "true" | "false") {
+    } else if (key == "calendar_notifications_enabled" || key == crate::services::calendar::notify::SHOW_TITLE_PREF)
+        && !matches!(value, "true" | "false")
+    {
         return Err(AppError::InvalidInput(format!(
-            "calendar_notifications_enabled must be true or false, got: {value}"
+            "{key} must be true or false, got: {value}"
         )));
     } else if key.starts_with("calendar.enabled:") && !matches!(value, "true" | "false") {
         // Per-account calendar-integration opt-in (calendar.enabled:<account_id>).
@@ -254,6 +256,14 @@ mod tests {
                 "should reject {v} as InvalidInput"
             );
         }
+    }
+
+    #[test]
+    fn validate_pref_calendar_notification_show_title_must_be_boolean() {
+        let key = crate::services::calendar::notify::SHOW_TITLE_PREF;
+        assert!(validate_pref(key, "true").is_ok());
+        assert!(validate_pref(key, "false").is_ok());
+        assert!(matches!(validate_pref(key, "maybe"), Err(AppError::InvalidInput(_))));
     }
 
     #[test]
