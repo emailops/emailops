@@ -473,15 +473,16 @@ export async function queueOutgoingEmail(
   return invoke('queue_outgoing_email', { message, schedule, draftId });
 }
 
-/** Take a waiting or failed message back (undo / edit / delete). Fails with
- *  code `outbox_not_pending` once it is being sent. */
-export async function cancelOutboxMessage(id: string): Promise<OutgoingMessage> {
-  return invoke('cancel_outbox_message', { id });
+/** Take a waiting or failed message of `accountId` back (undo / edit /
+ *  delete). Fails with code `outbox_not_pending` once it is being sent, and
+ *  `not_found` for a message of another account. */
+export async function cancelOutboxMessage(accountId: string, id: string): Promise<OutgoingMessage> {
+  return invoke('cancel_outbox_message', { accountId, id });
 }
 
-/** Send a waiting message now, or retry a failed one. */
-export async function sendOutboxMessageNow(id: string): Promise<void> {
-  return invoke('send_outbox_message_now', { id });
+/** Send a waiting message of `accountId` now, or retry a failed one. */
+export async function sendOutboxMessageNow(accountId: string, id: string): Promise<void> {
+  return invoke('send_outbox_message_now', { accountId, id });
 }
 
 /** Waiting and failed messages of one account, or every enabled one (`null`). */

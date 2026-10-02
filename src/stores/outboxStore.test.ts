@@ -93,7 +93,7 @@ describe('send', () => {
     await useOutboxStore.getState().send(message, { sendDirect: vi.fn() });
     lastToast().onAction?.();
     await vi.waitFor(() => expect(restore).toHaveBeenCalledWith(message));
-    expect(api.cancelOutboxMessage).toHaveBeenCalledWith('o1');
+    expect(api.cancelOutboxMessage).toHaveBeenCalledWith('acc', 'o1');
   });
 
   it('a late Undo (already sending) says so and reopens nothing', async () => {
@@ -127,7 +127,7 @@ describe('Scheduled view actions', () => {
     const restore = vi.fn();
     useOutboxStore.getState().setRestoreHandler(restore);
     useOutboxStore.setState({ entries: [entry('a'), entry('b')] });
-    await useOutboxStore.getState().remove('a');
+    await useOutboxStore.getState().remove(entry('a'));
     expect(useOutboxStore.getState().entries.map((e) => e.id)).toEqual(['b']);
     lastToast().onAction?.();
     expect(restore).toHaveBeenCalledWith(message);
@@ -137,14 +137,14 @@ describe('Scheduled view actions', () => {
     const restore = vi.fn();
     useOutboxStore.getState().setRestoreHandler(restore);
     useOutboxStore.setState({ entries: [entry('a')] });
-    await useOutboxStore.getState().edit('a');
+    await useOutboxStore.getState().edit(entry('a'));
     expect(restore).toHaveBeenCalledWith(message);
     expect(useOutboxStore.getState().entries).toEqual([]);
   });
 
-  it('send now asks the backend and refreshes', async () => {
-    await useOutboxStore.getState().sendNow('a');
-    expect(api.sendOutboxMessageNow).toHaveBeenCalledWith('a');
+  it('send now asks the backend for the row’s own account and refreshes', async () => {
+    await useOutboxStore.getState().sendNow(entry('a', { accountId: 'acc-2' }));
+    expect(api.sendOutboxMessageNow).toHaveBeenCalledWith('acc-2', 'a');
     expect(api.listOutbox).toHaveBeenCalled();
   });
 });

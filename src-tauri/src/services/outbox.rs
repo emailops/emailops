@@ -124,7 +124,7 @@ pub fn plan_send_at(now: i64, schedule: OutboxSchedule) -> Result<(i64, OutboxOr
 /// Check and complete a message before it is stored: the body is sanitized
 /// and its inline images normalized exactly as an immediate send would; a new
 /// message needs recipients and a single-line subject; a reply needs its
-/// parent, whose subject it takes when it has none of its own.
+/// parent in the same account, whose subject it takes when it has none of its own.
 fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<OutgoingMessage> {
     let body = crate::services::emails::outgoing_body(
         std::mem::take(&mut message.body),
@@ -144,9 +144,7 @@ fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<Outgoi
         return Err(AppError::NotFound(format!("Account {} not found", message.account_id)));
     }
     if let Some(parent_id) = message.reply_to_email_id.as_deref() {
-        let parent = db
-            .get_email(parent_id)?
-            .ok_or_else(|| AppError::NotFound(format!("Email {parent_id} not found")))?;
+        let parent = crate::services::ownership::email_in_account(db, &message.account_id, parent_id)?;
         if message.subject.trim().is_empty() {
             message.subject = crate::sync::mime_builder::reply_subject(&parent.subject);
         }
@@ -236,32 +234,30 @@ async fn delete_queued_draft(db: &Arc<Database>, draft: &crate::models::Draft, p
     }
 }
 
-/// Take a message back out of the outbox (undo, edit, delete) and return it so
-/// the composer can reopen with it. Refused with `OutboxNotPending` once the
-/// dispatcher has started sending it.
-pub fn cancel_outbox_message(db: &Database, id: &str, now: i64) -> Result<OutgoingMessage> {
+/// Take a message of `account_id` back out of the outbox (undo, edit, delete)
+/// and return it so the composer can reopen with it. Refused with
+/// `OutboxNotPending` once the dispatcher has started sending it, and with
+/// `NotFound` for an id that is not a message of that account.
+pub fn cancel_outbox_message(db: &Database, account_id: &str, id: &str, now: i64) -> Result<OutgoingMessage> {
+    crate::services::ownership::outbox_in_account(db, account_id, id)?;
     match db.cancel_outbox(id, now)? {
         Some(payload) => {
             logger::log("info", "sync", "Queued message cancelled");
             Ok(serde_json::from_str(&payload)?)
         }
-        None => match db.get_outbox_entry(id)? {
-            Some(_) => Err(AppError::OutboxNotPending),
-            None => Err(AppError::NotFound(format!("Outbox message {id} not found"))),
-        },
+        None => Err(AppError::OutboxNotPending),
     }
 }
 
-/// Send a waiting or failed message now (also how a failed one is retried).
-pub fn send_outbox_message_now(db: &Database, id: &str, now: i64) -> Result<()> {
+/// Send a waiting or failed message of `account_id` now (also how a failed one
+/// is retried).
+pub fn send_outbox_message_now(db: &Database, account_id: &str, id: &str, now: i64) -> Result<()> {
+    crate::services::ownership::outbox_in_account(db, account_id, id)?;
     if db.reschedule_outbox_now(id, now)? {
         wake_dispatcher_at(now, now);
         return Ok(());
     }
-    match db.get_outbox_entry(id)? {
-        Some(_) => Err(AppError::OutboxNotPending),
-        None => Err(AppError::NotFound(format!("Outbox message {id} not found"))),
-    }
+    Err(AppError::OutboxNotPending)
 }
 
 /// Waiting and failed messages of one account, or of every enabled account.
@@ -633,7 +629,7 @@ mod tests {
         assert_eq!(entry.send_at, NOW + 10);
         assert_eq!(entry.origin, OutboxOrigin::Undo);
         assert_eq!(entry.status, OutboxStatus::Scheduled);
-        let restored = cancel_outbox_message(&db, &entry.id, NOW).unwrap();
+        let restored = cancel_outbox_message(&db, "acc-1", &entry.id, NOW).unwrap();
         let html = restored.body_html.unwrap();
         assert!(!html.contains("script"), "{html}");
         assert_eq!(restored.attachments, new_message().attachments);
@@ -734,7 +730,7 @@ mod tests {
         assert_eq!(entry.attachment_count, 2);
         // The bytes travel with the queued message: the file can go away.
         drop(dir);
-        let restored = cancel_outbox_message(&db, &entry.id, NOW).unwrap();
+        let restored = cancel_outbox_message(&db, "acc-1", &entry.id, NOW).unwrap();
         assert_eq!(restored.attachments[1].filename, "agenda.txt");
         assert_eq!(restored.attachments[1].data, "YWdlbmRh");
     }
@@ -775,6 +771,54 @@ mod tests {
             db.get_draft(&draft.id).unwrap().is_some(),
             "the other account's draft stays"
         );
+        assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
+    }
+
+    // An outbox row is a per-account record: a command acting for one account
+    // must not cancel or send another account's queued message by its id.
+    #[tokio::test]
+    async fn another_accounts_outbox_message_is_refused_and_stays_scheduled() {
+        let (db, _fake) = setup();
+        db.seed_test_account("acc-2");
+        let entry = queue(&db, new_message(), OutboxSchedule::At { send_at: NOW + 600 }).await;
+
+        assert!(matches!(
+            cancel_outbox_message(&db, "acc-2", &entry.id, NOW),
+            Err(AppError::NotFound(_))
+        ));
+        assert!(matches!(
+            send_outbox_message_now(&db, "acc-2", &entry.id, NOW),
+            Err(AppError::NotFound(_))
+        ));
+        let row = db.get_outbox_entry(&entry.id).unwrap().unwrap();
+        assert_eq!(row.status, OutboxStatus::Scheduled);
+        assert_eq!(row.send_at, NOW + 600, "not rescheduled");
+        assert!(matches!(
+            send_outbox_message_now(&db, "acc-1", "missing", NOW),
+            Err(AppError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_owning_account_can_send_its_message_now() {
+        let (db, _fake) = setup();
+        let entry = queue(&db, new_message(), OutboxSchedule::At { send_at: NOW + 600 }).await;
+        send_outbox_message_now(&db, "acc-1", &entry.id, NOW).unwrap();
+        assert_eq!(db.get_outbox_entry(&entry.id).unwrap().unwrap().send_at, NOW);
+    }
+
+    // A reply is sent through its parent's thread: the parent must be a
+    // message of the account the reply goes out from.
+    #[tokio::test]
+    async fn a_reply_to_another_accounts_message_is_refused() {
+        let (db, _fake) = setup();
+        db.seed_test_account("acc-2");
+        let reply = OutgoingMessage {
+            account_id: "acc-2".into(),
+            ..reply_message()
+        };
+        let result = queue_outgoing(&db, reply, OutboxSchedule::At { send_at: NOW + 60 }, None, None, NOW).await;
+        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
         assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
     }
 
@@ -858,7 +902,7 @@ mod tests {
         assert!(fake.sent().is_empty(), "a failure is never retried on its own");
 
         // Retry is the user's call.
-        send_outbox_message_now(&db, &entry.id, NOW + 700).unwrap();
+        send_outbox_message_now(&db, "acc-1", &entry.id, NOW + 700).unwrap();
         let retry = dispatch_due_outbox(&db, NOW + 700, &providers).await.unwrap();
         assert_eq!(retry.sent.len(), 1);
         assert_eq!(db.get_outbox_entry(&entry.id).unwrap().unwrap().attempts, 2);
@@ -879,7 +923,9 @@ mod tests {
         let providers = FakeProviders(Arc::clone(&fake));
         let undone = queue(&db, new_message(), OutboxSchedule::Undo { delay_secs: 10 }).await;
         assert_eq!(
-            cancel_outbox_message(&db, &undone.id, NOW + 9).unwrap().subject,
+            cancel_outbox_message(&db, "acc-1", &undone.id, NOW + 9)
+                .unwrap()
+                .subject,
             "Lunch"
         );
         assert!(dispatch_due_outbox(&db, NOW + 10, &providers).await.unwrap().is_empty());
@@ -888,11 +934,11 @@ mod tests {
         let late = queue(&db, new_message(), OutboxSchedule::Undo { delay_secs: 10 }).await;
         db.claim_outbox(&late.id, NOW + 10).unwrap();
         assert!(matches!(
-            cancel_outbox_message(&db, &late.id, NOW + 10),
+            cancel_outbox_message(&db, "acc-1", &late.id, NOW + 10),
             Err(AppError::OutboxNotPending)
         ));
         assert!(matches!(
-            cancel_outbox_message(&db, "missing", NOW),
+            cancel_outbox_message(&db, "acc-1", "missing", NOW),
             Err(AppError::NotFound(_))
         ));
     }

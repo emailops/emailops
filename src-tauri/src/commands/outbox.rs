@@ -27,9 +27,11 @@ pub async fn queue_outgoing_email(
         // The provider is only needed to remove the draft's provider copy;
         // without one (offline) the local draft still goes.
         let draft_account = match draft_id.as_deref() {
+            // A draft of another account is refused by the service; its
+            // provider is never built (that would refresh its login).
             Some(id) => match db.get_draft(id)? {
-                Some(draft) => db.get_account(&draft.account_id)?,
-                None => None,
+                Some(draft) if draft.account_id == message.account_id => db.get_account(&draft.account_id)?,
+                _ => None,
             },
             None => None,
         };
@@ -62,18 +64,27 @@ pub async fn queue_outgoing_email(
     .await
 }
 
-/// Take a waiting or failed message out of the outbox (undo, edit, delete) and
-/// return it so the composer can reopen with it. Fails with
-/// `outbox_not_pending` once it is being sent.
+/// Take a waiting or failed message of `account_id` out of the outbox (undo,
+/// edit, delete) and return it so the composer can reopen with it. Fails with
+/// `outbox_not_pending` once it is being sent, and `not_found` for a message
+/// of another account.
 #[tauri::command]
-pub async fn cancel_outbox_message(state: State<'_, AppState>, id: String) -> Result<OutgoingMessage, AppError> {
-    outbox::cancel_outbox_message(&state.db, &id, clock::now_secs())
+pub async fn cancel_outbox_message(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+) -> Result<OutgoingMessage, AppError> {
+    outbox::cancel_outbox_message(&state.db, &account_id, &id, clock::now_secs())
 }
 
-/// Send a waiting message now, or retry a failed one.
+/// Send a waiting message of `account_id` now, or retry a failed one.
 #[tauri::command]
-pub async fn send_outbox_message_now(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    outbox::send_outbox_message_now(&state.db, &id, clock::now_secs())
+pub async fn send_outbox_message_now(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: String,
+) -> Result<(), AppError> {
+    outbox::send_outbox_message_now(&state.db, &account_id, &id, clock::now_secs())
 }
 
 /// Waiting and failed messages of one account, or of every enabled account.

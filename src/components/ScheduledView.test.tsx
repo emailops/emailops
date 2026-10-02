@@ -80,7 +80,7 @@ describe('ScheduledView', () => {
     const retry = container.querySelector<HTMLButtonElement>('[data-testid="scheduled-send-now"]');
     expect(retry?.textContent).toBe('Retry');
     await act(async () => retry?.click());
-    expect(api.sendOutboxMessageNow).toHaveBeenCalledWith('f');
+    expect(api.sendOutboxMessageNow).toHaveBeenCalledWith('acc', 'f');
   });
 
   it('Edit hands the message back to a composer', async () => {
@@ -98,6 +98,7 @@ describe('ScheduledView', () => {
     vi.mocked(api.cancelOutboxMessage).mockResolvedValue(message);
     await render([entry('a')]);
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="scheduled-edit"]')?.click());
+    expect(api.cancelOutboxMessage).toHaveBeenCalledWith('acc', 'a');
     expect(restore).toHaveBeenCalledWith(message);
     expect(rows()).toHaveLength(0);
   });

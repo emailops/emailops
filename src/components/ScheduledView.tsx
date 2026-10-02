@@ -119,7 +119,7 @@ function ScheduledRow({ entry, accountLabel }: { entry: OutboxEntry; accountLabe
           type="button"
           data-testid="scheduled-send-now"
           disabled={sending}
-          onClick={() => void sendNow(entry.id)}
+          onClick={() => void sendNow(entry)}
           className={buttonClass}
         >
           {failed ? t('compose:scheduled.retry') : t('compose:scheduled.sendNow')}
@@ -128,7 +128,7 @@ function ScheduledRow({ entry, accountLabel }: { entry: OutboxEntry; accountLabe
           type="button"
           data-testid="scheduled-edit"
           disabled={sending}
-          onClick={() => void edit(entry.id)}
+          onClick={() => void edit(entry)}
           className={buttonClass}
         >
           {t('compose:scheduled.edit')}
@@ -137,7 +137,7 @@ function ScheduledRow({ entry, accountLabel }: { entry: OutboxEntry; accountLabe
           type="button"
           data-testid="scheduled-delete"
           disabled={sending}
-          onClick={() => void remove(entry.id)}
+          onClick={() => void remove(entry)}
           className={`${buttonClass} hover:text-red-600`}
         >
           {t('compose:scheduled.delete')}

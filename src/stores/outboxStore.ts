@@ -24,6 +24,9 @@ import { useToastStore } from '@/stores/toastStore';
 
 type RestoreHandler = (message: OutgoingMessage) => void;
 
+/** An outbox row as the backend names it: the account it belongs to and its id. */
+type OutboxRef = Pick<OutboxEntry, 'id' | 'accountId'>;
+
 interface OutboxStore {
   /** Waiting and failed rows of `scope` (the Scheduled view). */
   entries: OutboxEntry[];
@@ -44,11 +47,11 @@ interface OutboxStore {
   /** Schedule a message for `at`. Throws when it cannot be queued. */
   schedule: (message: OutgoingMessage, at: Date, draftId?: string) => Promise<OutboxEntry>;
   /** Scheduled view: cancel and reopen the composer with the message. */
-  edit: (id: string) => Promise<void>;
+  edit: (entry: OutboxRef) => Promise<void>;
   /** Scheduled view: delete the message (its toast's Undo reopens it). */
-  remove: (id: string) => Promise<void>;
+  remove: (entry: OutboxRef) => Promise<void>;
   /** Scheduled view: send now / retry. */
-  sendNow: (id: string) => Promise<void>;
+  sendNow: (entry: OutboxRef) => Promise<void>;
   /** Apply an `outbox-updated` event from the dispatcher. */
   applyUpdate: (update: OutboxUpdated) => void;
   setRestoreHandler: (handler: RestoreHandler | null) => void;
@@ -76,9 +79,9 @@ const isNotPending = (err: unknown) => isAppErrorPayload(err) && err.code === 'o
 
 /** Take a queued message back. Returns it, or null when it is too late (the
  *  user is told) or failed (logged and shown). */
-async function takeBack(id: string): Promise<OutgoingMessage | null> {
+async function takeBack(entry: OutboxRef): Promise<OutgoingMessage | null> {
   try {
-    return await api.cancelOutboxMessage(id);
+    return await api.cancelOutboxMessage(entry.accountId, entry.id);
   } catch (err) {
     const text = isNotPending(err) ? i18n.t('compose:outbox.tooLate') : errorText(err);
     toasts().addToast({ message: text });
@@ -147,7 +150,7 @@ export const useOutboxStore = create<OutboxStore>((set, get) => ({
       durationMs: delay * 1000,
       onAction: () => {
         toasts().dismissToast(toastId);
-        void takeBack(queued.id).then((taken) => {
+        void takeBack(queued).then((taken) => {
           if (!taken) return;
           log('info', 'Send undone');
           restore(taken);
@@ -165,7 +168,7 @@ export const useOutboxStore = create<OutboxStore>((set, get) => ({
       message: i18n.t('compose:outbox.scheduledFor', { time: fmtTime(at) }),
       actionLabel: i18n.t('compose:outbox.undo'),
       onAction: () => {
-        void takeBack(queued.id).then((taken) => {
+        void takeBack(queued).then((taken) => {
           if (taken) restore(taken);
           void get().fetchEntries();
         });
@@ -175,16 +178,16 @@ export const useOutboxStore = create<OutboxStore>((set, get) => ({
     return queued;
   },
 
-  edit: async (id) => {
-    const taken = await takeBack(id);
-    set((s) => ({ entries: withoutEntry(s.entries, id) }));
+  edit: async (entry) => {
+    const taken = await takeBack(entry);
+    set((s) => ({ entries: withoutEntry(s.entries, entry.id) }));
     if (taken) restore(taken);
     else void get().fetchEntries();
   },
 
-  remove: async (id) => {
-    const taken = await takeBack(id);
-    set((s) => ({ entries: withoutEntry(s.entries, id) }));
+  remove: async (entry) => {
+    const taken = await takeBack(entry);
+    set((s) => ({ entries: withoutEntry(s.entries, entry.id) }));
     if (!taken) {
       void get().fetchEntries();
       return;
@@ -198,9 +201,9 @@ export const useOutboxStore = create<OutboxStore>((set, get) => ({
     });
   },
 
-  sendNow: async (id) => {
+  sendNow: async (entry) => {
     try {
-      await api.sendOutboxMessageNow(id);
+      await api.sendOutboxMessageNow(entry.accountId, entry.id);
       log('info', 'Sending a scheduled message now');
     } catch (err) {
       toasts().addToast({ message: isNotPending(err) ? i18n.t('compose:outbox.tooLate') : errorText(err) });

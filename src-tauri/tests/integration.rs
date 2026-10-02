@@ -6449,7 +6449,7 @@ async fn outbox_undo_send_cancels_or_sends_once_the_window_closes() {
     let taken_back = queue_outgoing(&db, message.clone(), undo, None, None, now)
         .await
         .unwrap();
-    let restored = cancel_outbox_message(&db, &taken_back.id, now + 2).unwrap();
+    let restored = cancel_outbox_message(&db, "acc-ob", &taken_back.id, now + 2).unwrap();
     assert_eq!(restored.subject, "Lunch");
 
     let left = queue_outgoing(&db, message, undo, None, None, now).await.unwrap();
