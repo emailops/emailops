@@ -321,7 +321,8 @@ def layer_evals():
     judge_model = os.environ.get("VERIFY_JUDGE_MODEL", model)
     flags = "--json --judge" + (f" --model {model}" if model else "") + (f" --judge-model {judge_model}" if judge_model else "")
     meta["evals"] = {"flags": flags, "model": model or "(preferencia ai_model de la BD demo)", "judge_model": judge_model or model or "(preferencia ai_model)"}
-    t0 = time.time(); rc, out, err = sh(f'make cli-eval ARGS="{flags}"', timeout=7200)
+    # The judged chat suite can outlast two hours on a laptop GPU; VERIFY_EVAL_TIMEOUT (seconds) raises the cap.
+    t0 = time.time(); rc, out, err = sh(f'make cli-eval ARGS="{flags}"', timeout=int(os.environ.get("VERIFY_EVAL_TIMEOUT", "7200")))
     body = out[out.find("{"):] if "{" in out else ""
     (LAYERS / "evals.raw.json").write_text(body or out + err)
     try: d = json.loads(body)
