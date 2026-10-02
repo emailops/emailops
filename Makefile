@@ -709,6 +709,13 @@ eval-draft:
 	MODEL="$(MODEL)" PROVIDER="$(PROVIDER)" ACCOUNT="$(ACCOUNT)" EVAL_DRAFT_N="$(EVAL_DRAFT_N)" JUDGE_MODEL="$(JUDGE_MODEL)" \
 	  EVAL_SNAPSHOT_DB="$(EVAL_SNAPSHOT_DB)" bash scripts/eval_draft.sh
 
+# Synthetic draft eval (src-tauri/evals/drafts/cases.yaml): how a draft ends,
+# with and without an account signature. In-memory DB, no private data.
+#   make eval-draft-cases ARGS="--repeat 3 [--case signature] [--model qwen3.5-9b-q4_k_m]"
+.PHONY: eval-draft-cases
+eval-draft-cases:
+	cd src-tauri && cargo run --features eval --example draft_case_eval -- $(ARGS)
+
 eval-all:
 	@if [ -z "$(MODEL)" ]; then \
 		echo "ERROR: MODEL is required. Example: make eval-all MODEL=qwen3.5-4b-q4_k_m"; \
