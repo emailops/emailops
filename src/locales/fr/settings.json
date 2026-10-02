@@ -607,7 +607,7 @@
     "useForNew": "Insérer dans les nouveaux messages",
     "useForReplies": "Insérer dans les réponses et transferts",
     "placementHelp": "Dans une réponse, la signature se place sous votre texte ; dans un transfert, au-dessus du message transféré.",
-    "imagesHelp": "Les images collées voyagent dans chaque message. Gardez-les légères : 512 Ko au maximum au total.",
+    "imagesHelp": "Les images voyagent dans chaque message. Les images larges sont réduites à 600 px ; chacune peut peser 200 Ko au maximum, la signature entière 512 Ko.",
     "save": "Enregistrer la signature",
     "saving": "Enregistrement…",
     "saved": "Signature enregistrée",
@@ -617,7 +617,16 @@
     "imported": "La signature Gmail est dans l’éditeur. Enregistrez-la pour l’utiliser ici.",
     "importNone": "Cette adresse n’a pas de signature dans Gmail.",
     "noAccounts": "Connectez un compte pour définir sa signature.",
-    "loadFailed": "Impossible de charger la signature. Les détails sont dans le panneau de sortie."
+    "loadFailed": "Impossible de charger la signature. Les détails sont dans le panneau de sortie.",
+    "addImage": "Ajouter une image",
+    "addImageHint": "Ajoutez un logo ou une image de votre signature manuscrite (PNG, JPEG, GIF ou WebP)",
+    "imageAdded": "Image ajoutée. Enregistrez pour la conserver.",
+    "imageErrors": {
+      "unsupportedType": "Utilisez une image PNG, JPEG, GIF ou WebP (SVG et les autres fichiers ne sont pas pris en charge).",
+      "fileTooLarge": "Ce fichier est trop volumineux (10 Mo au maximum).",
+      "tooLarge": "L’image dépasse encore 200 Ko après réduction. Utilisez une image plus petite ou plus simple.",
+      "unreadable": "Impossible de lire cette image."
+    }
   },
   "notifications": {
     "enabledLabel": "Notifications de nouveau courrier",

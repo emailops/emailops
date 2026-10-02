@@ -17,8 +17,18 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   importProviderSignature: vi.fn(),
 }));
 
+vi.mock('@/lib/signatureImage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/signatureImage')>()),
+  browserSignatureImageDeps: {
+    readDataUrl: async () => 'data:image/png;base64,iVBORw0KGgo=',
+    measure: async () => ({ width: 300, height: 80 }),
+    resize: async () => 'data:image/png;base64,iVBORw0KGgo=',
+  },
+}));
+
 import { initI18n } from '@/i18n';
 import * as api from '@/lib/api';
+import { useLogStore } from '@/stores/logStore';
 import { useSignatureStore } from '@/stores/signatureStore';
 import type { Account, AccountSignature } from '@/types';
 import { SignaturesSettings } from './SignaturesSettings';
@@ -126,5 +136,40 @@ describe('SignaturesSettings', () => {
   it('offers the Gmail import only for Gmail accounts', async () => {
     await render([imap]);
     expect(button('Import from Gmail')).toBeUndefined();
+  });
+});
+
+describe('SignaturesSettings — Add image', () => {
+  const pick = async (file: File) => {
+    const input = container.querySelector<HTMLInputElement>('[data-testid="signature-image-input"]');
+    if (!input) throw new Error('file input not rendered');
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  };
+
+  it('offers an Add image button that opens a picker limited to PNG, JPEG, GIF and WebP', async () => {
+    await render([gmail]);
+    expect(button('Add image')).toBeDefined();
+    const input = container.querySelector<HTMLInputElement>('[data-testid="signature-image-input"]');
+    expect(input?.accept).toBe('image/png,image/jpeg,image/gif,image/webp');
+  });
+
+  it('inserts an accepted image into the signature', async () => {
+    await render([gmail]);
+    await pick(new File(['x'], 'logo.png', { type: 'image/png' }));
+    expect(editor()?.value).toBe('<p>Ana</p><p><img src="data:image/png;base64,iVBORw0KGgo=" alt="logo.png"></p>');
+    expect(button('Save signature')?.disabled).toBe(false);
+  });
+
+  it('refuses an SVG with a visible, logged reason and leaves the signature alone', async () => {
+    await render([gmail]);
+    await pick(new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' }));
+    expect(container.textContent).toContain('PNG, JPEG, GIF or WebP');
+    expect(editor()?.value).toBe('<p>Ana</p>');
+    expect(useLogStore.getState().entries.some((e) => e.level === 'error' && e.message.includes('logo.svg'))).toBe(
+      true,
+    );
   });
 });

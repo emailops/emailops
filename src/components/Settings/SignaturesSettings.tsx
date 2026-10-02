@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import {
+  browserSignatureImageDeps,
+  prepareSignatureImage,
+  SIGNATURE_IMAGE_TYPES,
+  signatureImageHtml,
+} from '@/lib/signatureImage';
 import { useLogStore } from '@/stores/logStore';
 import { useSignatureStore } from '@/stores/signatureStore';
 import type { Account, AccountSignature, SignatureInput } from '@/types';
@@ -30,6 +36,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
   const [draft, setDraft] = useState<SignatureInput | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const account = accounts.find((a) => a.id === accountId);
 
@@ -88,6 +95,22 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
       setError(errorText(err));
       addLog('error', 'account', `Could not save the signature: ${errorText(err)}`);
     }
+  };
+
+  /** "Add image": validate, downscale and append the picked image. */
+  const handleImageFile = async (file: File | undefined) => {
+    if (!file || !draft) return;
+    setError(null);
+    const prepared = await prepareSignatureImage(file, browserSignatureImageDeps);
+    if (!prepared.ok) {
+      const message = t(`settings:signatures.imageErrors.${prepared.code}` as const);
+      setError(message);
+      addLog('error', 'account', `Signature image ${file.name} refused (${prepared.code}): ${message}`);
+      return;
+    }
+    update({ html: draft.html + signatureImageHtml(prepared.dataUrl, file.name) });
+    setStatus({ kind: 'notice', text: t('settings:signatures.imageAdded') });
+    addLog('info', 'account', `Signature image ${file.name} added to the editor`);
   };
 
   const handleImport = async () => {
@@ -184,6 +207,29 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
                 {t('settings:signatures.discard')}
               </button>
             )}
+            <button
+              type="button"
+              data-testid="signature-add-image"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={busy}
+              title={t('settings:signatures.addImageHint')}
+              className="px-3 py-1.5 text-sm text-gray-300 border border-gray-600 hover:text-white hover:bg-gray-700 rounded"
+            >
+              {t('settings:signatures.addImage')}
+            </button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              data-testid="signature-image-input"
+              accept={SIGNATURE_IMAGE_TYPES.join(',')}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Picking the same file again must fire `change` again.
+                e.target.value = '';
+                void handleImageFile(file);
+              }}
+            />
             {account?.provider === 'gmail' && (
               <button
                 type="button"

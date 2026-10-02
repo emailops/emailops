@@ -607,7 +607,7 @@
     "useForNew": "Insert in new messages",
     "useForReplies": "Insert in replies and forwards",
     "placementHelp": "In a reply the signature goes below your text; in a forward, above the forwarded message.",
-    "imagesHelp": "Pasted images travel inside each message. Keep them small: 512 KB at most in total.",
+    "imagesHelp": "Images travel inside each message. Wide images are scaled down to 600 px; each may be 200 KB at most, the whole signature 512 KB.",
     "save": "Save signature",
     "saving": "Saving…",
     "saved": "Signature saved",
@@ -617,7 +617,16 @@
     "imported": "Gmail's signature is in the editor. Save to use it here.",
     "importNone": "This address has no signature in Gmail.",
     "noAccounts": "Connect an account to set its signature.",
-    "loadFailed": "The signature could not be loaded. Details are in the output panel."
+    "loadFailed": "The signature could not be loaded. Details are in the output panel.",
+    "addImage": "Add image",
+    "addImageHint": "Add a logo or a picture of your handwritten signature (PNG, JPEG, GIF or WebP)",
+    "imageAdded": "Image added. Save to keep it.",
+    "imageErrors": {
+      "unsupportedType": "Use a PNG, JPEG, GIF or WebP image (SVG and other files are not supported).",
+      "fileTooLarge": "That file is too large to use (10 MB at most).",
+      "tooLarge": "That image is still over 200 KB after resizing. Use a smaller or simpler image.",
+      "unreadable": "That image could not be read."
+    }
   },
   "notifications": {
     "enabledLabel": "New mail notifications",

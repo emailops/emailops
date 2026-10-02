@@ -607,7 +607,7 @@
     "useForNew": "In neue Nachrichten einfügen",
     "useForReplies": "In Antworten und Weiterleitungen einfügen",
     "placementHelp": "In einer Antwort steht die Signatur unter Ihrem Text, in einer Weiterleitung über der weitergeleiteten Nachricht.",
-    "imagesHelp": "Eingefügte Bilder werden in jeder Nachricht mitgesendet. Halten Sie sie klein: insgesamt höchstens 512 KB.",
+    "imagesHelp": "Bilder werden in jeder Nachricht mitgesendet. Breite Bilder werden auf 600 px verkleinert; jedes darf höchstens 200 KB groß sein, die ganze Signatur 512 KB.",
     "save": "Signatur speichern",
     "saving": "Wird gespeichert…",
     "saved": "Signatur gespeichert",
@@ -617,7 +617,16 @@
     "imported": "Die Gmail-Signatur steht im Editor. Speichern Sie sie, um sie hier zu verwenden.",
     "importNone": "Diese Adresse hat in Gmail keine Signatur.",
     "noAccounts": "Verbinden Sie ein Konto, um seine Signatur festzulegen.",
-    "loadFailed": "Die Signatur konnte nicht geladen werden. Details stehen im Ausgabebereich."
+    "loadFailed": "Die Signatur konnte nicht geladen werden. Details stehen im Ausgabebereich.",
+    "addImage": "Bild hinzufügen",
+    "addImageHint": "Fügen Sie ein Logo oder ein Bild Ihrer handschriftlichen Unterschrift hinzu (PNG, JPEG, GIF oder WebP)",
+    "imageAdded": "Bild hinzugefügt. Speichern Sie, um es zu behalten.",
+    "imageErrors": {
+      "unsupportedType": "Verwenden Sie ein PNG-, JPEG-, GIF- oder WebP-Bild (SVG und andere Dateien werden nicht unterstützt).",
+      "fileTooLarge": "Diese Datei ist zu groß (höchstens 10 MB).",
+      "tooLarge": "Das Bild ist auch nach dem Verkleinern größer als 200 KB. Verwenden Sie ein kleineres oder einfacheres Bild.",
+      "unreadable": "Das Bild konnte nicht gelesen werden."
+    }
   },
   "notifications": {
     "enabledLabel": "Benachrichtigungen für neue E-Mails",

@@ -3067,3 +3067,27 @@ opened in the meantime.
 during triage. Reopening the conversation on undo while another is open — it would yank
 the user away from what they are reading. Advancing after bulk actions — there is no
 single "current" conversation to step from.
+
+## 2026-10-02 — Signature images: PNG, JPEG, GIF or WebP, ≤ 200 KB and ≤ 1200 px, checked twice
+
+**Decision:** Settings → Signatures has an "Add image" button (logo or handwritten
+signature). The frontend (`src/lib/signatureImage.ts`, a pure planner plus an executor with
+the FileReader/canvas work injected) accepts only PNG, JPEG, GIF and WebP, refuses source
+files over 10 MB, and redraws an image wider than 600 px or heavier than 200 KB at most
+600 px wide (JPEG stays JPEG; anything else becomes PNG to keep transparency); a result
+still over 200 KB is refused. Small images are inserted untouched, so a GIF keeps its
+animation. The backend re-checks every `data:` URL of a signature on save
+(`services/signatures.rs::check_signature_image`): allowed MIME type, `;base64` with the
+base64 alphabet only, decoded ≤ 200 KB, magic bytes matching the declared type, and width
+≤ 1200 px read from the image header (room for a pasted high-DPI logo, which does not go
+through the upload path). A failing image refuses the save with the reason; remote
+`https:` and `cid:` images are not embedded bytes and are not checked. The 512 KB total
+cap stays.
+**Context:** A contributor PR added signature images without validation; an SVG data URL
+can carry script and external references, and an unbounded image rides along with every
+message the account sends.
+**Rejected:** Silently stripping bad images on save — the user would not learn why their
+logo vanished. Allowing SVG and sanitizing it — another sanitizer to maintain for a
+format many mail clients refuse anyway. A Rust image crate to decode and re-encode —
+header parsing is enough to check width, and resizing belongs in the webview where the
+user picks the file.

@@ -607,7 +607,7 @@
     "useForNew": "Insertar en mensajes nuevos",
     "useForReplies": "Insertar en respuestas y reenvíos",
     "placementHelp": "En una respuesta la firma va debajo de tu texto; en un reenvío, encima del mensaje reenviado.",
-    "imagesHelp": "Las imágenes pegadas viajan dentro de cada mensaje. Que sean pequeñas: 512 KB como máximo en total.",
+    "imagesHelp": "Las imágenes viajan dentro de cada mensaje. Las anchas se reducen a 600 px; cada una puede ocupar 200 KB como máximo y la firma entera 512 KB.",
     "save": "Guardar firma",
     "saving": "Guardando…",
     "saved": "Firma guardada",
@@ -617,7 +617,16 @@
     "imported": "La firma de Gmail está en el editor. Guárdala para usarla aquí.",
     "importNone": "Esta dirección no tiene firma en Gmail.",
     "noAccounts": "Conecta una cuenta para configurar su firma.",
-    "loadFailed": "No se pudo cargar la firma. Los detalles están en el panel de salida."
+    "loadFailed": "No se pudo cargar la firma. Los detalles están en el panel de salida.",
+    "addImage": "Añadir imagen",
+    "addImageHint": "Añade un logotipo o una imagen de tu firma manuscrita (PNG, JPEG, GIF o WebP)",
+    "imageAdded": "Imagen añadida. Guarda para conservarla.",
+    "imageErrors": {
+      "unsupportedType": "Usa una imagen PNG, JPEG, GIF o WebP (SVG y otros archivos no se admiten).",
+      "fileTooLarge": "Ese archivo es demasiado grande (10 MB como máximo).",
+      "tooLarge": "La imagen sigue ocupando más de 200 KB tras reducirla. Usa una imagen más pequeña o sencilla.",
+      "unreadable": "No se ha podido leer la imagen."
+    }
   },
   "notifications": {
     "enabledLabel": "Notificaciones de correo nuevo",
