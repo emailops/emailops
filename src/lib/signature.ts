@@ -9,8 +9,9 @@
  * the text, and never insert it twice. The send sanitizer drops the data
  * attribute, so recipients get a plain `<div>`.
  *
- * No `-- ` separator is forced (as in Gmail); the user writes one into the
- * signature if they want it. In a new message or a reply the signature sits
+ * The HTML shows no `-- ` separator (as in Gmail); the text/plain part gets
+ * the standard one when the signature closes the message
+ * (`prepareOutgoingHtml`). In a new message or a reply the signature sits
  * below the text; in a forward it sits above the forwarded message.
  */
 

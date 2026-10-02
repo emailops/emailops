@@ -173,3 +173,41 @@ describe('plainTextToParagraphsHtml', () => {
     expect(plainTextToParagraphsHtml('<b> & </b>')).toBe('<p>&lt;b&gt; &amp; &lt;/b&gt;</p>');
   });
 });
+
+describe('the signature delimiter in the plain-text part', () => {
+  const sig = '<div data-emailops-signature=""><p>Ana Lopez</p><p>Example Ltd</p></div>';
+
+  it('puts "-- " (dash dash space) on its own line before a closing signature', () => {
+    const out = prepareOutgoingHtml(`<p>Hello Bea,</p><p>See you.</p><p></p>${sig}`, 'x').plainText;
+    expect(out).toBe('Hello Bea,\nSee you.\n\n-- \nAna Lopez\nExample Ltd');
+  });
+
+  it('keeps the HTML part free of it', () => {
+    const { bodyHtml } = prepareOutgoingHtml(`<p>Hi</p>${sig}`, 'x');
+    expect(bodyHtml).not.toContain('-- ');
+    expect(bodyHtml).toContain('data-emailops-signature');
+  });
+
+  it('leaves it out when the forwarded message follows the signature', () => {
+    const out = prepareOutgoingHtml(
+      `<p></p>${sig}<p>---------- Forwarded message ----------</p><p>Body</p>`,
+      'x',
+    ).plainText;
+    expect(out).not.toMatch(/^-- $/m);
+    expect(out).toContain('Ana Lopez');
+  });
+
+  it('does not double a delimiter the user typed into the signature', () => {
+    const typed = '<div data-emailops-signature=""><p>--</p><p>Ana</p></div>';
+    const out = prepareOutgoingHtml(`<p>Hi</p>${typed}`, 'x').plainText;
+    expect(out.match(/^--\s*$/gm)).toHaveLength(1);
+  });
+
+  it('adds nothing to a message without a signature', () => {
+    expect(prepareOutgoingHtml('<p>Hi</p><p>Bye</p>', 'x').plainText).toBe('Hi\nBye');
+  });
+
+  it('is not added by the generic converter used for quotes and translation', () => {
+    expect(htmlToPlainText(`<p>Hi</p>${sig}`)).not.toMatch(/^-- $/m);
+  });
+});

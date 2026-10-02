@@ -3091,3 +3091,21 @@ logo vanished. Allowing SVG and sanitizing it — another sanitizer to maintain 
 format many mail clients refuse anyway. A Rust image crate to decode and re-encode —
 header parsing is enough to check width, and resizing belongs in the webview where the
 user picks the file.
+
+## 2026-10-02 — The text/plain part marks a closing signature with "-- "
+
+**Decision:** When an outgoing message's signature block (`data-emailops-signature`)
+closes the message, the text/plain alternative carries the RFC 3676 separator line `-- `
+(dash, dash, space) before the signature text, so other clients can fold or strip it. The
+HTML part is unchanged (no visible separator). The plain text is derived in the frontend
+(`prepareOutgoingHtml` → `htmlToPlainText(html, { signatureDelimiter: true })`), where the
+marker still exists; the send sanitizer drops it later. No separator when content follows
+the block — a forward's quoted message sits below the signature, and clients would fold the
+forwarded message as signature — nor when the user typed a `--` line into the signature.
+This amends the 2026-10-01 signature entry's "no `-- ` separator is forced", which still
+holds for the HTML.
+**Context:** Contributor PR review; Thunderbird, mutt and many list archives rely on the
+separator in plain text.
+**Rejected:** Deriving the plain text in the backend — the marker is gone after
+sanitizing, and the text is already produced by the composer. A separator in the HTML too
+— Gmail and Outlook show none, and it would look like stray dashes.

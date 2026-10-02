@@ -20,6 +20,7 @@
  */
 
 import type { EmailAttachment } from '@/lib/api';
+import { SIGNATURE_ATTR } from '@/lib/signature';
 
 export interface PreparedOutgoing {
   bodyHtml: string;
@@ -67,7 +68,9 @@ export function prepareOutgoingHtml(html: string, cidPrefix?: string): PreparedO
 
   const bodyEl = doc.body;
   const bodyHtml = bodyEl ? bodyEl.innerHTML : html;
-  const plainText = htmlToPlainText(bodyHtml);
+  // The text/plain alternative marks the signature the standard way; the
+  // HTML part keeps it as it is (the send sanitizer drops the marker).
+  const plainText = htmlToPlainText(bodyHtml, { signatureDelimiter: true });
   return { bodyHtml, plainText, inlineImages };
 }
 
@@ -81,8 +84,9 @@ export function prepareOutgoingHtml(html: string, cidPrefix?: string): PreparedO
  * ~all of them in 2026) use the HTML part. The text/plain part is just
  * not-completely-broken fallback.
  */
-export function htmlToPlainText(html: string): string {
+export function htmlToPlainText(html: string, options: PlainTextOptions = {}): string {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
+  const delimitedSignature = options.signatureDelimiter && doc.body ? closingSignatureBlock(doc.body) : null;
   const lines: string[] = [];
   let current = '';
 
@@ -147,6 +151,7 @@ export function htmlToPlainText(html: string): string {
     ]);
     const isBlock = blockTags.has(tag);
     if (isBlock && current.length > 0) flush();
+    if (el === delimitedSignature) lines.push(SIGNATURE_DELIMITER);
     for (const child of Array.from(el.childNodes)) walk(child);
     if (isBlock) flush();
   };
@@ -161,6 +166,34 @@ export function htmlToPlainText(html: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export interface PlainTextOptions {
+  /** Put the standard `-- ` line before a closing signature block (send only). */
+  signatureDelimiter?: boolean;
+}
+
+/** RFC 3676 §4.3 signature separator: dash, dash, space, alone on its line.
+ *  Clients fold or strip what follows it. */
+export const SIGNATURE_DELIMITER = '-- ';
+
+/**
+ * The signature block that should get a delimiter: the composer's marked
+ * block, when nothing but whitespace follows it (in a forward the forwarded
+ * message follows, and a delimiter would make clients fold that message as
+ * signature) and the user did not type a `--` line into it already.
+ */
+function closingSignatureBlock(body: HTMLElement): Element | null {
+  const block = body.querySelector(`[${SIGNATURE_ATTR}]`);
+  if (!block) return null;
+  for (let node: Node = block; node !== body && node.parentNode; node = node.parentNode) {
+    for (let next = node.nextSibling; next; next = next.nextSibling) {
+      const hasImage = next instanceof Element && (next.tagName === 'IMG' || next.querySelector('img') !== null);
+      if ((next.textContent ?? '').trim() !== '' || hasImage) return null;
+    }
+  }
+  const firstLine = htmlToPlainText(block.innerHTML).split('\n')[0]?.trim();
+  return firstLine === '--' ? null : block;
 }
 
 function mimeTypeToExtension(mime: string): string {
