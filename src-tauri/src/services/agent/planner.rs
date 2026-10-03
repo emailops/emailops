@@ -97,11 +97,11 @@ pub fn render_event_context(event: &EventContext<'_>) -> String {
 }
 
 const MATCH_INSTRUCTIONS: &str = "You sort incoming items for an email assistant. \
-You get numbered criteria and one email or calendar event. Decide, for each criterion, \
-whether it describes the item. Judge by meaning, not by exact words. When unsure, leave \
-the criterion out.\n\
-Reply with JSON only: {\"matches\": [the keys of the criteria that describe the item]}. \
-An empty list is a valid answer.\n\n";
+You get numbered criteria and one email or calendar event. Decide each criterion on its own: \
+several can describe the same item, or none. Judge by meaning, not by exact words. When \
+unsure, answer \"no\".\n\
+Reply with JSON only: one field per criterion key, in order, each \"yes\" or \"no\". \
+Example: {\"R1\": \"no\", \"P1\": \"yes\"}\n\n";
 
 /// The match call: a fixed instruction prefix (kept decoded between calls by
 /// backends with a prefix cache) and the per-trigger suffix with the criteria
@@ -112,13 +112,20 @@ pub fn match_prompt(criteria: &[Criterion], context: &str) -> (String, String) {
     (MATCH_INSTRUCTIONS.to_string(), suffix)
 }
 
-/// `{"matches": [<keys>]}` — only keys that exist can be written.
+/// `{"R1": "yes"|"no", …}` — one explicit answer per criterion, so a small
+/// model cannot stop at the first criterion that fits.
 pub fn match_shape(criteria: &[Criterion]) -> JsonShape {
-    let keys: Vec<&str> = criteria.iter().map(|c| c.key.as_str()).collect();
-    JsonShape::object(vec![(
-        "matches",
-        JsonShape::array(JsonShape::one_of(&keys), 0, keys.len()),
-    )])
+    JsonShape::object(
+        criteria
+            .iter()
+            .map(|c| (c.key.as_str(), JsonShape::one_of(&["yes", "no"])))
+            .collect(),
+    )
+}
+
+/// Tokens the match reply needs: about ten per criterion.
+pub fn match_max_tokens(criteria: &[Criterion]) -> u32 {
+    32 + 10 * criteria.len() as u32
 }
 
 /// The outermost `{…}` of a reply that may carry prose or code fences.
@@ -128,20 +135,20 @@ fn json_object(raw: &str) -> Option<&str> {
     (end > start).then(|| &raw[start..=end])
 }
 
-#[derive(serde::Deserialize)]
-struct MatchReply {
-    #[serde(default)]
-    matches: Vec<String>,
-}
-
-/// The criteria the reply says match, each once, in criteria order. `None`
-/// when the reply is not the expected JSON.
+/// The criteria the reply answers "yes" for, in criteria order. A criterion
+/// the reply leaves out does not match. `None` when the reply is not a JSON
+/// object.
 pub fn parse_matches<'a>(raw: &str, criteria: &'a [Criterion]) -> Option<Vec<&'a Criterion>> {
-    let reply: MatchReply = serde_json::from_str(json_object(raw)?).ok()?;
+    let reply: serde_json::Map<String, serde_json::Value> = serde_json::from_str(json_object(raw)?).ok()?;
     Some(
         criteria
             .iter()
-            .filter(|c| reply.matches.iter().any(|m| m.trim() == c.key))
+            .filter(|c| {
+                reply
+                    .get(&c.key)
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("yes"))
+            })
             .collect(),
     )
 }
@@ -451,35 +458,46 @@ mod tests {
         assert_eq!(prefix_a, prefix_b, "the cached prefix must not vary");
         assert!(!prefix_a.is_empty());
         assert!(suffix_a.contains("R1: matches a"));
+        assert!(
+            prefix_a.contains("\"yes\""),
+            "the instructions ask for a yes/no per criterion"
+        );
         assert!(suffix_a.contains("P1: counts p"));
         assert!(suffix_a.contains("email one"));
     }
 
     #[test]
-    fn the_match_shape_only_lets_the_model_name_existing_keys() {
+    fn the_match_shape_asks_yes_or_no_for_every_criterion_in_order() {
         let shape = match_shape(&criteria());
+        let yes_no = || JsonShape::one_of(&["yes", "no"]);
         assert_eq!(
             shape,
-            JsonShape::object(vec![(
-                "matches",
-                JsonShape::array(JsonShape::one_of(&["R1", "R2", "P1"]), 0, 3)
-            )])
+            JsonShape::object(vec![("R1", yes_no()), ("R2", yes_no()), ("P1", yes_no())])
         );
     }
 
     #[test]
-    fn matches_are_read_once_each_in_criteria_order_ignoring_unknown_keys() {
+    fn the_criteria_answered_yes_match_in_criteria_order() {
         let c = criteria();
-        let found = parse_matches(r#"{"matches": ["P1", "R1", "P1", "R9"]}"#, &c).unwrap();
+        let found = parse_matches(r#"{"P1": "yes", "R1": "Yes", "R2": "no", "R9": "yes"}"#, &c).unwrap();
         assert_eq!(keys(&found), vec!["R1", "P1"]);
     }
 
     #[test]
     fn a_match_reply_wrapped_in_prose_or_fences_still_parses() {
         let c = criteria();
-        let found = parse_matches("Sure!\n```json\n{\"matches\": [\"R2\"]}\n```", &c).unwrap();
+        let found = parse_matches("Sure!\n```json\n{\"R1\": \"no\", \"R2\": \"yes\"}\n```", &c).unwrap();
         assert_eq!(keys(&found), vec!["R2"]);
-        assert!(parse_matches(r#"{"matches": []}"#, &c).unwrap().is_empty());
+        assert!(parse_matches(r#"{"R1": "no", "R2": "no", "P1": "no"}"#, &c)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_criterion_left_out_of_the_reply_does_not_match() {
+        let c = criteria();
+        let found = parse_matches(r#"{"R2": "yes"}"#, &c).unwrap();
+        assert_eq!(keys(&found), vec!["R2"]);
     }
 
     #[test]

@@ -274,7 +274,9 @@ async fn run_case(db: &Arc<Database>, case: &DraftCase, repeat: usize) -> EvalRe
     })
 }
 
-fn app_data_dir() -> Option<PathBuf> {
+/// Where the GGUF models are read from (`EMAILOPS_DATA_DIR`, else the app's
+/// default data dir). Read-only: no mailbox is opened.
+pub(crate) fn app_data_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("EMAILOPS_DATA_DIR") {
         if !dir.trim().is_empty() {
             return Some(PathBuf::from(dir));

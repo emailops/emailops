@@ -218,6 +218,94 @@ struct Trigger<'a> {
     context: String,
 }
 
+/// What the model decided about one email or event, before anything is
+/// stored or run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    /// The criteria (rules and panels) the model said match.
+    pub matched: Vec<Criterion>,
+    /// The match reply could not be read.
+    pub unreadable: bool,
+    /// One entry per matched rule, in criteria order.
+    pub rules: Vec<RuleDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleDecision {
+    pub rule_id: String,
+    pub rule_name: String,
+    /// `None` when the action reply could not be read.
+    pub summary: Option<String>,
+    pub actions: Vec<planner::PlannedAction>,
+}
+
+/// Ask the model which rules and panels match `context`, then what each
+/// matched rule does. No I/O besides the model; the eval harness calls this
+/// directly. A provider error is returned as is.
+pub async fn decide(
+    provider: &dyn AIProvider,
+    skills: &SkillCatalog,
+    rules: &[AgentRule],
+    panels: &[AgentPanel],
+    trigger: AgentTrigger,
+    account_id: &str,
+    context: &str,
+) -> Result<Decision> {
+    let criteria = planner::plan_criteria(rules, panels, trigger, account_id);
+    let mut decision = Decision {
+        matched: Vec::new(),
+        unreadable: false,
+        rules: Vec::new(),
+    };
+    if criteria.is_empty() {
+        return Ok(decision);
+    }
+    let (prefix, suffix) = planner::match_prompt(&criteria, context);
+    let reply = ask(
+        provider,
+        &prefix,
+        &suffix,
+        planner::match_shape(&criteria),
+        planner::match_max_tokens(&criteria),
+    )
+    .await?;
+    match planner::parse_matches(&reply, &criteria) {
+        Some(found) => decision.matched = found.into_iter().cloned().collect(),
+        None => {
+            decision.unreadable = true;
+            return Ok(decision);
+        }
+    }
+
+    let skill_names: Vec<&str> = skills.names();
+    let skill_list: Vec<(&str, &str)> = skills
+        .skills
+        .iter()
+        .map(|s| (s.name.as_str(), s.description.as_str()))
+        .collect();
+    let offered = planner::offered_kinds(trigger, !skill_names.is_empty());
+    for criterion in &decision.matched {
+        let CriterionTarget::Rule(rule_id) = &criterion.target else {
+            continue;
+        };
+        let Some(rule) = rules.iter().find(|r| &r.id == rule_id) else {
+            continue;
+        };
+        let (prefix, suffix) = planner::action_prompt(rule, context, &offered, &skill_list);
+        let reply = ask(provider, &prefix, &suffix, planner::action_shape(&offered), 700).await?;
+        let parsed = planner::parse_action_reply(&reply);
+        decision.rules.push(RuleDecision {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            summary: parsed.as_ref().map(|r| r.summary.trim().to_string()),
+            actions: parsed
+                .map(|r| planner::plan_actions(&r, rule, &offered, &skill_names))
+                .unwrap_or_default(),
+        });
+    }
+    Ok(decision)
+}
+
 /// Evaluate one trigger and store its run; run the actions that need no
 /// approval. Returns whether a rule matched. A provider error is returned
 /// before anything is stored, so the trigger is tried again next pass.
@@ -229,108 +317,91 @@ async fn evaluate(
     panels: &[AgentPanel],
     now: i64,
 ) -> Result<bool> {
-    let criteria = planner::plan_criteria(rules, panels, trigger.kind, trigger.account_id);
-    let mut run = AgentRun {
-        id: Uuid::new_v4().to_string(),
-        account_id: trigger.account_id.to_string(),
-        trigger: trigger.kind,
-        trigger_ref: trigger.trigger_ref.to_string(),
-        title: trigger.title.to_string(),
-        sender: trigger.sender.to_string(),
-        status: AgentRunStatus::NoMatch,
-        summary: String::new(),
-        error: None,
-        created_at: now,
-        actions: Vec::new(),
-    };
+    let decision = decide(
+        deps.provider,
+        deps.skills,
+        rules,
+        panels,
+        trigger.kind,
+        trigger.account_id,
+        &trigger.context,
+    )
+    .await?;
 
-    let matched: Vec<Criterion> = if criteria.is_empty() {
-        Vec::new()
-    } else {
-        let (prefix, suffix) = planner::match_prompt(&criteria, &trigger.context);
-        let reply = ask(deps.provider, &prefix, &suffix, planner::match_shape(&criteria), 128).await?;
-        match planner::parse_matches(&reply, &criteria) {
-            Some(found) => found.into_iter().cloned().collect(),
-            None => {
-                run.status = AgentRunStatus::Failed;
-                run.error = Some("The model's answer could not be read.".to_string());
-                Vec::new()
-            }
-        }
-    };
-
-    for criterion in &matched {
+    for criterion in &decision.matched {
         if let (CriterionTarget::Panel(panel_id), Some(ts)) = (&criterion.target, trigger.email_timestamp) {
             db.add_agent_panel_hit(panel_id, trigger.trigger_ref, ts)?;
         }
     }
 
-    let skill_names: Vec<&str> = deps.skills.names();
-    let skill_list: Vec<(&str, &str)> = deps
-        .skills
-        .skills
+    let id = Uuid::new_v4().to_string();
+    let actions: Vec<AgentAction> = decision
+        .rules
         .iter()
-        .map(|s| (s.name.as_str(), s.description.as_str()))
-        .collect();
-    let offered = planner::offered_kinds(trigger.kind, !skill_names.is_empty());
-    let mut summaries: Vec<(String, String)> = Vec::new();
-    for criterion in &matched {
-        let CriterionTarget::Rule(rule_id) = &criterion.target else {
-            continue;
-        };
-        let Some(rule) = rules.iter().find(|r| &r.id == rule_id) else {
-            continue;
-        };
-        let (prefix, suffix) = planner::action_prompt(rule, &trigger.context, &offered, &skill_list);
-        let reply = ask(deps.provider, &prefix, &suffix, planner::action_shape(&offered), 700).await?;
-        run.status = AgentRunStatus::Matched;
-        let Some(reply) = planner::parse_action_reply(&reply) else {
-            summaries.push((rule.name.clone(), String::new()));
-            run.error = Some(format!(
-                "The model's answer for rule '{}' could not be read.",
-                rule.name
-            ));
-            continue;
-        };
-        summaries.push((rule.name.clone(), reply.summary.trim().to_string()));
-        for planned in planner::plan_actions(&reply, rule, &offered, &skill_names) {
-            run.actions.push(AgentAction {
+        .flat_map(|r| {
+            r.actions.iter().map(|planned| AgentAction {
                 id: Uuid::new_v4().to_string(),
-                run_id: run.id.clone(),
-                rule_id: Some(rule.id.clone()),
-                rule_name: rule.name.clone(),
+                run_id: id.clone(),
+                rule_id: Some(r.rule_id.clone()),
+                rule_name: r.rule_name.clone(),
                 kind: planned.kind,
-                detail: planned.detail,
+                detail: planned.detail.clone(),
                 status: AgentActionStatus::Pending,
                 requires_approval: planned.requires_approval,
                 result: None,
                 error: None,
                 created_at: now,
                 decided_at: None,
-                run_title: run.title.clone(),
-            });
-        }
-    }
-    run.summary = match summaries.as_slice() {
-        [(_, only)] => only.clone(),
+                run_title: trigger.title.to_string(),
+            })
+        })
+        .collect();
+    let unreadable_rule = decision.rules.iter().find(|r| r.summary.is_none());
+    let (status, error) = if decision.unreadable {
+        (
+            AgentRunStatus::Failed,
+            Some("The model's answer could not be read.".to_string()),
+        )
+    } else if decision.rules.is_empty() {
+        (AgentRunStatus::NoMatch, None)
+    } else {
+        (
+            AgentRunStatus::Matched,
+            unreadable_rule.map(|r| format!("The model's answer for rule '{}' could not be read.", r.rule_name)),
+        )
+    };
+    let summary = match decision.rules.as_slice() {
+        [only] => only.summary.clone().unwrap_or_default(),
         many => many
             .iter()
-            .map(|(name, summary)| format!("{name}: {summary}"))
+            .map(|r| format!("{}: {}", r.rule_name, r.summary.as_deref().unwrap_or_default()))
             .collect::<Vec<_>>()
             .join("\n\n"),
+    };
+    let run = AgentRun {
+        id,
+        account_id: trigger.account_id.to_string(),
+        trigger: trigger.kind,
+        trigger_ref: trigger.trigger_ref.to_string(),
+        title: trigger.title.to_string(),
+        sender: trigger.sender.to_string(),
+        status,
+        summary,
+        error,
+        created_at: now,
+        actions,
     };
 
     if !db.insert_agent_run(&run)? {
         return Ok(false);
     }
-    let matched_rule = run.status == AgentRunStatus::Matched;
     for action in run.actions.iter().filter(|a| !a.requires_approval) {
         run_action(db, deps, &action.id, now).await?;
     }
     if run.status != AgentRunStatus::NoMatch {
         notify_changed();
     }
-    Ok(matched_rule)
+    Ok(run.status == AgentRunStatus::Matched)
 }
 
 /// Evaluate `account_id`'s new mail since the agent was turned on. Returns
@@ -430,7 +501,14 @@ pub async fn backfill_panel(db: &Arc<Database>, provider: &dyn AIProvider, panel
             continue;
         };
         let (prefix, suffix) = planner::match_prompt(&criteria, &email_context(db, &email));
-        let reply = ask(provider, &prefix, &suffix, planner::match_shape(&criteria), 64).await?;
+        let reply = ask(
+            provider,
+            &prefix,
+            &suffix,
+            planner::match_shape(&criteria),
+            planner::match_max_tokens(&criteria),
+        )
+        .await?;
         if planner::parse_matches(&reply, &criteria).is_some_and(|m| !m.is_empty()) {
             db.add_agent_panel_hit(&panel.id, &email.id, email.timestamp)?;
             hits += 1;
@@ -637,7 +715,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(
             r#"{"summary": "Ana cannot log in.", "actions": [
                 {"action": "draft_reply", "detail": "Offer a password reset"},
@@ -687,7 +765,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": []}"#);
+        ai.push_completion(r#"{"R1": "no"}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
         let d = deps(&ai, &effects, &skills);
@@ -768,7 +846,7 @@ mod tests {
         .unwrap();
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["P1"]}"#);
+        ai.push_completion(r#"{"P1": "yes"}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
 
@@ -786,7 +864,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "star", "detail": ""}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -811,7 +889,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "mark_read", "detail": ""}]}"#);
         let effects = FakeEffects {
             fail_thread_actions: true,
@@ -834,7 +912,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, true);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "create_task", "detail": "Call Ana"}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -869,7 +947,7 @@ mod tests {
             errors: vec![],
         };
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "run_skill", "detail": "triage"}]}"#);
         ai.push_completion("  The email is about the login page.  ");
         let effects = FakeEffects::default();
@@ -924,7 +1002,7 @@ mod tests {
         seed_event(&db, "ev-soon", NOW + 300);
         seed_event(&db, "ev-later", NOW + 7_200);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["R1"]}"#);
+        ai.push_completion(r#"{"R1": "yes"}"#);
         ai.push_completion(r#"{"summary": "Kickoff in 5 minutes", "actions": [{"action": "create_task", "detail": "Prepare kickoff"}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -960,8 +1038,8 @@ mod tests {
         )
         .unwrap();
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"matches": ["P1"]}"#);
-        ai.push_completion(r#"{"matches": []}"#);
+        ai.push_completion(r#"{"P1": "yes"}"#);
+        ai.push_completion(r#"{"R1": "no"}"#);
 
         assert_eq!(backfill_panel(&db, &ai, &panel.id, NOW).await.unwrap(), 1);
 

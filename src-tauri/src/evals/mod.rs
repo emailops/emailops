@@ -13,6 +13,7 @@
 //   runner       — orchestrate: load env, copy DB, build mock app, iterate cases
 //   json_report  — standardised machine-readable JSON schema for all eval runs
 
+pub mod agent;
 pub mod agent_search;
 pub mod case_loader;
 pub mod db_source;

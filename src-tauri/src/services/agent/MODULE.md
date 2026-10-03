@@ -7,9 +7,11 @@ calendar events against them, the runs (feed entries) and actions (done / pendin
 **Shape:**
 - `planner.rs` — pure: which criteria a trigger is checked against (`plan_criteria`), the
   match and action prompts with a fixed instruction prefix (prefix-cache friendly) and their
-  `JsonShape`s, parsing, validation of the model's actions (`plan_actions`), the approval
+  `JsonShape`s (the match reply is a yes/no per criterion, so a small model cannot stop at
+  the first one that fits), parsing, validation of the model's actions (`plan_actions`), the approval
   policy (`requires_approval`: mailbox changes always wait), due events, panel windows.
-- `runner.rs` — the executor: `process_new_emails` (sync hook, `agent:emails:*` on
+- `runner.rs` — `decide` (the two model calls, no DB — what `make eval-agent` scores on
+  synthetic cases in `src-tauri/evals/agent/cases.yaml`), and the executor: `process_new_emails` (sync hook, `agent:emails:*` on
   `ai_background`), `process_due_events` (`agent_event_loop` in `sync_scheduler.rs`,
   `agent:events`), `backfill_panel` (`agent:panel:*`), `run_action` (`agent:action:*` on
   `ai_queue`). `AgentEffects` is the seam for drafts and thread actions.

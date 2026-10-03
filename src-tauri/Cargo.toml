@@ -300,6 +300,10 @@ name = "form_fill_eval"
 required-features = ["eval"]
 
 [[example]]
+name = "agent_eval"
+required-features = ["eval"]
+
+[[example]]
 # Field-by-field check of what built-in Lens templates extract from the
 # synthetic emails in evals/lenses. See `make eval-lenses`.
 name = "lens_template_eval"
