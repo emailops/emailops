@@ -146,6 +146,16 @@ macro_rules! app_commands {
     ($($consumer:ident)::+) => {
         $($consumer)::+![
             commands::accounts::add_account,
+            commands::agent::get_agent_overview,
+            commands::agent::set_agent_enabled,
+            commands::agent::create_agent_rule,
+            commands::agent::update_agent_rule,
+            commands::agent::delete_agent_rule,
+            commands::agent::create_agent_panel,
+            commands::agent::update_agent_panel,
+            commands::agent::delete_agent_panel,
+            commands::agent::approve_agent_action,
+            commands::agent::reject_agent_action,
             commands::accounts::test_imap_connection,
             commands::accounts::add_imap_account,
             commands::accounts::get_imap_settings,

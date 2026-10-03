@@ -217,7 +217,8 @@
       "classification": "Classifying emails",
       "memoryExtraction": "Memory extraction",
       "taskExtraction": "Task extraction",
-      "lensExtraction": "Lens extraction"
+      "lensExtraction": "Lens extraction",
+      "agentRules": "Email agent"
     },
     "queued": "{{n}} queued",
     "moreQueued": "+{{n}} queued",

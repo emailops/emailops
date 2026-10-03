@@ -217,7 +217,8 @@
       "classification": "Clasificando correos",
       "memoryExtraction": "Extracción de memoria",
       "taskExtraction": "Extracción de tareas",
-      "lensExtraction": "Extracción de Lentes"
+      "lensExtraction": "Extracción de Lentes",
+      "agentRules": "Agente de email"
     },
     "queued": "{{n}} en cola",
     "moreQueued": "+{{n}} en cola",

@@ -235,6 +235,17 @@ impl Database {
         }
     }
 
+    /// One event by its local id.
+    pub fn get_calendar_event(&self, id: &str) -> Result<Option<CalendarEvent>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!("SELECT {EVENT_COLUMNS} FROM calendar_events WHERE id = ?1"))?;
+        match stmt.query_row(params![id], row_to_event) {
+            Ok(event) => Ok(Some(event)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Delete every stored instance of a recurring series (whole-series delete).
     /// Matches instances linked via `recurring_event_id` AND a possible master
     /// row stored under the master id itself.
@@ -425,6 +436,17 @@ mod tests {
         db.seed_test_account("acc1");
         db.seed_test_account("acc2");
         db
+    }
+
+    #[test]
+    fn an_event_is_found_by_its_local_id() {
+        let db = test_db();
+        db.upsert_calendar_events(&[event("acc1", "ev-1", 1_000, 2_000)])
+            .unwrap();
+        let found = db.get_calendar_event("acc1:primary:ev-1").unwrap().unwrap();
+        assert_eq!(found.provider_event_id, "ev-1");
+        assert_eq!(found.attendees.len(), 2);
+        assert!(db.get_calendar_event("acc1:primary:missing").unwrap().is_none());
     }
 
     #[test]

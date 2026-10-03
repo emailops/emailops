@@ -112,6 +112,7 @@ impl SyncScheduler {
         let accounts = db.list_accounts().unwrap_or_default();
         let enabled: Vec<Account> = enabled_accounts(accounts);
 
+        let agent_queue = ai_background.clone();
         let scheduler = Self {
             handles: Mutex::new(Vec::new()),
             stop_flags: Mutex::new(Vec::new()),
@@ -165,6 +166,15 @@ impl SyncScheduler {
             let flag = Arc::new(AtomicBool::new(false));
             scheduler.push_global(
                 tauri::async_runtime::spawn(meeting_notification_loop(db.clone(), app.clone(), flag.clone())),
+                flag,
+            );
+        }
+
+        // Single global email-agent ticker: upcoming calendar events.
+        {
+            let flag = Arc::new(AtomicBool::new(false));
+            scheduler.push_global(
+                tauri::async_runtime::spawn(agent_event_loop(db.clone(), agent_queue, flag.clone())),
                 flag,
             );
         }
@@ -773,6 +783,79 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
                 }
             }
         }
+    }
+}
+
+// ── Email agent: upcoming events ─────────────────────────────────────────────
+
+/// How often the email agent looks for calendar events about to start.
+const AGENT_EVENT_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Every minute, while the agent is on and has an enabled event rule, queue
+/// one pass over the events about to start on `ai_background` — never a
+/// second one while the previous pass is still queued or running.
+async fn agent_event_loop(db: Arc<Database>, ai_background: TaskQueue, stop_flag: Arc<AtomicBool>) {
+    let in_flight = Arc::new(AtomicBool::new(false));
+    let mut ticker = tokio::time::interval(AGENT_EVENT_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        if stop_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        if !crate::services::agent::is_enabled(&db) || !matches!(db.is_ai_enabled(), Ok(true)) {
+            continue;
+        }
+        let has_event_rules = match db.list_agent_rules() {
+            Ok(rules) => rules
+                .iter()
+                .any(|r| r.enabled && r.trigger == crate::models::agent::AgentTrigger::Event),
+            Err(e) => {
+                crate::services::logger::log("error", "agent", format!("Agent: rule read failed: {e}"));
+                continue;
+            }
+        };
+        if !has_event_rules || in_flight.swap(true, Ordering::SeqCst) {
+            continue;
+        }
+        let db_task = db.clone();
+        // Cleared when the task ends — or is dropped unrun after a cancel.
+        let in_flight_guard = ClearOnDrop(in_flight.clone());
+        ai_background
+            .submit_named("agent:events", async move {
+                let _in_flight = in_flight_guard;
+                use crate::services::agent::runner;
+                match runner::service_deps(&db_task) {
+                    Ok((provider, effects, skills)) => {
+                        let deps = runner::AgentDeps {
+                            provider: provider.as_ref(),
+                            effects: &effects,
+                            skills: &skills,
+                        };
+                        let now = crate::services::clock::now_secs();
+                        match runner::process_due_events(&db_task, &deps, now).await {
+                            Ok(0) => {}
+                            Ok(n) => crate::services::logger::log(
+                                "success",
+                                "agent",
+                                format!("Agent: {n} upcoming event(s) matched a rule"),
+                            ),
+                            Err(e) => crate::services::logger::log("error", "agent", format!("Agent failed: {e}")),
+                        }
+                    }
+                    Err(e) => crate::services::logger::log("warn", "agent", format!("Agent skipped: {e}")),
+                }
+            })
+            .await;
+    }
+}
+
+/// Resets the flag it holds when dropped.
+struct ClearOnDrop(Arc<AtomicBool>);
+
+impl Drop for ClearOnDrop {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1445,6 +1528,13 @@ mod tests {
         let planned = plan_calendar_accounts(&accounts);
         let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, vec!["g", "o"], "IMAP accounts have no calendar to poll");
+    }
+
+    #[test]
+    fn the_agent_in_flight_flag_clears_when_its_task_is_dropped_unrun() {
+        let flag = Arc::new(AtomicBool::new(true));
+        drop(ClearOnDrop(flag.clone()));
+        assert!(!flag.load(Ordering::SeqCst));
     }
 
     #[test]

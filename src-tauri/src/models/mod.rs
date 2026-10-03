@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "ts")]
 use ts_rs::TS;
 
+pub mod agent;
 pub mod error;
 pub mod headers;
 pub mod lens;

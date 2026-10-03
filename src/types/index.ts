@@ -375,7 +375,8 @@ export type AiWorkKind =
   | 'classification'
   | 'memoryExtraction'
   | 'taskExtraction'
-  | 'lensExtraction';
+  | 'lensExtraction'
+  | 'agentRules';
 
 /** One running or queued task that uses the AI provider. */
 export interface AiWorkItem {
