@@ -1,0 +1,91 @@
+{
+  "title": "Agente de email",
+  "subtitle": "Revisa el correo nuevo y los próximos eventos y actúa según tus reglas.",
+  "toggle": "Agente activo",
+  "off": "El agente está desactivado. Actívalo y revisará el correo que llegue a partir de ese momento.",
+  "refresh": "Actualizar",
+  "rules": {
+    "button": "Reglas ({{count}})",
+    "title": "Reglas del agente",
+    "subtitle": "Cada regla une un prompt que elige los emails o eventos con un prompt que dice qué hacer.",
+    "new": "Nueva regla",
+    "empty": "Aún no hay reglas. Una regla dice sobre qué emails o eventos actúa el agente y qué hace.",
+    "name": "Nombre",
+    "namePlaceholder": "p. ej. Peticiones de soporte",
+    "trigger": "Cuándo",
+    "triggerEmail": "Llega un email nuevo",
+    "triggerEvent": "Un evento está a punto de empezar",
+    "account": "Cuenta",
+    "allAccounts": "Todas las cuentas",
+    "matchPrompt": "Cuáles (prompt de clasificación)",
+    "matchPlaceholder": "p. ej. Un cliente informa de un problema o pide ayuda con el producto",
+    "actionPrompt": "Qué hacer (prompt de acción)",
+    "actionPlaceholder": "p. ej. Redacta una respuesta amable pidiendo una captura y crea una tarea de seguimiento",
+    "alwaysApprove": "Pedirme aprobación antes de cada acción",
+    "alwaysApproveHint": "Archivar, destacar y marcar como leído siempre esperan tu aprobación. Los borradores se quedan en local hasta que los abres. El agente nunca envía correo.",
+    "enabled": "Activa",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "off": "Desactivada",
+    "emailBadge": "Email",
+    "eventBadge": "Evento"
+  },
+  "panels": {
+    "new": "Nuevo panel",
+    "title": "Panel de estadísticas",
+    "name": "Título",
+    "namePlaceholder": "p. ej. Soporte hoy",
+    "prompt": "Qué contar",
+    "promptPlaceholder": "p. ej. Peticiones de soporte de clientes",
+    "window": "Periodo",
+    "today": "Hoy",
+    "last7Days": "Últimos 7 días",
+    "last30Days": "Últimos 30 días",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "hint": "El agente cuenta los emails de la bandeja de entrada que describe este prompt. El correo que ya está en el periodo se cuenta en segundo plano."
+  },
+  "feed": {
+    "empty": "Todavía nada. Cuando un email o un evento cumpla una de tus reglas, el agente te contará aquí qué ha visto y qué ha hecho.",
+    "emptyCta": "Crear una regla",
+    "email": "Email nuevo",
+    "event": "Próximo evento",
+    "from": "de {{sender}}",
+    "failed": "El agente no ha podido terminar con este."
+  },
+  "actions": {
+    "title": "Acciones",
+    "pending": "Por revisar ({{count}})",
+    "recent": "Recientes",
+    "none": "Nada pendiente de revisión.",
+    "approve": "Aprobar",
+    "reject": "Rechazar",
+    "openDraft": "Abrir borrador",
+    "openEmail": "Abrir email",
+    "rule": "Regla: {{name}}",
+    "output": "Resultado",
+    "kind": {
+      "draftReply": "Redactar respuesta",
+      "createTask": "Crear tarea",
+      "runSkill": "Ejecutar skill",
+      "markRead": "Marcar como leído",
+      "archive": "Archivar",
+      "star": "Destacar"
+    },
+    "status": {
+      "pending": "Pendiente",
+      "done": "Hecho",
+      "failed": "Error",
+      "rejected": "Rechazada"
+    }
+  },
+  "error": {
+    "load": "No se ha podido cargar el agente",
+    "save": "No se ha podido guardar",
+    "action": "No se ha podido actualizar la acción"
+  }
+}

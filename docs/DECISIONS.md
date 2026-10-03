@@ -3237,3 +3237,28 @@ contradict them. Stripping the name from the generated text afterwards — names
 closings vary by language and the draft can legitimately end with a name (a P.S., a
 mention). Putting the rule in the system/prefix part — it varies per account and kind and
 would bust the KV-prefix cache.
+
+## 2026-10-03 — The email agent acts alone only on local, reversible actions
+
+**Decision:** The email agent (the Agent view) evaluates user rules — a classification
+prompt that picks emails or upcoming events plus an action prompt — and runs an action
+without asking only when it is local and reversible: a reply draft saved locally (not
+pushed to the provider), a task, a skill's output as a note. Anything that changes the
+mailbox on the provider's server (mark read, archive, star) waits in the side panel for
+the user's approval; a rule can also make every one of its actions wait. The agent never
+sends mail. It only looks at mail that arrives after it was last turned on (never the
+history), evaluates every rule and panel of an email in one structured model call, and
+records one run per email or event so nothing is evaluated twice. Stats panels are
+counters: their prompt is one more criterion in that same call, and the count over the
+panel's window (today / 7 / 30 days) is plain SQL.
+**Context:** Requested as an AI-native "email agent" view. Earlier decisions all say the AI
+proposes and the user confirms (an unrequested draft pushed to the provider, 2026-09-10;
+forms the chat fills but never saves, 2026-09-23; suggested attachment rules never applied
+automatically, 2026-09-25). The developer chose "por tipo" over "everything waits" and
+"per-rule switch only".
+**Rejected:** Approving every action (local drafts and tasks are harmless and the queue
+would fill with clicks). Letting each rule decide without a per-kind floor (a rule could
+archive mail on the server unattended). Translating a panel's prompt once into a search
+plan and re-running it (date words like "today" freeze at planning time, and concepts such
+as "support requests" need the model, not keywords). One model call per rule per email
+(cost grows with the number of rules).

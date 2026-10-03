@@ -1484,3 +1484,98 @@ export interface BlockedSender {
   address: string;
   createdAt: number;
 }
+
+// ── Email agent (mirrors `models::agent`) ────────────────────────────────────
+
+export type AgentTrigger = 'email' | 'event';
+
+export type AgentActionKind = 'draftReply' | 'createTask' | 'runSkill' | 'markRead' | 'archive' | 'star';
+
+export type AgentActionStatus = 'pending' | 'done' | 'failed' | 'rejected';
+
+export type AgentRunStatus = 'matched' | 'noMatch' | 'failed';
+
+export type PanelWindow = 'today' | 'last7Days' | 'last30Days';
+
+export interface AgentRule {
+  id: string;
+  name: string;
+  trigger: AgentTrigger;
+  /** `null` = every account. */
+  accountId: string | null;
+  matchPrompt: string;
+  actionPrompt: string;
+  /** Every action of the rule waits for approval, local ones included. */
+  alwaysApprove: boolean;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentRuleInput {
+  name: string;
+  trigger: AgentTrigger;
+  accountId: string | null;
+  matchPrompt: string;
+  actionPrompt: string;
+  alwaysApprove: boolean;
+  enabled: boolean;
+}
+
+export interface AgentAction {
+  id: string;
+  runId: string;
+  ruleId: string | null;
+  ruleName: string;
+  kind: AgentActionKind;
+  /** Draft instructions, task title or skill name. */
+  detail: string;
+  status: AgentActionStatus;
+  requiresApproval: boolean;
+  /** Draft id, task id or the skill's output. */
+  result: string | null;
+  error: string | null;
+  createdAt: number;
+  decidedAt: number | null;
+  runTitle: string;
+}
+
+export interface AgentRun {
+  id: string;
+  accountId: string;
+  trigger: AgentTrigger;
+  /** Email id or calendar event id. */
+  triggerRef: string;
+  title: string;
+  sender: string;
+  status: AgentRunStatus;
+  summary: string;
+  error: string | null;
+  createdAt: number;
+  actions: AgentAction[];
+}
+
+export interface AgentPanel {
+  id: string;
+  title: string;
+  prompt: string;
+  window: PanelWindow;
+  createdAt: number;
+  count: number;
+}
+
+export interface AgentPanelInput {
+  title: string;
+  prompt: string;
+  window: PanelWindow;
+}
+
+export interface AgentOverview {
+  enabled: boolean;
+  rules: AgentRule[];
+  panels: AgentPanel[];
+  /** Newest first. */
+  feed: AgentRun[];
+  /** Pending first (oldest first), then the latest decided ones. */
+  actions: AgentAction[];
+}

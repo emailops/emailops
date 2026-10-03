@@ -7,6 +7,11 @@ import type {
   AccountDashboard,
   AccountSettings,
   AccountSignature,
+  AgentOverview,
+  AgentPanel,
+  AgentPanelInput,
+  AgentRule,
+  AgentRuleInput,
   AiConfig,
   AiModelInfo,
   AiProviderActivity,
@@ -2135,4 +2140,50 @@ export async function setJunkConfig(config: JunkConfig): Promise<void> {
 
 export async function getJunkStats(accountId: string): Promise<JunkStats> {
   return invoke('get_junk_stats', { accountId });
+}
+
+// ── Email agent ──────────────────────────────────────────────────────────────
+
+/** Everything the agent view shows: switch, rules, panels, feed and actions. */
+export async function getAgentOverview(): Promise<AgentOverview> {
+  return invoke('get_agent_overview');
+}
+
+/** Turn the agent on (it then looks at mail arriving from now on) or off. */
+export async function setAgentEnabled(enabled: boolean): Promise<void> {
+  return invoke('set_agent_enabled', { enabled });
+}
+
+export async function createAgentRule(input: AgentRuleInput): Promise<AgentRule> {
+  return invoke('create_agent_rule', { input });
+}
+
+export async function updateAgentRule(id: string, input: AgentRuleInput): Promise<AgentRule> {
+  return invoke('update_agent_rule', { id, input });
+}
+
+export async function deleteAgentRule(id: string): Promise<void> {
+  return invoke('delete_agent_rule', { id });
+}
+
+/** Create a stats panel; the mail already in its window is counted in the background. */
+export async function createAgentPanel(input: AgentPanelInput): Promise<AgentPanel> {
+  return invoke('create_agent_panel', { input });
+}
+
+export async function updateAgentPanel(id: string, input: AgentPanelInput): Promise<void> {
+  return invoke('update_agent_panel', { id, input });
+}
+
+export async function deleteAgentPanel(id: string): Promise<void> {
+  return invoke('delete_agent_panel', { id });
+}
+
+/** Approve a pending action; it runs in the background (`agent-updated` follows). */
+export async function approveAgentAction(id: string): Promise<void> {
+  return invoke('approve_agent_action', { id });
+}
+
+export async function rejectAgentAction(id: string): Promise<void> {
+  return invoke('reject_agent_action', { id });
 }

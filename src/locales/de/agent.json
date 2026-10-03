@@ -1,0 +1,91 @@
+{
+  "title": "E-Mail-Agent",
+  "subtitle": "Prüft neue E-Mails und anstehende Termine und handelt nach deinen Regeln.",
+  "toggle": "Agent aktiv",
+  "off": "Der Agent ist aus. Schalte ihn ein, dann prüft er die E-Mails, die ab dann eingehen.",
+  "refresh": "Aktualisieren",
+  "rules": {
+    "button": "Regeln ({{count}})",
+    "title": "Agent-Regeln",
+    "subtitle": "Jede Regel verbindet einen Prompt, der E-Mails oder Termine auswählt, mit einem Prompt, der sagt, was zu tun ist.",
+    "new": "Neue Regel",
+    "empty": "Noch keine Regeln. Eine Regel legt fest, bei welchen E-Mails oder Terminen der Agent handelt und was er tut.",
+    "name": "Name",
+    "namePlaceholder": "z. B. Support-Anfragen",
+    "trigger": "Wann",
+    "triggerEmail": "Eine neue E-Mail kommt an",
+    "triggerEvent": "Ein Termin beginnt gleich",
+    "account": "Konto",
+    "allAccounts": "Alle Konten",
+    "matchPrompt": "Welche (Klassifizierungs-Prompt)",
+    "matchPlaceholder": "z. B. Ein Kunde meldet ein Problem oder bittet um Hilfe mit dem Produkt",
+    "actionPrompt": "Was tun (Aktions-Prompt)",
+    "actionPlaceholder": "z. B. Entwirf eine freundliche Antwort mit der Bitte um einen Screenshot und lege eine Aufgabe zum Nachfassen an",
+    "alwaysApprove": "Vor jeder Aktion fragen",
+    "alwaysApproveHint": "Archivieren, Markieren und Als-gelesen-Markieren warten immer auf deine Freigabe. Entwürfe bleiben lokal, bis du sie öffnest. Der Agent sendet nie E-Mails.",
+    "enabled": "Aktiv",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "off": "Aus",
+    "emailBadge": "E-Mail",
+    "eventBadge": "Termin"
+  },
+  "panels": {
+    "new": "Neues Panel",
+    "title": "Statistik-Panel",
+    "name": "Titel",
+    "namePlaceholder": "z. B. Support heute",
+    "prompt": "Was zählen",
+    "promptPlaceholder": "z. B. Support-Anfragen von Kunden",
+    "window": "Zeitraum",
+    "today": "Heute",
+    "last7Days": "Letzte 7 Tage",
+    "last30Days": "Letzte 30 Tage",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "hint": "Der Agent zählt die E-Mails im Posteingang, die dieser Prompt beschreibt. E-Mails, die schon im Zeitraum liegen, werden im Hintergrund gezählt."
+  },
+  "feed": {
+    "empty": "Noch nichts. Wenn eine E-Mail oder ein Termin zu einer deiner Regeln passt, erzählt dir der Agent hier, was er gesehen und getan hat.",
+    "emptyCta": "Regel anlegen",
+    "email": "Neue E-Mail",
+    "event": "Anstehender Termin",
+    "from": "von {{sender}}",
+    "failed": "Der Agent konnte das nicht abschließen."
+  },
+  "actions": {
+    "title": "Aktionen",
+    "pending": "Zu prüfen ({{count}})",
+    "recent": "Zuletzt",
+    "none": "Nichts zu prüfen.",
+    "approve": "Freigeben",
+    "reject": "Ablehnen",
+    "openDraft": "Entwurf öffnen",
+    "openEmail": "E-Mail öffnen",
+    "rule": "Regel: {{name}}",
+    "output": "Ergebnis",
+    "kind": {
+      "draftReply": "Antwort entwerfen",
+      "createTask": "Aufgabe anlegen",
+      "runSkill": "Skill ausführen",
+      "markRead": "Als gelesen markieren",
+      "archive": "Archivieren",
+      "star": "Markieren"
+    },
+    "status": {
+      "pending": "Wartet",
+      "done": "Erledigt",
+      "failed": "Fehlgeschlagen",
+      "rejected": "Abgelehnt"
+    }
+  },
+  "error": {
+    "load": "Agent konnte nicht geladen werden",
+    "save": "Speichern fehlgeschlagen",
+    "action": "Aktion konnte nicht aktualisiert werden"
+  }
+}

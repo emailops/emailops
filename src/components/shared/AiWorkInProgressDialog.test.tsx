@@ -126,6 +126,7 @@ describe('AiWorkInProgressDialog', () => {
       'memoryExtraction',
       'taskExtraction',
       'lensExtraction',
+      'agentRules',
     ]);
     expect(onProceed).not.toHaveBeenCalled();
     expect(text()).toContain('settings:aiWork.stopping');

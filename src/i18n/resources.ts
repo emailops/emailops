@@ -6,6 +6,7 @@
 // import it here, and add it under both `resources[lang]` and the `NAMESPACES`
 // array. Then add it to the `Resources` interface at the bottom for typed keys.
 
+import deAgent from '../locales/de/agent.json';
 import deAttachments from '../locales/de/attachments.json';
 import deAuth from '../locales/de/auth.json';
 import deCalendar from '../locales/de/calendar.json';
@@ -25,6 +26,7 @@ import deShortcuts from '../locales/de/shortcuts.json';
 import deSidebar from '../locales/de/sidebar.json';
 import deTagboard from '../locales/de/tagboard.json';
 import deTasks from '../locales/de/tasks.json';
+import enAgent from '../locales/en/agent.json';
 import enAttachments from '../locales/en/attachments.json';
 import enAuth from '../locales/en/auth.json';
 import enCalendar from '../locales/en/calendar.json';
@@ -44,6 +46,7 @@ import enShortcuts from '../locales/en/shortcuts.json';
 import enSidebar from '../locales/en/sidebar.json';
 import enTagboard from '../locales/en/tagboard.json';
 import enTasks from '../locales/en/tasks.json';
+import esAgent from '../locales/es/agent.json';
 import esAttachments from '../locales/es/attachments.json';
 import esAuth from '../locales/es/auth.json';
 import esCalendar from '../locales/es/calendar.json';
@@ -63,6 +66,7 @@ import esShortcuts from '../locales/es/shortcuts.json';
 import esSidebar from '../locales/es/sidebar.json';
 import esTagboard from '../locales/es/tagboard.json';
 import esTasks from '../locales/es/tasks.json';
+import frAgent from '../locales/fr/agent.json';
 import frAttachments from '../locales/fr/attachments.json';
 import frAuth from '../locales/fr/auth.json';
 import frCalendar from '../locales/fr/calendar.json';
@@ -118,6 +122,7 @@ export const NAMESPACES = [
   'attachments',
   'tagboard',
   'shortcuts',
+  'agent',
 ] as const;
 
 export type Namespace = (typeof NAMESPACES)[number];
@@ -125,6 +130,7 @@ export type Namespace = (typeof NAMESPACES)[number];
 export const resources = {
   en: {
     common: enCommon,
+    agent: enAgent,
     sidebar: enSidebar,
     settings: enSettings,
     modal: enModal,
@@ -146,6 +152,7 @@ export const resources = {
   },
   es: {
     common: esCommon,
+    agent: esAgent,
     sidebar: esSidebar,
     settings: esSettings,
     modal: esModal,
@@ -167,6 +174,7 @@ export const resources = {
   },
   fr: {
     common: frCommon,
+    agent: frAgent,
     sidebar: frSidebar,
     settings: frSettings,
     modal: frModal,
@@ -188,6 +196,7 @@ export const resources = {
   },
   de: {
     common: deCommon,
+    agent: deAgent,
     sidebar: deSidebar,
     settings: deSettings,
     modal: deModal,
