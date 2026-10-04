@@ -3,7 +3,6 @@
   "subtitle": "Looks at new mail and upcoming events and acts on your rules.",
   "toggle": "Agent on",
   "off": "The agent is off. Turn it on and it will look at the mail that arrives from then on.",
-  "refresh": "Refresh",
   "rules": {
     "button": "Rules ({{count}})",
     "title": "Agent rules",
@@ -87,5 +86,28 @@
     "load": "Could not load the agent",
     "save": "Could not save",
     "action": "Could not update the action"
+  },
+  "review": {
+    "back": "Back to the feed",
+    "original": "Original email",
+    "draft": "The agent's draft",
+    "send": "Send",
+    "save": "Save changes",
+    "saved": "Saved",
+    "discard": "Discard",
+    "openInComposer": "Open in the composer",
+    "sentNotice": "Reply sent",
+    "discardedNotice": "Draft discarded",
+    "goneNotice": "This draft no longer exists: it was sent or deleted from the composer.",
+    "approveHint": "This action changes your mailbox on the server. Nothing happens until you approve it.",
+    "task": "Task created",
+    "skill": "Skill output",
+    "event": "Calendar event",
+    "error": "Could not finish",
+    "review": "Review",
+    "outcome": {
+      "sent": "Sent",
+      "discarded": "Discarded"
+    }
   }
 }

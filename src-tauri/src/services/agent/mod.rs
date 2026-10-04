@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::models::agent::{
-    AgentAction, AgentPanel, AgentPanelInput, AgentRule, AgentRuleInput, AgentRun, AGENT_ENABLED_PREF,
+    AgentAction, AgentPanel, AgentPanelInput, AgentRule, AgentRuleInput, AgentRun, ReviewOutcome, AGENT_ENABLED_PREF,
     AGENT_EVENT_LEAD_PREF, AGENT_SINCE_PREF,
 };
 use crate::models::error::{AppError, Result};
@@ -189,6 +189,17 @@ pub fn reject_action(db: &Database, id: &str, now: i64) -> Result<()> {
     Ok(())
 }
 
+/// Record that the user sent or discarded a reply draft of the agent.
+pub fn review_draft(db: &Database, id: &str, outcome: ReviewOutcome, now: i64) -> Result<()> {
+    if !db.review_agent_draft(id, outcome, now)? {
+        return Err(AppError::InvalidInput(format!(
+            "Agent action {id} is not a reply draft waiting for review"
+        )));
+    }
+    crate::services::events::emit("agent-updated", ());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +305,15 @@ mod tests {
         assert!(update_panel(&db, &panel.id, panel_input("complaints")).unwrap());
         assert!(matches!(
             create_panel(&db, panel_input(" "), NOW),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn reviewing_something_that_is_not_a_waiting_draft_is_refused() {
+        let db = Database::new_for_testing().unwrap();
+        assert!(matches!(
+            review_draft(&db, "missing", ReviewOutcome::Sent, NOW),
             Err(AppError::InvalidInput(_))
         ));
     }

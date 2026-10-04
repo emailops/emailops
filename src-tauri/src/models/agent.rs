@@ -122,6 +122,31 @@ impl AgentActionStatus {
     }
 }
 
+/// What the user did with a reply draft of the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewOutcome {
+    Sent,
+    Discarded,
+}
+
+impl ReviewOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReviewOutcome::Sent => "sent",
+            ReviewOutcome::Discarded => "discarded",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "sent" => Some(ReviewOutcome::Sent),
+            "discarded" => Some(ReviewOutcome::Discarded),
+            _ => None,
+        }
+    }
+}
+
 /// How a run ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,6 +238,12 @@ pub struct AgentAction {
     pub decided_at: Option<i64>,
     /// Subject or event title of the run it belongs to.
     pub run_title: String,
+    /// For a reply draft: what the user did with it, once reviewed.
+    pub review_outcome: Option<ReviewOutcome>,
+    pub reviewed_at: Option<i64>,
+    /// A reply draft the agent wrote that is still there and not reviewed:
+    /// the user still has to send or discard it. Computed when listed.
+    pub needs_review: bool,
 }
 
 /// The agent's work on one email or event — one entry of the feed.

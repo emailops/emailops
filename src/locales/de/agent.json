@@ -3,7 +3,6 @@
   "subtitle": "Prüft neue E-Mails und anstehende Termine und handelt nach deinen Regeln.",
   "toggle": "Agent aktiv",
   "off": "Der Agent ist aus. Schalte ihn ein, dann prüft er die E-Mails, die ab dann eingehen.",
-  "refresh": "Aktualisieren",
   "rules": {
     "button": "Regeln ({{count}})",
     "title": "Agent-Regeln",
@@ -87,5 +86,28 @@
     "load": "Agent konnte nicht geladen werden",
     "save": "Speichern fehlgeschlagen",
     "action": "Aktion konnte nicht aktualisiert werden"
+  },
+  "review": {
+    "back": "Zurück zum Verlauf",
+    "original": "Ursprüngliche E-Mail",
+    "draft": "Entwurf des Agenten",
+    "send": "Senden",
+    "save": "Änderungen speichern",
+    "saved": "Gespeichert",
+    "discard": "Verwerfen",
+    "openInComposer": "Im Editor öffnen",
+    "sentNotice": "Antwort gesendet",
+    "discardedNotice": "Entwurf verworfen",
+    "goneNotice": "Diesen Entwurf gibt es nicht mehr: Er wurde im Editor gesendet oder gelöscht.",
+    "approveHint": "Diese Aktion ändert dein Postfach auf dem Server. Es passiert nichts, bis du sie freigibst.",
+    "task": "Aufgabe angelegt",
+    "skill": "Ergebnis des Skills",
+    "event": "Kalendertermin",
+    "error": "Konnte nicht abgeschlossen werden",
+    "review": "Prüfen",
+    "outcome": {
+      "sent": "Gesendet",
+      "discarded": "Verworfen"
+    }
   }
 }

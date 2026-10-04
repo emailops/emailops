@@ -74,6 +74,7 @@ import type {
   QuickFilterStats,
   RefreshServerTotalResponse,
   ResearchEstimate,
+  ReviewOutcome,
   SendChatResponse,
   SenderMoveReport,
   SenderStatus,
@@ -2186,4 +2187,9 @@ export async function approveAgentAction(id: string): Promise<void> {
 
 export async function rejectAgentAction(id: string): Promise<void> {
   return invoke('reject_agent_action', { id });
+}
+
+/** The user sent or discarded a reply draft of the agent from the Agent view. */
+export async function reviewAgentDraft(id: string, outcome: ReviewOutcome): Promise<void> {
+  return invoke('review_agent_draft', { id, outcome });
 }

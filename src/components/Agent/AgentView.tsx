@@ -10,6 +10,7 @@ import type { AgentOverview, AgentPanel } from '@/types';
 import { AgentActionCard } from './AgentActionCard';
 import { AgentFeedItem } from './AgentFeedItem';
 import { AgentPanelDialog } from './AgentPanelDialog';
+import { AgentReviewPane } from './AgentReviewPane';
 import { AgentRulesDialog } from './AgentRulesDialog';
 import { chronological, splitActions } from './agentFeed';
 
@@ -21,7 +22,11 @@ interface AgentViewProps {
 /**
  * The email agent: a chat-like feed of what the agent saw and did on new
  * mail and upcoming events, the user's stats panels on top, and on the right
- * the actions waiting for approval followed by the latest decided ones.
+ * what waits for the user (actions to approve, drafts to send or discard)
+ * followed by the latest decided ones. A click on any action opens it in the
+ * review pane, in place of the feed, so the user finishes the agent's work
+ * without leaving the view. The view follows the backend live through the
+ * `agent-updated` event.
  */
 export function AgentView({ onOpenEmail }: AgentViewProps) {
   const { t } = useTranslation(['agent']);
@@ -32,6 +37,8 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
   const [rulesOpen, setRulesOpen] = useState(false);
   // `undefined` = closed; `null` = a new panel; otherwise the panel being edited.
   const [panelEditing, setPanelEditing] = useState<AgentPanel | null | undefined>(undefined);
+  // The action open in the review pane; `null` shows the feed.
+  const [reviewing, setReviewing] = useState<string | null>(null);
   const feedEnd = useRef<HTMLDivElement | null>(null);
   const loadId = useRef(0);
 
@@ -71,6 +78,10 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
   const feed = useMemo(() => chronological(overview?.feed ?? []), [overview]);
   const { pending, recent } = useMemo(() => splitActions(overview?.actions ?? []), [overview]);
   const runsById = useMemo(() => new Map((overview?.feed ?? []).map((r) => [r.id, r])), [overview]);
+  const reviewed = useMemo(
+    () => (reviewing ? (overview?.actions.find((a) => a.id === reviewing) ?? findInFeed(overview, reviewing)) : null),
+    [overview, reviewing],
+  );
 
   // Keep the newest message in view, like a chat.
   useEffect(() => {
@@ -108,14 +119,6 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
             <h2 className="text-base font-semibold text-gray-100">{t('agent:title')}</h2>
             <p className="truncate text-xs text-gray-400">{t('agent:subtitle')}</p>
           </div>
-          <button
-            type="button"
-            data-testid="agent-refresh"
-            onClick={() => void reload()}
-            className="whitespace-nowrap rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700"
-          >
-            {t('agent:refresh')}
-          </button>
           <button
             type="button"
             data-testid="agent-rules-button"
@@ -171,7 +174,19 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
               {t('agent:off')}
             </p>
           )}
-          {overview && feed.length === 0 ? (
+          {reviewed ? (
+            <AgentReviewPane
+              key={reviewed.id}
+              action={reviewed}
+              run={runsById.get(reviewed.runId)}
+              busy={busyAction === reviewed.id}
+              onBack={() => setReviewing(null)}
+              onApprove={(id) => void decide(id, true)}
+              onReject={(id) => void decide(id, false)}
+              onChanged={() => void reload()}
+              onOpenEmail={onOpenEmail}
+            />
+          ) : overview && feed.length === 0 ? (
             <div data-testid="agent-feed-empty" className="mx-auto mt-10 max-w-md text-center text-sm text-gray-400">
               <p>{t('agent:feed.empty')}</p>
               <button
@@ -186,11 +201,11 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
           ) : (
             <ul className="space-y-4">
               {feed.map((run) => (
-                <AgentFeedItem key={run.id} run={run} onOpenEmail={onOpenEmail} />
+                <AgentFeedItem key={run.id} run={run} onOpenEmail={onOpenEmail} onSelectAction={setReviewing} />
               ))}
             </ul>
           )}
-          <div ref={feedEnd} />
+          {!reviewed && <div ref={feedEnd} />}
         </div>
       </section>
 
@@ -209,11 +224,11 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
                 <AgentActionCard
                   key={a.id}
                   action={a}
-                  run={runsById.get(a.runId)}
+                  selected={a.id === reviewing}
                   busy={busyAction === a.id}
+                  onSelect={setReviewing}
                   onApprove={(id) => void decide(id, true)}
                   onReject={(id) => void decide(id, false)}
-                  onOpenEmail={onOpenEmail}
                 />
               ))}
             </ul>
@@ -226,11 +241,11 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
                   <AgentActionCard
                     key={a.id}
                     action={a}
-                    run={runsById.get(a.runId)}
+                    selected={a.id === reviewing}
                     busy={false}
+                    onSelect={setReviewing}
                     onApprove={(id) => void decide(id, true)}
                     onReject={(id) => void decide(id, false)}
-                    onOpenEmail={onOpenEmail}
                   />
                 ))}
               </ul>
@@ -254,4 +269,13 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
       )}
     </div>
   );
+}
+
+/** An action of a run in the feed that the side panel no longer lists. */
+function findInFeed(overview: AgentOverview | null, id: string) {
+  for (const run of overview?.feed ?? []) {
+    const found = run.actions.find((a) => a.id === id);
+    if (found) return found;
+  }
+  return null;
 }

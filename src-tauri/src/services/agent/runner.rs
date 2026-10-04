@@ -336,9 +336,11 @@ async fn evaluate(
     )
     .await?;
 
+    let mut counted = false;
     for criterion in &decision.matched {
         if let (CriterionTarget::Panel(panel_id), Some(ts)) = (&criterion.target, trigger.email_timestamp) {
             db.add_agent_panel_hit(panel_id, trigger.trigger_ref, ts)?;
+            counted = true;
         }
     }
 
@@ -361,6 +363,9 @@ async fn evaluate(
                 created_at: now,
                 decided_at: None,
                 run_title: trigger.title.to_string(),
+                review_outcome: None,
+                reviewed_at: None,
+                needs_review: false,
             })
         })
         .collect();
@@ -406,7 +411,8 @@ async fn evaluate(
     for action in run.actions.iter().filter(|a| !a.requires_approval) {
         run_action(db, deps, &action.id, now).await?;
     }
-    if run.status != AgentRunStatus::NoMatch {
+    // A panel that counted the email changes the view too, matched rule or not.
+    if run.status != AgentRunStatus::NoMatch || counted {
         notify_changed();
     }
     Ok(run.status == AgentRunStatus::Matched)

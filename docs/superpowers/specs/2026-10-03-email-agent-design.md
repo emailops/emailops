@@ -169,14 +169,37 @@ app puts the skill text before the item and gets plain text from the model.
 
 The sidebar shows "Agent" when AI is on. The view has these parts:
 
-1. A header with the title, the Refresh button, the Rules button and the switch.
+1. A header with the title, the Rules button and the switch.
 2. A row of panel cards. Each card shows the count, the title and the period.
 3. The feed. Each run is a message, with the oldest at the top. A message shows the
    type, the sender, the time, a link to the email, the summary and the actions.
-4. The side panel "Actions". It shows the actions to review first, then the recent
-   actions. A done reply draft has an "Open draft" link. A skill output opens on a click.
+4. The side panel "Actions". It shows the work that waits for the user first: actions
+   to approve and reply drafts to review. Then it shows the recent actions.
 
-The view loads again when the backend sends the event `agent-updated`.
+The view has no refresh button. It loads again when the backend sends the event
+`agent-updated`. The backend sends this event when a run or an action changes, and when
+a panel counts an email.
+
+### 4.10 Review pane
+
+A click on an action, in the side panel or in the feed, opens the review pane in place
+of the feed. The pane shows the summary of the run, the action and the original email.
+
+For a reply draft, the user reads and edits the text. Then the user does one of these:
+
+1. "Send". The app sends the reply through the outbox, with the undo window and the
+   reply signature of the account. The action records `sent`.
+2. "Save changes". The app saves the edited draft.
+3. "Discard". The app deletes the draft. The action records `discarded`.
+4. "Open in the composer". The app opens the draft in the reply composer.
+
+A draft waits for review until the user sends or discards it. If the user sends or
+deletes the draft from the composer, the draft does not wait any more.
+
+For an action that waits for approval, the pane shows Approve and Reject. For a task,
+it shows the title. For a skill, it shows the output.
+
+The agent never sends email. Only the click of the user on "Send" sends a reply.
 
 ## 5. Data
 
@@ -189,6 +212,9 @@ Migration `V035__email_agent.sql` adds these tables:
 | `agent_actions` | The actions of each run, with status, result and error. |
 | `agent_panels` | The panels. |
 | `agent_panel_hits` | The email that agree with each panel. |
+
+Migration `V036__agent_draft_review.sql` adds `review_outcome` (`sent` or `discarded`)
+and `reviewed_at` to `agent_actions`.
 
 All enum columns have a `CHECK` constraint. Deleting a rule keeps its actions with the rule
 name. Deleting an email deletes its panel results.
@@ -206,7 +232,7 @@ range 1 to 120).
 | Executor | `src-tauri/src/services/agent/runner.rs` (`AgentEffects` is the test seam) |
 | Service surface | `src-tauri/src/services/agent/mod.rs`, `MODULE.md` |
 | Hooks | `services/emails/sync.rs`, `services/sync_scheduler.rs`, `services/ai_activity.rs` |
-| Commands | `src-tauri/src/commands/agent.rs` (10 commands) |
+| Commands | `src-tauri/src/commands/agent.rs` (11 commands) |
 | CLI | `emailops-cli agent` (feed) and `emailops-cli agent run` |
 | Frontend | `src/components/Agent/*`, `src/lib/api.ts`, `src/types/index.ts` |
 | Text | `src/locales/{en,es,fr,de}/agent.json` |
@@ -267,12 +293,15 @@ passed:
 ## 10. Limits
 
 1. The agent does not examine email in the demo instance, because demo accounts do not
-   sync. Use `emailops-cli agent run` to start a pass by hand.
+   sync. Use `emailops-cli agent run` to start a pass by hand. The app does not get the
+   `agent-updated` event of the CLI process; it shows the result at the next event.
 2. An event is examined only while the app runs, in the 15 minutes before it starts.
 3. A panel counts back a maximum of 200 email when the user creates it.
 4. The match call takes approximately 0.5 to 2.5 seconds for each email on the 4B model.
    The agent runs on the background queue, after classification.
-5. When the window of the app is hidden, CSS transitions stop. In automated screenshots,
+5. If the user cancels a reply in the undo window, the action keeps `sent`. The
+   composer opens again with the message.
+6. When the window of the app is hidden, CSS transitions stop. In automated screenshots,
    the switch can show the old position. This is not a defect of the agent.
 
 ## 11. Open items

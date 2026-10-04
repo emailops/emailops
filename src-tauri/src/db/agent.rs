@@ -10,7 +10,7 @@ use rusqlite::{params, OptionalExtension, Row};
 use crate::db::Database;
 use crate::models::agent::{
     AgentAction, AgentActionKind, AgentActionStatus, AgentPanel, AgentRule, AgentRun, AgentRunStatus, AgentTrigger,
-    PanelWindow,
+    PanelWindow, ReviewOutcome,
 };
 use crate::models::error::Result;
 
@@ -41,9 +41,22 @@ fn rule_from_row(row: &Row<'_>) -> rusqlite::Result<AgentRule> {
     })
 }
 
-const ACTION_COLUMNS: &str =
+/// A reply draft of the agent the user has not sent or discarded, and that
+/// still exists (one sent or deleted from the composer has nothing to review).
+macro_rules! needs_review_sql {
+    () => {
+        "(a.kind = 'draft_reply' AND a.status = 'done' AND a.review_outcome IS NULL \
+         AND EXISTS (SELECT 1 FROM drafts d WHERE d.id = a.result))"
+    };
+}
+const NEEDS_REVIEW: &str = needs_review_sql!();
+
+const ACTION_COLUMNS: &str = concat!(
     "a.id, a.run_id, a.rule_id, a.rule_name, a.kind, a.detail, a.status, a.requires_approval, \
-     a.result, a.error, a.created_at, a.decided_at, r.title";
+     a.result, a.error, a.created_at, a.decided_at, r.title, a.review_outcome, a.reviewed_at, ",
+    needs_review_sql!(),
+    " AS needs_review"
+);
 
 fn action_from_row(row: &Row<'_>) -> rusqlite::Result<AgentAction> {
     let kind: String = row.get(4)?;
@@ -62,6 +75,12 @@ fn action_from_row(row: &Row<'_>) -> rusqlite::Result<AgentAction> {
         created_at: row.get(10)?,
         decided_at: row.get(11)?,
         run_title: row.get(12)?,
+        review_outcome: row
+            .get::<_, Option<String>>(13)?
+            .map(|v| ReviewOutcome::parse(&v).ok_or_else(|| bad_column("review outcome", &v)))
+            .transpose()?,
+        reviewed_at: row.get(14)?,
+        needs_review: row.get(15)?,
     })
 }
 
@@ -279,13 +298,13 @@ impl Database {
             "SELECT * FROM (
                  SELECT {ACTION_COLUMNS}, 0 AS grp, a.created_at AS sort_key
                  FROM agent_actions a JOIN agent_runs r ON r.id = a.run_id
-                 WHERE a.status = 'pending'
+                 WHERE a.status = 'pending' OR {NEEDS_REVIEW}
              )
              UNION ALL
              SELECT * FROM (
                  SELECT {ACTION_COLUMNS}, 1 AS grp, -COALESCE(a.decided_at, a.created_at) AS sort_key
                  FROM agent_actions a JOIN agent_runs r ON r.id = a.run_id
-                 WHERE a.status <> 'pending'
+                 WHERE a.status <> 'pending' AND NOT {NEEDS_REVIEW}
                  ORDER BY sort_key, a.id DESC LIMIT ?1
              )
              ORDER BY grp, sort_key, id"
@@ -316,6 +335,17 @@ impl Database {
         let n = self.connection().execute(
             "UPDATE agent_actions SET status = 'done', decided_at = ?2 WHERE id = ?1 AND status = 'pending'",
             params![id, now],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Record what the user did with a reply draft of the agent. `false`
+    /// when the action is not a done draft, or was reviewed already.
+    pub fn review_agent_draft(&self, id: &str, outcome: ReviewOutcome, now: i64) -> Result<bool> {
+        let n = self.connection().execute(
+            "UPDATE agent_actions SET review_outcome = ?2, reviewed_at = ?3
+             WHERE id = ?1 AND kind = 'draft_reply' AND status = 'done' AND review_outcome IS NULL",
+            params![id, outcome.as_str(), now],
         )?;
         Ok(n > 0)
     }
@@ -568,6 +598,9 @@ mod tests {
             created_at,
             decided_at: None,
             run_title: String::new(),
+            review_outcome: None,
+            reviewed_at: None,
+            needs_review: false,
         }
     }
 
@@ -658,6 +691,90 @@ mod tests {
         assert_eq!(feed[1].actions[0].run_id, "old");
         assert_eq!(feed[1].actions[0].run_title, "Title old");
         assert_eq!(db.list_agent_feed(1).unwrap().len(), 1);
+    }
+
+    fn seed_draft(db: &Database, id: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO drafts (id, account_id, to_addresses_json, subject, body, created_at, updated_at)
+                 VALUES (?1, 'acc-1', '[]', 'Re: Subject', 'Thanks', 0, 0)",
+                params![id],
+            )
+            .unwrap();
+    }
+
+    fn draft_action(id: &str, draft_id: &str) -> AgentAction {
+        let mut a = action(id, AgentActionKind::DraftReply, AgentActionStatus::Done, NOW);
+        a.result = Some(draft_id.into());
+        a
+    }
+
+    #[test]
+    fn a_done_draft_waits_for_review_while_the_draft_exists() {
+        let db = db();
+        seed_draft(&db, "d-kept");
+        db.insert_agent_run(&run(
+            "run",
+            "e-1",
+            AgentRunStatus::Matched,
+            NOW,
+            vec![draft_action("kept", "d-kept"), draft_action("gone", "d-gone")],
+        ))
+        .unwrap();
+        assert!(db.get_agent_action("kept").unwrap().unwrap().needs_review);
+        assert!(
+            !db.get_agent_action("gone").unwrap().unwrap().needs_review,
+            "a draft sent or deleted elsewhere has nothing left to review"
+        );
+    }
+
+    #[test]
+    fn a_reviewed_draft_records_its_outcome_once() {
+        let db = db();
+        seed_draft(&db, "d1");
+        db.insert_agent_run(&run(
+            "run",
+            "e-1",
+            AgentRunStatus::Matched,
+            NOW,
+            vec![
+                draft_action("draft", "d1"),
+                action("task", AgentActionKind::CreateTask, AgentActionStatus::Done, NOW),
+            ],
+        ))
+        .unwrap();
+        assert!(db.review_agent_draft("draft", ReviewOutcome::Sent, NOW + 3).unwrap());
+        assert!(!db
+            .review_agent_draft("draft", ReviewOutcome::Discarded, NOW + 4)
+            .unwrap());
+        assert!(
+            !db.review_agent_draft("task", ReviewOutcome::Sent, NOW).unwrap(),
+            "only drafts are reviewed"
+        );
+        let a = db.get_agent_action("draft").unwrap().unwrap();
+        assert_eq!(a.review_outcome, Some(ReviewOutcome::Sent));
+        assert_eq!(a.reviewed_at, Some(NOW + 3));
+        assert!(!a.needs_review);
+    }
+
+    #[test]
+    fn drafts_to_review_are_listed_with_the_pending_actions() {
+        let db = db();
+        seed_draft(&db, "d1");
+        db.insert_agent_run(&run(
+            "run",
+            "e-1",
+            AgentRunStatus::Matched,
+            NOW,
+            vec![
+                action("pending", AgentActionKind::Archive, AgentActionStatus::Pending, NOW + 2),
+                draft_action("draft", "d1"),
+                action("task", AgentActionKind::CreateTask, AgentActionStatus::Done, NOW + 1),
+            ],
+        ))
+        .unwrap();
+        let ids: Vec<_> = db.list_agent_actions(10).unwrap().into_iter().map(|a| a.id).collect();
+        assert_eq!(ids, vec!["draft", "pending", "task"]);
     }
 
     #[test]

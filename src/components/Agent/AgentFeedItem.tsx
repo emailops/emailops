@@ -6,6 +6,8 @@ import type { AgentRun } from '@/types';
 interface AgentFeedItemProps {
   run: AgentRun;
   onOpenEmail: () => void;
+  /** Open one of the run's actions in the review pane. */
+  onSelectAction: (id: string) => void;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -16,7 +18,7 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 /** One agent message: the email or event it looked at, its analysis, and what it did. */
-export function AgentFeedItem({ run, onOpenEmail }: AgentFeedItemProps) {
+export function AgentFeedItem({ run, onOpenEmail, onSelectAction }: AgentFeedItemProps) {
   const { t, i18n } = useTranslation(['agent']);
   const isEmail = run.trigger === 'email';
 
@@ -64,13 +66,19 @@ export function AgentFeedItem({ run, onOpenEmail }: AgentFeedItemProps) {
         {run.actions.length > 0 && (
           <ul className="mt-2 flex flex-wrap gap-1.5">
             {run.actions.map((a) => (
-              <li
-                key={a.id}
-                className="flex items-center gap-1.5 rounded-full border border-gray-600 px-2 py-0.5 text-xs text-gray-300"
-                title={t(`agent:actions.status.${a.status}`)}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[a.status]}`} />
-                {t(`agent:actions.kind.${a.kind}`)}
+              <li key={a.id}>
+                <button
+                  type="button"
+                  data-testid={`agent-chip-${a.id}`}
+                  onClick={() => onSelectAction(a.id)}
+                  className="flex items-center gap-1.5 rounded-full border border-gray-600 px-2 py-0.5 text-xs text-gray-300 hover:border-gray-400 hover:text-gray-100"
+                  title={t(`agent:actions.status.${a.status}`)}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${a.needsReview ? STATUS_DOT.pending : STATUS_DOT[a.status]}`}
+                  />
+                  {t(`agent:actions.kind.${a.kind}`)}
+                </button>
               </li>
             ))}
           </ul>

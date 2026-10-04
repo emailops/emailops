@@ -3262,3 +3262,19 @@ archive mail on the server unattended). Translating a panel's prompt once into a
 plan and re-running it (date words like "today" freeze at planning time, and concepts such
 as "support requests" need the model, not keywords). One model call per rule per email
 (cost grows with the number of rules).
+
+## 2026-10-04 — The agent's work is reviewed and finished in the Agent view
+
+**Decision:** Every action of the email agent opens in a review pane inside the Agent view,
+next to the email it acted on. A reply draft is read, edited and then sent (through the
+outbox, with the usual undo window and the account's reply signature) or discarded from
+there; the action records the outcome (`review_outcome`, V036). A draft stays "to review"
+until then, and stops being so if it is sent or deleted from the composer. The view has no
+refresh button: it reloads on the backend's `agent-updated` event, which also fires when a
+panel counts an email.
+**Context:** The developer wants the validation and confirmation work to happen in the
+agent view, not by jumping to the inbox, and found a manual refresh pointless for a view
+that should follow the agent live.
+**Rejected:** Only marking a draft reviewed and sending from the composer (one more jump
+for the commonest case). Opening the composer from the view as the only way to act on a
+draft. The agent still never sends on its own: the send is the user's click.

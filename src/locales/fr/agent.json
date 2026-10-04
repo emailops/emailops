@@ -3,7 +3,6 @@
   "subtitle": "Examine les nouveaux e-mails et les événements à venir et agit selon vos règles.",
   "toggle": "Agent actif",
   "off": "L'agent est désactivé. Activez-le et il examinera les e-mails qui arrivent à partir de ce moment.",
-  "refresh": "Actualiser",
   "rules": {
     "button": "Règles ({{count}})",
     "title": "Règles de l'agent",
@@ -87,5 +86,28 @@
     "load": "Impossible de charger l'agent",
     "save": "Impossible d'enregistrer",
     "action": "Impossible de mettre à jour l'action"
+  },
+  "review": {
+    "back": "Retour au fil",
+    "original": "E-mail d'origine",
+    "draft": "Brouillon de l'agent",
+    "send": "Envoyer",
+    "save": "Enregistrer",
+    "saved": "Enregistré",
+    "discard": "Supprimer",
+    "openInComposer": "Ouvrir dans l'éditeur",
+    "sentNotice": "Réponse envoyée",
+    "discardedNotice": "Brouillon supprimé",
+    "goneNotice": "Ce brouillon n'existe plus : il a été envoyé ou supprimé depuis l'éditeur.",
+    "approveHint": "Cette action modifie votre boîte sur le serveur. Rien ne se passe tant que vous ne l'approuvez pas.",
+    "task": "Tâche créée",
+    "skill": "Résultat du skill",
+    "event": "Événement du calendrier",
+    "error": "Impossible de terminer",
+    "review": "Vérifier",
+    "outcome": {
+      "sent": "Envoyé",
+      "discarded": "Supprimé"
+    }
   }
 }

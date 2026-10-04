@@ -1497,6 +1497,8 @@ export type AgentRunStatus = 'matched' | 'noMatch' | 'failed';
 
 export type PanelWindow = 'today' | 'last7Days' | 'last30Days';
 
+export type ReviewOutcome = 'sent' | 'discarded';
+
 export interface AgentRule {
   id: string;
   name: string;
@@ -1538,6 +1540,11 @@ export interface AgentAction {
   createdAt: number;
   decidedAt: number | null;
   runTitle: string;
+  /** For a reply draft: what the user did with it, once reviewed. */
+  reviewOutcome: ReviewOutcome | null;
+  reviewedAt: number | null;
+  /** A reply draft that still exists and was not sent or discarded yet. */
+  needsReview: boolean;
 }
 
 export interface AgentRun {

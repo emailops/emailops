@@ -3,7 +3,6 @@
   "subtitle": "Revisa el correo nuevo y los próximos eventos y actúa según tus reglas.",
   "toggle": "Agente activo",
   "off": "El agente está desactivado. Actívalo y revisará el correo que llegue a partir de ese momento.",
-  "refresh": "Actualizar",
   "rules": {
     "button": "Reglas ({{count}})",
     "title": "Reglas del agente",
@@ -87,5 +86,28 @@
     "load": "No se ha podido cargar el agente",
     "save": "No se ha podido guardar",
     "action": "No se ha podido actualizar la acción"
+  },
+  "review": {
+    "back": "Volver al feed",
+    "original": "Email original",
+    "draft": "Borrador del agente",
+    "send": "Enviar",
+    "save": "Guardar cambios",
+    "saved": "Guardado",
+    "discard": "Descartar",
+    "openInComposer": "Abrir en el compositor",
+    "sentNotice": "Respuesta enviada",
+    "discardedNotice": "Borrador descartado",
+    "goneNotice": "Este borrador ya no existe: se envió o se borró desde el compositor.",
+    "approveHint": "Esta acción cambia tu buzón en el servidor. No se hará hasta que la apruebes.",
+    "task": "Tarea creada",
+    "skill": "Resultado del skill",
+    "event": "Evento del calendario",
+    "error": "No se ha podido completar",
+    "review": "Revisar",
+    "outcome": {
+      "sent": "Enviado",
+      "discarded": "Descartado"
+    }
   }
 }

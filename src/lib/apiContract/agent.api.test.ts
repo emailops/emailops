@@ -32,6 +32,7 @@ describe('email agent payloads have the shape the frontend types declare', () =>
     ['AgentActionStatus', 'AgentActionStatus'],
     ['AgentRunStatus', 'AgentRunStatus'],
     ['PanelWindow', 'PanelWindow'],
+    ['ReviewOutcome', 'ReviewOutcome'],
   ])('enum %s', (rust, ts) => {
     expect(rustEnumVariants('models/agent.rs', rust)).toEqual(tsStringUnion(ts));
   });

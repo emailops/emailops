@@ -5,7 +5,9 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::models::agent::{AgentAction, AgentPanel, AgentPanelInput, AgentRule, AgentRuleInput, AgentRun};
+use crate::models::agent::{
+    AgentAction, AgentPanel, AgentPanelInput, AgentRule, AgentRuleInput, AgentRun, ReviewOutcome,
+};
 use crate::models::error::Result;
 use crate::services::agent::{self, runner};
 use crate::services::clock::now_secs;
@@ -135,4 +137,10 @@ pub async fn approve_agent_action(state: State<'_, AppState>, id: String) -> Res
 #[tauri::command]
 pub async fn reject_agent_action(state: State<'_, AppState>, id: String) -> Result<()> {
     agent::reject_action(&state.db, &id, now_secs())
+}
+
+/// The user sent or discarded a reply draft of the agent from the Agent view.
+#[tauri::command]
+pub async fn review_agent_draft(state: State<'_, AppState>, id: String, outcome: ReviewOutcome) -> Result<()> {
+    agent::review_draft(&state.db, &id, outcome, now_secs())
 }
