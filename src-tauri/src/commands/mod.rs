@@ -22,6 +22,7 @@ pub mod prompts;
 pub mod search;
 pub mod security;
 pub mod sender_controls;
+pub mod shared_docs;
 pub mod skills;
 pub mod system;
 pub mod translation;

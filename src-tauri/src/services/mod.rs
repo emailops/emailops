@@ -37,6 +37,7 @@ pub mod retrieval;
 pub mod search;
 pub mod secrets_vault;
 pub mod sender_controls;
+pub mod shared_docs;
 pub mod signatures;
 pub mod skills;
 pub mod storage_stats;

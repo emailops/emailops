@@ -868,6 +868,8 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
             }
             Err(e) => crate::services::logger::log("error", "sync", format!("Queued messages could not be sent: {e}")),
         }
+        // Shared documents whose edits have paused go out on the same tick.
+        crate::services::shared_docs::flush_due(&db, now, &providers).await;
     }
 }
 

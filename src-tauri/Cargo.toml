@@ -130,6 +130,7 @@ ts-rs = { version = "12", optional = true }
 opentelemetry      = { version = "0.33", optional = true }
 opentelemetry_sdk  = { version = "0.33", optional = true }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+yrs = "0.28"
 
 [features]
 # Enables tauri::test::mock_builder for the eval examples so they can build an

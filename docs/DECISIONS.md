@@ -3237,3 +3237,34 @@ contradict them. Stripping the name from the generated text afterwards — names
 closings vary by language and the draft can legitimately end with a name (a P.S., a
 mention). Putting the rule in the system/prefix part — it varies per account and kind and
 would bust the KV-prefix cache.
+
+## 2026-10-04 — Shared documents sync over email, sent automatically once the user consents
+
+**Decision:** Users can edit documents and sheets together without any server: each
+install keeps a Yjs CRDT (`yrs` in the backend, `yjs` in the webview) and changes travel
+as an `.eodoc` JSON attachment on ordinary messages between the participants' own
+accounts (`services/shared_docs`). Sharing a document (a dialog that names the recipients
+and says changes will be mailed to them automatically) or accepting an invitation is the
+consent; after it, pending changes are mailed in the background after a 2-minute pause in
+editing, with no click per message. This is the first mail the app sends without a click
+per message, and it is limited to exactly that: the document's participants, about that
+document, only while it is active and consented. A failed send stays pending and is
+retried on the next pass (a duplicate update is harmless to the CRDT), unlike the outbox,
+which never retries. Only EmailOps users can edit; anyone else gets an invitation with a
+readable copy. Update messages are marked read and archived; the invitation stays in the
+inbox. No new OAuth scope: it uses `gmail.send` / `gmail.modify` (archive) as sending and
+archiving already do. Messages are not end-to-end encrypted: they are as private as the
+user's other mail, and acceptance of a change rests on the sender being a stored
+participant, which a forged `From` can fake when the provider does not reject it.
+**Context:** The developer wants Google Docs/Sheets-style collaboration with no cloud,
+consistent with the privacy-first rule of no external calls beyond mail and AI providers.
+A message is recognised by its attachment rather than an `X-` header because none of the
+three send paths can set headers and the sync keeps only an allowlist. The update sent is
+the diff against the least up-to-date recipient's known state vector, so a lost message is
+made good by the next one.
+**Rejected:** A relay or peer-to-peer server — a cloud dependency by another name. A
+"Send changes" button per edit — safe but too clumsy for collaboration. Letting people
+without EmailOps edit by replying — free-text replies cannot be merged reliably. A custom
+`X-EmailOps-*` header — not settable on any provider today. End-to-end encryption in the
+first version — needs key exchange between participants; left for later, the envelope is
+versioned (`v`) so it can be added without breaking older messages.
