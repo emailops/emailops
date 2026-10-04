@@ -3,9 +3,11 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { insertSignature, signatureFor } from '@/lib/signature';
 import type { AccountSignature, AgentAction, AgentRun, Draft } from '@/types';
 
-/** The feed as a chat reads it: oldest first, newest at the bottom. */
+/** The feed as a chat reads it: oldest first, newest at the bottom. The
+ *  backend lists it newest first in the order the runs were made, which a
+ *  sort on the second would lose for runs of the same second. */
 export function chronological(feed: AgentRun[]): AgentRun[] {
-  return [...feed].sort((a, b) => a.createdAt - b.createdAt);
+  return [...feed].reverse();
 }
 
 /** The side panel's two lists: what waits for the user (actions to approve,

@@ -273,7 +273,7 @@ impl Database {
         let conn = self.reader();
         let mut stmt = conn.prepare(&format!(
             "SELECT {RUN_COLUMNS} FROM agent_runs WHERE status <> 'no_match'
-             ORDER BY created_at DESC, id DESC LIMIT ?1"
+             ORDER BY created_at DESC, rowid DESC LIMIT ?1"
         ))?;
         let mut runs = stmt
             .query_map(params![limit], run_from_row)?
@@ -663,6 +663,18 @@ mod tests {
         );
         assert!(!db.insert_agent_run(&again).unwrap(), "already evaluated");
         assert!(db.get_agent_action("a1").unwrap().is_none(), "the loser stores nothing");
+    }
+
+    #[test]
+    fn runs_of_the_same_second_keep_the_order_they_were_made_in() {
+        let db = db();
+        // Ids sort the other way round from the order the runs were made in.
+        for id in ["zz-first", "mm-second", "aa-third"] {
+            db.insert_agent_run(&run(id, &format!("e-{id}"), AgentRunStatus::Matched, NOW, vec![]))
+                .unwrap();
+        }
+        let ids: Vec<_> = db.list_agent_feed(10).unwrap().into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec!["aa-third", "mm-second", "zz-first"], "newest first");
     }
 
     #[test]
