@@ -1483,3 +1483,28 @@ export interface BlockedSender {
   address: string;
   createdAt: number;
 }
+
+// ── Shared documents ────────────────────────────────────────────────────────
+// Mirrors `models::shared_docs`. Content never crosses as JSON: it travels as
+// base64 Yjs updates (`getSharedDocState`, `applySharedDocUpdate`).
+
+export type DocKind = 'doc' | 'sheet';
+/** `invited`: shared with this account, read-only until accepted. `left`:
+ *  declined or left, kept read-only, later changes ignored. */
+export type DocStatus = 'invited' | 'active' | 'left';
+
+export interface SharedDoc {
+  id: string;
+  accountId: string;
+  kind: DocKind;
+  title: string;
+  status: DocStatus;
+  /** Normalized addresses, this account's own included. */
+  participants: string[];
+  /** When the user agreed to mail its changes (shared or accepted). */
+  consentedAt: number | null;
+  /** Changes not mailed yet, since this time. */
+  dirtySince: number | null;
+  createdAt: number;
+  updatedAt: number;
+}

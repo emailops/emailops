@@ -67,3 +67,6 @@ export const useHelpDocsEnabledStore = createBoolPrefStore('help_docs_enabled', 
 // chat may apply the user's skills from `<data dir>/skills/`, `/name` invokes
 // one, and the sidebar shows the Skills view.
 export const useSkillsEnabledStore = createBoolPrefStore('skills_enabled', false);
+// Mirrors `services::shared_docs::is_enabled` (experimental, default off):
+// documents and sheets edited together by email, and the Documents view.
+export const useSharedDocsEnabledStore = createBoolPrefStore('shared_docs_enabled', false);

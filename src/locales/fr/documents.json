@@ -1,0 +1,56 @@
+{
+  "title": "Documents",
+  "intro": "Des documents et des feuilles de calcul que vous modifiez avec d'autres utilisateurs d'EmailOps. Les modifications voyagent par e-mail entre vos comptes, sans cloud.",
+  "new": "Nouveau",
+  "newTitlePlaceholder": "Titre",
+  "kind": {
+    "doc": "Document",
+    "sheet": "Feuille de calcul"
+  },
+  "create": "Créer",
+  "cancel": "Annuler",
+  "invitations": "Invitations",
+  "invitedBy": "Partagé avec vous par {{address}}",
+  "accept": "Accepter",
+  "decline": "Refuser",
+  "empty": "Aucun document pour l'instant. Créez-en un avec Nouveau.",
+  "selectHint": "Sélectionnez un document ou créez-en un nouveau.",
+  "status": {
+    "private": "Vous seul",
+    "shared_one": "Partagé avec {{count}} personne",
+    "shared_many": "Partagé avec {{count}} personnes",
+    "shared_other": "Partagé avec {{count}} personnes",
+    "pending": "Modifications en attente d'envoi",
+    "left": "Vous avez quitté ce document"
+  },
+  "share": "Partager",
+  "sendNow": "Envoyer les modifications",
+  "leave": "Quitter",
+  "readOnlyInvitation": "Lecture seule tant que vous n'avez pas accepté. En acceptant, EmailOps enverra vos modifications par e-mail aux personnes qui le partagent.",
+  "readOnlyLeft": "Vous avez quitté ce document. Il est conservé ici en lecture seule.",
+  "participants": "Participants",
+  "shareDialog": {
+    "title": "Partager « {{title}} »",
+    "recipients": "Adresses e-mail",
+    "recipientsHint": "Séparez les adresses par des virgules. Il leur faut EmailOps pour modifier ; les autres reçoivent une copie en lecture seule.",
+    "from": "Envoyé depuis {{address}}",
+    "consent": "Je comprends qu'EmailOps enverra automatiquement mes modifications par e-mail à ces adresses, depuis ce compte, tant que le document est partagé.",
+    "submit": "Partager",
+    "sharing": "Partage…"
+  },
+  "sheet": {
+    "addRow": "Ajouter une ligne",
+    "addColumn": "Ajouter une colonne",
+    "deleteRow": "Supprimer la ligne",
+    "deleteColumn": "Supprimer la colonne",
+    "cell": "Cellule {{ref}}"
+  },
+  "toolbar": {
+    "bold": "Gras",
+    "italic": "Italique",
+    "underline": "Souligné",
+    "heading": "Titre",
+    "bulletList": "Liste à puces",
+    "orderedList": "Liste numérotée"
+  }
+}

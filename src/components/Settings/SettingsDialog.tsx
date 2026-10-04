@@ -14,6 +14,7 @@ import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
+import { DocumentsSettings } from './DocumentsSettings';
 import { JunkSettings } from './JunkSettings';
 import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
 import { LensesSettings } from './LensesSettings';
@@ -40,6 +41,7 @@ export type SettingsTab =
   | 'aitranslation'
   | 'aisearch'
   | 'skills'
+  | 'documents'
   | 'privacy';
 
 interface SettingsDialogProps {
@@ -82,6 +84,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'aitranslation', needsAi: true },
   { id: 'aisearch', needsAi: true },
   { id: 'skills', experimental: true, needsAi: true },
+  { id: 'documents', experimental: true },
   { id: 'privacy' },
 ];
 
@@ -250,6 +253,7 @@ export function SettingsDialog({
           {tab === 'aitranslation' && <AiTranslationSettings />}
           {tab === 'aisearch' && <AiSearchSettings activeAccountId={effectiveAccountId} />}
           {tab === 'skills' && <SkillsSettings />}
+          {tab === 'documents' && <DocumentsSettings />}
           {tab === 'privacy' && <PrivacySettings />}
         </div>
       </div>

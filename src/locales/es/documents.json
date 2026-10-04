@@ -1,0 +1,56 @@
+{
+  "title": "Documentos",
+  "intro": "Documentos y hojas de cálculo que editas junto con otros usuarios de EmailOps. Los cambios viajan por email entre vuestras cuentas, sin nube.",
+  "new": "Nuevo",
+  "newTitlePlaceholder": "Título",
+  "kind": {
+    "doc": "Documento",
+    "sheet": "Hoja de cálculo"
+  },
+  "create": "Crear",
+  "cancel": "Cancelar",
+  "invitations": "Invitaciones",
+  "invitedBy": "Compartido contigo por {{address}}",
+  "accept": "Aceptar",
+  "decline": "Rechazar",
+  "empty": "Aún no hay documentos. Crea uno con Nuevo.",
+  "selectHint": "Selecciona un documento o crea uno nuevo.",
+  "status": {
+    "private": "Solo tú",
+    "shared_one": "Compartido con {{count}} persona",
+    "shared_many": "Compartido con {{count}} personas",
+    "shared_other": "Compartido con {{count}} personas",
+    "pending": "Cambios pendientes de enviar",
+    "left": "Has salido de este documento"
+  },
+  "share": "Compartir",
+  "sendNow": "Enviar cambios ahora",
+  "leave": "Salir",
+  "readOnlyInvitation": "Solo lectura hasta que aceptes. Al aceptar, EmailOps enviará por email tus cambios a quienes lo comparten.",
+  "readOnlyLeft": "Has salido de este documento. Se conserva aquí en solo lectura.",
+  "participants": "Participantes",
+  "shareDialog": {
+    "title": "Compartir «{{title}}»",
+    "recipients": "Direcciones de email",
+    "recipientsHint": "Separa las direcciones con comas. Necesitan EmailOps para editar; los demás reciben una copia de solo lectura.",
+    "from": "Se envía desde {{address}}",
+    "consent": "Entiendo que EmailOps enviará automáticamente por email mis cambios a estas direcciones, desde esta cuenta, mientras el documento esté compartido.",
+    "submit": "Compartir",
+    "sharing": "Compartiendo…"
+  },
+  "sheet": {
+    "addRow": "Añadir fila",
+    "addColumn": "Añadir columna",
+    "deleteRow": "Eliminar fila",
+    "deleteColumn": "Eliminar columna",
+    "cell": "Celda {{ref}}"
+  },
+  "toolbar": {
+    "bold": "Negrita",
+    "italic": "Cursiva",
+    "underline": "Subrayado",
+    "heading": "Título",
+    "bulletList": "Lista con viñetas",
+    "orderedList": "Lista numerada"
+  }
+}

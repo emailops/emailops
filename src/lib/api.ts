@@ -33,6 +33,7 @@ import type {
   ContactsQuery,
   CreateLensInput,
   CreatePendingTaskRequest,
+  DocKind,
   Draft,
   DraftAttachment,
   Email,
@@ -72,6 +73,7 @@ import type {
   SendChatResponse,
   SenderMoveReport,
   SenderStatus,
+  SharedDoc,
   SignatureInput,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -2123,6 +2125,53 @@ export async function unblockSender(accountId: string, address: string, restore:
 /** Every blocked sender, or one account's. */
 export async function listBlockedSenders(accountId: string | null): Promise<BlockedSender[]> {
   return invoke('list_blocked_senders', { accountId });
+}
+
+// ── Shared documents ─────────────────────────────────────────────────────────
+// Content crosses as base64 Yjs v1 updates.
+
+export async function listSharedDocs(accountId: string | null): Promise<SharedDoc[]> {
+  return invoke('list_shared_docs', { accountId });
+}
+
+export async function createSharedDoc(accountId: string, kind: DocKind, title: string): Promise<SharedDoc> {
+  return invoke('create_shared_doc', { accountId, kind, title });
+}
+
+export async function getSharedDocState(accountId: string, docId: string): Promise<string> {
+  return invoke('get_shared_doc_state', { accountId, docId });
+}
+
+export async function getSharedDocDiff(accountId: string, docId: string, stateVector: string): Promise<string> {
+  return invoke('get_shared_doc_diff', { accountId, docId, stateVector });
+}
+
+export async function applySharedDocUpdate(accountId: string, docId: string, update: string): Promise<void> {
+  return invoke('apply_shared_doc_update', { accountId, docId, update });
+}
+
+/** Share and mail the invitation. Only call after the user confirmed that the
+ *  document's changes will be mailed to these addresses automatically. */
+export async function shareSharedDoc(
+  accountId: string,
+  docId: string,
+  recipients: string[],
+  snapshotHtml: string | null,
+): Promise<SharedDoc> {
+  return invoke('share_shared_doc', { accountId, docId, recipients, snapshotHtml });
+}
+
+export async function acceptSharedDoc(accountId: string, docId: string): Promise<SharedDoc> {
+  return invoke('accept_shared_doc', { accountId, docId });
+}
+
+export async function leaveSharedDoc(accountId: string, docId: string): Promise<SharedDoc> {
+  return invoke('leave_shared_doc', { accountId, docId });
+}
+
+/** Mail pending changes now. Resolves to whether a message went out. */
+export async function flushSharedDoc(accountId: string, docId: string): Promise<boolean> {
+  return invoke('flush_shared_doc', { accountId, docId });
 }
 
 export async function getJunkConfig(): Promise<JunkConfig> {

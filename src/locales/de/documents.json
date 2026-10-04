@@ -1,0 +1,56 @@
+{
+  "title": "Dokumente",
+  "intro": "Dokumente und Tabellen, die du gemeinsam mit anderen EmailOps-Nutzern bearbeitest. Änderungen gehen per E-Mail zwischen euren Konten hin und her, ohne Cloud.",
+  "new": "Neu",
+  "newTitlePlaceholder": "Titel",
+  "kind": {
+    "doc": "Dokument",
+    "sheet": "Tabelle"
+  },
+  "create": "Erstellen",
+  "cancel": "Abbrechen",
+  "invitations": "Einladungen",
+  "invitedBy": "Von {{address}} mit dir geteilt",
+  "accept": "Annehmen",
+  "decline": "Ablehnen",
+  "empty": "Noch keine Dokumente. Erstelle eines mit Neu.",
+  "selectHint": "Wähle ein Dokument aus oder erstelle ein neues.",
+  "status": {
+    "private": "Nur du",
+    "shared_one": "Mit {{count}} Person geteilt",
+    "shared_many": "Mit {{count}} Personen geteilt",
+    "shared_other": "Mit {{count}} Personen geteilt",
+    "pending": "Änderungen warten auf den Versand",
+    "left": "Du hast dieses Dokument verlassen"
+  },
+  "share": "Teilen",
+  "sendNow": "Änderungen jetzt senden",
+  "leave": "Verlassen",
+  "readOnlyInvitation": "Schreibgeschützt, bis du annimmst. Wenn du annimmst, schickt EmailOps deine Änderungen per E-Mail an die Personen, die es teilen.",
+  "readOnlyLeft": "Du hast dieses Dokument verlassen. Es bleibt hier schreibgeschützt erhalten.",
+  "participants": "Beteiligte",
+  "shareDialog": {
+    "title": "„{{title}}“ teilen",
+    "recipients": "E-Mail-Adressen",
+    "recipientsHint": "Trenne Adressen mit Kommas. Zum Bearbeiten brauchen sie EmailOps; alle anderen bekommen eine schreibgeschützte Kopie.",
+    "from": "Gesendet von {{address}}",
+    "consent": "Ich verstehe, dass EmailOps meine Änderungen automatisch per E-Mail von diesem Konto an diese Adressen sendet, solange das Dokument geteilt ist.",
+    "submit": "Teilen",
+    "sharing": "Wird geteilt…"
+  },
+  "sheet": {
+    "addRow": "Zeile hinzufügen",
+    "addColumn": "Spalte hinzufügen",
+    "deleteRow": "Zeile löschen",
+    "deleteColumn": "Spalte löschen",
+    "cell": "Zelle {{ref}}"
+  },
+  "toolbar": {
+    "bold": "Fett",
+    "italic": "Kursiv",
+    "underline": "Unterstrichen",
+    "heading": "Überschrift",
+    "bulletList": "Aufzählung",
+    "orderedList": "Nummerierte Liste"
+  }
+}

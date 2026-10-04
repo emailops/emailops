@@ -629,6 +629,35 @@ pub fn render_skills(overview: &crate::services::skills::SkillsOverview, style: 
     Ok(())
 }
 
+/// Shared documents of one account: kind, title, status, who it is shared
+/// with and whether changes wait to be mailed.
+pub fn render_shared_docs(docs: &[crate::models::shared_docs::SharedDoc], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(docs);
+    }
+    let color = style.color();
+    if docs.is_empty() {
+        println!("(no shared documents)");
+    }
+    for d in docs {
+        let pending = if d.dirty_since.is_some() {
+            " · changes pending"
+        } else {
+            ""
+        };
+        println!(
+            "  {} {} [{}{}] {}",
+            paint(d.kind.as_str(), "1", color),
+            d.title,
+            d.status.as_str(),
+            pending,
+            dim(&d.participants.join(", "), color)
+        );
+        println!("    {}", dim(&d.id, color));
+    }
+    Ok(())
+}
+
 pub fn render_stats(dashboards: &[AccountDashboard], style: RenderStyle) -> Result<()> {
     if style == RenderStyle::Json {
         return emit_ok(dashboards);
