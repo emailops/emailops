@@ -103,16 +103,24 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
   return (
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]" data-testid="agent-view">
       <section className="flex flex-1 min-w-0 flex-col min-h-0">
-        <header className="flex items-center gap-3 border-b border-gray-700 px-5 py-3">
-          <div className="min-w-0 flex-1">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-gray-700 px-5 py-3">
+          <div className="min-w-[12rem] flex-1">
             <h2 className="text-base font-semibold text-gray-100">{t('agent:title')}</h2>
             <p className="truncate text-xs text-gray-400">{t('agent:subtitle')}</p>
           </div>
           <button
             type="button"
+            data-testid="agent-refresh"
+            onClick={() => void reload()}
+            className="whitespace-nowrap rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700"
+          >
+            {t('agent:refresh')}
+          </button>
+          <button
+            type="button"
             data-testid="agent-rules-button"
             onClick={() => setRulesOpen(true)}
-            className="rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
+            className="whitespace-nowrap rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600"
           >
             {t('agent:rules.button', { count: overview?.rules.length ?? 0 })}
           </button>
@@ -120,7 +128,7 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
             checked={overview?.enabled ?? false}
             disabled={!overview}
             onChange={(next) => void toggle(next)}
-            label={<span className="text-sm text-gray-200">{t('agent:toggle')}</span>}
+            label={<span className="whitespace-nowrap text-sm text-gray-200">{t('agent:toggle')}</span>}
           />
         </header>
 
@@ -186,7 +194,7 @@ export function AgentView({ onOpenEmail }: AgentViewProps) {
         </div>
       </section>
 
-      <aside className="flex w-80 flex-shrink-0 flex-col min-h-0 border-l border-gray-700">
+      <aside className="flex w-72 flex-shrink-0 flex-col min-h-0 border-l border-gray-700">
         <h3 className="border-b border-gray-700 px-4 py-3 text-sm font-semibold text-gray-200">
           {t('agent:actions.title')}
         </h3>

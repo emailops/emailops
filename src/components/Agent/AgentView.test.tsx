@@ -185,6 +185,12 @@ describe('AgentView', () => {
     expect(q('agent-feed-empty')).not.toBeNull();
   });
 
+  it('refresh reloads the feed', async () => {
+    await render();
+    await click(q('agent-refresh'));
+    expect(getAgentOverview).toHaveBeenCalledTimes(2);
+  });
+
   it('an empty feed offers to create the first rule', async () => {
     getAgentOverview.mockResolvedValue(overview({ feed: [], actions: [] }));
     await render();

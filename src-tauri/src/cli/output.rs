@@ -598,6 +598,49 @@ pub fn render_thread(
 /// Render dashboard-style stats — the same numbers as the app's dashboard cards
 /// — one block per account: local/sent/server totals, pipeline coverage
 /// (classified / embeddings / memory / tasks), and per-category counts.
+/// `agent run`: how many emails and events matched a rule.
+pub fn render_agent_run(emails: usize, events: usize, style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(serde_json::json!({ "matchedEmails": emails, "matchedEvents": events }));
+    }
+    println!("{emails} email(s) and {events} event(s) matched a rule.");
+    Ok(())
+}
+
+/// `agent`: the feed, newest first, each run with its actions.
+pub fn render_agent_feed(feed: &[crate::models::agent::AgentRun], style: RenderStyle) -> Result<()> {
+    if style == RenderStyle::Json {
+        return emit_ok(feed);
+    }
+    let color = style.color();
+    if feed.is_empty() {
+        println!("(the agent has not acted on anything yet)");
+    }
+    for run in feed {
+        println!(
+            "{} {} {}",
+            paint(run.trigger.as_str(), "1", color),
+            run.title,
+            dim(&format!("· {}", run.sender), color)
+        );
+        if !run.summary.is_empty() {
+            println!("  {}", run.summary);
+        }
+        if let Some(error) = &run.error {
+            println!("  {}", paint(error, "31", color));
+        }
+        for action in &run.actions {
+            println!(
+                "  - {} [{}] {}",
+                action.kind.as_str(),
+                action.status.as_str(),
+                dim(&action.detail, color)
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn render_skills(overview: &crate::services::skills::SkillsOverview, style: RenderStyle) -> Result<()> {
     if style == RenderStyle::Json {
         return emit_ok(overview);

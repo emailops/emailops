@@ -89,7 +89,15 @@ impl AgentEffects for ServiceEffects {
         )
         .await;
         match report.failed.into_iter().next() {
-            Some(failure) => Err(AppError::SyncError(failure.message)),
+            // The failure carries the error already rendered; re-wrapping it
+            // must not print "Sync error:" twice.
+            Some(failure) => Err(AppError::SyncError(
+                failure
+                    .message
+                    .strip_prefix("Sync error: ")
+                    .unwrap_or(&failure.message)
+                    .to_string(),
+            )),
             None => Ok(()),
         }
     }
@@ -715,7 +723,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(
             r#"{"summary": "Ana cannot log in.", "actions": [
                 {"action": "draft_reply", "detail": "Offer a password reset"},
@@ -765,7 +773,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "no"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "not support", "answer": "no"}}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
         let d = deps(&ai, &effects, &skills);
@@ -846,7 +854,7 @@ mod tests {
         .unwrap();
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"P1": "yes"}"#);
+        ai.push_completion(r#"{"P1": {"reason": "support", "answer": "yes"}}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
 
@@ -864,7 +872,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "star", "detail": ""}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -889,7 +897,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, false);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "mark_read", "detail": ""}]}"#);
         let effects = FakeEffects {
             fail_thread_actions: true,
@@ -912,7 +920,7 @@ mod tests {
         add_rule(&db, AgentTrigger::Email, true);
         seed_email(&db, "e1", NOW - 60);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "create_task", "detail": "Call Ana"}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -947,7 +955,7 @@ mod tests {
             errors: vec![],
         };
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(r#"{"summary": "s", "actions": [{"action": "run_skill", "detail": "triage"}]}"#);
         ai.push_completion("  The email is about the login page.  ");
         let effects = FakeEffects::default();
@@ -1002,7 +1010,7 @@ mod tests {
         seed_event(&db, "ev-soon", NOW + 300);
         seed_event(&db, "ev-later", NOW + 7_200);
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"R1": "yes"}"#);
+        ai.push_completion(r#"{"R1": {"reason": "asks for help", "answer": "yes"}}"#);
         ai.push_completion(r#"{"summary": "Kickoff in 5 minutes", "actions": [{"action": "create_task", "detail": "Prepare kickoff"}]}"#);
         let effects = FakeEffects::default();
         let skills = SkillCatalog::default();
@@ -1038,8 +1046,8 @@ mod tests {
         )
         .unwrap();
         let ai = FakeAiProvider::new();
-        ai.push_completion(r#"{"P1": "yes"}"#);
-        ai.push_completion(r#"{"R1": "no"}"#);
+        ai.push_completion(r#"{"P1": {"reason": "support", "answer": "yes"}}"#);
+        ai.push_completion(r#"{"R1": {"reason": "not support", "answer": "no"}}"#);
 
         assert_eq!(backfill_panel(&db, &ai, &panel.id, NOW).await.unwrap(), 1);
 

@@ -170,6 +170,16 @@ pub enum SuggestionAction {
     },
 }
 
+/// What `agent` does.
+#[derive(Subcommand, Debug, Clone)]
+pub enum AgentCliAction {
+    /// The agent's feed: what it saw and did, newest first (the default).
+    Feed,
+    /// Evaluate the enabled accounts' new mail and the events about to start,
+    /// as a sync and the event ticker do. Needs the agent turned on.
+    Run,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// List or add accounts. Bare `accounts` lists; `accounts add <provider>`
@@ -347,6 +357,13 @@ pub enum Command {
     /// Dashboard stats per account: local/sent/server email totals, per-category
     /// counts, and classified / embeddings / memory / tasks coverage.
     Stats,
+
+    /// The email agent. Bare `agent` lists its feed; `agent run` evaluates new
+    /// mail and upcoming events now (loads the AI model).
+    Agent {
+        #[command(subcommand)]
+        action: Option<AgentCliAction>,
+    },
 
     /// List the skills in `<data dir>/skills/` (each a folder with a
     /// `SKILL.md`) and any that failed to load. Read-only; loads no model.
@@ -918,6 +935,19 @@ mod tests {
     #[test]
     fn chat_requires_at_least_one_question() {
         assert!(Cli::try_parse_from(["emailops-cli", "chat"]).is_err());
+    }
+
+    #[test]
+    fn agent_parses_bare_and_run() {
+        let cli = Cli::parse_from(["emailops-cli", "agent"]);
+        assert!(matches!(cli.command, Some(Command::Agent { action: None })));
+        let cli = Cli::parse_from(["emailops-cli", "agent", "run"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Agent {
+                action: Some(AgentCliAction::Run)
+            })
+        ));
     }
 
     #[test]

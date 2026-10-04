@@ -129,3 +129,22 @@
     attendees: ["yo@emailops.example.com", "dev1@emailops.example.com", "dev2@emailops.example.com"]
     description: "Reunión diaria del equipo de desarrollo"
   expect_matches: []
+
+- id: support_with_a_second_rule_and_a_panel_en
+  note: "regression from the demo run: with a promotions rule beside it, the support rule was answered no while the support panel was yes"
+  rules:
+    - name: Support requests
+      match: "A customer reports a problem with the product or asks for help using it"
+      action: "Draft a friendly reply asking for a screenshot of the error, and create a task to follow up"
+    - name: Promotions
+      match: "A promotional or marketing email: offers, discounts, newsletters"
+      action: "Archive it and mark it as read. Do not reply."
+  panels: ["Support requests from customers"]
+  email:
+    from: "Clara Demo <clara@northwind.example.com>"
+    date: "2026-10-03 12:40"
+    subject: "Sync stops after adding a second account"
+    body: "Hi Ulises, since I added my second mailbox to EmailOps, sync stops after a few minutes and the inbox never updates until I restart the app. I am on the latest version on macOS. Could you help me? Thanks, Clara"
+  expect_matches: [R1, P1]
+  expect_actions: [draft_reply, create_task]
+  expect_no_actions: [archive, mark_read]
