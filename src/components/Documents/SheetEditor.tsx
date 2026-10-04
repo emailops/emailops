@@ -86,7 +86,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
         <tbody>
           {grid.rowIds.map((rowId, r) => (
             <tr key={rowId} className="group">
-              <th className="px-2 border border-gray-700 bg-gray-800 font-medium text-gray-400 text-right">
+              <th className="px-2 border border-gray-700 bg-gray-800 font-medium text-gray-400 text-right whitespace-nowrap">
                 {editable && (
                   <button
                     type="button"

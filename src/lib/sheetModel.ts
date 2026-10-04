@@ -112,9 +112,21 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** The sheet as an HTML table: the readable copy an invitation carries. */
+/** The sheet as an HTML table: the readable copy an invitation carries. Empty
+ *  rows and columns after the last value are left out. */
 export function gridToHtml(grid: Grid): string {
-  const head = grid.colIds.map((_, i) => `<th>${columnLabel(i)}</th>`).join('');
-  const body = grid.values.map((row) => `<tr>${row.map((v) => `<td>${escapeHtml(v)}</td>`).join('')}</tr>`).join('');
+  const rows = grid.values.reduce((n, row, r) => (row.some((v) => v) ? r + 1 : n), 0);
+  const cols = grid.values.reduce((n, row) => row.reduce((m, v, c) => (v ? Math.max(m, c + 1) : m), n), 0);
+  const head = Array.from({ length: cols }, (_, i) => `<th>${columnLabel(i)}</th>`).join('');
+  const body = grid.values
+    .slice(0, rows)
+    .map(
+      (row) =>
+        `<tr>${row
+          .slice(0, cols)
+          .map((v) => `<td>${escapeHtml(v)}</td>`)
+          .join('')}</tr>`,
+    )
+    .join('');
   return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }

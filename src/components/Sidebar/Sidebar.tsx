@@ -597,6 +597,28 @@ export function Sidebar({
                   </button>
                 </li>
               )}
+              {sharedDocsEnabled && (
+                <li>
+                  <button
+                    type="button"
+                    data-testid="sidebar-documents"
+                    onClick={() => onSetViewMode('documents')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'documents' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+                      />
+                    </svg>
+                    {t('sidebar:documents')}
+                  </button>
+                </li>
+              )}
               {calendarEnabled && (
                 <li>
                   <button
@@ -958,28 +980,6 @@ export function Sidebar({
                       />
                     </svg>
                     {t('sidebar:skills')}
-                  </button>
-                </li>
-              )}
-              {sharedDocsEnabled && (
-                <li>
-                  <button
-                    type="button"
-                    data-testid="sidebar-documents"
-                    onClick={() => onSetViewMode('documents')}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'documents' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
-                      />
-                    </svg>
-                    {t('sidebar:documents')}
                   </button>
                 </li>
               )}

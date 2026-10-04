@@ -10,6 +10,7 @@
 
 pub mod crdt;
 pub mod envelope;
+mod mail_text;
 pub mod planner;
 
 use std::sync::Arc;
@@ -151,23 +152,26 @@ pub fn leave(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result<
 
 // ── Mail transport ───────────────────────────────────────────────────────────
 
-fn subject(title: &str) -> String {
-    format!("{title} (EmailOps shared document)")
+/// The sender's UI language, which the human-readable text is written in.
+fn mail_language(db: &Database) -> Result<crate::services::i18n::Language> {
+    Ok(crate::services::i18n::resolve_ui_language(db)?.unwrap_or_default())
 }
 
-fn invitation_body(account: &Account, doc: &SharedDoc, snapshot_html: Option<&str>) -> EmailBody {
+fn invitation_body(
+    db: &Database,
+    account: &Account,
+    doc: &SharedDoc,
+    snapshot_html: Option<&str>,
+) -> Result<EmailBody> {
     let sharer = crate::services::accounts::sender_display_name(account).unwrap_or(&account.email);
-    let text = format!(
-        "{sharer} shared \"{}\" with you in EmailOps.\n\n\
-         Open EmailOps to edit it together: changes travel between the people \
-         sharing it as email, with no server in between. Without EmailOps you \
-         can read the copy below, but not edit it.",
-        doc.title
-    );
+    let text = mail_text::invitation(mail_language(db)?, sharer, &doc.title);
     let html = snapshot_html.map(|snapshot| {
         format!(
             "<p>{}</p><hr>{}",
-            ammonia::clean_text(&text),
+            text.split("\n\n")
+                .map(ammonia::clean_text)
+                .collect::<Vec<_>>()
+                .join("</p><p>"),
             crate::services::emails::sanitize_outgoing_html(snapshot)
         )
     });
@@ -175,16 +179,11 @@ fn invitation_body(account: &Account, doc: &SharedDoc, snapshot_html: Option<&st
         Some(html) => EmailBody::with_html(text, html),
         None => EmailBody::plain(text),
     };
-    body.without_footer()
+    Ok(body.without_footer())
 }
 
-fn update_body(doc: &SharedDoc) -> EmailBody {
-    EmailBody::plain(format!(
-        "Changes to the shared document \"{}\", sent by EmailOps to the people \
-         editing it. EmailOps applies them automatically; you can ignore this message.",
-        doc.title
-    ))
-    .without_footer()
+fn update_body(db: &Database, doc: &SharedDoc) -> Result<EmailBody> {
+    Ok(EmailBody::plain(mail_text::update(mail_language(db)?, &doc.title)).without_footer())
 }
 
 /// Mail `update` (with our state vector) to every participant but us.
@@ -221,7 +220,7 @@ async fn mail_envelope(
         &account.id,
         to.clone(),
         Vec::new(),
-        &subject(&doc.title),
+        &mail_text::subject(mail_language(db)?, &doc.title),
         &body,
         vec![attachment],
         provider,
@@ -266,7 +265,7 @@ pub async fn share(
     // failed invitation is retried by the flush with the whole document.
     db.mark_shared_doc_dirty(doc_id, now)?;
     let dirty_since = db.get_shared_doc(doc_id)?.and_then(|d| d.dirty_since);
-    let body = invitation_body(account, &doc, snapshot_html);
+    let body = invitation_body(db, account, &doc, snapshot_html)?;
     let to = mail_envelope(db, account, provider, &doc, state, ours.state_vector.clone(), body).await?;
     if let Some(at) = dirty_since {
         db.claim_shared_doc_flush(doc_id, at)?;
@@ -315,7 +314,7 @@ pub async fn flush(db: &Arc<Database>, account: &Account, provider: &dyn EmailPr
             &doc,
             update,
             ours.state_vector.clone(),
-            update_body(&doc),
+            update_body(db, &doc)?,
         )
         .await?;
         db.set_participant_state_vectors(doc_id, &sent_to, &ours.state_vector)?;

@@ -115,13 +115,23 @@ describe('columnLabel', () => {
 });
 
 describe('gridToHtml', () => {
+  it('leaves out the empty rows and columns after the last value', () => {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 5, 4, ids('t'));
+    const { rowIds, colIds } = readGrid(doc);
+    setCell(doc, rowIds[1], colIds[1], 'x');
+    expect(gridToHtml(readGrid(doc))).toBe(
+      '<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td></td><td></td></tr><tr><td></td><td>x</td></tr></tbody></table>',
+    );
+  });
+
   it('renders a table with every value escaped', () => {
     const doc = new Y.Doc();
     ensureGrid(doc, 1, 2, ids('h'));
     const { rowIds, colIds } = readGrid(doc);
     setCell(doc, rowIds[0], colIds[0], '<b>&"x"');
     expect(gridToHtml(readGrid(doc))).toBe(
-      '<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>&lt;b&gt;&amp;&quot;x&quot;</td><td></td></tr></tbody></table>',
+      '<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>&lt;b&gt;&amp;&quot;x&quot;</td></tr></tbody></table>',
     );
   });
 });

@@ -101,7 +101,8 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
             </button>
           </>
         )}
-        {editable && consented && doc.dirtySince !== null && (
+        {/* Always offered once shared: the list's pending mark only refreshes on reload. */}
+        {editable && consented && (
           <button
             type="button"
             data-testid="shared-doc-send-now"
