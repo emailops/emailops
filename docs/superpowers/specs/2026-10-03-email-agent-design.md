@@ -2,9 +2,8 @@
 
 Written in ASD-STE100 Simplified Technical English.
 
-Date: 2026-10-03. Branch: `feature/email-agent` (off `feature/competitor-parity`).
-Commits: `474314c0` (backend), `d72927b3` (view), `75801412` (eval), and the commit that
-adds this specification (reason before each answer, CLI command, Refresh button).
+Date: 2026-10-03. Branch: `feature/email-agent` (on `main`). The pull request lists the
+commits.
 
 ## 1. Purpose
 
