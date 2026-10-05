@@ -8,7 +8,7 @@
 //! changing the command surface.
 
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use crate::models::{CompanyContactsGroup, Contact, ContactDetail, ContactsPage, ContactsQuery};
 
 pub fn get_contacts(db: &Database, account_id: &str) -> Result<Vec<Contact>> {
@@ -32,4 +32,52 @@ pub fn list_contacts_by_company(db: &Database, account_id: &str) -> Result<Vec<C
 /// autocomplete command — keeps the SQL in `db::emails::contacts`.
 pub fn search_contacts(db: &Database, account_id: &str, query: &str, limit: i32) -> Result<Vec<Contact>> {
     db.search_contacts(account_id, query, limit)
+}
+
+/// Pure: the organization an address belongs to — its domain, unless that is
+/// a free personal provider (gmail.com, outlook.com…), which says nothing
+/// about who someone works with.
+pub fn organization_domain(address: &str) -> Option<String> {
+    let domain = crate::util::email_addr::extract_domain(&address.trim().to_lowercase())?;
+    (!crate::util::email_addr::is_personal_email_domain(&domain)).then_some(domain)
+}
+
+/// The organization of one of the user's accounts ("Mi organización"), if any.
+pub fn account_organization_domain(db: &Database, account_id: &str) -> Result<Option<String>> {
+    let account = db
+        .get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    Ok(organization_domain(&account.email))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_company_address_has_an_organization_and_a_free_provider_does_not() {
+        assert_eq!(organization_domain("Ana@Acme.example").as_deref(), Some("acme.example"));
+        assert_eq!(organization_domain("me@gmail.com"), None);
+        assert_eq!(organization_domain("me@outlook.com"), None);
+        assert_eq!(organization_domain("not-an-address"), None);
+    }
+
+    #[test]
+    fn the_organization_of_an_account_comes_from_its_address() {
+        let db = Database::new_for_testing().unwrap();
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at) VALUES
+                   ('work', 'imap', 'ana@acme.example', 'Ana', 0),
+                   ('home', 'gmail', 'ana@gmail.com', 'Ana', 0)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            account_organization_domain(&db, "work").unwrap().as_deref(),
+            Some("acme.example")
+        );
+        assert_eq!(account_organization_domain(&db, "home").unwrap(), None);
+        assert!(account_organization_domain(&db, "missing").is_err());
+    }
 }

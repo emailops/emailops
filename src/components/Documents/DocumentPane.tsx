@@ -232,7 +232,9 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
       </div>
       {sharing && (
         <ShareDialog
+          accountId={doc.accountId}
           title={doc.title}
+          exclude={doc.participants}
           fromAddress={accountEmail}
           onShare={handleShare}
           onClose={() => setSharing(false)}

@@ -36,7 +36,9 @@
     "from": "Gesendet von {{address}}",
     "consent": "Ich verstehe, dass EmailOps meine Änderungen automatisch per E-Mail von diesem Konto an diese Adressen sendet, solange das Dokument geteilt ist.",
     "submit": "Teilen",
-    "sharing": "Wird geteilt…"
+    "sharing": "Wird geteilt…",
+    "suggested": "Vorschläge aus deiner Organisation",
+    "sameOrganization": "Deine Organisation"
   },
   "sheet": {
     "addRow": "Zeile hinzufügen",

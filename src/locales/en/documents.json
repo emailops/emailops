@@ -36,7 +36,9 @@
     "from": "Sent from {{address}}",
     "consent": "I understand that EmailOps will automatically email my changes to these addresses, from this account, while the document is shared.",
     "submit": "Share",
-    "sharing": "Sharing…"
+    "sharing": "Sharing…",
+    "suggested": "Suggested from your organization",
+    "sameOrganization": "Your organization"
   },
   "sheet": {
     "addRow": "Add row",

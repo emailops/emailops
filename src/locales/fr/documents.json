@@ -36,7 +36,9 @@
     "from": "Envoyé depuis {{address}}",
     "consent": "Je comprends qu'EmailOps enverra automatiquement mes modifications par e-mail à ces adresses, depuis ce compte, tant que le document est partagé.",
     "submit": "Partager",
-    "sharing": "Partage…"
+    "sharing": "Partage…",
+    "suggested": "Suggestions de votre organisation",
+    "sameOrganization": "Votre organisation"
   },
   "sheet": {
     "addRow": "Ajouter une ligne",

@@ -1519,6 +1519,12 @@ export async function listContactsByCompany(accountId: string): Promise<CompanyC
   return invoke('list_contacts_by_company', { accountId });
 }
 
+/** The account's organization domain ("Mi organización"); `null` for a free
+ *  personal provider such as gmail.com. */
+export async function getOrganizationDomain(accountId: string): Promise<string | null> {
+  return invoke('get_organization_domain', { accountId });
+}
+
 // Drafts
 export async function listDrafts(accountId: string): Promise<Draft[]> {
   return invoke('list_drafts', { accountId });

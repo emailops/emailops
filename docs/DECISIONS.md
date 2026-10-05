@@ -3287,3 +3287,19 @@ would have to be mailed as a new change to everyone.
 for organisation each person can do alone. Restoring a version — left out on request;
 viewing covers looking back. Diff highlighting between versions — more work than the
 view-only need justifies today. Title-only search — the text is what people remember.
+
+## 2026-10-05 — "My organization" is the account's own domain, unless it is a free provider
+
+**Decision:** An account's organization is the domain of its address
+(`services::contacts::organization_domain`), except when that domain is a free personal
+provider (`util::email_addr::PERSONAL_EMAIL_DOMAINS`: gmail.com, outlook.com…), in which
+case the account has none. Contacts gets a "My organization" tab listing the people on
+that domain (only shown when there is one), and the EO Docs share dialog suggests them
+first: before anything is typed, and ranked first among the matches while typing (the
+existing `autocomplete_recipients` domain boost). People already sharing the document are
+not suggested.
+**Context:** The developer asked for colleagues to come first when sharing, inferring the
+company from the domain.
+**Rejected:** A configurable organization domain or list — not asked for, and the address
+already says it. Treating free-provider domains as an organization — everyone on
+gmail.com would become a "colleague".

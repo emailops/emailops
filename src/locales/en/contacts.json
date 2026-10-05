@@ -37,6 +37,8 @@
     "noGroupings": "No company groupings yet — company tags are derived during sync.",
     "modeList": "List",
     "modeCompany": "By company",
+    "modeOrganization": "My organization",
+    "organizationHint": "People at {{domain}}",
     "searchPlaceholder": "Search contacts...",
     "sortPrefix": "Sort: {{label}}",
     "allCompanies": "All companies",
