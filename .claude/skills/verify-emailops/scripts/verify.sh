@@ -82,6 +82,12 @@ cmd_launch() {
   if [ "$DATA_DIR" = "$REPO/.emailops-demo-data" ]; then
     (cd "$REPO" && bash scripts/ensure_demo_db.sh "$DATA_DIR" demo-db demo-embed)
   fi
+  # Mark this build's release notes as seen: otherwise the "What's new" modal opens on
+  # top of every view and no step can click past it (ReleaseNotesDialog.test.tsx covers it).
+  if [ -f "$DATA_DIR/emailops.db" ]; then
+    local version; version="$(node -p "require('$REPO/package.json').version")"
+    sqlite3 "$DATA_DIR/emailops.db" "INSERT INTO user_preferences (key, value) VALUES ('release_notes_seen_version', '$version') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  fi
   RUN_DIR="${VERIFY_RUN_DIR:-$RUNS_ROOT/$(date +%Y%m%d-%H%M%S)}"
   mkdir -p "$RUN_DIR"; ln -sfn "$RUN_DIR" "$CURRENT"
   echo "$DATA_DIR" > "$RUN_DIR/data_dir"; echo "$PORT" > "$RUN_DIR/port"
