@@ -8,6 +8,7 @@ import {
   gridToHtml,
   insertColumn,
   insertRow,
+  pasteBlock,
   readGrid,
   setCell,
 } from './sheetModel';
@@ -133,5 +134,62 @@ describe('gridToHtml', () => {
     expect(gridToHtml(readGrid(doc))).toBe(
       '<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>&lt;b&gt;&amp;&quot;x&quot;</td></tr></tbody></table>',
     );
+  });
+});
+
+describe('pasteBlock', () => {
+  it('writes the block from the chosen cell, clearing cells pasted empty', () => {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 3, 3, ids('p'));
+    const { rowIds, colIds } = readGrid(doc);
+    setCell(doc, rowIds[2], colIds[2], 'old');
+    pasteBlock(doc, 1, 1, [
+      ['a', 'b'],
+      ['c', ''],
+    ]);
+    expect(readGrid(doc).values).toEqual([
+      ['', '', ''],
+      ['', 'a', 'b'],
+      ['', 'c', ''],
+    ]);
+  });
+
+  it('adds the rows and columns a large block needs', () => {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 2, 2, ids('q'));
+    pasteBlock(
+      doc,
+      1,
+      1,
+      [
+        ['x', 'y', 'z'],
+        ['1', '2', '3'],
+      ],
+      ids('n'),
+    );
+    const grid = readGrid(doc);
+    expect(grid.rowIds).toHaveLength(3);
+    expect(grid.colIds).toHaveLength(4);
+    expect(grid.values[2]).toEqual(['', '1', '2', '3']);
+  });
+
+  it('is one change, so a peer receives the whole block at once', () => {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 1, 1, ids('t'));
+    let updates = 0;
+    doc.on('update', () => {
+      updates += 1;
+    });
+    pasteBlock(
+      doc,
+      0,
+      0,
+      [
+        ['a', 'b'],
+        ['c', 'd'],
+      ],
+      ids('u'),
+    );
+    expect(updates).toBe(1);
   });
 });

@@ -96,6 +96,25 @@ export function deleteColumn(doc: Y.Doc, index: number): void {
   deleteLine(doc, parts(doc).cols, index, (col, row) => key(row, col));
 }
 
+/**
+ * Paste a block of values with its top-left corner at (`row`, `col`), as one
+ * change: rows and columns are added when the block runs past the grid, and a
+ * value pasted empty clears its cell.
+ */
+export function pasteBlock(doc: Y.Doc, row: number, col: number, values: string[][], makeId = newId): void {
+  const p = parts(doc);
+  const width = values.reduce((w, r) => Math.max(w, r.length), 0);
+  doc.transact(() => {
+    while (p.rows.length < row + values.length) p.rows.push([makeId()]);
+    while (p.cols.length < col + width) p.cols.push([makeId()]);
+    const rowIds = p.rows.toArray();
+    const colIds = p.cols.toArray();
+    values.forEach((line, r) => {
+      line.forEach((value, c) => setCell(doc, rowIds[row + r], colIds[col + c], value));
+    });
+  });
+}
+
 /** Spreadsheet column name: 0 → A, 25 → Z, 26 → AA. */
 export function columnLabel(index: number): string {
   let n = index + 1;

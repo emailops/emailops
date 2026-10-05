@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
+import { isTablePaste, parseClipboardTable } from '@/lib/clipboardTable';
 import {
   columnLabel,
   deleteColumn,
@@ -9,6 +10,7 @@ import {
   type Grid,
   insertColumn,
   insertRow,
+  pasteBlock,
   readGrid,
   setCell,
 } from '@/lib/sheetModel';
@@ -108,6 +110,14 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                     value={grid.values[r]?.[c] ?? ''}
                     readOnly={!editable}
                     onChange={(e) => setCell(doc, rowId, colId, e.target.value)}
+                    onPaste={(e) => {
+                      // A block copied from a spreadsheet fills the cells from
+                      // here on; plain text goes into this cell as usual.
+                      const text = e.clipboardData.getData('text/plain');
+                      if (!editable || !isTablePaste(text)) return;
+                      e.preventDefault();
+                      pasteBlock(doc, r, c, parseClipboardTable(text));
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
