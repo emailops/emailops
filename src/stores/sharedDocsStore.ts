@@ -26,6 +26,9 @@ export interface SharedDocsState {
   /** Bumped when another view asks to show a document (an import from an
    *  email attachment): the app switches to EO Docs. */
   openRequests: number;
+  /** Documents deleted in this session: an editor still closing must not
+   *  save or mail their last edits. */
+  deleted: string[];
 }
 
 export type SharedDocsAction =
@@ -34,6 +37,7 @@ export type SharedDocsAction =
   | { type: 'loaded'; accountId: string; docs: SharedDoc[] }
   | { type: 'failed'; error: string }
   | { type: 'upserted'; doc: SharedDoc }
+  | { type: 'removed'; docId: string }
   | { type: 'selected'; id: string | null }
   | { type: 'changed'; docIds: string[] }
   | { type: 'foldersLoaded'; folders: DocFolder[] }
@@ -54,6 +58,7 @@ export const initialSharedDocsState: SharedDocsState = {
   searchQuery: '',
   searchResults: null,
   openRequests: 0,
+  deleted: [],
 };
 
 function newestFirst(docs: SharedDoc[]): SharedDoc[] {
@@ -68,6 +73,7 @@ export function sharedDocsReducer(state: SharedDocsState, action: SharedDocsActi
         accountId: action.accountId,
         changes: state.changes,
         openRequests: state.openRequests,
+        deleted: state.deleted,
       };
     case 'loading':
       return { ...state, isLoading: true, error: null };
@@ -79,6 +85,14 @@ export function sharedDocsReducer(state: SharedDocsState, action: SharedDocsActi
       return { ...state, isLoading: false, error: action.error };
     case 'upserted':
       return { ...state, docs: newestFirst([action.doc, ...state.docs.filter((d) => d.id !== action.doc.id)]) };
+    case 'removed':
+      return {
+        ...state,
+        docs: state.docs.filter((d) => d.id !== action.docId),
+        searchResults: state.searchResults?.filter((d) => d.id !== action.docId) ?? null,
+        selectedId: state.selectedId === action.docId ? null : state.selectedId,
+        deleted: [...state.deleted, action.docId],
+      };
     case 'selected':
       return { ...state, selectedId: action.id };
     case 'changed': {
@@ -129,6 +143,8 @@ interface SharedDocsStore extends SharedDocsState {
   share: (docId: string, recipients: string[], snapshotHtml: string | null) => Promise<SharedDoc>;
   accept: (docId: string) => Promise<SharedDoc>;
   leave: (docId: string) => Promise<SharedDoc>;
+  /** Delete a document from this install (see `delete_shared_doc`). */
+  deleteDoc: (docId: string) => Promise<void>;
   reloadFolders: () => Promise<void>;
   openFolder: (folderId: string | null) => void;
   createFolder: (name: string) => Promise<DocFolder>;
@@ -175,6 +191,10 @@ export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
       upsert(await api.shareSharedDoc(requireAccount(), docId, recipients, snapshotHtml)),
     accept: async (docId) => upsert(await api.acceptSharedDoc(requireAccount(), docId)),
     leave: async (docId) => upsert(await api.leaveSharedDoc(requireAccount(), docId)),
+    deleteDoc: async (docId) => {
+      await api.deleteSharedDoc(requireAccount(), docId);
+      dispatch({ type: 'removed', docId });
+    },
     reloadFolders: async () => {
       const { accountId } = get();
       if (!accountId) return;

@@ -106,5 +106,14 @@
     "skippedImages_other": "{{count}} imágenes eran demasiado grandes para importarlas",
     "openInEoDocs": "Abrir en EO Docs",
     "show": "Abrir"
+  },
+  "delete": "Eliminar",
+  "deleteDialog": {
+    "title": "¿Eliminar «{{title}}»?",
+    "body": "Se borra de este equipo, con su historial.",
+    "shared_one": "Está compartido: dejarás de enviar y recibir sus cambios. La otra persona conserva su copia.",
+    "shared_many": "Está compartido: dejarás de enviar y recibir sus cambios. Las otras {{count}} personas conservan su copia.",
+    "shared_other": "Está compartido: dejarás de enviar y recibir sus cambios. Las otras {{count}} personas conservan su copia.",
+    "confirm": "Eliminar"
   }
 }

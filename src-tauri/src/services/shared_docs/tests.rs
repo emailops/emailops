@@ -656,3 +656,33 @@ async fn a_workbook_imports_as_searchable_sheets_in_the_chosen_folder() {
     assert_eq!(found, vec![docs[0].id.clone()]);
     assert!(import_spreadsheet(&alice.db, &alice.account, "x.xlsx", "bm90IGEgc2hlZXQ=", None, NOW).is_err());
 }
+
+#[tokio::test]
+async fn deleting_a_document_removes_it_with_its_history_and_search_entry() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Ferry times", NOW).unwrap();
+    type_at_end(&alice, &doc.id, &open_editor(&alice, &doc.id, 1), "Leaves at nine");
+    assert!(
+        delete(&alice.db, "acc-other", &doc.id, NOW).is_err(),
+        "another account cannot delete it"
+    );
+
+    delete(&alice.db, &alice.account.id, &doc.id, NOW).unwrap();
+
+    assert!(alice.db.list_shared_docs(Some(&alice.account.id)).unwrap().is_empty());
+    assert!(search(&alice.db, &alice.account.id, "ferry").unwrap().is_empty());
+    assert!(versions(&alice.db, &alice.account.id, &doc.id).is_err());
+}
+
+#[tokio::test]
+async fn a_deleted_shared_document_does_not_come_back_with_later_changes() {
+    let (alice, bob, doc) = shared_pair().await;
+    delete(&bob.db, &bob.account.id, &doc, NOW).unwrap();
+
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), " more");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    deliver(&alice, &bob).await;
+
+    assert!(bob.db.get_shared_doc(&doc).unwrap().is_none());
+    assert!(bob.db.list_shared_docs(Some(&bob.account.id)).unwrap().is_empty());
+}

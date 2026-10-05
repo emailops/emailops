@@ -23,10 +23,12 @@ interface DocumentPaneProps {
   doc: SharedDoc;
   /** The address of the account the document belongs to. */
   accountEmail: string;
+  /** Asks to delete the document (the view confirms first). */
+  onDelete: () => void;
 }
 
 /** One open document: its header (sharing, status) and its editor. */
-export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
+export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps) {
   const { t, i18n } = useTranslation(['documents']);
   const addLog = useLogStore((s) => s.addLog);
   const share = useSharedDocsStore((s) => s.share);
@@ -175,6 +177,14 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
             {t('documents:leave')}
           </button>
         )}
+        <button
+          type="button"
+          data-testid="shared-doc-delete"
+          onClick={onDelete}
+          className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-red-800 text-gray-200"
+        >
+          {t('documents:delete')}
+        </button>
       </div>
       {shownError && (
         <div

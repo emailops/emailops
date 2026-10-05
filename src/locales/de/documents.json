@@ -106,5 +106,14 @@
     "skippedImages_other": "{{count}} Bilder waren zu groß zum Importieren",
     "openInEoDocs": "In EO Docs öffnen",
     "show": "Öffnen"
+  },
+  "delete": "Löschen",
+  "deleteDialog": {
+    "title": "„{{title}}“ löschen?",
+    "body": "Es wird mit seinem Verlauf von diesem Computer gelöscht.",
+    "shared_one": "Es ist geteilt: Sie senden und empfangen keine Änderungen mehr. Die andere Person behält ihre Kopie.",
+    "shared_many": "Es ist geteilt: Sie senden und empfangen keine Änderungen mehr. Die {{count}} anderen Personen behalten ihre Kopie.",
+    "shared_other": "Es ist geteilt: Sie senden und empfangen keine Änderungen mehr. Die {{count}} anderen Personen behalten ihre Kopie.",
+    "confirm": "Löschen"
   }
 }

@@ -77,6 +77,12 @@ export function useSharedYDoc({ accountId, docId, mailOnClose }: UseSharedYDocAr
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      if (useSharedDocsStore.getState().deleted.includes(docId)) {
+        // Closed because it was deleted: its last edits go with it.
+        ydoc.off('update', onUpdate);
+        ydoc.destroy();
+        return;
+      }
       // `save` takes the pending edits synchronously, before the doc goes away.
       const saved = save();
       ydoc.off('update', onUpdate);

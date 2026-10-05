@@ -71,6 +71,17 @@ describe('sharedDocsReducer', () => {
     expect(state.changes).toEqual({ a: 2, x: 1 });
   });
 
+  it('a deleted document leaves the list, the search results and the selection', () => {
+    let state = sharedDocsReducer(loaded([doc('a', 1), doc('b', 2)]), { type: 'selected', id: 'a' });
+    state = sharedDocsReducer(state, { type: 'searchStarted', query: 'doc' });
+    state = sharedDocsReducer(state, { type: 'searched', query: 'doc', results: [doc('a', 1)] });
+    state = sharedDocsReducer(state, { type: 'removed', docId: 'a' });
+    expect(state.docs.map((d) => d.id)).toEqual(['b']);
+    expect(state.searchResults).toEqual([]);
+    expect(state.selectedId).toBeNull();
+    expect(state.deleted).toEqual(['a']);
+  });
+
   it('forgets the selection when the account changes', () => {
     let state = sharedDocsReducer(loaded([doc('a', 1)]), { type: 'selected', id: 'a' });
     state = sharedDocsReducer(state, { type: 'accountChanged', accountId: 'acc-2' });

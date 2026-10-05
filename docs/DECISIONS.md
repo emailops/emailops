@@ -3380,3 +3380,20 @@ on (the new, empty row was filtered out).
 every formula would need translating between ids and A1 text on each edit); the known
 cost of the A1 rewrite is that two people inserting rows at the same time both rewrite
 the same formula cell and the last write wins, which can leave a range off by one.
+
+## 2026-10-05 — Deleting an EO Doc is local, with a tombstone; moving is drag-and-drop
+
+**Decision:** Deleting a document (after a confirmation that says what happens to a
+shared one) removes it from this install with its history and search entry, and records
+its id in `shared_doc_tombstones` so later mail from the other participants is ignored
+instead of reappearing as an invitation. Nothing is mailed about the deletion: the others
+keep their copies and go on editing among themselves. Edits still pending in an open
+editor are discarded, not mailed. Documents move between folders by dragging them onto a
+folder or a breadcrumb entry, besides the "Move to" menu of an open document.
+**Context:** The developer asked to move documents to other folders and to delete them
+with confirmation.
+**Rejected:** Deleting for everyone (no owner exists in a peer-to-peer document, and
+mailing a delete would let any participant destroy the others' work); a soft-delete flag
+on `shared_docs` (every list, search and flush query would need to filter it); a hard
+delete without a tombstone (the next change from a peer would bring the document back as
+an invitation).

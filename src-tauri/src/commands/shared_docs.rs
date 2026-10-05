@@ -142,6 +142,12 @@ pub async fn leave_shared_doc(
     shared_docs::leave(&state.db, &account_id, &doc_id, crate::services::clock::now_secs())
 }
 
+/// Delete a document from this install (other participants keep theirs).
+#[tauri::command]
+pub async fn delete_shared_doc(state: State<'_, AppState>, account_id: String, doc_id: String) -> Result<(), AppError> {
+    shared_docs::delete(&state.db, &account_id, &doc_id, crate::services::clock::now_secs())
+}
+
 /// Mail the document's pending changes now ("Send now", closing the editor)
 /// instead of waiting for the pause. Returns whether a message went out.
 #[tauri::command]

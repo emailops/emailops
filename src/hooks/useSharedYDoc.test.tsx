@@ -48,7 +48,7 @@ describe('useSharedYDoc', () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     latest = null;
-    useSharedDocsStore.setState({ changes: {} });
+    useSharedDocsStore.setState({ changes: {}, deleted: [] });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -127,6 +127,20 @@ describe('useSharedYDoc', () => {
     await act(async () => {
       root.unmount();
     });
+    expect(mocked.flushSharedDoc).not.toHaveBeenCalled();
+  });
+
+  it('drops pending edits and mails nothing when the document was deleted', async () => {
+    await mount(peerWith('Hi'), true);
+    act(() => {
+      latest?.getText('body').insert(2, '!');
+    });
+    await act(async () => {
+      useSharedDocsStore.setState({ deleted: ['d1'] });
+      root.unmount();
+    });
+
+    expect(mocked.applySharedDocUpdate).not.toHaveBeenCalled();
     expect(mocked.flushSharedDoc).not.toHaveBeenCalled();
   });
 });

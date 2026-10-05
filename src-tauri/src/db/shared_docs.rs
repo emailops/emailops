@@ -406,6 +406,37 @@ impl Database {
             .optional()?)
     }
 
+    /// Delete a document with its participants, history and search entry,
+    /// remembering its id for the account so later mail about it is ignored.
+    pub fn delete_shared_doc(&self, account_id: &str, doc_id: &str, now: i64) -> Result<()> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR REPLACE INTO shared_doc_tombstones (account_id, doc_id, deleted_at) VALUES (?1, ?2, ?3)",
+            params![account_id, doc_id, now],
+        )?;
+        tx.execute("DELETE FROM shared_docs_fts WHERE doc_id = ?1", params![doc_id])?;
+        tx.execute(
+            "DELETE FROM shared_docs WHERE id = ?1 AND account_id = ?2",
+            params![doc_id, account_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Whether the account deleted this document.
+    pub fn shared_doc_deleted(&self, account_id: &str, doc_id: &str) -> Result<bool> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT 1 FROM shared_doc_tombstones WHERE account_id = ?1 AND doc_id = ?2",
+                params![account_id, doc_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     // ── Search ───────────────────────────────────────────────────────────
 
     /// Replace a document's entry in the search index.

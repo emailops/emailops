@@ -17,7 +17,7 @@ email as the only transport: no server, no cloud.
 - **The decisions** (`planner.rs`, pure): what an arriving envelope does
   (`plan_arrival`), who a document's mail goes to, and which documents are
   due to be mailed (`due_flushes`, 2-minute pause after the last edit).
-- **The executors** (`mod.rs`): create, share, accept, leave, local edits,
+- **The executors** (`mod.rs`): create, share, accept, leave, delete, local edits,
   `flush` / `flush_due` (mail pending changes) and `ingest_arrivals` (the sync
   hook).
 
@@ -30,6 +30,10 @@ email as the only transport: no server, no cloud.
   Versions are read-only (`versions`, `version_state`).
 - `reindex` refreshes the FTS5 entry (title + `crdt::plain_text`) after every
   content change; `search` matches every word as a prefix.
+- `delete` removes the document, its history and its search entry, and keeps a
+  tombstone (`shared_doc_tombstones`, V038) so `ingest_arrivals` ignores later
+  mail about it instead of storing it as a new invitation. Nothing is mailed:
+  the other participants keep their copies.
 
 ## How changes travel
 

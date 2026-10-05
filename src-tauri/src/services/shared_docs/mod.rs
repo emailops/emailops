@@ -156,6 +156,14 @@ pub fn leave(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result<
     shared_doc_in_account(db, account_id, doc_id)
 }
 
+/// Delete a document from this install: its content, history and search
+/// entry go. If it was shared, nothing more is mailed about it and later
+/// changes from the others are ignored; their copies stay as they are.
+pub fn delete(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result<()> {
+    shared_doc_in_account(db, account_id, doc_id)?;
+    db.delete_shared_doc(account_id, doc_id, now)
+}
+
 // ── Folders, history and search ──────────────────────────────────────────────
 
 /// Refresh a document's entry in the search index from its current content.
@@ -705,6 +713,17 @@ enum Applied {
 
 /// Merge one envelope into this install, per [`planner::plan_arrival`].
 fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope, now: i64) -> Result<Applied> {
+    if db.shared_doc_deleted(&account.id, &env.doc_id)? {
+        logger::log(
+            "debug",
+            "sync",
+            format!(
+                "[{}] Shared document message ignored: you deleted this document",
+                account.email
+            ),
+        );
+        return Ok(Applied::Ignored);
+    }
     let known = db.get_shared_doc(&env.doc_id)?;
     // A document id is global: one held by another local account is not
     // this account's to change.

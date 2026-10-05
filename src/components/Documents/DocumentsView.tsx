@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { type DragEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { isDocDrag, readDocDrag, writeDocDrag } from '@/lib/docDrag';
 import { childFolders, folderPath } from '@/lib/docFolders';
 import { errorText } from '@/lib/errors';
 import { importOfficeFile } from '@/lib/officeImport';
@@ -8,11 +9,35 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useLogStore } from '@/stores/logStore';
 import { selectFolderDocs, selectInvitations, selectSelectedDoc, useSharedDocsStore } from '@/stores/sharedDocsStore';
 import type { DocFolder, DocKind, SharedDoc } from '@/types';
+import { DeleteDocDialog } from './DeleteDocDialog';
 import { DocumentPane } from './DocumentPane';
 
 interface DocumentsViewProps {
   accountId: string | null;
 }
+
+/** Props that make an element a drop target for a dragged document; `over`
+ *  says whether one is held over it right now. */
+function docDropTarget(onDrop: (docId: string) => void, setOver: (over: boolean) => void) {
+  return {
+    onDragOver: (e: DragEvent) => {
+      if (!isDocDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setOver(true);
+    },
+    onDragLeave: () => setOver(false),
+    onDrop: (e: DragEvent) => {
+      setOver(false);
+      const docId = readDocDrag(e.dataTransfer);
+      if (!docId) return;
+      e.preventDefault();
+      onDrop(docId);
+    },
+  };
+}
+
+const DROP_OVER = 'bg-primary-900/40 ring-1 ring-primary-500';
 
 interface DocRowProps {
   doc: SharedDoc;
@@ -20,9 +45,10 @@ interface DocRowProps {
   /** Where the document sits, shown in search results. */
   location?: string;
   onSelect: () => void;
+  onDelete: () => void;
 }
 
-function DocRow({ doc, selected, location, onSelect }: DocRowProps) {
+function DocRow({ doc, selected, location, onSelect, onDelete }: DocRowProps) {
   const { t } = useTranslation(['documents']);
   const others = doc.participants.length - 1;
   const status =
@@ -36,17 +62,36 @@ function DocRow({ doc, selected, location, onSelect }: DocRowProps) {
             ? t('documents:status.shared', { count: others })
             : t('documents:status.private');
   return (
-    <li className={selected ? 'bg-gray-700/60' : 'hover:bg-gray-800'}>
+    <li className={`group flex items-center ${selected ? 'bg-gray-700/60' : 'hover:bg-gray-800'}`}>
       <button
         type="button"
         data-testid={`shared-doc-row-${doc.id}`}
+        draggable
+        onDragStart={(e) => writeDocDrag(e.dataTransfer, doc.id)}
         onClick={onSelect}
-        className="w-full text-left px-4 py-2"
+        className="flex-1 min-w-0 text-left px-4 py-2"
       >
         <span className="block text-sm text-gray-200 truncate">{doc.title}</span>
         <span className="block text-xs text-gray-500 truncate">
           {t(`documents:kind.${doc.kind}` as const)} · {location ?? status}
         </span>
+      </button>
+      <button
+        type="button"
+        data-testid={`shared-doc-delete-${doc.id}`}
+        title={t('documents:delete')}
+        aria-label={t('documents:delete')}
+        onClick={onDelete}
+        className="hidden group-hover:block mr-2 p-1 rounded text-gray-500 hover:text-red-300 hover:bg-gray-700"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+          />
+        </svg>
       </button>
     </li>
   );
@@ -55,12 +100,15 @@ function DocRow({ doc, selected, location, onSelect }: DocRowProps) {
 interface FolderRowProps {
   folder: DocFolder;
   onOpen: () => void;
+  /** A document dragged onto the folder. */
+  onDropDoc: (docId: string) => void;
   onRename: (name: string) => Promise<void>;
   onDelete: () => Promise<void>;
 }
 
-function FolderRow({ folder, onOpen, onRename, onDelete }: FolderRowProps) {
+function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowProps) {
   const { t } = useTranslation(['documents']);
+  const [over, setOver] = useState(false);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(folder.name);
   const [confirming, setConfirming] = useState(false);
@@ -85,7 +133,10 @@ function FolderRow({ folder, onOpen, onRename, onDelete }: FolderRowProps) {
     );
   }
   return (
-    <li className="group flex items-center hover:bg-gray-800">
+    <li
+      className={`group flex items-center ${over ? DROP_OVER : 'hover:bg-gray-800'}`}
+      {...docDropTarget(onDropDoc, setOver)}
+    >
       <button
         type="button"
         data-testid={`doc-folder-${folder.id}`}
@@ -142,6 +193,27 @@ function FolderRow({ folder, onOpen, onRename, onDelete }: FolderRowProps) {
   );
 }
 
+interface CrumbProps {
+  label: string;
+  onOpen: () => void;
+  onDropDoc: (docId: string) => void;
+}
+
+/** A breadcrumb entry: opens that folder, and takes documents dropped on it. */
+function Crumb({ label, onOpen, onDropDoc }: CrumbProps) {
+  const [over, setOver] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      {...docDropTarget(onDropDoc, setOver)}
+      className={`rounded px-1 hover:text-white ${over ? DROP_OVER : ''}`}
+    >
+      {label}
+    </button>
+  );
+}
+
 /**
  * EO Docs: the account's documents, sheets and personal folders on the left
  * (with search across all of them), the selected document on the right.
@@ -167,6 +239,8 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
     search,
     searchQuery,
     searchResults,
+    moveDoc,
+    deleteDoc,
   } = state;
   const invitations = selectInvitations(state);
   const documents = selectFolderDocs(state);
@@ -176,6 +250,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
   const [kind, setKind] = useState<DocKind>('doc');
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<SharedDoc | null>(null);
   const searching = searchQuery.trim() !== '';
   const path = folderPath(folders, folderId);
 
@@ -242,6 +317,14 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
       if (result.skippedImages > 0) parts.push(t('documents:import.skippedImages', { count: result.skippedImages }));
       setNotice(parts.join(' · '));
     });
+  };
+
+  const dropInto = (folder: string | null) => (docId: string) =>
+    void run('The document could not be moved', () => moveDoc(docId, folder));
+
+  const handleDelete = async (doc: SharedDoc) => {
+    await deleteDoc(doc.id);
+    addLog('success', 'sync', `Deleted "${doc.title}" from EO Docs`);
   };
 
   const locationOf = (doc: SharedDoc) =>
@@ -377,6 +460,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                   selected={d.id === selected?.id}
                   location={locationOf(d)}
                   onSelect={() => select(d.id)}
+                  onDelete={() => setDeleting(d)}
                 />
               ))}
             </ul>
@@ -389,7 +473,13 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                   </h3>
                   <ul>
                     {invitations.map((d) => (
-                      <DocRow key={d.id} doc={d} selected={d.id === selected?.id} onSelect={() => select(d.id)} />
+                      <DocRow
+                        key={d.id}
+                        doc={d}
+                        selected={d.id === selected?.id}
+                        onSelect={() => select(d.id)}
+                        onDelete={() => setDeleting(d)}
+                      />
                     ))}
                   </ul>
                 </>
@@ -398,15 +488,11 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                 className="flex flex-wrap items-center gap-1 px-4 pt-3 pb-1 text-xs text-gray-400"
                 data-testid="doc-breadcrumb"
               >
-                <button type="button" onClick={() => openFolder(null)} className="hover:text-white">
-                  {t('documents:root')}
-                </button>
+                <Crumb label={t('documents:root')} onOpen={() => openFolder(null)} onDropDoc={dropInto(null)} />
                 {path.map((f) => (
                   <span key={f.id} className="flex items-center gap-1">
                     <span aria-hidden="true">›</span>
-                    <button type="button" onClick={() => openFolder(f.id)} className="hover:text-white">
-                      {f.name}
-                    </button>
+                    <Crumb label={f.name} onOpen={() => openFolder(f.id)} onDropDoc={dropInto(f.id)} />
                   </span>
                 ))}
               </nav>
@@ -416,6 +502,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                     key={f.id}
                     folder={f}
                     onOpen={() => openFolder(f.id)}
+                    onDropDoc={dropInto(f.id)}
                     onRename={async (name) => {
                       await run('The folder could not be renamed', () => renameFolder(f.id, name));
                     }}
@@ -431,7 +518,13 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                     <li className="px-4 py-3 text-xs text-gray-500">{t('documents:empty')}</li>
                   )}
                 {documents.map((d) => (
-                  <DocRow key={d.id} doc={d} selected={d.id === selected?.id} onSelect={() => select(d.id)} />
+                  <DocRow
+                    key={d.id}
+                    doc={d}
+                    selected={d.id === selected?.id}
+                    onSelect={() => select(d.id)}
+                    onDelete={() => setDeleting(d)}
+                  />
                 ))}
               </ul>
             </>
@@ -440,9 +533,22 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
         <p className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-700">{t('documents:intro')}</p>
       </aside>
       {selected && accountEmail ? (
-        <DocumentPane key={selected.id} doc={selected} accountEmail={accountEmail} />
+        <DocumentPane
+          key={selected.id}
+          doc={selected}
+          accountEmail={accountEmail}
+          onDelete={() => setDeleting(selected)}
+        />
       ) : (
         <div className="flex-1 flex items-center justify-center text-sm text-gray-500">{t('documents:selectHint')}</div>
+      )}
+      {deleting && (
+        <DeleteDocDialog
+          title={deleting.title}
+          sharedWith={deleting.participants.filter((p) => p !== accountEmail.toLowerCase()).length}
+          onDelete={() => handleDelete(deleting)}
+          onClose={() => setDeleting(null)}
+        />
       )}
     </div>
   );

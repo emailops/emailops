@@ -2177,6 +2177,11 @@ export async function leaveSharedDoc(accountId: string, docId: string): Promise<
   return invoke('leave_shared_doc', { accountId, docId });
 }
 
+/** Delete a document from this install; other participants keep their copies. */
+export async function deleteSharedDoc(accountId: string, docId: string): Promise<void> {
+  return invoke('delete_shared_doc', { accountId, docId });
+}
+
 /** Mail pending changes now. Resolves to whether a message went out. */
 export async function flushSharedDoc(accountId: string, docId: string): Promise<boolean> {
   return invoke('flush_shared_doc', { accountId, docId });

@@ -320,6 +320,7 @@ macro_rules! app_commands {
             commands::shared_docs::share_shared_doc,
             commands::shared_docs::accept_shared_doc,
             commands::shared_docs::leave_shared_doc,
+            commands::shared_docs::delete_shared_doc,
             commands::shared_docs::flush_shared_doc,
             commands::shared_docs::search_shared_docs,
             commands::shared_docs::list_doc_folders,
