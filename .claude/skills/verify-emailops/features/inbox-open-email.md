@@ -11,8 +11,8 @@ the list.
 - `inbox.categories` the Primary/Social/Updates/Forums/Promotions tabs filter the list.
 - `inbox.open` clicking a row shows the thread with its subject as the page H1.
 - `inbox.close` Back hides the thread and shows the list again.
-- `inbox.rowMenu` a row's ⋮ menu offers Chat about this thread, Open in new tab, sender filter, block sender, rules, copy id, redownload, move (IMAP) and delete thread.
-- `inbox.toolbar` an open thread shows Reply, Reply All, Forward and AI Draft plus search-in-thread and delete.
+- `inbox.rowMenu` a row's ⋮ menu offers Chat about this thread, Open in new tab, sender filter, hide from smart filters, block sender (with confirmation), read/unread, star, snooze, archive, rules, copy id, redownload, move (IMAP) and delete thread.
+- `inbox.toolbar` an open thread shows Reply, Reply All, Forward and AI Draft plus archive, snooze, read/unread, star, search-in-thread and delete; tooltips name the shortcut key.
 - `inbox.openInTab` "Open in new tab" (row ⋮ or the thread header) opens the thread in its own tab next to the main one; the tab's ✕ closes it.
 - `inbox.remoteImages` remote images are blocked with "Show images" / "Always trust this sender", and the frame's CSP allows only `data: blob: cid:`.
 

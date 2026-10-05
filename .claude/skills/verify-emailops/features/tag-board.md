@@ -20,7 +20,7 @@ search, hide/restore per block, two block widths and drag-to-reorder.
 - `tagboard.categories` Gmail/Outlook category chips narrow the board; IMAP-only scopes hide the row.
 - `tagboard.inbox` a block title or "Open in inbox" applies the tag as the inbox filter and switches to the list.
 - `tagboard.pin` Pin keeps a tag at the top of the sidebar list; persists.
-- `tagboard.cardActions` every card carries the inbox row's ⋮ actions (filter sender, block, attachment rule, classification rule, open in tab, chat about thread).
+- `tagboard.cardActions` every card carries the inbox row's ⋮ actions (filter sender, hide from smart filters, block sender, read/unread, star, snooze, archive, attachment rule, classification rule, open in tab, chat about thread).
 - `tagboard.scope` the selected account scopes the board; All accounts shows one block per account.
 
 ## How to get to it (user POV)

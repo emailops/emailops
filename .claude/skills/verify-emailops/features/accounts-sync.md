@@ -11,8 +11,8 @@ preferences and credentials.
 - `accounts.add` the add-account dialogs (Gmail, Outlook, IMAP) create an account and start its first sync.
 - `accounts.remove` Account settings → Delete account removes the account with its mail, sync state, preferences and secrets.
 - `sync.incremental` new mail per mailbox, with watermarks and backfill.
-- `sync.writeBack` marking read and deleting are pushed to IMAP and Outlook; a failed read push is retried on the next sync (V029 `read_push_pending_since`).
-- `sync.stateRefresh` read state and removals made elsewhere reach stored mail (IMAP flags, Outlook, Gmail History API).
+- `sync.writeBack` read/unread, star, archive, spam and delete are pushed to Gmail (labels), Outlook and IMAP; a failed read or star push is retried on the next sync (V029 `read_push_pending_since`, V030 `star_push_pending_since`).
+- `sync.stateRefresh` read state, stars, Gmail archive and removals made elsewhere reach stored mail (IMAP flags, Outlook, Gmail History API).
 - `sync.uidValidity` a changed IMAP UIDVALIDITY re-keys stored mail instead of duplicating it (V027 `folder_uid_validity`).
 - `sync.largeAttachments` Outlook attachments over the inline limit go through upload sessions.
 - `accounts.reorder` ↑ / ↓ on an account row changes the account order.

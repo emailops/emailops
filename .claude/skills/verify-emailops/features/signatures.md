@@ -13,7 +13,22 @@ replies and forwards, editable or removable in any message. Gmail accounts can i
 
 ## How to get to it (user POV)
 
-- Gear → **Signatures**; then any Compose / Reply / Forward.
+Eight entry points, the columns of `## Parity`:
+
+- **Settings → Signatures** — Gear → **Signatures**.
+- **Compose modal**, **Compose tab** (inserts when opened fresh, swaps on a From change), **Reply**, **Reply all**, **Forward**.
+- **AI drafts** — the chat's `generate_email_draft`: a new mail opens a Compose tab that inserts the signature, a reply opens the thread's reply composer; the model is told not to sign.
+- **CLI compose** — `emailops-cli compose`.
+
+## Parity
+
+| Capability | Settings → Signatures | Compose modal | Compose tab | Reply | Reply all | Forward | AI drafts | CLI compose |
+|---|---|---|---|---|---|---|---|---|
+| signatures.edit | e2e:Firmas/guardar firma | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures; in a message the block is ordinary editable text | n/a: edited in Settings → Signatures, not per message |
+| signatures.insert | n/a: the editor composes no message | e2e:Firmas/firma en un mensaje nuevo | gap: untested — the composer signature hook in the tab has no test, neither a fresh tab nor the From-account swap | vitest:src/components/EmailView/ReplyCompose.signature.test.tsx::puts the signature below the reply | gap: untested — the signature test renders only mode reply and forward | vitest:src/components/EmailView/ReplyCompose.signature.test.tsx::puts the signature above the forwarded message | gap: untested — only a lib helper test checks the insert flag is requested; no tab or e2e opens a chat draft and finds the block | gap: missing — compose builds the body from --body/--body-file only and never reads the account signature |
+| signatures.import | vitest:src/components/Settings/SignaturesSettings.test.tsx::imports Gmail's signature into the editor without saving it | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message | n/a: imported in Settings, not per message |
+| signatures.image | e2e:Firmas/imagen aceptada y reducida | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings; a composer carries the saved block | n/a: images are added and checked in Settings, not per message |
+| signatures.plain | n/a: the editor sends nothing | gap: untested — the modal's send uses the shared outgoing-HTML helper; only its lib test checks the -- line | gap: untested — same helper, no tab test checks the text/plain part | gap: untested — same helper, no reply test checks the text/plain part | gap: untested — no reply-all test | gap: untested — no test checks that a forward's text/plain has no -- line | n/a: an AI draft is sent from the Compose tab or reply composer it opens in (those columns) | gap: missing — the CLI adds no signature, so its text body never gets the -- line |
 
 ## Driving it with verify.sh
 

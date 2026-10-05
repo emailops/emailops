@@ -9,14 +9,30 @@ from them is filed on arrival. Settings → Junk lists blocked senders with Unbl
 ## Sub-features
 
 - `sender.unsubscribe` header parsing, the three methods, the confirmation dialog, "Unsubscribed" banner.
-- `sender.block` the Block dialog (with "also move existing messages"), the blocked banner in the thread.
+- `sender.block` the Block dialog (with "also move existing messages").
+- `sender.banner` the blocked / unsubscribed banner in the thread, with Unblock.
 - `sender.unblock` Unblock from the banner or Settings → Junk, optionally bringing their mail back and forgetting the junk mark.
 - `sender.arrivals` the sync hook that files a blocked sender's new mail as spam.
 
 ## How to get to it (user POV)
 
-- Open a newsletter: **Unsubscribe** next to the sender. Row ⋮ → **Block sender**.
-- Gear → **Junk** → *Blocked senders*.
+Four entry points, the columns of `## Parity`:
+
+- **Inbox row ⋮** — **Block sender**.
+- **Open thread** — **Unsubscribe** next to the sender, and the blocked / unsubscribed banner.
+- **Tag Board** — a card's ⋮ (same menu) and the board's reading pane.
+- **Settings → Junk** — Gear → **Junk** → *Blocked senders*.
+- Sync files a blocked sender's new mail with no UI entry point.
+
+## Parity
+
+| Capability | Inbox row ⋮ | Open thread | Tag Board | Settings → Junk |
+|---|---|---|---|---|
+| sender.unsubscribe | gap: missing — the ⋮ menu has no Unsubscribe; only the open message offers it | e2e:Remitentes/Unsubscribe: diálogo y Cancel | gap: untested — the card ⋮ has none; the board pane's Unsubscribe button is never driven | n/a: Settings → Junk manages blocks; an unsubscribe is a one-off request from a message |
+| sender.block | e2e:Remitentes/bloquear remitente | gap: missing — the thread toolbar has no Block sender; it is offered only after a confirmed unsubscribe | gap: untested — card ⋮ → Block sender is never driven on the board | n/a: Settings → Junk lists and lifts blocks; a block starts from a message |
+| sender.banner | n/a: the banner belongs to the open message, not the row | e2e:Remitentes/aviso de remitente bloqueado en el hilo | gap: untested — the board pane renders the same banner, never checked there | n/a: Settings shows no message |
+| sender.unblock | gap: missing — the ⋮ menu offers Block sender even for a blocked sender, never Unblock | vitest:src/components/EmailView/SenderControls.test.tsx::tells a blocked sender apart and offers Unblock | gap: untested — reachable only through the board pane's banner, never driven | e2e:Remitentes/Ajustes → Junk: lista y desbloqueo |
+| sender.arrivals | integration:sync_files_new_mail_from_a_blocked_sender_as_spam | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point |
 
 ## Driving it with verify.sh
 

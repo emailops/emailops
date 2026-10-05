@@ -16,6 +16,7 @@
     {
       "id": "organizar",
       "name": "Archivar, destacar, posponer y selección",
+      "doc": "organize-archive-star-snooze.md",
       "rust": [
         "services::emails::thread_actions",
         "services::emails::snooze",
@@ -60,6 +61,7 @@
     {
       "id": "envio",
       "name": "Deshacer envío y envío programado",
+      "doc": "outbox-undo-schedule.md",
       "rust": [
         "services::outbox",
         "db::outbox",
@@ -86,6 +88,7 @@
     {
       "id": "firmas",
       "name": "Firmas",
+      "doc": "signatures.md",
       "rust": [
         "services::signatures",
         "db::signatures"
@@ -108,6 +111,7 @@
     {
       "id": "atajos",
       "name": "Atajos de teclado",
+      "doc": "keyboard-shortcuts.md",
       "rust": [],
       "vitest": [
         "src/lib/shortcuts",
@@ -131,6 +135,7 @@
     {
       "id": "remitentes",
       "name": "Remitentes: baja y bloqueo",
+      "doc": "sender-controls.md",
       "rust": [
         "services::unsubscribe",
         "services::sender_controls",
@@ -156,6 +161,7 @@
     {
       "id": "notificaciones",
       "name": "Notificaciones de correo nuevo",
+      "doc": "new-mail-notifications.md",
       "rust": [
         "services::mail_notifications",
         "services::notifier"
