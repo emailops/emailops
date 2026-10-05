@@ -6,7 +6,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
+  useTranslation: () => ({
+    t: (key: string, vars?: Record<string, unknown>) => (vars ? `${key} ${JSON.stringify(vars)}` : key),
+    i18n: { language: 'en' },
+  }),
 }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock('@/lib/api', () => ({
@@ -69,5 +72,29 @@ describe('HistoryPanel', () => {
     await mount(3);
     await act(async () => (container.querySelector('[data-testid="shared-doc-version-3"]') as HTMLElement).click());
     expect(onSelect).toHaveBeenLastCalledWith(null);
+  });
+
+  it('lists the cells two people changed at once, and whether that was settled', async () => {
+    await act(async () => {
+      root.render(
+        <HistoryPanel
+          accountId="acc-1"
+          docId="d1"
+          me="me@example.com"
+          selectedId={null}
+          onSelect={onSelect}
+          onClose={() => {}}
+          conflicts={[
+            { id: '1:4', rowId: 'r', colId: 'c', row: 1, col: 1, lost: '120', kept: '130', resolved: false },
+            { id: '2:9', rowId: 'r', colId: 'd', row: 1, col: 2, lost: 'x', kept: 'y', resolved: true },
+          ]}
+        />,
+      );
+    });
+    const rows = [...container.querySelectorAll('[data-testid="shared-doc-conflict"]')].map((e) => e.textContent);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('B2');
+    expect(rows[0]).toContain('documents:conflicts.pending');
+    expect(rows[1]).toContain('documents:conflicts.resolved');
   });
 });

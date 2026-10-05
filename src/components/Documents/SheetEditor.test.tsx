@@ -11,6 +11,7 @@ import * as Y from 'yjs';
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 
 import { ensureGrid, readGrid, setCell } from '@/lib/sheetModel';
+import { useToastStore } from '@/stores/toastStore';
 import { SheetEditor } from './SheetEditor';
 
 function paste(target: Element, text: string): boolean {
@@ -184,5 +185,37 @@ describe('SheetEditor', () => {
     act(() => Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer), 'shared-doc-remote'));
     act(() => (container.querySelector('[data-testid="sheet-undo"]') as HTMLButtonElement).click());
     expect(readGrid(doc).values[0][1]).toBe('Price');
+  });
+
+  it('flags a cell two people changed at once and brings the dropped value back on request', async () => {
+    const base = sheetWith([
+      ['Item', 'Cost'],
+      ['Desk', '100'],
+    ]);
+    const doc = new Y.Doc({ gc: false });
+    doc.clientID = 1;
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(base));
+    const other = new Y.Doc({ gc: false });
+    other.clientID = 2;
+    Y.applyUpdate(other, Y.encodeStateAsUpdate(base));
+    const before = Y.encodeStateVector(other);
+    const { rowIds, colIds } = readGrid(doc);
+    setCell(doc, rowIds[1], colIds[1], '120');
+    setCell(other, rowIds[1], colIds[1], '130');
+    await mount(doc);
+    const toasts: string[] = [];
+    useToastStore.setState({ toasts: [] });
+
+    act(() => Y.applyUpdate(doc, Y.encodeStateAsUpdate(other, before), 'shared-doc-remote'));
+    for (const t of useToastStore.getState().toasts) toasts.push(t.message);
+
+    const kept = readGrid(doc).values[1][1];
+    const lost = kept === '120' ? '130' : '120';
+    expect(container.querySelector('[data-testid="sheet-conflicts"]')).not.toBeNull();
+    expect(cell('1:1').getAttribute('data-conflict')).toBe('true');
+    expect(toasts).toHaveLength(1);
+    act(() => (container.querySelector('[data-testid="sheet-conflict-restore"]') as HTMLButtonElement).click());
+    expect(readGrid(doc).values[1][1]).toBe(lost);
+    expect(container.querySelector('[data-testid="sheet-conflicts"]')).toBeNull();
   });
 });

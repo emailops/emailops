@@ -117,5 +117,18 @@
     "confirm": "Delete"
   },
   "exportPdf": "Export PDF",
-  "exportPdfHint": "Saves the document as a PDF in your Downloads folder."
+  "exportPdfHint": "Saves the document as a PDF in your Downloads folder.",
+  "conflicts": {
+    "title": "Changed at once",
+    "banner_one": "{{count}} cell was changed by two people at once; one value was dropped",
+    "banner_many": "{{count}} cells were changed by two people at once; one value of each was dropped",
+    "banner_other": "{{count}} cells were changed by two people at once; one value of each was dropped",
+    "item": "{{cell}}: «{{lost}}» was dropped, «{{kept}}» stayed",
+    "restore": "Bring back «{{value}}»",
+    "keep": "Keep «{{value}}»",
+    "cellTitle": "Changed by two people at once: «{{lost}}» was dropped",
+    "arrived": "A change made at the same time replaced the value of {{cell}}",
+    "pending": "pending",
+    "resolved": "settled"
+  }
 }

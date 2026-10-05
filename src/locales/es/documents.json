@@ -117,5 +117,18 @@
     "confirm": "Eliminar"
   },
   "exportPdf": "Exportar PDF",
-  "exportPdfHint": "Guarda el documento como PDF en tu carpeta Descargas."
+  "exportPdfHint": "Guarda el documento como PDF en tu carpeta Descargas.",
+  "conflicts": {
+    "title": "Cambios simultáneos",
+    "banner_one": "{{count}} celda la cambiaron dos personas a la vez y se perdió un valor",
+    "banner_many": "{{count}} celdas las cambiaron dos personas a la vez y se perdió un valor de cada una",
+    "banner_other": "{{count}} celdas las cambiaron dos personas a la vez y se perdió un valor de cada una",
+    "item": "{{cell}}: se perdió «{{lost}}» y quedó «{{kept}}»",
+    "restore": "Recuperar «{{value}}»",
+    "keep": "Mantener «{{value}}»",
+    "cellTitle": "Cambiada por dos personas a la vez: se perdió «{{lost}}»",
+    "arrived": "Un cambio hecho a la vez sustituyó el valor de {{cell}}",
+    "pending": "pendiente",
+    "resolved": "resuelto"
+  }
 }

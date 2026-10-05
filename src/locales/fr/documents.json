@@ -117,5 +117,18 @@
     "confirm": "Supprimer"
   },
   "exportPdf": "Exporter en PDF",
-  "exportPdfHint": "Enregistre le document en PDF dans votre dossier Téléchargements."
+  "exportPdfHint": "Enregistre le document en PDF dans votre dossier Téléchargements.",
+  "conflicts": {
+    "title": "Modifiés en même temps",
+    "banner_one": "{{count}} cellule a été modifiée par deux personnes en même temps ; une valeur a été perdue",
+    "banner_many": "{{count}} cellules ont été modifiées par deux personnes en même temps ; une valeur de chacune a été perdue",
+    "banner_other": "{{count}} cellules ont été modifiées par deux personnes en même temps ; une valeur de chacune a été perdue",
+    "item": "{{cell}} : « {{lost}} » a été perdu, « {{kept}} » est resté",
+    "restore": "Rétablir « {{value}} »",
+    "keep": "Garder « {{value}} »",
+    "cellTitle": "Modifiée par deux personnes en même temps : « {{lost}} » a été perdu",
+    "arrived": "Une modification faite en même temps a remplacé la valeur de {{cell}}",
+    "pending": "en attente",
+    "resolved": "réglé"
+  }
 }

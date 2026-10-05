@@ -70,6 +70,7 @@ describe('useSharedYDoc', () => {
     const stored = peerWith('Hello');
     await mount(stored);
     expect(latest?.getText('body').toString()).toBe('Hello');
+    expect(latest?.gc).toBe(false); // replaced values stay, so concurrent cell edits can be found
 
     act(() => {
       latest?.getText('body').insert(5, ' there');

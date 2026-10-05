@@ -1,7 +1,9 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
+import { useSheetConflicts } from '@/hooks/useSheetConflicts';
 import { isTablePaste, parseClipboardTable } from '@/lib/clipboardTable';
+import { type CellConflict, resolveConflict } from '@/lib/sheetConflicts';
 import { type ColumnFilters, columnValues, visibleRows } from '@/lib/sheetFilter';
 import { displayValue } from '@/lib/sheetFormula';
 import {
@@ -113,6 +115,54 @@ function ColumnFilterMenu({ column, values, selected, onChange, onClose }: Colum
   );
 }
 
+interface ConflictBannerProps {
+  conflicts: CellConflict[];
+  onResolve: (conflict: CellConflict, keep: 'lost' | 'kept') => void;
+}
+
+/** The cells two people changed at once, each with the value the merge
+ *  dropped and the choice of which one stays. */
+function ConflictBanner({ conflicts, onResolve }: ConflictBannerProps) {
+  const { t } = useTranslation(['documents']);
+  return (
+    <div
+      data-testid="sheet-conflicts"
+      className="mb-3 rounded border border-amber-700 bg-amber-900/20 p-2 text-xs text-amber-100"
+    >
+      <p className="mb-1 font-medium">{t('documents:conflicts.banner', { count: conflicts.length })}</p>
+      <ul className="flex flex-col gap-1">
+        {conflicts.map((c) => (
+          <li key={c.id} className="flex flex-wrap items-center gap-2">
+            <span>
+              {t('documents:conflicts.item', {
+                cell: `${columnLabel(c.col)}${c.row + 1}`,
+                lost: c.lost,
+                kept: c.kept,
+              })}
+            </span>
+            <button
+              type="button"
+              data-testid="sheet-conflict-restore"
+              onClick={() => onResolve(c, 'lost')}
+              className="rounded bg-amber-700 px-1.5 py-0.5 text-white hover:bg-amber-600"
+            >
+              {t('documents:conflicts.restore', { value: c.lost })}
+            </button>
+            <button
+              type="button"
+              data-testid="sheet-conflict-keep"
+              onClick={() => onResolve(c, 'kept')}
+              className="rounded px-1.5 py-0.5 text-amber-100 hover:bg-amber-900/40"
+            >
+              {t('documents:conflicts.keep', { value: c.kept })}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 interface Resize {
   colId: string;
   startX: number;
@@ -132,6 +182,8 @@ interface Resize {
  *   added while filtering stays in view until the filters change.
  * - Undo and redo (toolbar, Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y) cover this
  *   person's own changes only.
+ * - A cell two people changed at once is marked, with the value the merge
+ *   dropped and the choice of which one stays (`sheetConflicts`).
  */
 export function SheetEditor({ doc, editable }: SheetEditorProps) {
   const { t, i18n } = useTranslation(['documents']);
@@ -142,6 +194,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
   const [resize, setResize] = useState<Resize | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [undo, setUndo] = useState<Y.UndoManager | null>(null);
+  const conflicts = useSheetConflicts(doc, editable);
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -209,6 +262,8 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
     if (filters[colId]) byIndex[c] = filters[colId];
   });
   const shown = visibleRows(grid.values, byIndex);
+  const pending = conflicts.filter((c) => !c.resolved);
+  const conflictAt = new Map(pending.map((c) => [`${c.row}:${c.col}`, c]));
   const rows = grid.rowIds.flatMap((rowId, r) => (shown.includes(r) || added.has(rowId) ? [r] : []));
   const widthOf = (colId: string, c: number) => (resize?.colId === colId ? resize.width : grid.widths[c]);
   const setFilter = (colId: string, selected: Set<string> | undefined) => {
@@ -265,6 +320,9 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
           </p>
         )}
       </div>
+      {editable && pending.length > 0 && (
+        <ConflictBanner conflicts={pending} onResolve={(c, keep) => resolveConflict(doc, c, keep)} />
+      )}
       <table className="border-collapse text-sm text-gray-200" style={{ tableLayout: 'fixed' }}>
         <colgroup>
           <col style={{ width: 48 }} />
@@ -385,6 +443,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                   const ref = `${r}:${c}`;
                   const raw = grid.values[r]?.[c] ?? '';
                   const isFormula = raw.startsWith('=');
+                  const conflict = conflictAt.get(ref);
                   return (
                     <td key={colId} className="border border-gray-700 p-0">
                       <input
@@ -392,7 +451,14 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                         aria-label={t('documents:sheet.cell', { ref: `${columnLabel(c)}${r + 1}` })}
                         value={focused === ref || !isFormula ? raw : displayValue(grid.values, r, c, i18n.language)}
                         readOnly={!editable}
-                        title={isFormula ? raw : undefined}
+                        title={
+                          conflict
+                            ? t('documents:conflicts.cellTitle', { lost: conflict.lost })
+                            : isFormula
+                              ? raw
+                              : undefined
+                        }
+                        data-conflict={conflict ? 'true' : undefined}
                         onFocus={() => setFocused(ref)}
                         onBlur={() => setFocused((f) => (f === ref ? null : f))}
                         onChange={(e) => setCell(doc, rowId, colId, e.target.value)}
@@ -414,7 +480,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                         }}
                         className={`w-full px-2 py-1 bg-transparent focus:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-primary-500 ${
                           isFormula && focused !== ref ? 'text-right text-primary-200' : ''
-                        }`}
+                        } ${conflict ? 'ring-1 ring-inset ring-amber-500 bg-amber-900/20' : ''}`}
                       />
                     </td>
                   );

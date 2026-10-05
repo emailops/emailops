@@ -227,6 +227,12 @@ Eine Zelle, die mit `=` beginnt, ist eine Formel: `SUM`, `AVERAGE`, `MIN`, `MAX`
 von Zeilen zeigen die Bereiche weiter auf dieselben Zellen. Die Filterschaltfläche im Spaltenkopf
 blendet die Zeilen aus, deren Haken Sie entfernen; Filter ändern nur Ihre eigene Ansicht.
 
+<!-- claim:feat-eo-docs-8 -->
+Ändern zwei Personen dieselbe Zelle, bevor sie die Änderung der anderen gesehen haben, behalten
+alle Kopien denselben der beiden Werte. Die Zelle wird dann markiert, ein Hinweis nennt den
+verlorenen Wert, und Sie entscheiden: ihn zurückholen oder den angezeigten behalten. **Verlauf**
+listet diese Zellen ebenfalls auf, geklärt oder nicht.
+
 <!-- claim:feat-eo-docs-4 -->
 **Teilen** fragt nach den E-Mail-Adressen, schlägt zuerst Kollegen aus Ihrem Unternehmen vor, und
 nach Ihrer Zustimmung: Von da an mailt EmailOps Ihre Änderungen von selbst, etwa zwei Minuten nachdem

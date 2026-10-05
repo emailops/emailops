@@ -3436,3 +3436,26 @@ dependency was needed; the developer chose pdfmake.
 WebKitGTK) — no new library, but three native implementations, two only testable in CI.
 jsPDF — lighter, but its layout (line wrapping, lists, tables) would have to be written by
 hand.
+
+## 2026-10-05 — EO sheets surface concurrent cell edits instead of dropping a value silently
+
+**Decision:** When two people change the same cell before either saw the other's value,
+the CRDT still keeps one value on every copy, but the dropped value is now shown: the cell
+is marked, a banner names the dropped and the kept value with "bring back" / "keep"
+buttons, a toast and log line fire when such a change arrives in an open sheet, and the
+History panel lists every such cell, settled or not. Detection reads the document itself
+(`src/lib/sheetConflicts.ts`): a map entry whose `origin` is not the entry it replaced was
+written without seeing it. The choice is stored in the shared document
+(`resolvedConflicts`), so it is settled for everyone. This needs the replaced values kept:
+the editor's `Y.Doc` runs with `gc: false`, and the backend keeps storing merged updates
+(`merge_updates_v1` / `diff_updates_v1`), never re-encoding the state through a collected
+`yrs::Doc` — a Rust test guards that.
+**Context:** The developer asked to mark the overwritten cells in the history and to warn
+when changes arrive in a cell one just edited, after the explanation that a concurrent cell
+edit loses a value without notice.
+**Rejected:** Detecting in the backend at merge time — `yrs` keeps an item's `origin`
+crate-private, and the app would also have to know which client ids are "this person's";
+reading the document in the webview covers sheets that were closed when the change arrived,
+since the stored state still holds both values. Last-writer-wins by wall clock — clocks
+differ between machines and the CRDT's own choice is already the same everywhere. Locking
+cells — impossible without a server.

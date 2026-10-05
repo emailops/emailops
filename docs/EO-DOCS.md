@@ -132,6 +132,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 | H4 | Una hoja por documento: un libro con varias pestañas se importa como varios documentos | P2 |
 | H5 | Sin virtualización: la tabla pinta todas las filas. No se ha medido el rendimiento con miles de filas (la importación permite hasta 5.000) | P1 |
 | H6 | Si dos personas insertan filas a la vez, una fórmula puede quedar desplazada una fila: la reescritura A1 es de último en escribir, gana (registrado en DECISIONS) | P2 |
+| H8 | Celdas cambiadas a la vez: resuelto en parte (05/10/2026). La celda se marca, un aviso permite recuperar el valor perdido o mantener el que quedó, y el Historial las lista. Sigue sin saberse quién escribió cada valor (Yjs solo guarda un identificador de cliente) | P2 |
 | H7 | Los filtros suponen que la primera fila es la cabecera y no se guardan entre sesiones | P2 |
 
 ### 5.5 Producto e integración

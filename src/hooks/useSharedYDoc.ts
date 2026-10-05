@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { REMOTE_ORIGIN } from '@/lib/sharedDocOrigin';
 import { bytesFromBase64, bytesToBase64 } from '@/lib/yjsBytes';
 import { useLogStore } from '@/stores/logStore';
 import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 
-/** Transaction origin of changes that came from the backend: never saved back. */
-export const REMOTE_ORIGIN = 'shared-doc-remote';
+export { REMOTE_ORIGIN };
 
 /** Edits are batched this long before they are saved to the backend. */
 const SAVE_DELAY_MS = 400;
@@ -36,7 +36,9 @@ export function useSharedYDoc({ accountId, docId, mailOnClose }: UseSharedYDocAr
 
   useEffect(() => {
     let cancelled = false;
-    const ydoc = new Y.Doc();
+    // Replaced values are kept so concurrent cell edits can be found
+    // (`sheetConflicts.ts`).
+    const ydoc = new Y.Doc({ gc: false });
     let pending: Uint8Array[] = [];
     let timer: ReturnType<typeof setTimeout> | null = null;
 

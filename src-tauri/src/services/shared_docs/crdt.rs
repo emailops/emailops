@@ -227,6 +227,29 @@ mod tests {
     }
 
     #[test]
+    fn a_merged_state_keeps_the_value_a_concurrent_write_replaced() {
+        // The webview finds concurrent cell overwrites (`sheetConflicts.ts`)
+        // by reading the replaced value back out of the stored state, so
+        // merging must never collect it.
+        use yrs::{Map, WriteTxn};
+        let set = |client: u64, value: &str| {
+            let doc = Doc::with_client_id(client);
+            let mut txn = doc.transact_mut();
+            txn.get_or_insert_map("cells").insert(&mut txn, "r:c", value);
+            txn.encode_update_v1()
+        };
+        let state = merge(
+            &merge(&empty_state(), &set(1, "first-value")).unwrap(),
+            &set(2, "other-value"),
+        )
+        .unwrap();
+        let state = merge(&state, &state).unwrap();
+
+        let has = |needle: &str| state.windows(needle.len()).any(|w| w == needle.as_bytes());
+        assert!(has("first-value") && has("other-value"));
+    }
+
+    #[test]
     fn merging_the_same_update_twice_changes_nothing() {
         let alice = Peer::new(1);
         let a = alice.insert(0, "Hello");

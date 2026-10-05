@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
 import { useSharedYDoc } from '@/hooks/useSharedYDoc';
+import { useSheetConflicts } from '@/hooks/useSheetConflicts';
 import { useVersionDoc } from '@/hooks/useVersionDoc';
 import * as api from '@/lib/api';
 import { folderOptions } from '@/lib/docFolders';
@@ -51,6 +52,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
     docId: doc.id,
     mailOnClose: consented && editable,
   });
+  const conflicts = useSheetConflicts(doc.kind === 'sheet' ? ydoc : null);
   const editorRef = useRef<Editor | null>(null);
   const onEditor = useCallback((editor: Editor | null) => {
     editorRef.current = editor;
@@ -268,6 +270,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             me={accountEmail.toLowerCase()}
             selectedId={version?.id ?? null}
             onSelect={setVersion}
+            conflicts={conflicts}
             onClose={() => {
               setHistoryOpen(false);
               setVersion(null);

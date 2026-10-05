@@ -222,6 +222,12 @@ Una celda que empieza por `=` es una fórmula: `SUMA`, `PROMEDIO`, `MIN`, `MAX` 
 los rangos siguen apuntando a las mismas celdas. El botón de filtro de la cabecera de una
 columna oculta las filas que desmarcas; los filtros solo cambian tu vista.
 
+<!-- claim:feat-eo-docs-8 -->
+Si dos personas cambian la misma celda antes de ver el cambio de la otra, todas las copias se
+quedan con el mismo de los dos valores. La celda queda marcada, un aviso dice qué valor se
+perdió y tú eliges: recuperarlo o mantener el que se ve. **Historial** también lista estas
+celdas, resueltas o no.
+
 <!-- claim:feat-eo-docs-4 -->
 **Compartir** pide las direcciones de email, sugiriendo primero a compañeros de tu empresa, y tu
 consentimiento: desde entonces EmailOps les envía tus cambios por su cuenta, unos dos minutos

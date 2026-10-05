@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import type { CellConflict } from '@/lib/sheetConflicts';
+import { columnLabel } from '@/lib/sheetModel';
 import { useLogStore } from '@/stores/logStore';
 import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import type { DocVersion } from '@/types';
@@ -15,6 +17,8 @@ interface HistoryPanelProps {
   selectedId: number | null;
   onSelect: (version: DocVersion | null) => void;
   onClose: () => void;
+  /** A sheet's cells changed by two people at once (none for a text document). */
+  conflicts?: CellConflict[];
 }
 
 /**
@@ -22,7 +26,15 @@ interface HistoryPanelProps {
  * each change and when. Selecting one shows it read-only in place of the
  * editor; history is for looking back, nothing here changes the document.
  */
-export function HistoryPanel({ accountId, docId, me, selectedId, onSelect, onClose }: HistoryPanelProps) {
+export function HistoryPanel({
+  accountId,
+  docId,
+  me,
+  selectedId,
+  onSelect,
+  onClose,
+  conflicts = [],
+}: HistoryPanelProps) {
   const { t } = useTranslation(['documents']);
   const fmt = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
@@ -68,6 +80,25 @@ export function HistoryPanel({ accountId, docId, me, selectedId, onSelect, onClo
         </button>
       </div>
       {error && <p className="m-3 p-2 rounded bg-red-900/30 border border-red-800 text-red-300 text-xs">{error}</p>}
+      {conflicts.length > 0 && (
+        <section className="border-b border-gray-700 px-4 py-2">
+          <h4 className="mb-1 text-[11px] font-semibold uppercase text-gray-500">{t('documents:conflicts.title')}</h4>
+          <ul className="flex flex-col gap-1">
+            {conflicts.map((c) => (
+              <li key={c.id} data-testid="shared-doc-conflict" className="text-xs text-gray-300">
+                {t('documents:conflicts.item', {
+                  cell: `${columnLabel(c.col)}${c.row + 1}`,
+                  lost: c.lost,
+                  kept: c.kept,
+                })}
+                <span className={`ml-1 ${c.resolved ? 'text-gray-500' : 'text-amber-300'}`}>
+                  {c.resolved ? t('documents:conflicts.resolved') : t('documents:conflicts.pending')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <ul className="flex-1 overflow-y-auto py-1">
         {versions?.length === 0 && <li className="px-4 py-3 text-xs text-gray-500">{t('documents:history.empty')}</li>}
         {versions?.map((v) => (

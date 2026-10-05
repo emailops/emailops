@@ -207,6 +207,12 @@ A sheet cell that starts with `=` is a formula: `SUM`, `AVERAGE`, `MIN`, `MAX` a
 rows keeps the ranges pointing at the same cells. The filter button on a column header hides
 the rows you untick; filters only change your own view.
 
+<!-- claim:feat-eo-docs-8 -->
+When two people change the same cell before either has seen the other's change, every copy
+keeps the same one of the two values. The cell is then marked, a notice names the value that
+was dropped, and you choose: bring it back or keep the one shown. **History** lists these cells
+as well, settled or not.
+
 <!-- claim:feat-eo-docs-4 -->
 **Share** asks for the email addresses, suggesting colleagues from your company first, and for
 your consent: from then on EmailOps emails your changes to them on its own, about two minutes

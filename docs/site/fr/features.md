@@ -230,6 +230,12 @@ Une cellule qui commence par `=` est une formule : `SUM`, `AVERAGE`, `MIN`, `MAX
 lignes garde les plages sur les mêmes cellules. Le bouton de filtre d'un en-tête de colonne masque
 les lignes que vous décochez ; les filtres ne changent que votre propre vue.
 
+<!-- claim:feat-eo-docs-8 -->
+Quand deux personnes modifient la même cellule avant d'avoir vu la modification de l'autre,
+toutes les copies gardent la même des deux valeurs. La cellule est alors signalée, un avis indique
+la valeur perdue, et vous choisissez : la rétablir ou garder celle affichée. **Historique** liste
+aussi ces cellules, réglées ou non.
+
 <!-- claim:feat-eo-docs-4 -->
 **Partager** demande les adresses e-mail, en proposant d'abord les collègues de votre entreprise, et
 votre consentement : dès lors, EmailOps leur envoie vos modifications de lui-même, environ deux

@@ -117,5 +117,18 @@
     "confirm": "Löschen"
   },
   "exportPdf": "Als PDF exportieren",
-  "exportPdfHint": "Speichert das Dokument als PDF in Ihrem Downloads-Ordner."
+  "exportPdfHint": "Speichert das Dokument als PDF in Ihrem Downloads-Ordner.",
+  "conflicts": {
+    "title": "Gleichzeitig geändert",
+    "banner_one": "{{count}} Zelle wurde von zwei Personen gleichzeitig geändert; ein Wert ging verloren",
+    "banner_many": "{{count}} Zellen wurden von zwei Personen gleichzeitig geändert; je ein Wert ging verloren",
+    "banner_other": "{{count}} Zellen wurden von zwei Personen gleichzeitig geändert; je ein Wert ging verloren",
+    "item": "{{cell}}: „{{lost}}“ ging verloren, „{{kept}}“ blieb",
+    "restore": "„{{value}}“ zurückholen",
+    "keep": "„{{value}}“ behalten",
+    "cellTitle": "Von zwei Personen gleichzeitig geändert: „{{lost}}“ ging verloren",
+    "arrived": "Eine gleichzeitige Änderung hat den Wert von {{cell}} ersetzt",
+    "pending": "offen",
+    "resolved": "geklärt"
+  }
 }
