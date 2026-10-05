@@ -1,0 +1,150 @@
+# How well the email agent decides.
+#
+# Each case gives the agent's rules (keyed R1, R2… in order), its stats panels
+# (P1, P2…), optional skills, and one email or calendar event. It checks the
+# exact set of criteria the model says match, and the action kinds the matched
+# rules must and must not plan. Restraint matters as much as recall: a rule
+# that fires on the wrong mail drafts replies nobody asked for.
+#
+# Synthetic only — no sender, subject or address from real-world mail.
+
+- id: support_request_es
+  note: "the canonical case: a customer asking for help matches the support rule and the support panel, and gets a draft"
+  rules:
+    - name: Soporte
+      match: "Un cliente informa de un problema con el producto o pide ayuda para usarlo"
+      action: "Redacta una respuesta amable pidiendo una captura de pantalla del error"
+  panels: ["Peticiones de soporte de clientes"]
+  email:
+    from: "Ana Ejemplo <ana@cliente.example.com>"
+    date: "2026-10-03 09:12"
+    subject: "No puedo iniciar sesión"
+    body: "Hola, desde ayer no consigo entrar en la aplicación: me dice que la contraseña es incorrecta aunque la he cambiado dos veces. ¿Me podéis ayudar? Gracias."
+  expect_matches: [R1, P1]
+  expect_actions: [draft_reply]
+  expect_no_actions: [archive, mark_read]
+
+- id: newsletter_does_not_trigger_support_en
+  note: "restraint: a marketing newsletter is not a support request"
+  rules:
+    - name: Support
+      match: "A customer reports a problem with the product or asks for help using it"
+      action: "Draft a friendly reply asking for a screenshot of the error"
+  panels: ["Support requests from customers"]
+  email:
+    from: "Weekly Digest <news@digest.example.com>"
+    date: "2026-10-03 07:00"
+    subject: "Your weekly roundup: 10 productivity tips"
+    body: "This week: ten tips to organise your inbox, a webinar invitation and our autumn discount. Unsubscribe at any time."
+  expect_matches: []
+  expect_no_actions: [draft_reply]
+
+- id: supplier_invoice_creates_task_en
+  note: "the action prompt asks for a task, not a reply"
+  rules:
+    - name: Invoices
+      match: "A supplier sends an invoice or a payment request"
+      action: "Create a task to pay the invoice, with the supplier and the amount in the title. Do not reply."
+  email:
+    from: "Billing <billing@supplier.example.com>"
+    date: "2026-10-03 10:30"
+    subject: "Invoice 2026-114 for September"
+    body: "Please find attached invoice 2026-114 for September services, total 1,250.00 EUR, due on 15/10/2026."
+  expect_matches: [R1]
+  expect_actions: [create_task]
+  expect_no_actions: [draft_reply]
+
+- id: only_the_matching_rule_fires_es
+  note: "two rules, one email: an invoice must not trigger the support rule"
+  rules:
+    - name: Soporte
+      match: "Un cliente informa de un problema con el producto o pide ayuda para usarlo"
+      action: "Redacta una respuesta pidiendo más detalles"
+    - name: Facturas
+      match: "Un proveedor envía una factura o una solicitud de pago"
+      action: "Crea una tarea para pagarla"
+  email:
+    from: "Administración <admin@proveedor.example.com>"
+    date: "2026-10-03 11:00"
+    subject: "Factura F-0932"
+    body: "Adjuntamos la factura F-0932 correspondiente a octubre por importe de 480 EUR. Vencimiento a 30 días."
+  expect_matches: [R2]
+  expect_actions: [create_task]
+  expect_no_actions: [draft_reply]
+
+- id: promotions_are_archived_en
+  note: "mailbox actions are planned when the rule asks for them (they then wait for approval)"
+  rules:
+    - name: Promotions
+      match: "A promotional or marketing email: offers, discounts, newsletters"
+      action: "Archive it and mark it as read. Do not reply."
+  email:
+    from: "Shop <offers@shop.example.com>"
+    date: "2026-10-03 08:45"
+    subject: "48h flash sale: 30% off everything"
+    body: "Only for 48 hours: 30% off the whole catalogue with code FLASH30. Free shipping on orders over 50 EUR."
+  expect_matches: [R1]
+  expect_actions: [archive]
+  expect_no_actions: [draft_reply]
+
+- id: panel_counts_without_rules_es
+  note: "a panel alone is a criterion: an invoice counts on the invoices panel and nothing else"
+  panels: ["Facturas de proveedores", "Peticiones de soporte de clientes"]
+  email:
+    from: "Contabilidad <cuentas@proveedor.example.com>"
+    date: "2026-10-03 12:10"
+    subject: "Factura 77/2026"
+    body: "Le remitimos la factura 77/2026 por los servicios de mantenimiento, importe 320 EUR."
+  expect_matches: [P1]
+
+- id: external_meeting_runs_briefing_skill_en
+  note: "an event rule with a skill: a client meeting gets the briefing skill"
+  rules:
+    - name: Client meetings
+      match: "A meeting with people from outside my company, such as a client or a prospect"
+      action: "Run the briefing skill to prepare me for the meeting"
+  skills:
+    - name: briefing
+      description: "Summarise the recent conversation with the attendees and list open questions"
+  event:
+    title: "Kickoff with Northwind"
+    start: "2026-10-03 16:00"
+    organizer: "me@emailops.example.com"
+    attendees: ["me@emailops.example.com", "lead@northwind.example.com"]
+    description: "Project kickoff with the client"
+    recent: ["2026-10-01 lead@northwind.example.com: Agenda for Friday's kickoff"]
+  expect_matches: [R1]
+  expect_actions: [run_skill]
+
+- id: internal_standup_does_not_match_es
+  note: "restraint on events: an internal stand-up is not a client meeting"
+  rules:
+    - name: Reuniones con clientes
+      match: "Una reunión con personas de fuera de mi empresa, como un cliente o un posible cliente"
+      action: "Crea una tarea para preparar la reunión"
+  event:
+    title: "Daily del equipo"
+    start: "2026-10-03 09:30"
+    organizer: "yo@emailops.example.com"
+    attendees: ["yo@emailops.example.com", "dev1@emailops.example.com", "dev2@emailops.example.com"]
+    description: "Reunión diaria del equipo de desarrollo"
+  expect_matches: []
+
+- id: support_with_a_second_rule_and_a_panel_en
+  note: "regression from the demo run: with a promotions rule beside it, the support rule was answered no while the support panel was yes"
+  rules:
+    - name: Support requests
+      match: "A customer reports a problem with the product or asks for help using it"
+      action: "Draft a friendly reply asking for a screenshot of the error, and create a task to follow up"
+    - name: Promotions
+      match: "A promotional or marketing email: offers, discounts, newsletters"
+      action: "Archive it and mark it as read. Do not reply."
+  panels: ["Support requests from customers"]
+  email:
+    from: "Clara Demo <clara@northwind.example.com>"
+    date: "2026-10-03 12:40"
+    subject: "Sync stops after adding a second account"
+    body: "Hi Ulises, since I added my second mailbox to EmailOps, sync stops after a few minutes and the inbox never updates until I restart the app. I am on the latest version on macOS. Could you help me? Thanks, Clara"
+  expect_matches: [R1, P1]
+  expect_actions: [draft_reply, create_task]
+  expect_no_actions: [archive, mark_read]

@@ -1,0 +1,113 @@
+{
+  "title": "Agent d'e-mail",
+  "subtitle": "Examine les nouveaux e-mails et les événements à venir et agit selon vos règles.",
+  "toggle": "Agent actif",
+  "off": "L'agent est désactivé. Activez-le et il examinera les e-mails qui arrivent à partir de ce moment.",
+  "rules": {
+    "button": "Règles ({{count}})",
+    "title": "Règles de l'agent",
+    "subtitle": "Chaque règle associe un prompt qui choisit les e-mails ou événements à un prompt qui dit quoi faire.",
+    "new": "Nouvelle règle",
+    "empty": "Aucune règle pour l'instant. Une règle indique sur quels e-mails ou événements l'agent agit et ce qu'il fait.",
+    "name": "Nom",
+    "namePlaceholder": "ex. Demandes de support",
+    "trigger": "Quand",
+    "triggerEmail": "Un nouvel e-mail arrive",
+    "triggerEvent": "Un événement va commencer",
+    "account": "Compte",
+    "allAccounts": "Tous les comptes",
+    "matchPrompt": "Lesquels (prompt de classification)",
+    "matchPlaceholder": "ex. Un client signale un problème ou demande de l'aide sur le produit",
+    "actionPrompt": "Que faire (prompt d'action)",
+    "actionPlaceholder": "ex. Rédige une réponse aimable demandant une capture d'écran et crée une tâche de suivi",
+    "alwaysApprove": "Me demander avant chaque action",
+    "alwaysApproveHint": "Archiver, suivre et marquer comme lu attendent toujours votre accord. Les brouillons restent en local jusqu'à ce que vous les ouvriez. L'agent n'envoie jamais d'e-mail.",
+    "enabled": "Active",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "off": "Désactivée",
+    "emailBadge": "E-mail",
+    "eventBadge": "Événement"
+  },
+  "panels": {
+    "new": "Nouveau panneau",
+    "title": "Panneau de statistiques",
+    "name": "Titre",
+    "namePlaceholder": "ex. Support aujourd'hui",
+    "prompt": "Que compter",
+    "promptPlaceholder": "ex. Demandes de support des clients",
+    "window": "Période",
+    "today": "Aujourd'hui",
+    "last7Days": "7 derniers jours",
+    "last30Days": "30 derniers jours",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "hint": "L'agent compte les e-mails de la boîte de réception que décrit ce prompt. Les e-mails déjà dans la période sont comptés en arrière-plan."
+  },
+  "feed": {
+    "empty": "Rien pour l'instant. Quand un e-mail ou un événement correspond à l'une de vos règles, l'agent vous dit ici ce qu'il a vu et ce qu'il a fait.",
+    "emptyCta": "Créer une règle",
+    "email": "Nouvel e-mail",
+    "event": "Événement à venir",
+    "from": "de {{sender}}",
+    "failed": "L'agent n'a pas pu terminer celui-ci."
+  },
+  "actions": {
+    "title": "Actions",
+    "pending": "À valider ({{count}})",
+    "recent": "Récentes",
+    "none": "Rien à valider.",
+    "approve": "Approuver",
+    "reject": "Refuser",
+    "openDraft": "Ouvrir le brouillon",
+    "openEmail": "Ouvrir l'e-mail",
+    "rule": "Règle : {{name}}",
+    "output": "Résultat",
+    "kind": {
+      "draftReply": "Rédiger une réponse",
+      "createTask": "Créer une tâche",
+      "runSkill": "Lancer un skill",
+      "markRead": "Marquer comme lu",
+      "archive": "Archiver",
+      "star": "Suivre"
+    },
+    "status": {
+      "pending": "En attente",
+      "done": "Fait",
+      "failed": "Échec",
+      "rejected": "Refusée"
+    }
+  },
+  "error": {
+    "load": "Impossible de charger l'agent",
+    "save": "Impossible d'enregistrer",
+    "action": "Impossible de mettre à jour l'action"
+  },
+  "review": {
+    "back": "Retour au fil",
+    "original": "E-mail d'origine",
+    "draft": "Brouillon de l'agent",
+    "send": "Envoyer",
+    "save": "Enregistrer",
+    "saved": "Enregistré",
+    "discard": "Supprimer",
+    "openInComposer": "Ouvrir dans l'éditeur",
+    "sentNotice": "Réponse envoyée",
+    "discardedNotice": "Brouillon supprimé",
+    "goneNotice": "Ce brouillon n'existe plus : il a été envoyé ou supprimé depuis l'éditeur.",
+    "approveHint": "Cette action modifie votre boîte sur le serveur. Rien ne se passe tant que vous ne l'approuvez pas.",
+    "task": "Tâche créée",
+    "skill": "Résultat du skill",
+    "event": "Événement du calendrier",
+    "error": "Impossible de terminer",
+    "review": "Vérifier",
+    "outcome": {
+      "sent": "Envoyé",
+      "discarded": "Supprimé"
+    }
+  }
+}

@@ -10,6 +10,7 @@
 
 import 'i18next';
 
+import type agent from '../locales/en/agent.json';
 import type attachments from '../locales/en/attachments.json';
 import type auth from '../locales/en/auth.json';
 import type calendar from '../locales/en/calendar.json';
@@ -53,6 +54,7 @@ declare module 'i18next' {
       attachments: typeof attachments;
       tagboard: typeof tagboard;
       shortcuts: typeof shortcuts;
+      agent: typeof agent;
     };
     returnNull: false;
   }

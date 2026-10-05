@@ -5,6 +5,7 @@ import { commandFiles, invokeSites, rustCommands } from './contract';
 
 const CHECKED_FILES = [
   'accounts.rs',
+  'agent.rs',
   'ai_config.rs',
   'ai_models.rs',
   'attachments.rs',

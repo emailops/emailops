@@ -1420,6 +1420,43 @@ async fn enqueue_ai_followups(
         }
     }
 
+    // Email agent: the user's rules and panels on the new mail. Queued after
+    // junk scoring so junk never reaches a rule.
+    if crate::services::agent::is_enabled(db) && matches!(db.is_ai_enabled(), Ok(true)) {
+        let db_agent = Arc::clone(db);
+        let aid_agent = account_id.to_string();
+        let email_agent = account_email.to_string();
+        let task_label = format!("agent:emails:{}:{}", aid_agent, label_suffix);
+        ai_background
+            .submit_named(&task_label, async move {
+                use crate::services::agent::runner;
+                let (provider, effects, skills) = match runner::service_deps(&db_agent) {
+                    Ok(deps) => deps,
+                    Err(e) => {
+                        emit_account_log("warn", "agent", &email_agent, &format!("Agent skipped: {e}"));
+                        return;
+                    }
+                };
+                let deps = runner::AgentDeps {
+                    provider: provider.as_ref(),
+                    effects: &effects,
+                    skills: &skills,
+                };
+                let now = crate::services::clock::now_secs();
+                match runner::process_new_emails(&db_agent, &deps, &aid_agent, now).await {
+                    Ok(0) => {}
+                    Ok(n) => emit_account_log(
+                        "success",
+                        "agent",
+                        &email_agent,
+                        &format!("Agent: {n} new email(s) matched a rule"),
+                    ),
+                    Err(e) => emit_account_log("error", "agent", &email_agent, &format!("Agent failed: {e}")),
+                }
+            })
+            .await;
+    }
+
     // Search embeddings — drain the entire backlog in 50-row batches.
     {
         let db_clone = Arc::clone(db);

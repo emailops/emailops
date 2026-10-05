@@ -11,6 +11,7 @@ mod embedded {
 }
 
 pub mod accounts;
+pub mod agent;
 pub mod attachments;
 pub mod calendar;
 pub mod calendars;
@@ -1177,6 +1178,7 @@ mod schema_parity_tests {
             ("memory_facts", "source_email_id", "idx_memory_facts_source_email"),
             ("lens_rows", "email_id", "idx_lens_rows_email"),
             ("lens_exclusions", "email_id", "idx_lens_exclusions_email"),
+            ("agent_panel_hits", "email_id", "idx_agent_panel_hits_email"),
         ] {
             let mut stmt = conn
                 .prepare(&format!("EXPLAIN QUERY PLAN SELECT 1 FROM {table} WHERE {column} = ?1"))

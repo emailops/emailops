@@ -1,0 +1,113 @@
+{
+  "title": "Email agent",
+  "subtitle": "Looks at new mail and upcoming events and acts on your rules.",
+  "toggle": "Agent on",
+  "off": "The agent is off. Turn it on and it will look at the mail that arrives from then on.",
+  "rules": {
+    "button": "Rules ({{count}})",
+    "title": "Agent rules",
+    "subtitle": "Each rule pairs a prompt that picks the emails or events with a prompt that says what to do.",
+    "new": "New rule",
+    "empty": "No rules yet. A rule says which emails or events the agent acts on and what it does.",
+    "name": "Name",
+    "namePlaceholder": "e.g. Support requests",
+    "trigger": "When",
+    "triggerEmail": "A new email arrives",
+    "triggerEvent": "An event is about to start",
+    "account": "Account",
+    "allAccounts": "All accounts",
+    "matchPrompt": "Which ones (classification prompt)",
+    "matchPlaceholder": "e.g. A customer reports a problem or asks for help with the product",
+    "actionPrompt": "What to do (action prompt)",
+    "actionPlaceholder": "e.g. Draft a friendly reply asking for a screenshot, and create a task to follow up",
+    "alwaysApprove": "Ask me before every action",
+    "alwaysApproveHint": "Archiving, starring and marking as read always wait for your approval. Drafts stay local until you open them. The agent never sends email.",
+    "enabled": "Enabled",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "off": "Off",
+    "emailBadge": "Email",
+    "eventBadge": "Event"
+  },
+  "panels": {
+    "new": "New panel",
+    "title": "Stats panel",
+    "name": "Title",
+    "namePlaceholder": "e.g. Support today",
+    "prompt": "What to count",
+    "promptPlaceholder": "e.g. Support requests from customers",
+    "window": "Period",
+    "today": "Today",
+    "last7Days": "Last 7 days",
+    "last30Days": "Last 30 days",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "hint": "The agent counts the inbox emails this prompt describes. Mail already in the period is counted in the background."
+  },
+  "feed": {
+    "empty": "Nothing yet. When an email or event matches one of your rules, the agent tells you here what it found and what it did.",
+    "emptyCta": "Create a rule",
+    "email": "New email",
+    "event": "Upcoming event",
+    "from": "from {{sender}}",
+    "failed": "The agent could not finish with this one."
+  },
+  "actions": {
+    "title": "Actions",
+    "pending": "To review ({{count}})",
+    "recent": "Recent",
+    "none": "Nothing waiting for review.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "openDraft": "Open draft",
+    "openEmail": "Open email",
+    "rule": "Rule: {{name}}",
+    "output": "Output",
+    "kind": {
+      "draftReply": "Draft a reply",
+      "createTask": "Create a task",
+      "runSkill": "Run skill",
+      "markRead": "Mark as read",
+      "archive": "Archive",
+      "star": "Star"
+    },
+    "status": {
+      "pending": "Waiting",
+      "done": "Done",
+      "failed": "Failed",
+      "rejected": "Rejected"
+    }
+  },
+  "error": {
+    "load": "Could not load the agent",
+    "save": "Could not save",
+    "action": "Could not update the action"
+  },
+  "review": {
+    "back": "Back to the feed",
+    "original": "Original email",
+    "draft": "The agent's draft",
+    "send": "Send",
+    "save": "Save changes",
+    "saved": "Saved",
+    "discard": "Discard",
+    "openInComposer": "Open in the composer",
+    "sentNotice": "Reply sent",
+    "discardedNotice": "Draft discarded",
+    "goneNotice": "This draft no longer exists: it was sent or deleted from the composer.",
+    "approveHint": "This action changes your mailbox on the server. Nothing happens until you approve it.",
+    "task": "Task created",
+    "skill": "Skill output",
+    "event": "Calendar event",
+    "error": "Could not finish",
+    "review": "Review",
+    "outcome": {
+      "sent": "Sent",
+      "discarded": "Discarded"
+    }
+  }
+}

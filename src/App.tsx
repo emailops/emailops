@@ -3,6 +3,7 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AddImapAccountModal } from '@/components/AddImapAccountModal';
+import { AgentView } from '@/components/Agent/AgentView';
 import { AttachmentList } from '@/components/Attachments/AttachmentList';
 import { AttachmentToolbar } from '@/components/Attachments/AttachmentToolbar';
 import { AttachmentViewer } from '@/components/Attachments/AttachmentViewer';
@@ -297,6 +298,7 @@ function AppInner() {
     else if (viewMode === 'lenses' && (!lensesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'skills' && (!skillsEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'chat' && !aiEnabled) setViewMode('inbox');
+    else if (viewMode === 'agent' && !aiEnabled) setViewMode('inbox');
     else if (viewMode === 'tagboard' && !aiEnabled) setViewMode('inbox');
   }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, skillsEnabled, aiEnabled]);
   const addLog = useLogStore((s) => s.addLog);
@@ -1582,6 +1584,8 @@ function AppInner() {
             </div>
           ) : viewMode === 'skills' && skillsEnabled ? (
             <SkillsView />
+          ) : viewMode === 'agent' && aiEnabled ? (
+            <AgentView onOpenEmail={() => setViewMode('inbox')} />
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView
               onCreateWithChat={(prompt) => {

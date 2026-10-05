@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod agent;
 pub mod agent_search;
 pub mod ai;
 pub mod ai_activity;

@@ -20,6 +20,7 @@ const KIND_USES: Record<AiWorkKind, { chat: boolean; embedding: boolean }> = {
   memoryExtraction: { chat: true, embedding: true },
   taskExtraction: { chat: true, embedding: false },
   lensExtraction: { chat: true, embedding: false },
+  agentRules: { chat: true, embedding: true },
 };
 
 export function changesAnything(change: AiChange): boolean {

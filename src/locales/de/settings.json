@@ -217,7 +217,8 @@
       "classification": "E-Mails werden klassifiziert",
       "memoryExtraction": "Gedächtnis-Extraktion",
       "taskExtraction": "Aufgaben-Extraktion",
-      "lensExtraction": "Linsen-Extraktion"
+      "lensExtraction": "Linsen-Extraktion",
+      "agentRules": "E-Mail-Agent"
     },
     "queued": "{{n}} in der Warteschlange",
     "moreQueued": "+{{n}} in der Warteschlange",

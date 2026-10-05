@@ -10,7 +10,7 @@ use crate::models::error::{AppError, Result};
 
 use super::output;
 use super::session::CliSession;
-use super::{Command, OutputMode, RenderStyle, SuggestionAction};
+use super::{AgentCliAction, Command, OutputMode, RenderStyle, SuggestionAction};
 
 /// Execute one parsed command against the session.
 pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> {
@@ -327,6 +327,28 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             let report = super::doctor::build_report(&session.db, &session.data_dir, &session.model)?;
             super::doctor::render(&report, session.mode)
         }
+
+        Command::Agent { action } => match action.unwrap_or(AgentCliAction::Feed) {
+            AgentCliAction::Feed => {
+                output::render_agent_feed(&crate::services::agent::feed(&session.db)?, session.style)
+            }
+            AgentCliAction::Run => {
+                use crate::services::agent::runner;
+                let (provider, effects, skills) = runner::service_deps(&session.db)?;
+                let deps = runner::AgentDeps {
+                    provider: provider.as_ref(),
+                    effects: &effects,
+                    skills: &skills,
+                };
+                let now = crate::services::clock::now_secs();
+                let mut emails = 0;
+                for account in session.db.list_accounts()?.into_iter().filter(|a| a.enabled) {
+                    emails += runner::process_new_emails(&session.db, &deps, &account.id, now).await?;
+                }
+                let events = runner::process_due_events(&session.db, &deps, now).await?;
+                output::render_agent_run(emails, events, session.style)
+            }
+        },
 
         Command::Skills => output::render_skills(&crate::services::skills::overview(&session.db), session.style),
 
@@ -1312,6 +1334,15 @@ mod tests {
     fn collect_referenced_drafts_empty_when_no_refs() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         assert!(collect_referenced_drafts(&db, &[]).expect("collect ok").is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_agent_lists_the_feed_without_loading_a_model() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let mut session = test_session(db, None);
+        dispatch(&mut session, Command::Agent { action: None })
+            .await
+            .expect("agent feed ok");
     }
 
     #[tokio::test]

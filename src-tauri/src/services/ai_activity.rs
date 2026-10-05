@@ -22,6 +22,8 @@ pub enum AiWorkKind {
     MemoryExtraction,
     TaskExtraction,
     LensExtraction,
+    /// The email agent evaluating new mail, events or a panel.
+    AgentRules,
     Other,
 }
 
@@ -48,6 +50,7 @@ pub fn work_kind(task_name: &str) -> AiWorkKind {
         ("memory", _) => AiWorkKind::MemoryExtraction,
         ("tasks", _) => AiWorkKind::TaskExtraction,
         ("lens", _) => AiWorkKind::LensExtraction,
+        ("agent", _) => AiWorkKind::AgentRules,
         _ => AiWorkKind::Other,
     }
 }
@@ -108,6 +111,10 @@ mod tests {
             ("classify:account:acc-1", Classification),
             ("reclassify:account:acc-1", Classification),
             ("reclassify:rule_update:7", Classification),
+            ("agent:emails:acc-1:final", AgentRules),
+            ("agent:events", AgentRules),
+            ("agent:panel:p-1", AgentRules),
+            ("agent:action:a-1", AgentRules),
             ("junk:score:acc-1:final", JunkScoring),
             ("junk:backfill:acc-1", JunkScoring),
             ("memory:extract:acc-1:final", MemoryExtraction),

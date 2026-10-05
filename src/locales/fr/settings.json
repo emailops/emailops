@@ -217,7 +217,8 @@
       "classification": "Classification des e-mails",
       "memoryExtraction": "Extraction de la mémoire",
       "taskExtraction": "Extraction des tâches",
-      "lensExtraction": "Extraction des filtres dynamiques"
+      "lensExtraction": "Extraction des filtres dynamiques",
+      "agentRules": "Agent d'e-mail"
     },
     "queued": "{{n}} en file d’attente",
     "moreQueued": "+{{n}} en file d’attente",

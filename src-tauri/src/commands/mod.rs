@@ -1,6 +1,7 @@
 // The `unwrap_used` / `expect_used` deny is set crate-wide in `lib.rs`.
 
 pub mod accounts;
+pub mod agent;
 pub mod ai_config;
 pub mod ai_models;
 pub mod attachments;
