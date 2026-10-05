@@ -42,6 +42,12 @@ Anmeldeinformationsspeicher des Systems: macOS-Schlüsselbund, Windows-
 Anmeldeinformationsverwaltung oder ein Secret-Service-Schlüsselbund unter Linux. Sie werden
 nie in eine Konfigurationsdatei geschrieben und überstehen das Deinstallieren der App.
 
+<!-- claim:priv-where-data-7 -->
+Wenn Sie ein Gmail-Konto entfernen, wird auch der Zugriff von EmailOps bei Google widerrufen;
+schlägt das fehl, sagt das Protokoll, wo Sie ihn von Hand entfernen. Microsoft lässt eine App
+ihren eigenen Zugriff nicht widerrufen, daher verweist das Entfernen eines Outlook-Kontos auf
+die Microsoft-Seiten, auf denen Sie EmailOps selbst entfernen.
+
 ## Es gibt keinen EmailOps-Server
 
 <!-- claim:priv-there-no-1 -->
@@ -164,6 +170,11 @@ Zur Klarheit, was das leistet: Es sperrt die Anwendung, es verschlüsselt die Da
 die SQLite-Datei direkt lesen. Wenn das zu Ihrem Bedrohungsmodell gehört, nutzen Sie
 Festplattenverschlüsselung — FileVault unter macOS, BitLocker unter Windows, LUKS unter
 Linux — das ist das richtige Werkzeug dafür.
+
+<!-- claim:priv-locking-app-3 -->
+Falsche Versuche werden gebremst: Nach fünf falschen Passwörtern wartet der Sperrbildschirm
+30 Sekunden, bevor er ein weiteres annimmt, jedes Mal doppelt so lange bis zu 15 Minuten, und
+ein Neustart der App setzt den Zähler nicht zurück.
 
 ## All das überprüfen
 

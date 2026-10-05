@@ -7,7 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **Archive, mark unread and star**, written back to Gmail, Outlook and IMAP,
+  on one conversation or on many at once: select several rows and act on them
+  together, with Undo for archive and delete. After archiving, deleting or
+  snoozing, the next conversation opens.
+- **Snooze.** A snoozed conversation leaves the inbox until the time you pick,
+  waits in a new **Snoozed** view, and comes back unread. A new reply brings it
+  back early.
+- **Undo send and scheduled send.** Sent mail can wait 5 to 30 seconds with an
+  Undo button, or until a time you choose; a **Scheduled** view lists what is
+  waiting, with Send now, Edit and Delete. A message whose send was interrupted
+  is never sent twice.
+- **Email signatures per account**, in every composer, with images. AI drafts
+  now leave the sign-off to your signature.
+- **Keyboard shortcuts**, listed by pressing `?`; toolbar tooltips show each
+  action's key.
+- **Desktop notifications for new mail** in the inbox: sender and subject,
+  never the body, or only the account when you hide their content or the app
+  is locked. Junk, promotions and blocked senders never notify, and a burst
+  becomes one summary.
+- **One-click unsubscribe and block sender.** Unsubscribe uses the sender's
+  own one-click link or address when the newsletter offers one. Blocking a
+  sender marks their new mail as junk and files it in the provider's Spam,
+  optionally their earlier mail too; unblock from the banner or **Settings →
+  Junk**. Report junk now files the message in Spam on Gmail and Outlook too.
+- **OpenRouter chat streams its answer and can call tools**, like the local
+  models. The OpenRouter settings and onboarding gain a default chat model, an
+  embedding model picker with recommended models, and a context budget for
+  remote models; research is sized to the model's window and your spending
+  budget.
+- **The compose editor keeps tables and safe inline styles**, in what you write
+  and in what is sent.
+
+### Changed
+
+- **The chat fits its prompt to the model's context window.** When a turn
+  would not fit, older material is cut first and the question never is; a note
+  under the answer says when this turn's own emails were shortened.
+- **The AI backend is changed in Settings only**, and changing the provider or
+  model first asks what to do with AI work still in progress. Changing the
+  embedding model asks before re-indexing.
+- **Read state and deletions reach IMAP and Outlook**, and changes made on the
+  server reach EmailOps. Gmail changes are followed through Google's History
+  API.
+- **Sender, domain and tag filters include archived mail.**
+- **Large attachments can be sent from Outlook accounts**: they upload in
+  pieces.
+
+### Security
+
+- **Meeting reminders leave the meeting title out of system notifications**,
+  which can show on the lock screen, unless you turn on **Show the meeting
+  title in notifications** in **Settings → Calendar**.
+- **Removing an Outlook account tells you where to remove EmailOps' access**
+  at Microsoft, which does not let an app revoke its own access.
+- **The data folder is readable only by your user on Linux**, as it already
+  was on macOS and Windows; a crash log written outside it is too.
+- **Downloaded attachments carry the system's "from the internet" mark**, and
+  opening one that can run code asks first, naming the file.
+- **Attachment previews and draft HTML are sanitized**, and remote background
+  images stay blocked while remote content is off.
+- **Error messages shown in the app no longer include raw database, network
+  or keychain details.**
+- **Credentials are wiped from memory when no longer needed**, and the main password's
+  minimum length is enforced by the app itself, not only by the form.
+- **Commands that act on a message, draft or outbox entry check that it
+  belongs to the account they name.**
+
+### Fixed
+
+- **A reply saved as a draft stays in its thread**, also after a round trip
+  through Gmail.
+- **A draft with edits not yet uploaded is never dropped by a sync.**
+- **Mail, drafts and invites are never sent twice** after a server error.
+- **IMAP mail is kept when a folder's UIDVALIDITY changes**, and a folder that
+  failed to download is retried.
+- **Cancel stops a chat turn** at any stage, including while a local model is
+  still writing.
+- **Deleted and junk mail stay out of chat answers.**
+- **Toasts sit above the Output bar**, the Snoozed and Scheduled views keep
+  their subjects readable, and row checkboxes show in the full-width list.
 
 ## [0.6.12] — 2026-09-29
 

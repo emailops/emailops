@@ -529,6 +529,13 @@ checks = [
   { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
 ]
 
+[feat-calendar-3]
+checks = [
+  { app = true },
+  { tests = ['services::calendar::notify::tests::notification_hides_the_meeting_title_by_default', 'services::calendar::notify::tests::notification_shows_the_title_when_the_user_opts_in', 'services::calendar::notify::tests::hidden_title_notification_carries_no_event_text'], covers = ["System notifications for a reminder leave the meeting title out unless you turn on Show the meeting title in notifications in Settings → Calendar"] },
+  { manual = 'Where the OS shows notifications (lock screen, Notification Center) is the OS behaviour the setting explains, not something the app controls; the in-app reminder needs a meeting starting soon, which the demo does not schedule.', covers = ["they can appear on the lock screen and in Notification Center, outside the app's lock.", "The reminder inside EmailOps always shows the full meeting."] },
+]
+
 [feat-attachments-view-1]
 checks = [
   { app = true },
@@ -1115,6 +1122,13 @@ checks = [
   { tests = ['services::keychain::chunking_tests::a_value_within_budget_is_stored_verbatim_under_its_own_key', 'services::accounts::tests::imap_edit_settings_never_carry_a_plaintext_password'], covers = ["Credentials are not in there.", "OAuth tokens and IMAP passwords go to the system credential store", "They are never written to a config file"] },
 ]
 
+[priv-where-data-7]
+checks = [
+  { tests = ['services::accounts::tests::revocable_token_falls_back_to_the_gmail_access_token', 'sync::oauth::tests::revoke_token_posts_the_token_as_a_form', 'sync::oauth::tests::revoke_token_fails_on_a_non_success_status'], covers = ["Removing a Gmail account also revokes EmailOps' access at Google"] },
+  { tests = ['services::accounts::tests::an_outlook_account_gets_manual_revocation_links', 'services::accounts::tests::revocable_token_is_none_for_providers_without_revocation'], covers = ["Microsoft does not let an app revoke its own access, so removing an Outlook account points you to the Microsoft pages where you remove EmailOps yourself."] },
+  { manual = 'The failure log needs a revocation that fails against Google; the demo has no Gmail account to remove.', covers = ["if that fails, the log says where to remove it by hand."] },
+]
+
 [priv-there-no-1]
 checks = [
   { app = true },
@@ -1220,6 +1234,12 @@ checks = [
 [priv-locking-app-2]
 checks = [
   { app = true },
+]
+
+[priv-locking-app-3]
+checks = [
+  { tests = ['services::password::tests::lockout_starts_after_the_free_attempts_and_doubles_up_to_a_cap', 'services::password::tests::attempts_are_refused_during_a_lockout_even_with_the_right_password', 'services::password::tests::the_lockout_ends_after_its_delay'], covers = ["after five wrong attempts the lock screen waits 30 seconds before accepting another, doubling each time up to 15 minutes"] },
+  { manual = 'The counter is stored in the database (services::password), but no test relaunches the app between wrong attempts; the locked phase could type five wrong passwords and relaunch — a case worth adding.', covers = ["restarting the app does not reset the count."] },
 ]
 
 [priv-auditing-any-1]
