@@ -4,8 +4,8 @@ import { displayValue, evaluateCell, formatNumber, parseNumber, shiftFormula } f
 describe('parseNumber', () => {
   it('reads numbers as people type them, currency and thousands included', () => {
     expect(parseNumber('420')).toBe(420);
-    expect(parseNumber('69,00 €')).toBe(69);
-    expect(parseNumber('1.287,81 €')).toBe(1287.81);
+    expect(parseNumber('10,00 €')).toBe(10);
+    expect(parseNumber('1.234,56 €')).toBe(1234.56);
     expect(parseNumber('$1,234.50')).toBe(1234.5);
     expect(parseNumber('1.234')).toBe(1234);
     expect(parseNumber('0.5')).toBe(0.5);
@@ -19,8 +19,8 @@ describe('parseNumber', () => {
 // values[row][col]; A1 is values[0][0].
 const SHEET = [
   ['Item', 'Price', 'Qty'],
-  ['Desk', '69,00 €', '2'],
-  ['Lamp', '24,90 €', ''],
+  ['Desk', '10,00 €', '2'],
+  ['Lamp', '20,50 €', ''],
   ['Chair', 'n/a', '3'],
   ['Total', '=SUM(B2:B4)', '=SUMA(C2:C4)'],
 ];
@@ -33,7 +33,7 @@ const at = (values: string[][], ref: string) => {
 
 describe('evaluateCell', () => {
   it('adds the numbers of a range and skips text and blanks', () => {
-    expect(at(SHEET, 'B5')).toEqual({ value: 93.9 });
+    expect(at(SHEET, 'B5')).toEqual({ value: 30.5 });
     expect(at(SHEET, 'C5')).toEqual({ value: 5 });
   });
 
@@ -70,14 +70,14 @@ describe('evaluateCell', () => {
   });
 
   it('a plain value is itself', () => {
-    expect(evaluateCell(SHEET, 1, 1)).toEqual({ text: '69,00 €' });
+    expect(evaluateCell(SHEET, 1, 1)).toEqual({ text: '10,00 €' });
   });
 });
 
 describe('displayValue', () => {
   it('shows a formula as its result and anything else as typed', () => {
-    expect(displayValue(SHEET, 4, 1, 'es')).toBe('93,9');
-    expect(displayValue(SHEET, 4, 1, 'en')).toBe('93.9');
+    expect(displayValue(SHEET, 4, 1, 'es')).toBe('30,5');
+    expect(displayValue(SHEET, 4, 1, 'en')).toBe('30.5');
     expect(displayValue(SHEET, 0, 0, 'es')).toBe('Item');
     expect(displayValue([['=MEDIAN(A1)']], 0, 0, 'es')).toBe('#NAME?');
   });
@@ -85,7 +85,7 @@ describe('displayValue', () => {
 
 describe('formatNumber', () => {
   it('keeps up to two decimals with the locale separators', () => {
-    expect(formatNumber(1287.8149, 'es')).toBe('1287,81');
+    expect(formatNumber(1234.5649, 'es')).toBe('1234,56');
     expect(formatNumber(1234567.5, 'en')).toBe('1,234,567.5');
   });
 });

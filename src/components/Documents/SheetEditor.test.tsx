@@ -50,12 +50,12 @@ describe('SheetEditor', () => {
     await mount(doc);
     let handled = false;
     act(() => {
-      handled = paste(container.querySelector('[data-cell="1:1"]') as Element, 'Item\tPrice\r\nDesk\t69,00 €\r\n');
+      handled = paste(container.querySelector('[data-cell="1:1"]') as Element, 'Item\tPrice\r\nDesk\t10,00 €\r\n');
     });
     expect(handled).toBe(true);
     const { values } = readGrid(doc);
     expect(values[1].slice(1, 3)).toEqual(['Item', 'Price']);
-    expect(values[2].slice(1, 3)).toEqual(['Desk', '69,00 €']);
+    expect(values[2].slice(1, 3)).toEqual(['Desk', '10,00 €']);
   });
 
   it('leaves plain text to the browser', async () => {

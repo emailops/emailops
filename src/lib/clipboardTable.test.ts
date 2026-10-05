@@ -3,9 +3,9 @@ import { isTablePaste, parseClipboardTable } from './clipboardTable';
 
 describe('parseClipboardTable', () => {
   it('reads rows and tab-separated cells, as Excel copies them', () => {
-    expect(parseClipboardTable('Item\tPrice (€)\r\nDesk\t69,00 €\r\nLamp\t\r\n')).toEqual([
+    expect(parseClipboardTable('Item\tPrice (€)\r\nDesk\t10,00 €\r\nLamp\t\r\n')).toEqual([
       ['Item', 'Price (€)'],
-      ['Desk', '69,00 €'],
+      ['Desk', '10,00 €'],
       ['Lamp', ''],
     ]);
   });

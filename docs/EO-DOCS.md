@@ -40,7 +40,7 @@ Decisiones registradas en `docs/DECISIONS.md`, entradas del 04/10/2026 y del 05/
 | Rejilla | Añadir y eliminar filas y columnas, insertar una fila encima, navegar con Enter / Shift+Enter |
 | Pegar desde Excel | Un bloque copiado (separado por tabuladores) rellena las celdas desde la seleccionada y amplía la rejilla si hace falta |
 | Anchos de columna | Se cambian arrastrando y se guardan en el documento (compartidos) |
-| Fórmulas | `SUMA`/`SUM`, `PROMEDIO`/`AVERAGE`, `MIN`, `MAX`, `CONTAR`/`COUNT` sobre rangos A1. Errores `#REF!`, `#NAME?`, `#DIV/0!` y `#CYCLE!`. Lee importes como «1.287,81 €» |
+| Fórmulas | `SUMA`/`SUM`, `PROMEDIO`/`AVERAGE`, `MIN`, `MAX`, `CONTAR`/`COUNT` sobre rangos A1. Errores `#REF!`, `#NAME?`, `#DIV/0!` y `#CYCLE!`. Lee importes como «1.234,56 €» |
 | Referencias que siguen a las filas | Insertar o borrar filas o columnas reescribe los rangos, como en Excel |
 | Filtros por columna | Lista de valores con casillas; la primera fila hace de cabecera. Son locales: no se comparten |
 | Deshacer / rehacer | Como en los documentos de texto (`Y.UndoManager`, solo cambios propios) |

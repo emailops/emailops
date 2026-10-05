@@ -3355,7 +3355,7 @@ display (`src/lib/sheetFormula.ts`): `SUM`/`SUMA`, `AVERAGE`/`PROMEDIO`, `MIN`, 
 (starting with sum) and column filters. Widths are part of how a shared sheet reads;
 a filter is a question one person is asking of it. Storing the formula text keeps the
 CRDT the only source of truth: every peer computes the same result from the same cells.
-Numbers are parsed leniently (European "1.287,81 €" and "$1,234.50") because pasted
+Numbers are parsed leniently (European "1.234,56 €" and "$1,234.50") because pasted
 Excel blocks arrive as display text.
 **Rejected:** Shared filters (one person's filter would hide rows from everyone);
 storing computed results next to the formula (two values that can disagree after a
