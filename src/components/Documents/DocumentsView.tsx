@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import * as api from '@/lib/api';
 import { childFolders, folderPath } from '@/lib/docFolders';
 import { errorText } from '@/lib/errors';
-import { fileToBase64 } from '@/lib/fileBase64';
 import { importOfficeFile } from '@/lib/officeImport';
 import { useAccountStore } from '@/stores/accountStore';
 import { useLogStore } from '@/stores/logStore';
@@ -176,7 +176,6 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
   const [kind, setKind] = useState<DocKind>('doc');
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const searching = searchQuery.trim() !== '';
   const path = folderPath(folders, folderId);
 
@@ -218,16 +217,27 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
     }
   };
 
-  const handleImport = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (importInputRef.current) importInputRef.current.value = '';
-    if (!file || !accountId) return;
+  const handleImport = async () => {
+    if (!accountId) return;
     setNotice(null);
-    await run(`${file.name} could not be imported`, async () => {
-      const result = await importOfficeFile(accountId, file.name, await fileToBase64(file), folderId);
+    // The native dialog, opened by the backend: it filters to importable
+    // files, and the webview never names a path.
+    let file: api.PickedImportFile | null;
+    try {
+      file = await api.pickImportFile();
+    } catch (err) {
+      const msg = errorText(err);
+      setActionError(msg);
+      addLog('error', 'sync', `The file could not be opened: ${msg}`);
+      return;
+    }
+    if (!file) return;
+    const picked = file;
+    await run(`${picked.filename} could not be imported`, async () => {
+      const result = await importOfficeFile(accountId, picked.filename, picked.data, folderId);
       await state.reload();
       if (result.docs[0]) select(result.docs[0].id);
-      addLog('success', 'sync', `Imported ${file.name} into EO Docs`);
+      addLog('success', 'sync', `Imported ${picked.filename} into EO Docs`);
       const parts = [t('documents:import.done', { count: result.docs.length })];
       if (result.skippedImages > 0) parts.push(t('documents:import.skippedImages', { count: result.skippedImages }));
       setNotice(parts.join(' · '));
@@ -269,7 +279,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             data-testid="shared-doc-import"
             title={t('documents:import.hint')}
             aria-label={t('documents:import.button')}
-            onClick={() => importInputRef.current?.click()}
+            onClick={() => void handleImport()}
             className="p-1 rounded text-gray-300 hover:text-white hover:bg-gray-700"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -281,14 +291,6 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
               />
             </svg>
           </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept=".docx,.xlsx,.xlsm,.xls,.ods"
-            className="hidden"
-            data-testid="shared-doc-import-input"
-            onChange={(e) => void handleImport(e.target.files)}
-          />
           <button
             type="button"
             data-testid="shared-doc-new"

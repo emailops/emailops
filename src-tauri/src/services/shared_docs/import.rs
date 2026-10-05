@@ -150,6 +150,49 @@ pub fn tab_title(filename: &str, tab: &str, tabs: usize) -> String {
     }
 }
 
+/// Extensions EO Docs can import, for the file dialog's filter.
+pub const IMPORT_EXTENSIONS: &[&str] = &["docx", "xlsx", "xlsm", "xls", "ods"];
+
+/// A file the user picked to import, ready for the webview: Word files are
+/// converted there, spreadsheets come back to [`read_workbook`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedFile {
+    pub filename: String,
+    /// Standard base64.
+    pub data: String,
+}
+
+/// Read the file the user picked in the native dialog. Only importable
+/// extensions and sizes up to [`MAX_IMPORT_BYTES`] are read.
+pub fn read_picked_file(path: &std::path::Path) -> Result<PickedFile> {
+    use base64::Engine;
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| AppError::InvalidInput("The file has no usable name".into()))?
+        .to_string();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !IMPORT_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(AppError::InvalidInput(format!("EO Docs cannot import {filename}")));
+    }
+    let size = std::fs::metadata(path)
+        .map_err(|e| AppError::IoError(format!("Could not read {filename}: {e}")))?
+        .len();
+    if size > MAX_IMPORT_BYTES as u64 {
+        return Err(AppError::InvalidInput("The file is too large to import".into()));
+    }
+    let bytes = std::fs::read(path).map_err(|e| AppError::IoError(format!("Could not read {filename}: {e}")))?;
+    Ok(PickedFile {
+        filename,
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +261,26 @@ mod tests {
         assert_eq!(tab_title("Q3 budget.xlsx", "Sheet1", 1), "Q3 budget");
         assert_eq!(tab_title("Q3 budget.xlsx", "Travel", 2), "Q3 budget · Travel");
         assert_eq!(tab_title(".xlsx", "A", 1), ".xlsx");
+    }
+
+    #[test]
+    fn a_picked_spreadsheet_is_read_and_other_files_are_refused() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join(format!("eodocs-pick-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sheet = dir.join("Budget.XLSX");
+        std::fs::write(&sheet, BUDGET).unwrap();
+        let other = dir.join("notes.pdf");
+        std::fs::write(&other, b"%PDF").unwrap();
+
+        let picked = read_picked_file(&sheet).unwrap();
+        assert_eq!(picked.filename, "Budget.XLSX");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.decode(picked.data).unwrap(),
+            BUDGET
+        );
+        assert!(read_picked_file(&other).is_err());
+        assert!(read_picked_file(&dir.join("missing.xlsx")).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

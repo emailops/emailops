@@ -2215,6 +2215,18 @@ export async function getSharedDocVersion(accountId: string, docId: string, vers
   return invoke('get_shared_doc_version', { accountId, docId, versionId });
 }
 
+/** A file picked in the native dialog for import into EO Docs. */
+export interface PickedImportFile {
+  filename: string;
+  /** Standard base64. */
+  data: string;
+}
+
+/** Open the native file dialog for a Word or spreadsheet file; `null` when cancelled. */
+export async function pickImportFile(): Promise<PickedImportFile | null> {
+  return invoke('pick_import_file');
+}
+
 /** Import a spreadsheet file (standard base64) as one EO Docs sheet per tab. */
 export async function importSpreadsheet(
   accountId: string,

@@ -330,6 +330,7 @@ macro_rules! app_commands {
             commands::shared_docs::list_shared_doc_versions,
             commands::shared_docs::get_shared_doc_version,
             commands::shared_docs::import_spreadsheet,
+            commands::shared_docs::pick_import_file,
             commands::junk::get_junk_config,
             commands::junk::set_junk_config,
             commands::junk::get_junk_stats,

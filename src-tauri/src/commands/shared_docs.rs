@@ -260,3 +260,26 @@ pub async fn import_spreadsheet(
         crate::services::clock::now_secs(),
     )
 }
+
+/// Let the user pick a Word or spreadsheet file in the native dialog and read
+/// it for import. `None` when the dialog was cancelled. The webview never
+/// names a path: only the file the user chose is read.
+#[tauri::command]
+pub async fn pick_import_file(app: AppHandle) -> Result<Option<shared_docs::import::PickedFile>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("Word / Excel", shared_docs::import::IMPORT_EXTENSIONS)
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|e| AppError::IoError(format!("The file dialog failed: {e}")))?;
+    let Some(file) = picked else {
+        return Ok(None);
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| AppError::InvalidInput(format!("Not a local file: {e}")))?;
+    shared_docs::import::read_picked_file(&path).map(Some)
+}
