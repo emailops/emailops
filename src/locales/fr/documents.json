@@ -51,7 +51,8 @@
     "selectNone": "Effacer",
     "blank": "(Vides)",
     "filteredRows": "{{shown}} lignes sur {{total}} affichées",
-    "resizeColumn": "Faites glisser pour redimensionner la colonne {{col}}"
+    "resizeColumn": "Faites glisser pour redimensionner la colonne {{col}}",
+    "insertRowAbove": "Insérer une ligne au-dessus"
   },
   "toolbar": {
     "bold": "Gras",
@@ -59,7 +60,9 @@
     "underline": "Souligné",
     "heading": "Titre",
     "bulletList": "Liste à puces",
-    "orderedList": "Liste numérotée"
+    "orderedList": "Liste numérotée",
+    "undo": "Annuler",
+    "redo": "Rétablir"
   },
   "searchPlaceholder": "Rechercher dans EO Docs",
   "noResults": "Aucun document ne correspond à « {{query}} »",

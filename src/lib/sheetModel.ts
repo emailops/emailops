@@ -1,5 +1,5 @@
-import type * as Y from 'yjs';
-import { displayValue } from '@/lib/sheetFormula';
+import * as Y from 'yjs';
+import { columnName, displayValue, shiftFormula } from '@/lib/sheetFormula';
 
 /**
  * A shared sheet inside a Yjs document. Rows and columns are ordered lists of
@@ -72,6 +72,13 @@ export function readGrid(doc: Y.Doc): Grid {
   };
 }
 
+/** Undo and redo for this person's own changes to the sheet: changes merged
+ *  in from other people carry an origin, so they are never undone here. */
+export function sheetUndoManager(doc: Y.Doc): Y.UndoManager {
+  const p = parts(doc);
+  return new Y.UndoManager([p.rows, p.cols, p.cells, p.widths]);
+}
+
 /** Set one cell; an empty value removes it. */
 export function setCell(doc: Y.Doc, rowId: string, colId: string, value: string): void {
   const { cells } = parts(doc);
@@ -86,12 +93,28 @@ export function setColumnWidth(doc: Y.Doc, colId: string, px: number): void {
   if (widths.get(colId) !== width) widths.set(colId, width);
 }
 
+/** Rewrite every formula for a row or column inserted or deleted at `index`,
+ *  so its references keep pointing at the same cells. */
+function shiftFormulas(doc: Y.Doc, axis: 'row' | 'col', index: number, delta: 1 | -1) {
+  const { cells } = parts(doc);
+  for (const [k, value] of cells.entries()) {
+    const shifted = shiftFormula(value, axis, index, delta);
+    if (shifted !== value) cells.set(k, shifted);
+  }
+}
+
 export function insertRow(doc: Y.Doc, index: number, makeId = newId): void {
-  parts(doc).rows.insert(index, [makeId()]);
+  doc.transact(() => {
+    parts(doc).rows.insert(index, [makeId()]);
+    shiftFormulas(doc, 'row', index, 1);
+  });
 }
 
 export function insertColumn(doc: Y.Doc, index: number, makeId = newId): void {
-  parts(doc).cols.insert(index, [makeId()]);
+  doc.transact(() => {
+    parts(doc).cols.insert(index, [makeId()]);
+    shiftFormulas(doc, 'col', index, 1);
+  });
 }
 
 function deleteLine(doc: Y.Doc, list: Y.Array<string>, index: number, keyOf: (id: string, other: string) => string) {
@@ -106,7 +129,10 @@ function deleteLine(doc: Y.Doc, list: Y.Array<string>, index: number, keyOf: (id
 }
 
 export function deleteRow(doc: Y.Doc, index: number): void {
-  deleteLine(doc, parts(doc).rows, index, (row, col) => key(row, col));
+  doc.transact(() => {
+    deleteLine(doc, parts(doc).rows, index, (row, col) => key(row, col));
+    shiftFormulas(doc, 'row', index, -1);
+  });
 }
 
 export function deleteColumn(doc: Y.Doc, index: number): void {
@@ -115,6 +141,7 @@ export function deleteColumn(doc: Y.Doc, index: number): void {
   doc.transact(() => {
     deleteLine(doc, p.cols, index, (col, row) => key(row, col));
     if (colId !== undefined) p.widths.delete(colId);
+    shiftFormulas(doc, 'col', index, -1);
   });
 }
 
@@ -140,16 +167,7 @@ export function pasteBlock(doc: Y.Doc, row: number, col: number, values: string[
 }
 
 /** Spreadsheet column name: 0 → A, 25 → Z, 26 → AA. */
-export function columnLabel(index: number): string {
-  let n = index + 1;
-  let label = '';
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    label = String.fromCharCode(65 + rem) + label;
-    n = Math.floor((n - 1) / 26);
-  }
-  return label;
-}
+export const columnLabel = columnName;
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

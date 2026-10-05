@@ -126,4 +126,63 @@ describe('SheetEditor', () => {
     expect(cell('3:0')).toBeNull();
     expect(readGrid(doc).values[1][0]).toBe('Desk');
   });
+
+  it('shows a row added while a filter is on, though its cells do not match', async () => {
+    const doc = sheetWith([
+      ['Item', 'Room'],
+      ['Desk', 'Office'],
+      ['Lamp', 'Hall'],
+      ['Chair', 'Office'],
+    ]);
+    await mount(doc);
+    act(() => (container.querySelector('[data-testid="sheet-filter-1"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="sheet-filter-value-Hall"]') as HTMLInputElement).click());
+    act(() => (container.querySelector('[data-testid="sheet-add-row"]') as HTMLButtonElement).click());
+    expect(readGrid(doc).rowIds).toHaveLength(5);
+    expect(cell('4:0')).not.toBeNull();
+  });
+
+  it('inserts a row above another, and a sum over the rows takes it in', async () => {
+    const doc = sheetWith([['1'], ['2'], ['=SUM(A1:A2)']]);
+    await mount(doc);
+    act(() => (container.querySelector('[data-testid="sheet-insert-row-1"]') as HTMLButtonElement).click());
+    expect(
+      readGrid(doc)
+        .values.map((row) => row[0])
+        .slice(0, 4),
+    ).toEqual(['1', '', '2', '=SUM(A1:A3)']);
+  });
+
+  it('undoes and redoes this person’s edits from the toolbar and the keyboard', async () => {
+    const doc = sheetWith([['Item']]);
+    await mount(doc);
+    const { rowIds, colIds } = readGrid(doc);
+    act(() => setCell(doc, rowIds[0], colIds[1], 'Price'));
+    act(() => (container.querySelector('[data-testid="sheet-undo"]') as HTMLButtonElement).click());
+    expect(readGrid(doc).values[0][1]).toBe('');
+    act(() => (container.querySelector('[data-testid="sheet-redo"]') as HTMLButtonElement).click());
+    expect(readGrid(doc).values[0][1]).toBe('Price');
+    act(() => {
+      cell('0:1').dispatchEvent(new KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true }));
+    });
+    expect(readGrid(doc).values[0][1]).toBe('');
+    act(() => {
+      cell('0:1').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'z', metaKey: true, shiftKey: true, bubbles: true }),
+      );
+    });
+    expect(readGrid(doc).values[0][1]).toBe('Price');
+  });
+
+  it('never undoes changes that came from other people', async () => {
+    const doc = sheetWith([['Item']]);
+    await mount(doc);
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    const { rowIds, colIds } = readGrid(peer);
+    setCell(peer, rowIds[0], colIds[1], 'Price');
+    act(() => Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer), 'shared-doc-remote'));
+    act(() => (container.querySelector('[data-testid="sheet-undo"]') as HTMLButtonElement).click());
+    expect(readGrid(doc).values[0][1]).toBe('Price');
+  });
 });

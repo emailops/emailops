@@ -23,6 +23,12 @@ function remoteParagraph(base: Y.Doc, text: string): Uint8Array {
   return Y.encodeStateAsUpdate(other, Y.encodeStateVector(base));
 }
 
+// The toolbar focuses the editor, which scrolls the caret into view; jsdom has
+// no layout, so ranges get empty rectangles.
+const rect = { x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}) };
+Range.prototype.getClientRects ??= () => Object.assign([], { item: () => null }) as unknown as DOMRectList;
+Range.prototype.getBoundingClientRect ??= () => rect as DOMRect;
+
 describe('DocEditor', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -63,5 +69,40 @@ describe('DocEditor', () => {
     });
     expect(container.querySelector('[aria-label="documents:toolbar.bold"]')).toBeNull();
     expect(editor?.isEditable).toBe(false);
+  });
+
+  it('undoes and redoes local typing from the toolbar, never what others wrote', async () => {
+    const doc = new Y.Doc();
+    await act(async () => {
+      root.render(<DocEditor doc={doc} editable onEditor={(e) => (editor = e)} />);
+    });
+    await act(async () => Y.applyUpdate(doc, remoteParagraph(doc, 'From a colleague')));
+    await act(async () => {
+      editor?.commands.insertContentAt(editor.state.doc.content.size, '<p>Mine</p>');
+    });
+
+    const button = (label: string) => container.querySelector(`[aria-label="${label}"]`) as HTMLButtonElement;
+    await act(async () => button('documents:toolbar.undo').click());
+    expect(container.textContent).not.toContain('Mine');
+    expect(container.textContent).toContain('From a colleague');
+    await act(async () => button('documents:toolbar.redo').click());
+    expect(container.textContent).toContain('Mine');
+  });
+
+  it('undoes on the Edit menu, which arrives as a historyUndo input event', async () => {
+    const doc = new Y.Doc();
+    await act(async () => {
+      root.render(<DocEditor doc={doc} editable onEditor={(e) => (editor = e)} />);
+    });
+    await act(async () => {
+      editor?.commands.insertContentAt(editor.state.doc.content.size, '<p>Mine</p>');
+    });
+    const target = container.querySelector('[data-testid="shared-doc-editor"]') as HTMLElement;
+    await act(async () => {
+      target.dispatchEvent(
+        new InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(container.textContent).not.toContain('Mine');
   });
 });

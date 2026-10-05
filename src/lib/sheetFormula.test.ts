@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayValue, evaluateCell, formatNumber, parseNumber } from './sheetFormula';
+import { displayValue, evaluateCell, formatNumber, parseNumber, shiftFormula } from './sheetFormula';
 
 describe('parseNumber', () => {
   it('reads numbers as people type them, currency and thousands included', () => {
@@ -87,5 +87,36 @@ describe('formatNumber', () => {
   it('keeps up to two decimals with the locale separators', () => {
     expect(formatNumber(1287.8149, 'es')).toBe('1287,81');
     expect(formatNumber(1234567.5, 'en')).toBe('1,234,567.5');
+  });
+});
+
+describe('shiftFormula', () => {
+  it('moves references below an inserted row down, growing a range that spans it', () => {
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 2, 1)).toBe('=SUM(B2:B5)');
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 0, 1)).toBe('=SUM(B3:B5)');
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 4, 1)).toBe('=SUM(B2:B4)');
+    expect(shiftFormula('=SUMA(B2:B4; C9)', 'row', 5, 1)).toBe('=SUMA(B2:B4; C10)');
+  });
+
+  it('shrinks a range a deleted row was part of and shifts the ones below', () => {
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 2, -1)).toBe('=SUM(B2:B3)');
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 1, -1)).toBe('=SUM(B2:B3)');
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 0, -1)).toBe('=SUM(B1:B3)');
+    expect(shiftFormula('=SUM(B2:B4)', 'row', 7, -1)).toBe('=SUM(B2:B4)');
+  });
+
+  it('turns a reference to a deleted cell into #REF!', () => {
+    expect(shiftFormula('=SUM(B2, C5)', 'row', 4, -1)).toBe('=SUM(B2, #REF!)');
+    expect(shiftFormula('=SUM(B5:B5)', 'row', 4, -1)).toBe('=SUM(#REF!)');
+  });
+
+  it('shifts columns the same way', () => {
+    expect(shiftFormula('=SUM(A1:C1)', 'col', 1, 1)).toBe('=SUM(A1:D1)');
+    expect(shiftFormula('=SUM(A1:C1)', 'col', 0, -1)).toBe('=SUM(A1:B1)');
+    expect(shiftFormula('=MAX(Z1)', 'col', 0, 1)).toBe('=MAX(AA1)');
+  });
+
+  it('leaves the function name alone', () => {
+    expect(shiftFormula('=CONTAR(A1:A3)', 'col', 0, 1)).toBe('=CONTAR(B1:B3)');
   });
 });

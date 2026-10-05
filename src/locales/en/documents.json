@@ -51,7 +51,8 @@
     "selectNone": "Clear",
     "blank": "(Blank)",
     "filteredRows": "Showing {{shown}} of {{total}} rows",
-    "resizeColumn": "Drag to resize column {{col}}"
+    "resizeColumn": "Drag to resize column {{col}}",
+    "insertRowAbove": "Insert row above"
   },
   "toolbar": {
     "bold": "Bold",
@@ -59,7 +60,9 @@
     "underline": "Underline",
     "heading": "Heading",
     "bulletList": "Bulleted list",
-    "orderedList": "Numbered list"
+    "orderedList": "Numbered list",
+    "undo": "Undo",
+    "redo": "Redo"
   },
   "searchPlaceholder": "Search EO Docs",
   "noResults": "No document matches “{{query}}”",

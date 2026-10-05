@@ -219,3 +219,42 @@ describe('column widths', () => {
     expect(readGrid(b).widths).toEqual([250, 40]);
   });
 });
+
+describe('formulas follow rows and columns', () => {
+  function sheet(rows: string[][]) {
+    const doc = new Y.Doc();
+    ensureGrid(doc, rows.length, rows[0].length, ids('x'));
+    const { rowIds, colIds } = readGrid(doc);
+    rows.forEach((row, r) => {
+      row.forEach((value, c) => {
+        setCell(doc, rowIds[r], colIds[c], value);
+      });
+    });
+    return doc;
+  }
+
+  it('an inserted row inside a summed range is added to the sum', () => {
+    const doc = sheet([['1'], ['2'], ['=SUM(A1:A2)']]);
+    insertRow(doc, 1, ids('n'));
+    setCell(doc, 'n0', readGrid(doc).colIds[0], '4');
+    expect(readGrid(doc).values[3][0]).toBe('=SUM(A1:A3)');
+  });
+
+  it('a deleted row leaves the sum, and a deleted column moves the references left', () => {
+    const doc = sheet([
+      ['', '1', '=SUM(B1:B3)'],
+      ['', '2', ''],
+      ['', '3', ''],
+    ]);
+    deleteRow(doc, 1);
+    expect(readGrid(doc).values[0][2]).toBe('=SUM(B1:B2)');
+    deleteColumn(doc, 0);
+    expect(readGrid(doc).values[0][1]).toBe('=SUM(A1:A2)');
+  });
+
+  it('a new column shifts the references to its right', () => {
+    const doc = sheet([['1', '2', '=SUM(A1:B1)']]);
+    insertColumn(doc, 0, ids('n'));
+    expect(readGrid(doc).values[0][3]).toBe('=SUM(B1:C1)');
+  });
+});

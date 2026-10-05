@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
 import { isTablePaste, parseClipboardTable } from '@/lib/clipboardTable';
@@ -14,10 +14,12 @@ import {
   insertRow,
   MAX_COL_WIDTH,
   MIN_COL_WIDTH,
+  newId,
   pasteBlock,
   readGrid,
   setCell,
   setColumnWidth,
+  sheetUndoManager,
 } from '@/lib/sheetModel';
 
 interface SheetEditorProps {
@@ -126,7 +128,10 @@ interface Resize {
  * - A value starting with "=" is a formula (`sheetFormula`): the cell shows
  *   its result, and the formula while the cell has the focus.
  * - Column widths are dragged from the right edge of a header and shared.
- * - Column filters (first row = header) are this person's view only.
+ * - Column filters (first row = header) are this person's view only. A row
+ *   added while filtering stays in view until the filters change.
+ * - Undo and redo (toolbar, Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y) cover this
+ *   person's own changes only.
  */
 export function SheetEditor({ doc, editable }: SheetEditorProps) {
   const { t, i18n } = useTranslation(['documents']);
@@ -135,6 +140,38 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
   const [filterOpen, setFilterOpen] = useState<string | null>(null);
   const [resize, setResize] = useState<Resize | null>(null);
+  const [added, setAdded] = useState<Set<string>>(new Set());
+  const [undo, setUndo] = useState<Y.UndoManager | null>(null);
+  const [history, setHistory] = useState({ canUndo: false, canRedo: false });
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const manager = sheetUndoManager(doc);
+    const track = () => setHistory({ canUndo: manager.canUndo(), canRedo: manager.canRedo() });
+    manager.on('stack-item-added', track);
+    manager.on('stack-item-popped', track);
+    manager.on('stack-cleared', track);
+    setUndo(manager);
+    track();
+    return () => {
+      manager.destroy();
+      setUndo(null);
+    };
+  }, [doc]);
+
+  // The webview's own Edit menu sends undo as an input event, not a key press.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !undo || !editable) return;
+    const onBeforeInput = (e: InputEvent) => {
+      if (e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') return;
+      e.preventDefault();
+      if (e.inputType === 'historyUndo') undo.undo();
+      else undo.redo();
+    };
+    root.addEventListener('beforeinput', onBeforeInput);
+    return () => root.removeEventListener('beforeinput', onBeforeInput);
+  }, [undo, editable]);
 
   useEffect(() => {
     // A sheet nobody has laid out yet gets its first rows and columns here.
@@ -171,18 +208,63 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
   grid.colIds.forEach((colId, c) => {
     if (filters[colId]) byIndex[c] = filters[colId];
   });
-  const rows = visibleRows(grid.values, byIndex);
+  const shown = visibleRows(grid.values, byIndex);
+  const rows = grid.rowIds.flatMap((rowId, r) => (shown.includes(r) || added.has(rowId) ? [r] : []));
   const widthOf = (colId: string, c: number) => (resize?.colId === colId ? resize.width : grid.widths[c]);
-  const setFilter = (colId: string, selected: Set<string> | undefined) =>
+  const setFilter = (colId: string, selected: Set<string> | undefined) => {
+    setAdded(new Set());
     setFilters(({ [colId]: _, ...rest }) => (selected ? { ...rest, [colId]: selected } : rest));
+  };
+  const addRow = (index: number) =>
+    insertRow(doc, index, () => {
+      const id = newId();
+      setAdded((ids) => new Set(ids).add(id));
+      return id;
+    });
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    if (!undo || !editable || !(e.metaKey || e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    if (key === 'z' && !e.shiftKey) undo.undo();
+    else if ((key === 'z' && e.shiftKey) || key === 'y') undo.redo();
+    else return;
+    e.preventDefault();
+  };
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto p-4" data-testid="shared-sheet">
-      {rows.length < grid.rowIds.length && (
-        <p className="mb-2 text-xs text-amber-300" data-testid="sheet-filtered">
-          {t('documents:sheet.filteredRows', { shown: rows.length - 1, total: grid.rowIds.length - 1 })}
-        </p>
-      )}
+    <div ref={rootRef} onKeyDown={onKeyDown} className="flex-1 min-h-0 overflow-auto p-4" data-testid="shared-sheet">
+      <div className="mb-2 flex items-center gap-3 min-h-6">
+        {editable && (
+          <div className="flex gap-1">
+            <button
+              type="button"
+              data-testid="sheet-undo"
+              title={t('documents:toolbar.undo')}
+              aria-label={t('documents:toolbar.undo')}
+              disabled={!history.canUndo}
+              onClick={() => undo?.undo()}
+              className="px-2 py-0.5 rounded text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              ↶
+            </button>
+            <button
+              type="button"
+              data-testid="sheet-redo"
+              title={t('documents:toolbar.redo')}
+              aria-label={t('documents:toolbar.redo')}
+              disabled={!history.canRedo}
+              onClick={() => undo?.redo()}
+              className="px-2 py-0.5 rounded text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              ↷
+            </button>
+          </div>
+        )}
+        {rows.length < grid.rowIds.length && (
+          <p className="text-xs text-amber-300" data-testid="sheet-filtered">
+            {t('documents:sheet.filteredRows', { shown: rows.length - 1, total: grid.rowIds.length - 1 })}
+          </p>
+        )}
+      </div>
       <table className="border-collapse text-sm text-gray-200" style={{ tableLayout: 'fixed' }}>
         <colgroup>
           <col style={{ width: 48 }} />
@@ -277,6 +359,18 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                   {editable && (
                     <button
                       type="button"
+                      data-testid={`sheet-insert-row-${r}`}
+                      title={t('documents:sheet.insertRowAbove')}
+                      aria-label={t('documents:sheet.insertRowAbove')}
+                      onClick={() => addRow(r)}
+                      className="mr-1 invisible group-hover:visible text-gray-500 hover:text-white"
+                    >
+                      +
+                    </button>
+                  )}
+                  {editable && (
+                    <button
+                      type="button"
                       title={t('documents:sheet.deleteRow')}
                       aria-label={t('documents:sheet.deleteRow')}
                       onClick={() => deleteRow(doc, r)}
@@ -334,7 +428,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
         <button
           type="button"
           data-testid="sheet-add-row"
-          onClick={() => insertRow(doc, lastRow)}
+          onClick={() => addRow(lastRow)}
           className="mt-2 px-2 py-1 text-xs rounded text-gray-400 hover:text-white hover:bg-gray-700"
         >
           + {t('documents:sheet.addRow')}

@@ -3361,3 +3361,22 @@ Excel blocks arrive as display text.
 storing computed results next to the formula (two values that can disagree after a
 merge); a formula library such as HyperFormula (a new dependency for five functions);
 keeping Excel formulas on import (imports still bring values, see the entry above).
+
+## 2026-10-05 — EO sheets: formulas follow inserted and deleted rows; undo is per person
+
+**Decision:** Inserting or deleting a row or column rewrites every formula's A1
+references in the same Yjs transaction, as a spreadsheet does: references past the
+change move, a range spanning it grows or shrinks, a reference to a deleted cell becomes
+`#REF!`. Undo and redo in sheets and documents use Yjs's `UndoManager`, which only
+tracks this person's own transactions; changes merged from other people are never
+undone. Both editors answer the toolbar, Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z (and Ctrl+Y in
+sheets) and the native Edit menu, which reaches the webview as a
+`historyUndo`/`historyRedo` input event. A row added while a filter is on stays in
+view until the filters change.
+**Context:** The developer reported that sums went stale after creating or deleting
+rows, that undo/redo was missing, and that "Add row" seemed to do nothing with a filter
+on (the new, empty row was filtered out).
+**Rejected:** Storing references by row/column id (immune to concurrent inserts, but
+every formula would need translating between ids and A1 text on each edit); the known
+cost of the A1 rewrite is that two people inserting rows at the same time both rewrite
+the same formula cell and the last write wins, which can leave a range off by one.

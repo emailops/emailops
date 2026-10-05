@@ -51,7 +51,8 @@
     "selectNone": "Borrar",
     "blank": "(Vacías)",
     "filteredRows": "Mostrando {{shown}} de {{total}} filas",
-    "resizeColumn": "Arrastra para cambiar el ancho de la columna {{col}}"
+    "resizeColumn": "Arrastra para cambiar el ancho de la columna {{col}}",
+    "insertRowAbove": "Insertar fila encima"
   },
   "toolbar": {
     "bold": "Negrita",
@@ -59,7 +60,9 @@
     "underline": "Subrayado",
     "heading": "Título",
     "bulletList": "Lista con viñetas",
-    "orderedList": "Lista numerada"
+    "orderedList": "Lista numerada",
+    "undo": "Deshacer",
+    "redo": "Rehacer"
   },
   "searchPlaceholder": "Buscar en EO Docs",
   "noResults": "Ningún documento coincide con «{{query}}»",

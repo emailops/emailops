@@ -64,6 +64,52 @@ function cellsOf(arg: string): [number, number][] | null {
   return cells;
 }
 
+/** Spreadsheet column name: 0 → A, 25 → Z, 26 → AA. */
+export function columnName(index: number): string {
+  let n = index + 1;
+  let name = '';
+  while (n > 0) {
+    name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+/** A cell reference or a range ("B2", "B2:B9"), not part of a longer word. */
+const REFERENCE = /(?<![A-Za-z0-9#])([A-Za-z]{1,3}\d{1,6})(?::([A-Za-z]{1,3}\d{1,6}))?(?![\w(])/g;
+
+/**
+ * Pure: a formula with its references moved for a row or column inserted
+ * (`delta` 1) or deleted (`delta` -1) at `index`, as a spreadsheet does: what
+ * is below or right of it moves, a range that spans it grows or shrinks, and a
+ * reference to a deleted cell becomes `#REF!`.
+ */
+export function shiftFormula(formula: string, axis: 'row' | 'col', index: number, delta: 1 | -1): string {
+  if (!formula.startsWith('=')) return formula;
+  const at = axis === 'row' ? 0 : 1;
+  return formula.replace(REFERENCE, (match, from: string, to: string | undefined) => {
+    const a = parseRef(from);
+    const b = to === undefined ? a : parseRef(to);
+    if (!a || !b) return match;
+    let start = Math.min(a[at], b[at]);
+    let end = Math.max(a[at], b[at]);
+    if (delta === 1) {
+      if (start >= index) start++;
+      if (end >= index) end++;
+    } else {
+      if (start === index && end === index) return '#REF!';
+      if (start > index) start--;
+      if (end >= index) end--;
+    }
+    const other = [Math.min(a[1 - at], b[1 - at]), Math.max(a[1 - at], b[1 - at])];
+    const ref = (pos: number, rest: number) => {
+      const [row, col] = axis === 'row' ? [pos, rest] : [rest, pos];
+      return `${columnName(col)}${row + 1}`;
+    };
+    return to === undefined ? ref(start, other[0]) : `${ref(start, other[0])}:${ref(end, other[1])}`;
+  });
+}
+
 function evaluate(values: string[][], row: number, col: number, visiting: Set<string>): CellResult {
   const raw = values[row]?.[col] ?? '';
   if (!raw.startsWith('=')) return { text: raw };

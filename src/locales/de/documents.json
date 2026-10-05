@@ -51,7 +51,8 @@
     "selectNone": "Leeren",
     "blank": "(Leer)",
     "filteredRows": "{{shown}} von {{total}} Zeilen angezeigt",
-    "resizeColumn": "Ziehen, um die Breite von Spalte {{col}} zu ändern"
+    "resizeColumn": "Ziehen, um die Breite von Spalte {{col}} zu ändern",
+    "insertRowAbove": "Zeile darüber einfügen"
   },
   "toolbar": {
     "bold": "Fett",
@@ -59,7 +60,9 @@
     "underline": "Unterstrichen",
     "heading": "Überschrift",
     "bulletList": "Aufzählung",
-    "orderedList": "Nummerierte Liste"
+    "orderedList": "Nummerierte Liste",
+    "undo": "Rückgängig",
+    "redo": "Wiederholen"
   },
   "searchPlaceholder": "In EO Docs suchen",
   "noResults": "Kein Dokument passt zu „{{query}}“",
