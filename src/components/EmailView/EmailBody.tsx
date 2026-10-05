@@ -32,7 +32,9 @@ export function EmailBody({
   // sending from the account that received this email.
   const handleMailtoLink = useCallback(
     (mailto: ParsedMailto) => {
-      openComposeTab(accountId, mailto.to, mailto.subject, mailto.body ? plainTextToHtml(mailto.body) : '');
+      openComposeTab(accountId, mailto.to, mailto.subject, mailto.body ? plainTextToHtml(mailto.body) : '', {
+        insertSignature: true,
+      });
     },
     [accountId, openComposeTab],
   );

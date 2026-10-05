@@ -279,25 +279,40 @@ impl Database {
                 ("e.account_id IN (SELECT id FROM accounts WHERE enabled = 1)", None)
             }
         };
+        // A woken (snoozed, then resurfaced) conversation sorts by its wake
+        // time, so the target's sort key and the two arms mirror the inbox
+        // list in `get_emails`. A snoozed one is not listed: its position is
+        // where it would be, which no caller asks for.
         let sql = format!(
             "WITH target AS (
-                SELECT rep.id, rep.timestamp
+                SELECT rep.id,
+                       COALESCE((SELECT w.woke_at FROM thread_snoozes w
+                                 WHERE w.account_id = rep.account_id AND w.thread_id = rep.thread_id
+                                   AND w.woke_at IS NOT NULL),
+                                rep.timestamp) AS k
                 FROM emails rep
                 WHERE rep.account_id = (SELECT account_id FROM emails WHERE id = ?1)
                   AND rep.thread_id = (SELECT thread_id FROM emails WHERE id = ?1)
                   AND {rep_latest}
                 LIMIT 1
              )
-             SELECT COUNT(*)
-             FROM emails e, target
-             WHERE {list_scope_cond}
-               AND {e_latest}
-               AND (
-                   e.timestamp > target.timestamp
-                   OR (e.timestamp = target.timestamp AND e.id > target.id)
-               )",
+             SELECT
+               (SELECT COUNT(*)
+                FROM emails e, target
+                WHERE {list_scope_cond}
+                  AND {e_latest}
+                  AND {no_record}
+                  AND (e.timestamp > target.k OR (e.timestamp = target.k AND e.id > target.id)))
+             + (SELECT COUNT(*)
+                FROM thread_snoozes snz CROSS JOIN emails e, target
+                WHERE snz.woke_at IS NOT NULL
+                  AND e.account_id = snz.account_id AND e.thread_id = snz.thread_id
+                  AND {list_scope_cond}
+                  AND {e_latest}
+                  AND (snz.woke_at > target.k OR (snz.woke_at = target.k AND e.id > target.id)))",
             rep_latest = latest_inbox_email_predicate("rep"),
             e_latest = latest_inbox_email_predicate("e"),
+            no_record = super::snoozes::no_snooze_record_predicate("e."),
         );
         let position: i32 = match account_param {
             Some(id) => conn.query_row(&sql, params![email_id, id], |row| row.get(0))?,

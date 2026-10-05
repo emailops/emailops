@@ -19,6 +19,7 @@ pub mod junk;
 pub mod junk_model;
 pub mod mailbox_state;
 pub mod search;
+pub mod snoozes;
 
 #[cfg(test)]
 pub(super) mod test_helpers;
@@ -31,7 +32,7 @@ pub(super) use crate::util::html::strip_html_for_fts;
 // Body lives in email_bodies — all queries on the emails table use this column list.
 pub(super) const EMAIL_COLUMNS: &str = "id, account_id, thread_id, message_id, subject, sender, sender_email, \
      recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, \
-     references_header";
+     references_header, is_starred";
 
 pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
     let recipients_json: String = row.get(7)?;
@@ -60,6 +61,8 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         // NULL for everything ingested before V023 — the header was parsed for
         // the thread hash and then dropped.
         references: row.get(16).unwrap_or(None),
+        // Absent from queries that list their own columns: not starred.
+        is_starred: row.get::<_, i32>(17).unwrap_or(0) != 0,
         // Write-only transport field. Headers live in their own table and are
         // read via `get_email_headers_batch`, not hydrated onto every Email —
         // the vast majority of reads (list views, search) never need them.
@@ -215,7 +218,7 @@ pub(super) fn relationship_score(a: &ContactAccum, now_secs: i64) -> f64 {
 /// poison the DB.
 pub(crate) fn normalize_mailbox(raw: &str) -> &str {
     match raw {
-        "inbox" | "sent" | "spam" | "trash" => raw,
+        "inbox" | "sent" | "spam" | "trash" | "archive" => raw,
         s if s.len() > "folder:".len() && s.starts_with("folder:") => raw,
         _ => "inbox",
     }
@@ -238,6 +241,7 @@ mod normalize_mailbox_tests {
         assert_eq!(normalize_mailbox("sent"), "sent");
         assert_eq!(normalize_mailbox("spam"), "spam");
         assert_eq!(normalize_mailbox("trash"), "trash");
+        assert_eq!(normalize_mailbox("archive"), "archive");
     }
 
     #[test]
@@ -261,9 +265,8 @@ mod normalize_mailbox_tests {
     }
 }
 
-// Used by test code to benchmark the scalar subquery approach against
-// the inbox-scoped variant. Production paths use `latest_inbox_email_predicate`.
-#[cfg(test)]
+// The latest live message of the thread, whatever its mailbox. The Snoozed
+// view picks its row with it; the inbox uses `latest_inbox_email_predicate`.
 pub(super) fn latest_thread_email_predicate(alias: &str) -> String {
     // Scalar subquery: check that this email IS the latest in its thread.
     // Uses idx_emails_thread_latest (account_id, thread_id, timestamp DESC, id DESC)
@@ -301,6 +304,16 @@ pub(super) fn latest_inbox_email_predicate(alias: &str) -> String {
             LIMIT 1
         )"
     )
+}
+
+/// [`EMAIL_COLUMNS`] qualified with `alias`, for queries that join another
+/// table carrying same-named columns (`account_id`, `thread_id`, `created_at`).
+pub(super) fn qualified_email_columns(alias: &str) -> String {
+    EMAIL_COLUMNS
+        .split(',')
+        .map(|c| format!("{alias}.{}", c.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(super) fn thread_order_clause(alias: &str, ascending: bool) -> String {

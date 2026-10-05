@@ -266,6 +266,7 @@ pub(super) fn email_fixture(id: &str, account_id: &str, body: &str) -> crate::mo
         category: "primary".to_string(),
         mailbox: "inbox".to_string(),
         is_sent: false,
+        is_starred: false,
         headers: None,
     }
 }

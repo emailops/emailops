@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { dataUrlToBase64, saveToDownloads } from '@/lib/download';
+import { useOverlay } from '@/stores/overlayStore';
 import type { EmailAttachmentMeta } from '@/types';
 
 interface AttachmentLightboxProps {
@@ -10,6 +11,7 @@ interface AttachmentLightboxProps {
 }
 
 export function AttachmentLightbox({ meta, onClose }: AttachmentLightboxProps) {
+  useOverlay();
   const { t } = useTranslation(['attachments', 'common']);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);

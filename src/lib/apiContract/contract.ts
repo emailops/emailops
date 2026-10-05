@@ -14,9 +14,12 @@ const RUST_SOURCES: Record<string, string> = Object.fromEntries(
       [
         '../../../src-tauri/src/commands/*.rs',
         '../../../src-tauri/src/models/mod.rs',
+        '../../../src-tauri/src/models/outbox.rs',
         '../../../src-tauri/src/ai/provider.rs',
         '../../../src-tauri/src/services/ai_activity.rs',
         '../../../src-tauri/src/services/calendar/invite.rs',
+        '../../../src-tauri/src/services/sender_controls.rs',
+        '../../../src-tauri/src/services/unsubscribe.rs',
       ],
       { query: '?raw', import: 'default', eager: true },
     ),

@@ -244,7 +244,7 @@ pub fn unlabelled(
     let order = if random { "RANDOM()" } else { "timestamp DESC" };
     let sql = format!(
         "SELECT id FROM emails
-         WHERE account_id = ?1 AND is_deleted = 0 AND mailbox IN ('inbox', 'spam')
+         WHERE account_id = ?1 AND is_deleted = 0 AND mailbox IN ('inbox', 'archive', 'spam')
          ORDER BY {order} LIMIT ?2"
     );
     let mut stmt = conn.prepare(&sql)?;

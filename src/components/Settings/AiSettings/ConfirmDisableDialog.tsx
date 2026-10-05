@@ -2,6 +2,7 @@
 // Warns about hidden features while reassuring that local data is preserved.
 
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface ConfirmDisableDialogProps {
   onCancel: () => void;
@@ -9,6 +10,7 @@ interface ConfirmDisableDialogProps {
 }
 
 export function ConfirmDisableDialog({ onCancel, onConfirm }: ConfirmDisableDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">

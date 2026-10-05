@@ -17,8 +17,12 @@ vi.mock('@/components/shared/RichTextEditor', () => ({
 }));
 vi.mock('@/components/shared/TranslateComposeControl', () => ({ TranslateComposeControl: () => null }));
 vi.mock('@/components/shared/Select', () => ({ Select: () => null }));
+// Undo send off unless a test turns it on: these cases pin the direct send.
+let undoDelay = '0';
 vi.mock('@/lib/api', () => ({
-  getPref: vi.fn(async () => null),
+  getPref: vi.fn(async (key: string) => (key === 'compose.undo_send_delay_secs' ? undoDelay : null)),
+  queueOutgoingEmail: vi.fn(async () => ({ id: 'o1' })),
+  sendReply: vi.fn(async () => {}),
   autocompleteRecipients: vi.fn(async () => []),
   saveDraft: vi.fn(async () => ({ id: 'd1' })),
   deleteDraft: vi.fn(async () => {}),
@@ -29,6 +33,7 @@ vi.mock('@/lib/api', () => ({
 
 import * as api from '@/lib/api';
 import type { ComposeTab } from '@/stores/emailStore';
+import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
 import { ComposeTabView } from './ComposeTabView';
 
@@ -56,6 +61,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  undoDelay = '0';
+  useOutboxStore.setState({ undoDelaySecs: null });
   vi.useFakeTimers();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -86,7 +93,7 @@ async function typeIntoTo(value: string) {
 }
 
 function sendButton(): HTMLButtonElement {
-  const b = [...container.querySelectorAll('button')].find((x) => x.textContent === 'Send');
+  const b = container.querySelector<HTMLButtonElement>('[data-testid="compose-tab-send"]');
   if (!b) throw new Error('Send button not rendered');
   return b;
 }
@@ -139,5 +146,52 @@ describe('ComposeTabView opened from the compose modal', () => {
       sendButton().click();
     });
     expect(vi.mocked(api.sendNewEmail).mock.calls[0][5]).toEqual([file]);
+  });
+});
+
+describe('ComposeTabView with undo send on', () => {
+  it('queues the message for the undo window, hands over its draft, and closes', async () => {
+    undoDelay = '10';
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <ComposeTabView
+          tab={{ ...tab, toAddresses: ['bob@example.com'], draftId: 'd9' }}
+          accounts={[account]}
+          onClose={onClose}
+        />,
+      );
+    });
+    await act(async () => {
+      sendButton().click();
+    });
+    expect(api.sendNewEmail).not.toHaveBeenCalled();
+    const [message, schedule, draftId] = vi.mocked(api.queueOutgoingEmail).mock.calls[0];
+    expect(message).toMatchObject({
+      accountId: 'a1',
+      to: ['bob@example.com'],
+      subject: 'Feedback',
+      replyToEmailId: null,
+    });
+    expect(schedule).toEqual({ type: 'undo', delaySecs: 10 });
+    expect(draftId).toBe('d9');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('a reopened reply is queued as a reply to its message', async () => {
+    undoDelay = '5';
+    await act(async () => {
+      root.render(
+        <ComposeTabView
+          tab={{ ...tab, toAddresses: ['bob@example.com'], replyToEmailId: 'e1' }}
+          accounts={[account]}
+          onClose={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      sendButton().click();
+    });
+    expect(vi.mocked(api.queueOutgoingEmail).mock.calls[0][0]).toMatchObject({ replyToEmailId: 'e1' });
   });
 });

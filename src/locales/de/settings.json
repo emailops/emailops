@@ -3,6 +3,10 @@
   "tabs": {
     "appearance": "Erscheinungsbild",
     "appearanceDesc": "Layout des Posteingangs",
+    "signatures": "Signaturen",
+    "signaturesDesc": "E-Mail-Signatur je Konto",
+    "notifications": "Benachrichtigungen",
+    "notificationsDesc": "Desktop-Benachrichtigungen für neue E-Mails",
     "calendar": "Kalender",
     "calendarDesc": "Konten & Meeting-Benachrichtigungen",
     "ai": "KI: Backend & Modelle",
@@ -39,7 +43,19 @@
     "layoutSplitLabel": "Geteilte Ansicht",
     "layoutSplitDesc": "E-Mail-Liste links, E-Mail-Inhalt rechts",
     "layoutFullWidthLabel": "Liste in voller Breite",
-    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen"
+    "layoutFullWidthDesc": "Die Liste nimmt die volle Breite ein; öffne eine E-Mail, um sie zu lesen",
+    "undoSend": "Senden rückgängig machen",
+    "undoSendHelp": "Nach dem Klick auf Senden wartet die Nachricht so lange, damit Sie sie zurückholen können. EmailOps muss geöffnet bleiben, bis sie gesendet ist.",
+    "undoSendOff": "Aus",
+    "undoSendSeconds": "{{count}} Sekunden",
+    "keyboardShortcuts": "Tastenkombinationen",
+    "keyboardShortcutsHelp": "Navigieren, Konversationen bearbeiten und Nachrichten verfassen per Tastatur. Drücken Sie ?, um alle Tastenkombinationen zu sehen.",
+    "keyboardShortcutsShowList": "Liste anzeigen",
+    "afterLeave": "Nach dem Archivieren oder Löschen",
+    "afterLeaveHelp": "Was angezeigt wird, wenn die geöffnete Konversation die Liste verlässt (archivieren, löschen, zurückstellen, blockieren oder als Spam melden). „Als ungelesen markieren“ kehrt immer zur Liste zurück.",
+    "afterLeaveNext": "Nächste Konversation öffnen",
+    "afterLeavePrevious": "Vorherige Konversation öffnen",
+    "afterLeaveList": "Zurück zur Liste"
   },
   "dialog": {
     "closeTitle": "Einstellungen schließen",
@@ -529,7 +545,7 @@
       "dim": "Bleibt an Ort und Stelle, nur leichter zu überspringen.",
       "hide": "Aus der Liste entfernt. Weiterhin über die Suche und die Ordner Ihres Anbieters erreichbar."
     },
-    "neverMoves": "Keine der Optionen verschiebt oder löscht etwas auf dem Server. Das tut nur die Schaltfläche „Als Spam bestätigen“, und nur wenn Sie sie drücken.",
+    "neverMoves": "Keine der beiden Optionen verschiebt oder löscht E-Mails auf dem Server. Nur „Als Spam bestätigen“ und „Absender blockieren“ tun das, und nur, wenn Sie sie verwenden.",
     "phishing": "Vor Identitätsmissbrauch warnen",
     "phishingDesc": "Standardmäßig aus. Dies ist die einzige Prüfung, die einer Nachricht Betrug vorwirft, und sie hat weit weniger Belege hinter sich als die anderen beiden.",
     "statusTitle": "Status",
@@ -547,7 +563,14 @@
     "modelNotYet": "noch zu wenige Labels — {{pos}} / {{neg}}",
     "backfill": "{{count}} ältere Nachrichten bewerten",
     "backfillStarted": "Ältere Nachrichten werden im Hintergrund bewertet",
-    "backfillRunning": "Wird bewertet… noch {{count}}"
+    "backfillRunning": "Wird bewertet… noch {{count}}",
+    "blocked": {
+      "title": "Blockierte Absender",
+      "desc": "E-Mails dieser Absender werden beim Eintreffen in den Spam verschoben.",
+      "empty": "Sie haben niemanden blockiert. Blockieren Sie einen Absender über das ⋮-Menü einer Nachricht.",
+      "since": "blockiert am {{date}}",
+      "unblock": "Blockierung aufheben"
+    }
   },
   "skills": {
     "enable": "Skills aktivieren",
@@ -577,5 +600,51 @@
       "deleteYes": "Löschen",
       "deleteNo": "Abbrechen"
     }
+  },
+  "signatures": {
+    "title": "Signaturen",
+    "help": "Wird an die Nachrichten angefügt, die Sie von jedem Konto schreiben. Sie können sie in jeder Nachricht noch ändern oder löschen.",
+    "account": "Konto",
+    "editorPlaceholder": "Ihr Name, Ihre Funktion, Telefon…",
+    "useForNew": "In neue Nachrichten einfügen",
+    "useForReplies": "In Antworten und Weiterleitungen einfügen",
+    "placementHelp": "In einer Antwort steht die Signatur unter Ihrem Text, in einer Weiterleitung über der weitergeleiteten Nachricht.",
+    "imagesHelp": "Bilder werden in jeder Nachricht mitgesendet. Breite Bilder werden auf 600 px verkleinert; jedes darf höchstens 200 KB groß sein, die ganze Signatur 512 KB.",
+    "save": "Signatur speichern",
+    "saving": "Wird gespeichert…",
+    "saved": "Signatur gespeichert",
+    "discard": "Änderungen verwerfen",
+    "importGmail": "Aus Gmail importieren",
+    "importing": "Wird importiert…",
+    "imported": "Die Gmail-Signatur steht im Editor. Speichern Sie sie, um sie hier zu verwenden.",
+    "importNone": "Diese Adresse hat in Gmail keine Signatur.",
+    "noAccounts": "Verbinden Sie ein Konto, um seine Signatur festzulegen.",
+    "loadFailed": "Die Signatur konnte nicht geladen werden. Details stehen im Ausgabebereich.",
+    "addImage": "Bild hinzufügen",
+    "addImageHint": "Fügen Sie ein Logo oder ein Bild Ihrer handschriftlichen Unterschrift hinzu (PNG, JPEG, GIF oder WebP)",
+    "imageAdded": "Bild hinzugefügt. Speichern Sie, um es zu behalten.",
+    "imageErrors": {
+      "unsupportedType": "Verwenden Sie ein PNG-, JPEG-, GIF- oder WebP-Bild (SVG und andere Dateien werden nicht unterstützt).",
+      "fileTooLarge": "Diese Datei ist zu groß (höchstens 10 MB).",
+      "tooLarge": "Das Bild ist auch nach dem Verkleinern größer als 200 KB. Verwenden Sie ein kleineres oder einfacheres Bild.",
+      "unreadable": "Das Bild konnte nicht gelesen werden."
+    }
+  },
+  "notifications": {
+    "enabledLabel": "Benachrichtigungen für neue E-Mails",
+    "enabledDesc": "Zeigt eine Desktop-Benachrichtigung, wenn neue E-Mails im Posteingang eintreffen und wenn eine zurückgestellte Unterhaltung wieder da ist. Nie bei der ersten Synchronisierung eines Kontos, für ältere oder bereits gelesene E-Mails, Junk oder blockierte Absender.",
+    "accountsLabel": "Konten",
+    "accountsDesc": "Wähle, welche Konten benachrichtigen.",
+    "accountToggleAria": "Benachrichtigen für {{email}}",
+    "noAccounts": "Noch keine Konten verbunden.",
+    "contentLabel": "Inhalt der Benachrichtigung",
+    "contentDesc": "Was eine Benachrichtigung auf dem Bildschirm zeigen darf. Der Nachrichtentext wird nie angezeigt.",
+    "contentPreview": "Absender und Betreff anzeigen",
+    "contentPreviewDesc": "Der Absender als Titel, der Betreff als Text.",
+    "contentHidden": "Inhalt ausblenden",
+    "contentHiddenDesc": "Nur „Neue Nachricht in“ und das Konto.",
+    "onlyUnfocusedLabel": "Nur wenn EmailOps nicht im Vordergrund ist",
+    "onlyUnfocusedDesc": "Bleibt still, während du in EmailOps arbeitest.",
+    "footnote": "Mehr als drei neue Nachrichten auf einmal werden zu einer Zusammenfassung. Solange die App mit dem Hauptpasswort gesperrt ist, zeigen Benachrichtigungen nie Absender oder Betreff."
   }
 }

@@ -77,8 +77,8 @@ pub async fn backfill_junk_scores(state: State<'_, AppState>, account_id: String
 /// server's Junk folder.
 ///
 /// The override is recorded either way, so the statistical layer learns from the
-/// correction even when the provider cannot be told (Gmail and Graph do not
-/// implement the move seam; only IMAP does).
+/// correction even when the provider cannot be told (an account without mailbox
+/// writes, or an IMAP server with no Junk folder). Returns whether it was filed.
 #[tauri::command]
 pub async fn report_junk_to_provider(
     state: State<'_, AppState>,
@@ -90,29 +90,28 @@ pub async fn report_junk_to_provider(
     // trains the model — and it must survive a failure to reach the server.
     junk::set_feedback(&state.db, &account_id, &email_id, true).await?;
 
-    let spam_folder = state
+    let email = crate::services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
+    let account = state
         .db
-        .list_folders(&account_id, Some(crate::models::FolderRole::Spam))?
-        .into_iter()
-        .next();
-    let Some(folder) = spam_folder else {
-        crate::services::logger::log(
-            "info",
-            "system",
-            "Marked as junk locally: this account has no server-side Junk folder to file it in",
-        );
-        return Ok(false);
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    let provider = if crate::sync::provider::provider_supports_mailbox_writes(&account.provider) {
+        Some(crate::services::emails::build_provider(&account, Some(app)).await?)
+    } else {
+        None
     };
-
-    let (account, provider) = crate::commands::emails::account_and_provider(&state, app, &account_id).await?;
-    let target = format!("folder:{}", folder.server_path);
-    crate::services::emails::move_email(&state.db, &account, provider.as_ref(), &email_id, &target).await?;
+    let filing = crate::services::emails::file_in_spam(&state.db, &email, provider.as_deref()).await?;
+    let filed = filing == crate::services::emails::SpamFiling::Filed;
     crate::services::logger::log(
-        "success",
+        if filed { "success" } else { "info" },
         "system",
-        "Reported as junk and filed in the server's Junk folder",
+        if filed {
+            "Reported as junk and filed in the server's Junk folder"
+        } else {
+            "Marked as junk locally: this account has no server-side Junk folder to file it in"
+        },
     );
-    Ok(true)
+    Ok(filed)
 }
 
 #[tauri::command]

@@ -257,13 +257,7 @@ pub async fn move_email(
             email.id.clone()
         }
     };
-    // If a concurrent sync already ingested the moved message under its new
-    // id, re-keying would collide — drop our stale source row instead.
-    if new_id != email.id && db.get_email(&new_id)?.is_some() {
-        db.hard_delete_email(&email.id)?;
-    } else {
-        db.migrate_email_id(&email.id, &new_id, &new_mailbox)?;
-    }
+    refile_moved_row(db, &email.id, &new_id, &new_mailbox)?;
 
     logger::log(
         "info",
@@ -271,6 +265,66 @@ pub async fn move_email(
         format!("[{}] Moved email to {}", account.email, new_mailbox),
     );
     Ok(())
+}
+
+/// A message a bulk move could not move, with the error in the same
+/// `{code, params, message}` shape `AppError` has at the command boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveFailure {
+    pub email_id: String,
+    pub code: String,
+    pub params: std::collections::BTreeMap<String, String>,
+    pub message: String,
+}
+
+/// The outcome of [`move_emails`]: every id not listed in `failed` was moved.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveReport {
+    pub failed: Vec<MoveFailure>,
+}
+
+/// Move several messages of one account to the same target ([`move_email`]
+/// for each, through one provider). Never fails as a whole: one refused
+/// message does not stop the others, and the report names the ones that
+/// failed so the UI can put exactly those back.
+pub async fn move_emails(
+    db: &Arc<Database>,
+    account: &Account,
+    email_provider: &dyn EmailProvider,
+    email_ids: &[String],
+    target_mailbox: &str,
+) -> MoveReport {
+    let mut report = MoveReport::default();
+    for email_id in email_ids {
+        if let Err(e) = move_email(db, account, email_provider, email_id, target_mailbox).await {
+            logger::log(
+                "error",
+                "sync",
+                format!("[{}] Could not move a message to {target_mailbox}: {e}", account.email),
+            );
+            report.failed.push(MoveFailure {
+                email_id: email_id.clone(),
+                code: e.code().to_string(),
+                params: e.params().into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                message: e.to_string(),
+            });
+        }
+    }
+    report
+}
+
+/// File a row the provider just moved under its new id and mailbox. If a
+/// concurrent sync already ingested the moved message under its new id,
+/// re-keying would collide — the stale source row is dropped instead. Shared
+/// by folder moves, archive and move-to-inbox.
+pub(crate) fn refile_moved_row(db: &Database, old_id: &str, new_id: &str, new_mailbox: &str) -> Result<()> {
+    if new_id != old_id && db.get_email(new_id)?.is_some() {
+        db.hard_delete_email(old_id)
+    } else {
+        db.migrate_email_id(old_id, new_id, new_mailbox)
+    }
 }
 
 #[cfg(test)]
@@ -347,6 +401,7 @@ mod tests {
             category: "primary".to_string(),
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
+            is_starred: false,
             headers: None,
         }
     }
@@ -801,5 +856,40 @@ mod tests {
             .unwrap();
 
         assert!(provider.folder_ops().is_empty());
+    }
+
+    #[tokio::test]
+    async fn move_emails_moves_each_and_reports_only_the_failures() {
+        let db = test_db("acc-1");
+        seed_folder(&db, "acc-1", "Archiv");
+        db.insert_emails_batch(&[
+            email("acc-1::20", "acc-1", "inbox"),
+            email("acc-1::21", "acc-1", "inbox"),
+            email("acc-1::SENT::2", "acc-1", "sent"),
+        ])
+        .unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        for id in ["acc-1::20", "acc-1::21"] {
+            provider.add_message(email(id, "acc-1", "inbox"), EmailCategory::Primary, vec![]);
+        }
+        let ids: Vec<String> = ["acc-1::20", "acc-1::SENT::2", "acc-1::21", "acc-1::gone"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let report = move_emails(&db, &imap_account("acc-1"), &provider, &ids, "folder:Archiv").await;
+
+        let failed: Vec<(&str, &str)> = report
+            .failed
+            .iter()
+            .map(|f| (f.email_id.as_str(), f.code.as_str()))
+            .collect();
+        assert_eq!(
+            failed,
+            vec![("acc-1::SENT::2", "invalid_input"), ("acc-1::gone", "not_found")]
+        );
+        for id in ["acc-1::20", "acc-1::21"] {
+            assert_eq!(db.get_email(id).unwrap().unwrap().mailbox, "folder:Archiv");
+        }
     }
 }

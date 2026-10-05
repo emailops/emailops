@@ -177,6 +177,7 @@ mod tests {
             timestamp: 1_700_000_000,
             is_read: false,
             is_sent: false,
+            is_starred: false,
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),

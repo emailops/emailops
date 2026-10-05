@@ -9,6 +9,7 @@
   "trash": "Corbeille",
   "spam": "Indésirables",
   "starred": "Favoris",
+  "snoozed": "En attente",
   "search": "Rechercher des courriels…",
   "compose": "Nouveau message",
   "accounts": "Comptes",
@@ -81,5 +82,7 @@
   "allAccounts": "Tous les comptes",
   "allAccountsFooter": "Affichage de tous les comptes",
   "newLens": "Nouvelle lentille",
-  "skills": "Skills"
+  "skills": "Skills",
+  "archive": "Archives",
+  "scheduled": "Programmés"
 }

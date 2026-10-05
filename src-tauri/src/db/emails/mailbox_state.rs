@@ -14,6 +14,16 @@ pub struct PendingReadPush {
     pub pending_since: i64,
 }
 
+/// A row whose star has not reached the provider yet (V030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingStarPush {
+    pub id: String,
+    /// The state to push — the local row is authoritative while it is pending.
+    pub is_starred: bool,
+    /// When the change was made locally (unix seconds).
+    pub pending_since: i64,
+}
+
 /// What is stored for a message the refresh pass is about to check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredMessageState {
@@ -25,6 +35,26 @@ pub struct StoredMessageState {
     pub is_sent: bool,
     /// A local read-state change has not reached the provider yet.
     pub read_push_pending: bool,
+    pub is_starred: bool,
+    /// A local star change has not reached the provider yet.
+    pub star_push_pending: bool,
+}
+
+/// Columns read into a [`StoredMessageState`], in [`stored_state_from_row`] order.
+const STORED_STATE_COLUMNS: &str = "id, message_id, mailbox, is_read, is_sent, read_push_pending_since IS NOT NULL, \
+     is_starred, star_push_pending_since IS NOT NULL";
+
+fn stored_state_from_row(row: &rusqlite::Row) -> rusqlite::Result<StoredMessageState> {
+    Ok(StoredMessageState {
+        id: row.get(0)?,
+        message_id: row.get(1)?,
+        mailbox: row.get(2)?,
+        is_read: row.get::<_, i32>(3)? != 0,
+        is_sent: row.get::<_, i32>(4)? != 0,
+        read_push_pending: row.get(5)?,
+        is_starred: row.get::<_, i32>(6)? != 0,
+        star_push_pending: row.get(7)?,
+    })
 }
 
 impl Database {
@@ -42,25 +72,16 @@ impl Database {
         limit: usize,
     ) -> Result<Vec<StoredMessageState>> {
         let conn = self.reader();
-        let mut stmt = conn.prepare(
-            "SELECT id, message_id, mailbox, is_read, is_sent, read_push_pending_since IS NOT NULL
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {STORED_STATE_COLUMNS}
              FROM emails
              WHERE account_id = ?1 AND is_deleted = 0 AND timestamp >= ?2
                AND pending_sync = 0 AND mailbox != 'spam'
              ORDER BY timestamp DESC, id DESC
-             LIMIT ?3",
-        )?;
+             LIMIT ?3"
+        ))?;
         let rows = stmt
-            .query_map(params![account_id, since, limit as i64], |row| {
-                Ok(StoredMessageState {
-                    id: row.get(0)?,
-                    message_id: row.get(1)?,
-                    mailbox: row.get(2)?,
-                    is_read: row.get::<_, i32>(3)? != 0,
-                    is_sent: row.get::<_, i32>(4)? != 0,
-                    read_push_pending: row.get(5)?,
-                })
-            })?
+            .query_map(params![account_id, since, limit as i64], stored_state_from_row)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -76,7 +97,7 @@ impl Database {
         for chunk in ids.chunks(900) {
             let placeholders: Vec<String> = (2..=chunk.len() + 1).map(|i| format!("?{i}")).collect();
             let sql = format!(
-                "SELECT id, message_id, mailbox, is_read, is_sent, read_push_pending_since IS NOT NULL
+                "SELECT {STORED_STATE_COLUMNS}
                  FROM emails
                  WHERE account_id = ?1 AND is_deleted = 0 AND pending_sync = 0 AND mailbox != 'spam'
                    AND id IN ({})",
@@ -89,16 +110,7 @@ impl Database {
             }
             let mut stmt = conn.prepare(&sql)?;
             let found = stmt
-                .query_map(bound.as_slice(), |row| {
-                    Ok(StoredMessageState {
-                        id: row.get(0)?,
-                        message_id: row.get(1)?,
-                        mailbox: row.get(2)?,
-                        is_read: row.get::<_, i32>(3)? != 0,
-                        is_sent: row.get::<_, i32>(4)? != 0,
-                        read_push_pending: row.get(5)?,
-                    })
-                })?
+                .query_map(bound.as_slice(), stored_state_from_row)?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             rows.extend(found);
         }
@@ -154,6 +166,122 @@ impl Database {
         Ok(())
     }
 
+    /// Set one email's read state and record, in the same statement, that the
+    /// change still has to reach the provider — see
+    /// [`Self::mark_as_read_pending_push`]. Used for both directions.
+    pub fn set_read_pending_push(&self, email_id: &str, read: bool, now: i64) -> Result<()> {
+        self.connection().execute(
+            "UPDATE emails SET is_read = ?2, read_push_pending_since = ?3 WHERE id = ?1",
+            params![email_id, read as i32, now],
+        )?;
+        Ok(())
+    }
+
+    /// Set one email's read state with nothing owed to the provider (a
+    /// provider without mailbox writes, or a locally-composed row).
+    pub fn set_read_local(&self, email_id: &str, read: bool) -> Result<()> {
+        self.connection().execute(
+            "UPDATE emails SET is_read = ?2 WHERE id = ?1",
+            params![email_id, read as i32],
+        )?;
+        Ok(())
+    }
+
+    /// Star or unstar one email and record, in the same statement, that the
+    /// change still has to reach the provider. One statement for the same
+    /// reason as [`Self::mark_as_read_pending_push`].
+    pub fn set_starred_pending_push(&self, email_id: &str, starred: bool, now: i64) -> Result<()> {
+        self.connection().execute(
+            "UPDATE emails SET is_starred = ?2, star_push_pending_since = ?3 WHERE id = ?1",
+            params![email_id, starred as i32, now],
+        )?;
+        Ok(())
+    }
+
+    /// Star or unstar one email with nothing owed to the provider.
+    pub fn set_starred_local(&self, email_id: &str, starred: bool) -> Result<()> {
+        self.connection().execute(
+            "UPDATE emails SET is_starred = ?2 WHERE id = ?1",
+            params![email_id, starred as i32],
+        )?;
+        Ok(())
+    }
+
+    /// The provider has the row's star (or no longer has the message).
+    pub fn clear_star_push_pending(&self, email_id: &str) -> Result<()> {
+        self.connection().execute(
+            "UPDATE emails SET star_push_pending_since = NULL WHERE id = ?1",
+            params![email_id],
+        )?;
+        Ok(())
+    }
+
+    /// Take the provider's star for a row. Refuses — returning `false` — when
+    /// a local star change is still pending for it, checked in the statement
+    /// itself like [`Self::apply_server_read_state`].
+    pub fn apply_server_starred(&self, email_id: &str, starred: bool) -> Result<bool> {
+        let changed = self.connection().execute(
+            "UPDATE emails SET is_starred = ?2
+             WHERE id = ?1 AND is_starred != ?2 AND star_push_pending_since IS NULL",
+            params![email_id, starred as i32],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Star changes of one account still owed to the provider, oldest first.
+    pub fn pending_star_pushes(&self, account_id: &str, limit: usize) -> Result<Vec<PendingStarPush>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, is_starred, star_push_pending_since FROM emails
+             WHERE account_id = ?1 AND star_push_pending_since IS NOT NULL
+             ORDER BY star_push_pending_since, id
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![account_id, limit as i64], |row| {
+                Ok(PendingStarPush {
+                    id: row.get(0)?,
+                    is_starred: row.get::<_, i32>(1)? != 0,
+                    pending_since: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Which of `threads` (`(account_id, thread_id)`) have a live starred
+    /// message — a thread is starred when any of its messages is.
+    pub fn starred_threads(&self, threads: &[(&str, &str)]) -> Result<std::collections::HashSet<(String, String)>> {
+        let mut starred = std::collections::HashSet::new();
+        if threads.is_empty() {
+            return Ok(starred);
+        }
+        let conn = self.reader();
+        // Two binds per thread; stay well under SQLite's variable limit.
+        for chunk in threads.chunks(400) {
+            let pairs = vec!["(?, ?)"; chunk.len()].join(", ");
+            let sql = format!(
+                "WITH wanted(account_id, thread_id) AS (VALUES {pairs})
+                 SELECT DISTINCT e.account_id, e.thread_id
+                 FROM emails e JOIN wanted w ON e.account_id = w.account_id AND e.thread_id = w.thread_id
+                 WHERE e.is_starred = 1 AND e.is_deleted = 0"
+            );
+            let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 2);
+            for (account_id, thread_id) in chunk {
+                bound.push(account_id);
+                bound.push(thread_id);
+            }
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(bound.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                starred.insert(row?);
+            }
+        }
+        Ok(starred)
+    }
+
     /// The provider has the row's read state (or no longer has the message).
     pub fn clear_read_push_pending(&self, email_id: &str) -> Result<()> {
         self.connection().execute(
@@ -189,7 +317,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::PendingReadPush;
+    use super::{PendingReadPush, PendingStarPush};
     use crate::db::emails::test_helpers::insert_email;
     use crate::db::Database;
 
@@ -249,6 +377,120 @@ mod tests {
     }
 
     #[test]
+    fn marking_unread_with_a_pending_push_records_the_unread_state() {
+        let db = db_with(&["m-1"]);
+        db.mark_as_read_pending_push("m-1", 400).unwrap();
+
+        db.set_read_pending_push("m-1", false, 500).unwrap();
+
+        assert!(!db.get_email("m-1").unwrap().unwrap().is_read);
+        assert_eq!(
+            db.pending_read_pushes("acc-1", 10).unwrap(),
+            vec![PendingReadPush {
+                id: "m-1".to_string(),
+                is_read: false,
+                pending_since: 500
+            }]
+        );
+    }
+
+    #[test]
+    fn a_local_only_read_change_leaves_nothing_pending() {
+        let db = db_with(&["m-1"]);
+
+        db.set_read_local("m-1", true).unwrap();
+        db.set_read_local("m-1", false).unwrap();
+
+        assert!(!db.get_email("m-1").unwrap().unwrap().is_read);
+        assert!(db.pending_read_pushes("acc-1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn starring_with_a_pending_push_sets_both_and_clearing_keeps_the_star() {
+        let db = db_with(&["m-1", "m-2"]);
+        insert_email(&db, "other", "acc-2", "t-2", 1_000);
+        db.set_starred_pending_push("m-2", true, 300).unwrap();
+        db.set_starred_pending_push("m-1", true, 100).unwrap();
+        db.set_starred_pending_push("other", true, 50).unwrap();
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_starred);
+        assert_eq!(
+            db.pending_star_pushes("acc-1", 10).unwrap(),
+            vec![
+                PendingStarPush {
+                    id: "m-1".to_string(),
+                    is_starred: true,
+                    pending_since: 100
+                },
+                PendingStarPush {
+                    id: "m-2".to_string(),
+                    is_starred: true,
+                    pending_since: 300
+                },
+            ]
+        );
+        assert_eq!(db.pending_star_pushes("acc-1", 1).unwrap().len(), 1, "capped");
+
+        db.clear_star_push_pending("m-1").unwrap();
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_starred);
+        let left: Vec<String> = db
+            .pending_star_pushes("acc-1", 10)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(left, vec!["m-2".to_string()]);
+    }
+
+    #[test]
+    fn a_local_only_star_leaves_nothing_pending() {
+        let db = db_with(&["m-1"]);
+
+        db.set_starred_local("m-1", true).unwrap();
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_starred);
+        assert!(db.pending_star_pushes("acc-1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_servers_star_is_applied_unless_a_local_star_change_is_pending() {
+        let db = db_with(&["m-1", "pending"]);
+        db.set_starred_pending_push("pending", true, 500).unwrap();
+
+        assert!(db.apply_server_starred("m-1", true).unwrap());
+        assert!(!db.apply_server_starred("m-1", true).unwrap(), "already starred");
+        assert!(!db.apply_server_starred("pending", false).unwrap());
+
+        assert!(db.get_email("m-1").unwrap().unwrap().is_starred);
+        assert!(db.get_email("pending").unwrap().unwrap().is_starred);
+    }
+
+    #[test]
+    fn starred_threads_are_the_threads_with_any_live_starred_message() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "a1", "acc-1", "t-a", 100);
+        insert_email(&db, "a2", "acc-1", "t-a", 200);
+        insert_email(&db, "b1", "acc-1", "t-b", 100);
+        insert_email(&db, "c1", "acc-1", "t-c", 100);
+        insert_email(&db, "same-thread-other-account", "acc-2", "t-b", 100);
+        db.set_starred_local("a1", true).unwrap();
+        db.set_starred_local("c1", true).unwrap();
+        db.delete_email("c1").unwrap();
+        db.set_starred_local("same-thread-other-account", true).unwrap();
+
+        let starred = db
+            .starred_threads(&[("acc-1", "t-a"), ("acc-1", "t-b"), ("acc-1", "t-c")])
+            .unwrap();
+
+        assert_eq!(
+            starred,
+            std::collections::HashSet::from([("acc-1".to_string(), "t-a".to_string())])
+        );
+        assert!(db.starred_threads(&[]).unwrap().is_empty());
+    }
+
+    #[test]
     fn the_servers_read_state_is_applied_in_both_directions() {
         let db = db_with(&["m-1"]);
 
@@ -305,6 +547,8 @@ mod tests {
                     is_read: false,
                     is_sent: false,
                     read_push_pending: false,
+                    is_starred: false,
+                    star_push_pending: false,
                 },
                 super::StoredMessageState {
                     id: "newer".to_string(),
@@ -313,6 +557,8 @@ mod tests {
                     is_read: true,
                     is_sent: false,
                     read_push_pending: true,
+                    is_starred: false,
+                    star_push_pending: false,
                 },
             ]
         );

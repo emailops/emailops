@@ -4,8 +4,17 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
+import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
-import type { DraftFailedEvent, DraftGeneratedEvent, EmailAttachment, RecipientSuggestion } from '@/lib/api';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
+import { useComposerSignature } from '@/hooks/useComposerSignature';
+import type {
+  DraftFailedEvent,
+  DraftGeneratedEvent,
+  EmailAttachment,
+  OutgoingMessage,
+  RecipientSuggestion,
+} from '@/lib/api';
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
@@ -19,7 +28,10 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
+import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
+import { useOutboxStore } from '@/stores/outboxStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
 
 export interface ComposeMaximizeState {
@@ -77,6 +89,7 @@ export function ComposeModal({
   onClose,
   onMaximize,
 }: ComposeModalProps) {
+  useOverlay();
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
@@ -84,6 +97,8 @@ export function ComposeModal({
   const [subject, setSubject] = useState('');
   // Rich-text HTML body. Empty string → editor shows empty state.
   const [bodyHtml, setBodyHtml] = useState('');
+  // The From account's signature: inserted on open, swapped when it changes.
+  useComposerSignature({ accountId: fromAccountId, kind: 'new', insertOnOpen: true, setBodyHtml });
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -136,9 +151,10 @@ export function ComposeModal({
       return;
     }
     // Replace the body with the generated draft (the typed text was the
-    // brief, sent as instructions). Convert plain text → HTML so the
-    // rich-text editor renders line breaks correctly.
-    setBodyHtml(plainTextToHtml(outcome.event.body));
+    // brief, sent as instructions), above the signature. Convert plain text
+    // → HTML so the rich-text editor renders line breaks correctly.
+    const draft = plainTextToHtml(outcome.event.body);
+    setBodyHtml((current) => replaceBodyKeepingSignature(current, draft, 'new'));
     addLog('success', 'ai', 'AI draft ready');
   };
 
@@ -310,7 +326,9 @@ export function ComposeModal({
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) {
+    // A body holding only the inserted signature is not something to save.
+    const typed = { ...state, plainBody: prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText };
+    if (!shouldAutosaveDraft(typed)) {
       // Sending / sent: a save still waiting must not resurrect the draft.
       debouncedRef.current.cancel();
       return;
@@ -341,7 +359,9 @@ export function ComposeModal({
     });
   };
 
-  const handleSend = async () => {
+  /** Send now (`scheduleAt` null: through the undo window when it is on)
+   *  or schedule the message. The one send entry point of this composer. */
+  const submit = async (scheduleAt: Date | null) => {
     // Include a valid address still sitting in the input box (typed but not
     // tokenized) so it isn't silently dropped from the outgoing message.
     const to = mergePendingRecipient(toRecipients, toInput);
@@ -352,32 +372,65 @@ export function ComposeModal({
     setSendError(null);
     setIsSending(true);
     try {
-      await api.sendNewEmail(
-        fromAccountId,
+      // Save an edit still in the quiet period and wait for every save, so
+      // the draft id is final; auto-save stops while sending.
+      debouncedRef.current.flushPending();
+      const draftId = await autosaverRef.current?.flush();
+      const message: OutgoingMessage = {
+        accountId: fromAccountId,
+        replyToEmailId: null,
         to,
         cc,
-        subject.trim(),
-        plain,
+        subject: subject.trim(),
+        body: plain,
+        bodyHtml: prepared.bodyHtml,
+        inlineImages: prepared.inlineImages,
         attachments,
-        prepared.bodyHtml,
-        prepared.inlineImages,
-      );
-      addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
-      setSent(true);
-      // Drop the auto-saved draft (local + provider copy) now that it's sent,
-      // so it doesn't linger in Drafts or get re-pulled on the next sync.
-      // flush() waits for any in-flight autosave so we delete the real row.
-      const draftId = await autosaverRef.current?.flush();
-      if (draftId) {
-        api.deleteDraft(draftId, fromAccountId).catch(() => {});
+      };
+      const outbox = useOutboxStore.getState();
+      if (scheduleAt) {
+        // The queued copy owns the content now; the draft leaves Drafts.
+        await outbox.schedule(message, scheduleAt, draftId);
+        setSent(true);
+        onClose();
+        return;
       }
-      setTimeout(onClose, 1200);
+      const outcome = await outbox.send(message, {
+        draftId,
+        sendDirect: async () => {
+          await api.sendNewEmail(
+            fromAccountId,
+            to,
+            cc,
+            subject.trim(),
+            plain,
+            attachments,
+            prepared.bodyHtml,
+            prepared.inlineImages,
+          );
+          addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
+          setSent(true);
+          // Drop the auto-saved draft (local + provider copy) now that it's
+          // sent, so it doesn't linger in Drafts or get re-pulled on the next sync.
+          if (draftId) {
+            api.deleteDraft(draftId, fromAccountId).catch(() => {});
+          }
+          setTimeout(onClose, 1200);
+        },
+      });
+      if (outcome === 'queued') {
+        setSent(true);
+        onClose();
+      }
     } catch (err) {
       setSendError(errorText(err));
     } finally {
       setIsSending(false);
     }
   };
+
+  const handleSend = () => void submit(null);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent || isLoadingAttachments);
 
   // Recipients + subject are the minimum the backend needs to draft a new
   // email; the subject is always part of the brief on that side.
@@ -389,7 +442,7 @@ export function ComposeModal({
     // Whatever the user has already typed in the body becomes the freeform
     // brief for the model (subject is folded in backend-side). Empty is fine —
     // the model then drafts purely from recipients + subject.
-    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    const brief = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim();
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
     draftTrackerRef.current.begin();
@@ -425,7 +478,7 @@ export function ComposeModal({
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                 isUnusual ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-gray-100 text-gray-700'
               }`}
-              title={isUnusual ? 'Different domain than other recipients' : r}
+              title={isUnusual ? t('compose:unusualDomain') : r}
             >
               {r}
               <button
@@ -455,7 +508,7 @@ export function ComposeModal({
             onBlur={() => setTimeout(() => setActiveField(null), 200)}
             onKeyDown={(e) => handleKeyDown(field, e, input)}
             className="w-full text-sm outline-none bg-transparent py-0.5"
-            placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
+            placeholder={recipients.length === 0 ? t('compose:recipientsPlaceholder') : ''}
           />
           {activeField === field && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
@@ -492,7 +545,10 @@ export function ComposeModal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
-      <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
+      <div
+        className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]"
+        onKeyDownCapture={handleSendKey}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
@@ -745,9 +801,11 @@ export function ComposeModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={handleSend}
+          <SendSplitButton
+            testId="compose-send"
+            label={isSending ? t('compose:sending') : isLoadingAttachments ? 'Loading files…' : t('compose:send')}
+            onSend={handleSend}
+            onSchedule={(at) => void submit(at)}
             disabled={
               isSending ||
               sent ||
@@ -756,10 +814,7 @@ export function ComposeModal({
               !subject.trim() ||
               !bodyHtml.trim()
             }
-            className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSending ? 'Sending…' : isLoadingAttachments ? 'Loading files…' : 'Send'}
-          </button>
+          />
         </div>
       </div>
     </div>,

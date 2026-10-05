@@ -10,6 +10,7 @@
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
+use crate::models::outbox::OutboxEntry;
 use crate::models::{AttachmentRule, Draft, Email};
 
 fn not_found(kind: &str, id: &str) -> AppError {
@@ -60,6 +61,14 @@ pub fn memory_fact_in_account(db: &Database, account_id: &str, fact_id: &str) ->
 
 pub fn pending_task_in_account(db: &Database, account_id: &str, task_id: &str) -> Result<()> {
     owned_by(db.get_pending_task_account(task_id)?, account_id, "Task", task_id)
+}
+
+pub fn outbox_in_account(db: &Database, account_id: &str, outbox_id: &str) -> Result<OutboxEntry> {
+    let entry = db
+        .get_outbox_entry(outbox_id)?
+        .ok_or_else(|| not_found("Outbox message", outbox_id))?;
+    owned_by(Some(entry.account_id.clone()), account_id, "Outbox message", outbox_id)?;
+    Ok(entry)
 }
 
 /// A thread exists in `account_id` when at least one of its emails does.
@@ -124,6 +133,12 @@ mod tests {
                 params![OWNER],
             )
             .unwrap();
+            conn.execute(
+                "INSERT INTO outbox (id, account_id, kind, origin, payload, send_at, created_at, updated_at)
+                 VALUES ('outbox-1', ?1, 'new', 'scheduled', '{}', 1, 0, 0)",
+                params![OWNER],
+            )
+            .unwrap();
         }
         db
     }
@@ -136,7 +151,7 @@ mod tests {
     #[test]
     fn a_record_is_visible_only_to_its_own_account() {
         let db = db_with_records();
-        let checks: [(&str, &str, Check); 7] = [
+        let checks: [(&str, &str, Check); 8] = [
             ("email", "email-1", |db, a, id| email_in_account(db, a, id).map(|_| ())),
             ("draft", "draft-1", |db, a, id| draft_in_account(db, a, id).map(|_| ())),
             ("attachment rule", "rule-1", |db, a, id| {
@@ -146,6 +161,9 @@ mod tests {
             ("memory fact", "fact-1", memory_fact_in_account),
             ("pending task", "task-1", pending_task_in_account),
             ("thread", "thread-1", thread_in_account),
+            ("outbox message", "outbox-1", |db, a, id| {
+                outbox_in_account(db, a, id).map(|_| ())
+            }),
         ];
         for (kind, id, check) in checks {
             assert!(check(&db, OWNER, id).is_ok(), "{kind}: owner must see it");
@@ -166,5 +184,6 @@ mod tests {
         assert_eq!(email_in_account(&db, OWNER, "email-1").unwrap().id, "email-1");
         assert_eq!(draft_in_account(&db, OWNER, "draft-1").unwrap().id, "draft-1");
         assert_eq!(attachment_rule_in_account(&db, OWNER, "rule-1").unwrap().id, "rule-1");
+        assert_eq!(outbox_in_account(&db, OWNER, "outbox-1").unwrap().id, "outbox-1");
     }
 }

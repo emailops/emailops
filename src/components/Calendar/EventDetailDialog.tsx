@@ -14,6 +14,7 @@ import {
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { CalendarEvent } from '@/types';
 
 /**
@@ -53,6 +54,7 @@ export function EventDetailDialog({
   onDeleted,
   onAuthError,
 }: EventDetailDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['calendar', 'common']);
   const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);

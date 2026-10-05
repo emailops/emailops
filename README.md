@@ -22,6 +22,11 @@ All installers, checksums, and older versions are on the [Releases page](https:/
 
 - **Multi-account email**: Gmail, Outlook / Microsoft 365 (Graph API), and IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, custom servers)
 - **Unified inbox**: read and triage mail from all your accounts in a single combined view
+- **Triage like Gmail or Outlook**: archive, star, mark as unread and snooze conversations, act on many at once, undo an archive or delete, and drive it all from the keyboard (`?` lists the shortcuts)
+- **Undo send and scheduled send**: take a message back for a few seconds after Send, or schedule it for later (EmailOps must be open when it goes out)
+- **Signatures**: one per account, with images, inserted in new messages and/or replies and forwards; Gmail signatures can be imported
+- **Unsubscribe and block sender**: one-click unsubscribe that tells you what it will contact, and a block that files a sender's mail in Spam
+- **New-mail notifications**: desktop notifications per account, with the content optionally hidden
 - **Calendar**: per-account month/week/day views for Google Calendar and Outlook and get meeting reminders with a one-click Join button for Meet / Teams / Webex / Zoom links
 - **Chat with your emails**: use AI to answer questions about your emails, generate drafts, ...
 - **AI email classification**: auto-tag emails by priority, intent, and topic using configurable rules + local AI

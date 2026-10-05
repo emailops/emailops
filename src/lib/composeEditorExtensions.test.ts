@@ -339,3 +339,23 @@ describe('composeEditorExtensions — known limits', () => {
     expect(roundTrip('<div style="padding: 8px"><p>one</p><p>two</p></div>')).toBe('<p>one</p><p>two</p>');
   });
 });
+
+describe('composeEditorExtensions — signature block', () => {
+  it('keeps the signature container through a round trip', () => {
+    const html =
+      '<p>Hello</p><p></p><div data-emailops-signature=""><p>Ana <strong>Lopez</strong></p><p>Example Ltd</p></div>';
+    expect(roundTrip(html)).toBe(html);
+  });
+
+  it('keeps a signature whose content is bare text', () => {
+    const body = parse(roundTrip('<p>Hi</p><div data-emailops-signature="">Ana</div>'));
+    expect(body.querySelector('[data-emailops-signature]')?.textContent).toBe('Ana');
+  });
+
+  it('keeps a pasted logo in the signature', () => {
+    const body = parse(
+      roundTrip('<div data-emailops-signature=""><p><img src="data:image/png;base64,AAAA" alt="logo"></p></div>'),
+    );
+    expect(body.querySelector('[data-emailops-signature] img')?.getAttribute('src')).toBe('data:image/png;base64,AAAA');
+  });
+});

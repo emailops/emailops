@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import * as api from '@/lib/api';
-import { plainTextToHtml } from '@/lib/composeHtml';
 import { errorText } from '@/lib/errors';
+import { draftComposeBody } from '@/lib/signature';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 
@@ -78,7 +78,13 @@ export function DraftRefPill({ draftId, accountId, label, onOpenEmail }: DraftRe
         // New-mail path — pop the standalone Compose tab. The compose tab
         // only shows in inbox-family views, so the view-switch is what
         // makes the click visibly do something.
-        openComposeTab(draft.accountId, draft.toAddresses, draft.subject, plainTextToHtml(draft.body));
+        // A chat draft is plain text without the signature: the composer adds
+        // it once; a draft a composer saved already carries it.
+        const { bodyHtml, insertSignature } = draftComposeBody(draft);
+        openComposeTab(draft.accountId, draft.toAddresses, draft.subject, bodyHtml, {
+          draftId: draft.id,
+          insertSignature,
+        });
         onOpenEmail?.();
       }
     } catch (e) {

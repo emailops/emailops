@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::{Account, AccountSettings};
+use crate::models::{Account, AccountSettings, AccountSignature, SignatureInput};
 use crate::services;
 use crate::sync::imap::ImapCredentials;
 use crate::AppState;
@@ -261,6 +261,44 @@ pub async fn set_account_settings(
     let json = serde_json::to_string(&settings).map_err(|e| AppError::InvalidInput(e.to_string()))?;
     state.db.set_preference(&key, &json)?;
     Ok(())
+}
+
+/// The account's email signature (defaults when it never saved one).
+#[tauri::command]
+pub async fn get_account_signature(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<AccountSignature, AppError> {
+    services::signatures::get_signature(&state.db, &account_id)
+}
+
+/// Save the account's email signature; the HTML is sanitized before storing.
+#[tauri::command]
+pub async fn save_account_signature(
+    state: State<'_, AppState>,
+    account_id: String,
+    signature: SignatureInput,
+) -> Result<AccountSignature, AppError> {
+    let saved =
+        services::signatures::save_signature(&state.db, &account_id, signature, crate::services::clock::now_secs())?;
+    services::logger::log("success", "account", "Signature saved".to_string());
+    Ok(saved)
+}
+
+/// The signature the provider's own client uses for this account (Gmail
+/// only), sanitized and not saved. `None` when there is none.
+#[tauri::command]
+pub async fn import_provider_signature(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Option<String>, AppError> {
+    let account = state
+        .db
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    let provider = services::emails::build_provider(&account, Some(app)).await?;
+    services::signatures::import_provider_signature(&state.db, &account_id, provider.as_ref()).await
 }
 
 /// Categories that should appear as Inbox filter tabs for the given account.

@@ -3,7 +3,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
+import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
+import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -18,6 +21,7 @@ import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/com
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
+import { hasSignature, insertSignature, replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
@@ -37,6 +41,8 @@ interface ReplyComposeProps {
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
     attachments?: EmailAttachment[];
+    /** Set when the user picked "Schedule send": the message goes out then. */
+    scheduleAt: Date | null;
     /** The saved reply draft this send replaces; the caller deletes it. */
     draftId?: string;
   }) => Promise<void>;
@@ -130,6 +136,12 @@ function detectUnusualRecipients(recipients: string[], selfEmails: string[]): st
   return nonSelf.filter((r) => !majorityDomains.has(getDomain(r)));
 }
 
+/** The text the user wrote, signature left out: inserting the signature once
+ *  it loads is not an edit worth saving a draft for. */
+function typedText(html: string): string {
+  return htmlToPlainText(withoutSignature(html)).trim();
+}
+
 export function ReplyCompose({
   email,
   threadEmails,
@@ -162,16 +174,33 @@ export function ReplyCompose({
   // preferred one, offer to translate the drafted reply into it.
   const threadDetection = useTranslationStore((s) => s.detectedByEmail[email.id]);
 
+  // The From account's signature: below the reply, above a forwarded message;
+  // swapped when the account changes.
+  const signatureKind = mode === 'forward' ? 'forward' : 'reply';
+  const currentSignature = useComposerSignature({
+    accountId: fromAccountId,
+    kind: signatureKind,
+    // A restored reply draft already holds its signature block.
+    insertOnOpen: restoredDraft === null,
+    setBodyHtml,
+  });
+
   // Sync body when the parent updates initialBody (e.g. AI draft generation
-  // replaces the "Generating draft..." placeholder with the actual draft).
-  // Only on a change: on mount the body is already set, and a restored draft
-  // must not be replaced by the empty template.
+  // replaces the "Generating draft..." placeholder with the actual draft, a
+  // forward brings the forwarded message). Only on a change: on mount the body
+  // is already set, and a restored draft must not be replaced by the empty
+  // template. The signature stays, edits included.
   const appliedInitialBody = useRef(initialBody);
   useEffect(() => {
     if (appliedInitialBody.current === initialBody) return;
     appliedInitialBody.current = initialBody;
-    setBodyHtml(plainTextToHtml(initialBody));
-  }, [initialBody]);
+    const next = plainTextToHtml(initialBody);
+    setBodyHtml((current) =>
+      hasSignature(current)
+        ? replaceBodyKeepingSignature(current, next, signatureKind)
+        : insertSignature(next, currentSignature(), signatureKind),
+    );
+  }, [initialBody, signatureKind, currentSignature]);
 
   // Compute initial recipients
   const initialTo = (() => {
@@ -235,14 +264,16 @@ export function ReplyCompose({
   // What the panel opened with. Opening Reply prefills the recipients (and an
   // AI draft may fill the body), so only a change from this is the user
   // writing something worth keeping.
-  const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: bodyHtml });
+  const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: typedText(bodyHtml) });
   const sentRef = useRef(false);
 
   useEffect(() => {
     if (!keepsDraft || isLoadingDraft) return;
     const opened = openedWith.current;
     const edited =
-      bodyHtml !== opened.body || toRecipients.join() !== opened.to.join() || ccRecipients.join() !== opened.cc.join();
+      typedText(bodyHtml) !== opened.body ||
+      toRecipients.join() !== opened.to.join() ||
+      ccRecipients.join() !== opened.cc.join();
     if (!edited) return;
     const state = {
       emailId: restoredDraft?.emailId ?? email.id,
@@ -291,6 +322,8 @@ export function ReplyCompose({
   const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
   // Pre-send warnings awaiting "send anyway"; any edit dismisses them.
   const [sendWarnings, setSendWarnings] = useState<SendWarning[] | null>(null);
+  // The schedule time the warnings interrupted, so "send anyway" keeps it.
+  const warnedScheduleAt = useRef<Date | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every edit of the body or attachments
   useEffect(() => {
     setSendWarnings(null);
@@ -406,7 +439,9 @@ export function ReplyCompose({
     }
   };
 
-  const handleSend = async (force = false) => {
+  /** Send (through the undo window when it is on) or, with `scheduleAt`,
+   *  schedule the reply. The one send entry point of this composer. */
+  const handleSend = async (force = false, scheduleAt: Date | null = null) => {
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     // A valid address still in the input box (typed, not tokenised) is a
@@ -416,8 +451,11 @@ export function ReplyCompose({
     if (to.length === 0 || !plain) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
-      const warnings = findSendWarnings(plain, attachments.length);
+      // The signature is not the user's text: "attached" in it is no promise.
+      const typed = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText;
+      const warnings = findSendWarnings(typed, attachments.length);
       if (warnings.length > 0) {
+        warnedScheduleAt.current = scheduleAt;
         setSendWarnings(warnings);
         return;
       }
@@ -436,6 +474,7 @@ export function ReplyCompose({
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
         attachments,
+        scheduleAt,
         draftId,
       });
     } catch (err) {
@@ -447,6 +486,8 @@ export function ReplyCompose({
       setIsSending(false);
     }
   };
+
+  const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft);
 
   const renderTokenInput = (
     field: 'to' | 'cc',
@@ -469,7 +510,7 @@ export function ReplyCompose({
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
                 isUnusual ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-gray-100 text-gray-700'
               }`}
-              title={isUnusual ? 'Different domain than other recipients' : r}
+              title={isUnusual ? t('compose:unusualDomain') : r}
             >
               {r}
               <button
@@ -499,7 +540,7 @@ export function ReplyCompose({
             onBlur={() => setTimeout(() => setActiveField(null), 200)}
             onKeyDown={(e) => handleKeyDown(field, e, input)}
             className="w-full text-sm outline-none bg-transparent py-0.5"
-            placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
+            placeholder={recipients.length === 0 ? t('compose:recipientsPlaceholder') : ''}
           />
           {activeField === field && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
@@ -534,7 +575,7 @@ export function ReplyCompose({
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4" onKeyDownCapture={handleSendKey}>
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>
@@ -586,7 +627,11 @@ export function ReplyCompose({
         <AiInstructionBar
           onGenerate={onGenerateDraft}
           isGenerating={isLoadingDraft}
-          hasDraft={bodyHtml.replace(/<[^>]*>/g, '').trim().length > 0}
+          hasDraft={
+            withoutSignature(bodyHtml)
+              .replace(/<[^>]*>/g, '')
+              .trim().length > 0
+          }
         />
       )}
 
@@ -596,7 +641,7 @@ export function ReplyCompose({
           value={bodyHtml}
           onChange={setBodyHtml}
           disabled={isLoadingDraft}
-          placeholder={isLoadingDraft ? 'Generating draft…' : 'Write your reply...'}
+          placeholder={isLoadingDraft ? t('compose:generatingDraft') : t('compose:replyPlaceholder')}
           contentClassName="min-h-[180px] max-h-[40vh] overflow-y-auto"
         />
         {isLoadingDraft && (
@@ -672,29 +717,30 @@ export function ReplyCompose({
         >
           Cancel
         </button>
-        <button
-          type="button"
-          onClick={() => void handleSend()}
+        <SendSplitButton
+          testId="reply-send"
+          label={
+            isSending
+              ? t('compose:sending')
+              : mode === 'forward'
+                ? t('compose:forward')
+                : mode === 'reply-all'
+                  ? 'Reply All'
+                  : 'Send Reply'
+          }
+          onSend={() => void handleSend()}
+          onSchedule={(at) => void handleSend(false, at)}
           disabled={
             isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
           }
-          className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isSending
-            ? t('compose:sending')
-            : mode === 'forward'
-              ? t('compose:forward')
-              : mode === 'reply-all'
-                ? 'Reply All'
-                : 'Send Reply'}
-        </button>
+        />
       </div>
 
       {sendWarnings && (
         <div className="mt-3">
           <SendWarningBanner
             warnings={sendWarnings}
-            onSendAnyway={() => void handleSend(true)}
+            onSendAnyway={() => void handleSend(true, warnedScheduleAt.current)}
             onReview={() => setSendWarnings(null)}
           />
         </div>

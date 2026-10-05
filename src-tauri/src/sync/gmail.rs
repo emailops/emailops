@@ -33,8 +33,11 @@ pub(crate) fn mailbox_from_labels(labels: &[String]) -> &'static str {
         "spam"
     } else if has("SENT") && !has("INBOX") {
         "sent"
-    } else {
+    } else if has("INBOX") {
         "inbox"
+    } else {
+        // Gmail's archive is the absence of INBOX ("All Mail" only).
+        "archive"
     }
 }
 
@@ -153,6 +156,20 @@ struct GmailSendAs {
     display_name: String,
     #[serde(rename = "isPrimary", default)]
     is_primary: bool,
+    /// HTML signature Gmail's web client inserts for this address.
+    #[serde(default)]
+    signature: String,
+}
+
+/// The signature set on the send-as entry of `email`. `None` when that
+/// address has none (Gmail keeps one per address; there is no fallback).
+fn pick_send_as_signature(entries: &[GmailSendAs], email: &str) -> Option<String> {
+    entries
+        .iter()
+        .find(|e| e.send_as_email.eq_ignore_ascii_case(email))
+        .map(|e| e.signature.trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Display name Gmail uses for `email`: its own send-as name, else the primary
@@ -185,6 +202,13 @@ pub struct GmailMessageRef {
 
 /// A `format=minimal` message read: no payload, just the labels that say
 /// which mailbox the message sits in now.
+/// The answer to `users.messages.modify`: the message, with its thread.
+#[derive(Debug, Deserialize)]
+struct GmailModifiedMessage {
+    #[serde(rename = "threadId")]
+    thread_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GmailMessageLabels {
     #[serde(rename = "labelIds", default)]
@@ -433,6 +457,16 @@ impl GmailClient {
     /// Display name Gmail uses when sending from `email` (readable with the
     /// `gmail.modify` scope the app already holds). Empty when none is set.
     async fn get_send_as_display_name(&self, email: &str) -> Result<String> {
+        Ok(pick_send_as_display_name(&self.list_send_as().await?, email))
+    }
+
+    /// Gmail's own signature for `email`, from the same "Send mail as" list.
+    async fn get_send_as_signature(&self, email: &str) -> Result<Option<String>> {
+        Ok(pick_send_as_signature(&self.list_send_as().await?, email))
+    }
+
+    /// The account's "Send mail as" addresses (`users.settings.sendAs.list`).
+    async fn list_send_as(&self) -> Result<Vec<GmailSendAs>> {
         let url = format!("{}/users/me/settings/sendAs", self.base_url);
         let response = self.send_get_with_retry(&url, "list send-as addresses").await?;
 
@@ -445,7 +479,7 @@ impl GmailClient {
         }
 
         let list: GmailSendAsList = response.json().await?;
-        Ok(pick_send_as_display_name(&list.send_as, email))
+        Ok(list.send_as)
     }
 
     /// The mailbox's current history id (`users.getProfile`), where following
@@ -794,6 +828,30 @@ impl GmailClient {
         Ok(())
     }
 
+    /// Add or remove one label (`users.messages.modify`, `gmail.modify`
+    /// scope). Answers the message's thread id.
+    /// Add and remove labels in one `messages.modify` call. Returns the
+    /// thread id Gmail reports.
+    async fn modify_labels(&self, message_id: &str, add: &[&str], remove: &[&str], operation: &str) -> Result<String> {
+        let payload = serde_json::json!({ "addLabelIds": add, "removeLabelIds": remove });
+        let url = format!("{}/users/me/messages/{}/modify", self.base_url, message_id);
+        let response = self.send_post_json_with_retry(&url, &payload, operation).await?;
+        let modified: GmailModifiedMessage = response.json().await?;
+        Ok(modified.thread_id.unwrap_or_default())
+    }
+
+    async fn modify_label(&self, message_id: &str, label: &str, add: bool, operation: &str) -> Result<String> {
+        let payload = if add {
+            serde_json::json!({ "addLabelIds": [label] })
+        } else {
+            serde_json::json!({ "removeLabelIds": [label] })
+        };
+        let url = format!("{}/users/me/messages/{}/modify", self.base_url, message_id);
+        let response = self.send_post_json_with_retry(&url, &payload, operation).await?;
+        let modified: GmailModifiedMessage = response.json().await?;
+        Ok(modified.thread_id.unwrap_or_default())
+    }
+
     /// Move a message to Gmail's Trash (`users.messages.trash`,
     /// `gmail.modify` scope). Deliberately not `messages.delete`, which is
     /// permanent and unrecoverable — the app's delete action is the reversible
@@ -984,6 +1042,7 @@ impl GmailClient {
             // view about it — the sender is no help when the message went out
             // through a send-as alias.
             is_sent: labels.iter().any(|l| l == "SENT"),
+            is_starred: labels.iter().any(|l| l == "STARRED"),
             // `?format=full` already returns the complete header list; before
             // this we read five of them and discarded the rest. No extra
             // network cost.
@@ -1708,6 +1767,10 @@ impl EmailProvider for GmailClient {
         self.get_profile().await
     }
 
+    async fn get_signature(&self, email: &str) -> Result<Option<String>> {
+        self.get_send_as_signature(email).await
+    }
+
     async fn list_messages(
         &self,
         max_results: u32,
@@ -1956,6 +2019,65 @@ impl EmailProvider for GmailClient {
 
     async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
         self.trash_message(message_id).await
+    }
+
+    /// The `STARRED` label is the star.
+    async fn set_starred(&self, message_id: &str, starred: bool) -> Result<()> {
+        self.modify_label(message_id, "STARRED", starred, "set star").await?;
+        Ok(())
+    }
+
+    /// Archive is removing `INBOX`; the message keeps its id.
+    async fn archive_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        self.modify_label(message_id, "INBOX", false, "archive message").await?;
+        Ok(provider::MessageLocation {
+            id: message_id.to_string(),
+            mailbox: "archive".to_string(),
+        })
+    }
+
+    /// Spam is the `SPAM` label without `INBOX`; the message keeps its id.
+    async fn move_to_spam(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<provider::MessageLocation> {
+        self.modify_labels(message_id, &["SPAM"], &["INBOX"], "move message to spam")
+            .await?;
+        Ok(provider::MessageLocation {
+            id: message_id.to_string(),
+            mailbox: "spam".to_string(),
+        })
+    }
+
+    /// Only the inbox is a move target on Gmail (adding `INBOX` back); the
+    /// app maps no user labels to folders.
+    async fn move_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+        target: &provider::MoveTarget,
+    ) -> Result<Option<MessageRef>> {
+        match target {
+            // `SPAM` goes too, so the inverse of `move_to_spam` is this move.
+            // Removing a label the message does not carry is a no-op.
+            provider::MoveTarget::Inbox => {
+                let thread_id = self
+                    .modify_labels(message_id, &["INBOX"], &["SPAM"], "move message to inbox")
+                    .await?;
+                Ok(Some(MessageRef {
+                    id: message_id.to_string(),
+                    thread_id,
+                }))
+            }
+            provider::MoveTarget::Folder(_) => Err(AppError::InvalidInput(
+                "moving to a folder is not supported for Gmail accounts".to_string(),
+            )),
+        }
     }
 
     async fn list_drafts(
@@ -2855,6 +2977,7 @@ mod tests {
             send_as_email: email.to_string(),
             display_name: name.to_string(),
             is_primary: primary,
+            signature: String::new(),
         }
     }
 
@@ -2957,6 +3080,36 @@ mod tests {
         let (email, name) = client.get_profile().await.expect("profile");
         assert_eq!(email, "ada@example.com");
         assert_eq!(name, "Ada Example");
+    }
+
+    #[tokio::test]
+    async fn get_signature_reads_the_send_as_signature_of_the_account_address() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/settings/sendAs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sendAs": [
+                    { "sendAsEmail": "alias@example.com", "signature": "<div>Alias</div>" },
+                    { "sendAsEmail": "ada@example.com", "isPrimary": true, "signature": "<div>Ada <b>Example</b></div>" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-send-as-sig".into())).with_base_url(server.uri());
+
+        let sig = EmailProvider::get_signature(&client, "ADA@example.com")
+            .await
+            .expect("signature");
+        assert_eq!(sig.as_deref(), Some("<div>Ada <b>Example</b></div>"));
+        let none = EmailProvider::get_signature(&client, "other@example.com")
+            .await
+            .expect("signature");
+        assert_eq!(none, None);
     }
 
     #[tokio::test]
@@ -3120,6 +3273,111 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
         assert_eq!(body["addLabelIds"], serde_json::json!(["UNREAD"]));
         assert!(body.get("removeLabelIds").is_none());
+    }
+
+    async fn modify_bodies(server: &wiremock::MockServer) -> Vec<serde_json::Value> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    async fn modify_server(message_id: &str) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/users/me/messages/{message_id}/modify")))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!(r#"{{"id":"{message_id}","threadId":"t-9"}}"#),
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn starring_adds_and_removes_the_starred_label() {
+        let server = modify_server("m-1").await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        EmailProvider::set_starred(&client, "m-1", true).await.unwrap();
+        EmailProvider::set_starred(&client, "m-1", false).await.unwrap();
+
+        assert_eq!(
+            modify_bodies(&server).await,
+            vec![
+                serde_json::json!({ "addLabelIds": ["STARRED"] }),
+                serde_json::json!({ "removeLabelIds": ["STARRED"] })
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn archiving_removes_the_inbox_label_and_keeps_the_id() {
+        let server = modify_server("m-1").await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let location = EmailProvider::archive_message(&client, "m-1", None).await.unwrap();
+
+        assert_eq!(
+            location,
+            provider::MessageLocation {
+                id: "m-1".to_string(),
+                mailbox: "archive".to_string()
+            }
+        );
+        assert_eq!(
+            modify_bodies(&server).await,
+            vec![serde_json::json!({ "removeLabelIds": ["INBOX"] })]
+        );
+    }
+
+    #[tokio::test]
+    async fn moving_to_spam_adds_the_spam_label_and_drops_the_inbox_one() {
+        let server = modify_server("m-1").await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let location = EmailProvider::move_to_spam(&client, "m-1", None).await.unwrap();
+
+        assert_eq!(
+            location,
+            provider::MessageLocation {
+                id: "m-1".to_string(),
+                mailbox: "spam".to_string()
+            }
+        );
+        assert_eq!(
+            modify_bodies(&server).await,
+            vec![serde_json::json!({ "addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX"] })]
+        );
+    }
+
+    #[tokio::test]
+    async fn moving_to_the_inbox_adds_the_inbox_label_back() {
+        let server = modify_server("m-1").await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let moved = EmailProvider::move_message(&client, "m-1", None, &provider::MoveTarget::Inbox)
+            .await
+            .unwrap()
+            .expect("ref");
+
+        assert_eq!((moved.id.as_str(), moved.thread_id.as_str()), ("m-1", "t-9"));
+        assert_eq!(
+            modify_bodies(&server).await,
+            vec![serde_json::json!({ "addLabelIds": ["INBOX"], "removeLabelIds": ["SPAM"] })],
+            "out of Spam too: a message brought back from spam must not stay labelled SPAM"
+        );
+        assert!(
+            EmailProvider::move_message(&client, "m-1", None, &provider::MoveTarget::Folder("x".into()))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -3911,11 +4169,25 @@ mod tests {
     }
 
     #[test]
-    fn mailbox_no_relevant_labels_defaults_to_inbox() {
-        // Archived/labelled emails (no INBOX, no SENT) default to inbox — the
-        // extra-mailbox sync pass overrides this for trash/spam/etc.
-        assert_eq!(mailbox_from_labels(&labels(&[])), "inbox");
-        assert_eq!(mailbox_from_labels(&labels(&["CATEGORY_PERSONAL"])), "inbox");
+    fn mail_without_the_inbox_label_is_archived() {
+        // Gmail archives by removing INBOX: such mail (no SENT, TRASH or SPAM
+        // either) is filed under `archive`, out of the inbox view.
+        assert_eq!(mailbox_from_labels(&labels(&[])), "archive");
+        assert_eq!(mailbox_from_labels(&labels(&["CATEGORY_PERSONAL"])), "archive");
+        assert_eq!(mailbox_from_labels(&labels(&["Label_7", "STARRED"])), "archive");
+        assert_eq!(mailbox_from_labels(&labels(&["INBOX", "CATEGORY_PERSONAL"])), "inbox");
+    }
+
+    #[tokio::test]
+    async fn parse_message_reads_the_star_from_the_starred_label() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let starred = client
+            .parse_message(test_message(&["INBOX", "STARRED"]))
+            .await
+            .expect("parse");
+        assert!(starred.0.is_starred);
+        let plain = client.parse_message(test_message(&["INBOX"])).await.expect("parse");
+        assert!(!plain.0.is_starred);
     }
 
     // --- collect_inline_image_refs tests ---

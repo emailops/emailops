@@ -63,6 +63,11 @@ describe('buildSaveDraftRequest', () => {
     expect(req.bodyHtml).toBeNull();
   });
 
+  it('keeps a reply draft attached to the message it answers', () => {
+    expect(buildSaveDraftRequest({ ...base, subject: 'Re: Hi', emailId: 'e1' }).emailId).toBe('e1');
+    expect('emailId' in buildSaveDraftRequest({ ...base, subject: 'Hi' })).toBe(false);
+  });
+
   it('links a reply draft to the email it answers', () => {
     expect(buildSaveDraftRequest({ ...base, emailId: 'e1', plainBody: 'Hi' }).emailId).toBe('e1');
     expect(buildSaveDraftRequest({ ...base, plainBody: 'Hi' }).emailId).toBeUndefined();

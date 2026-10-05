@@ -314,6 +314,18 @@ pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, 
     Ok(())
 }
 
+/// Forget the user's judgement on a message (neither "junk" nor "not junk"):
+/// the detector's own verdict applies again. Used when an unblock brings a
+/// blocked sender's mail back out of Spam — unblocking is not a statement that
+/// every one of their messages is legitimate.
+pub fn clear_feedback(db: &Arc<Database>, account_id: &str, email_id: &str) -> Result<()> {
+    db.set_junk_override(email_id, account_id, None, now_secs())?;
+    if let Err(e) = db.delete_email_tag(email_id, "junk") {
+        log_tag_error("clear", email_id, &e);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod suppression_tests {
     use super::*;
@@ -544,6 +556,7 @@ mod feedback_tests {
             snippet: "Please update our remittance account.".to_string(),
             timestamp: now_secs() - 60,
             is_read: false,
+            is_starred: false,
             triage_status: None,
             category: "primary".to_string(),
             mailbox: if is_sent { "sent" } else { "inbox" }.to_string(),

@@ -274,7 +274,7 @@ impl Database {
     /// `db::emails::search::get_filtered_emails` (tag branch) shows a thread when
     /// ANY email in the thread carries the tag, displaying the thread's latest
     /// email as the representative. We count the same set: distinct threads with
-    /// at least one tagged, non-deleted, inbox/sent email that the junk
+    /// at least one tagged, non-deleted email in the inbox, Sent or Archive that the junk
     /// detector did not flag (the list applies the same `exclude_junk_sql`).
     ///
     /// Under `AllEnabled`, threads dedup per `(account_id, thread_id)` — thread
@@ -286,6 +286,7 @@ impl Database {
         limit: i32,
     ) -> Result<Vec<(String, i32)>> {
         let conn = self.reader();
+        let live = crate::db::live_mailboxes_sql!();
         let (scope_cond, account_param): (&str, Option<&str>) = match scope {
             crate::db::AccountScope::Account(id) => ("e.account_id = ?3", Some(id)),
             crate::db::AccountScope::AllEnabled => {
@@ -301,7 +302,7 @@ impl Database {
                  WHERE {scope_cond}
                    AND t.tag_type = ?1
                    AND e.is_deleted = 0
-                   AND e.mailbox IN ('inbox', 'sent')
+                   AND e.mailbox IN {live}
                    {junk_sql}
              )
              GROUP BY tag_value
@@ -388,6 +389,7 @@ impl Database {
         now_ts: i64,
         limit: i32,
     ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let live = crate::db::live_mailboxes_sql!();
         // ?1 tag_type, ?2 limit, then the scope's account id (if any), then the
         // window binds — so the fixed indices stay stable.
         let mut next_index = 3usize;
@@ -457,7 +459,7 @@ impl Database {
              WHERE {scope_cond}
                AND t.tag_type = ?1
                AND e.is_deleted = 0
-               AND e.mailbox IN ('inbox', 'sent')
+               AND e.mailbox IN {live}
                {junk_sql}
                {latest_sql}
                {search_sql}
@@ -901,5 +903,60 @@ mod tests {
             "expected 3 matching threads (1,2,3 — not the spam one), got {}",
             sidebar_count
         );
+    }
+
+    #[test]
+    fn get_tag_stats_counts_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_email_with_mailbox(&db, "arch", account, "thread-arch", 100, "archive", 0);
+        tag_email(&db, "arch", "company", "globex");
+
+        let stats = db
+            .get_tag_stats(crate::db::AccountScope::Account(account), "company", 15)
+            .unwrap();
+        assert_eq!(stat_for(&stats, "globex"), Some(1), "got {:?}", stats);
+    }
+
+    #[test]
+    fn get_tag_board_stats_counts_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_email_with_mailbox(&db, "arch", account, "thread-arch", 100, "archive", 0);
+        tag_email(&db, "arch", "company", "globex");
+
+        let rows = db
+            .get_tag_board_stats(
+                crate::db::AccountScope::Account(account),
+                "company",
+                &crate::models::EmailWindow::default(),
+                1_000,
+                15,
+            )
+            .unwrap();
+        let counts: Vec<(&str, i32)> = rows.iter().map(|r| (r.tag_value.as_str(), r.count)).collect();
+        assert_eq!(counts, vec![("globex", 1)]);
+    }
+
+    // "Latest tag only": a newer archived message with a different tag is what
+    // the thread is about now, as a newer inbox message would be.
+    #[test]
+    fn latest_tag_only_treats_a_newer_archived_message_as_newer() {
+        let db = Database::new_for_testing().unwrap();
+        let account = "acc1";
+        insert_email_with_mailbox(&db, "old", account, "t1", 100, "inbox", 0);
+        insert_email_with_mailbox(&db, "new", account, "t1", 200, "archive", 0);
+        tag_email(&db, "old", "company", "globex");
+        tag_email(&db, "new", "company", "initech");
+
+        let window = crate::models::EmailWindow {
+            latest_tag_only: true,
+            ..Default::default()
+        };
+        let rows = db
+            .get_tag_board_stats(crate::db::AccountScope::Account(account), "company", &window, 1_000, 15)
+            .unwrap();
+        let values: Vec<&str> = rows.iter().map(|r| r.tag_value.as_str()).collect();
+        assert_eq!(values, vec!["initech"]);
     }
 }

@@ -3,12 +3,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
+import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
+import { useComposerSendKey } from '@/hooks/useComposerSendKey';
+import { useComposerSignature } from '@/hooks/useComposerSignature';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
   DraftGeneratedEvent,
   EmailAttachment,
+  OutgoingMessage,
   RecipientSuggestion,
 } from '@/lib/api';
 import * as api from '@/lib/api';
@@ -22,9 +26,11 @@ import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
+import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
+import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
 
 interface ComposeTabViewProps {
@@ -50,6 +56,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [fromAccountId, setFromAccountId] = useState(tab.accountId);
   const [subject, setSubject] = useState(tab.subject);
   const [bodyHtml, setBodyHtml] = useState(tab.bodyHtml);
+  // A tab opened on a new message gets the From account's signature; one
+  // carrying an existing body (a draft, the outbox, a maximized composer)
+  // already has it and only swaps it when the account changes.
+  useComposerSignature({
+    accountId: fromAccountId,
+    kind: 'new',
+    insertOnOpen: tab.insertSignature === true,
+    setBodyHtml,
+  });
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -124,6 +139,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const prepared = prepareOutgoingHtml(bodyHtml);
     const state: ComposeDraftState = {
       accountId: fromAccountId,
+      // A reopened reply keeps answering its message.
+      emailId: tab.replyToEmailId,
       // A valid address still in the input box (typed, not tokenised) is a
       // recipient the user means; the saved draft must not drop it.
       toAddresses: mergePendingRecipient(toRecipients, toInput),
@@ -138,7 +155,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       isSending,
       sent,
     };
-    if (!shouldAutosaveDraft(state)) return;
+    // A body holding only the inserted signature is not something to save.
+    const typed = { ...state, plainBody: prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText };
+    if (!shouldAutosaveDraft(typed)) return;
     const handle = window.setTimeout(() => void autosaverRef.current?.save(state), 800);
     return () => window.clearTimeout(handle);
   }, [
@@ -153,6 +172,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     sent,
     draftAttachments,
     hasDraftAttachments,
+    tab.replyToEmailId,
   ]);
 
   const addRecipient = (field: 'to' | 'cc', email: string) => {
@@ -226,7 +246,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
       return;
     }
-    setBodyHtml(plainTextToHtml(outcome.event.body));
+    const draft = plainTextToHtml(outcome.event.body);
+    setBodyHtml((current) => replaceBodyKeepingSignature(current, draft, 'new'));
     addLog('success', 'ai', 'AI draft ready');
   };
 
@@ -257,7 +278,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const to = mergePendingRecipient(toRecipients, toInput);
     if (to.length === 0 || !subject.trim()) return;
     // Whatever is already typed becomes the freeform brief for the model.
-    const brief = prepareOutgoingHtml(bodyHtml).plainText.trim();
+    const brief = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim();
     setIsGeneratingDraft(true);
     addLog('info', 'ai', 'Requesting AI draft…');
     draftTrackerRef.current.begin();
@@ -272,7 +293,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     }
   };
 
-  const handleSend = async () => {
+  /** Send now (`scheduleAt` null: through the undo window when it is on)
+   *  or schedule the message. The one send entry point of this composer. */
+  const submit = async (scheduleAt: Date | null) => {
     // Same rule as ComposeModal: an address left in the input box counts.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
@@ -282,47 +305,89 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     setSendError(null);
     setIsSending(true);
     try {
-      if (hasDraftAttachments) {
-        // The draft's file-path attachments live on disk, not as base64 here —
-        // send through the draft so the backend reads their bytes (and removes
-        // the draft, local + provider, afterwards). Flush pending edits first.
-        const draftId = await autosaverRef.current?.flush();
-        if (!draftId) throw new Error('draft not yet saved');
-        await api.sendDraft(draftId, fromAccountId);
-        addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
-        setSent(true);
-        // The backend stored the optimistic Sent row before returning — nudge
-        // the list to refetch so the Sent view shows the message instantly.
-        useEmailStore.getState().bumpSentRefresh();
-        setTimeout(onClose, 1200);
-        return;
-      }
-      await api.sendNewEmail(
-        fromAccountId,
+      // Wait for any in-flight auto-save so the queued message and the draft
+      // it replaces are the same text (auto-save stops while sending).
+      const draftId = await autosaverRef.current?.flush();
+      const message: OutgoingMessage = {
+        accountId: fromAccountId,
+        replyToEmailId: tab.replyToEmailId ?? null,
         to,
         cc,
-        subject.trim(),
-        plain,
+        subject: subject.trim(),
+        body: plain,
+        bodyHtml: prepared.bodyHtml,
+        inlineImages: prepared.inlineImages,
         attachments,
-        prepared.bodyHtml,
-        prepared.inlineImages,
-      );
-      addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
-      setSent(true);
-      // The backend stored the optimistic Sent row before returning — nudge
-      // the list to refetch so the Sent view shows the message instantly.
-      useEmailStore.getState().bumpSentRefresh();
-      // Drop the backing draft (local + provider copy) now that it's sent, so it
-      // doesn't linger in Drafts or get re-pulled on the next sync.
-      const draftId = await autosaverRef.current?.flush();
-      if (draftId) api.deleteDraft(draftId, fromAccountId).catch(() => {});
-      setTimeout(onClose, 1200);
+      };
+      const outbox = useOutboxStore.getState();
+      if (scheduleAt) {
+        // The queued copy owns the content now; the draft leaves Drafts.
+        await outbox.schedule(message, scheduleAt, draftId);
+        setSent(true);
+        onClose();
+        return;
+      }
+      const outcome = await outbox.send(message, {
+        draftId,
+        sendDirect: () => sendDirect(message, draftId, prepared.inlineImages),
+      });
+      if (outcome === 'queued') {
+        setSent(true);
+        onClose();
+      }
     } catch (err) {
       setSendError(errorText(err));
     } finally {
       setIsSending(false);
     }
   };
+
+  /** Undo send off: send at once, as before the outbox existed. */
+  const sendDirect = async (message: OutgoingMessage, draftId: string | undefined, inlineImages: EmailAttachment[]) => {
+    if (hasDraftAttachments) {
+      // The draft's file-path attachments live on disk, not as base64 here —
+      // send through the draft so the backend reads their bytes (and removes
+      // the draft, local + provider, afterwards).
+      if (!draftId) throw new Error('draft not yet saved');
+      await api.sendDraft(draftId, fromAccountId);
+    } else {
+      if (message.replyToEmailId) {
+        await api.sendReply(
+          message.replyToEmailId,
+          message.body,
+          fromAccountId,
+          message.to,
+          message.cc,
+          message.bodyHtml ?? undefined,
+          inlineImages,
+          message.attachments,
+        );
+      } else {
+        await api.sendNewEmail(
+          fromAccountId,
+          message.to,
+          message.cc,
+          message.subject,
+          message.body,
+          message.attachments,
+          message.bodyHtml ?? undefined,
+          inlineImages,
+        );
+      }
+      // Drop the backing draft (local + provider copy) now that it's sent, so it
+      // doesn't linger in Drafts or get re-pulled on the next sync.
+      if (draftId) api.deleteDraft(draftId, fromAccountId).catch(() => {});
+    }
+    addLog('success', 'sync', `Email sent to ${message.to.join(', ')}`);
+    setSent(true);
+    // The backend stored the optimistic Sent row before returning — nudge
+    // the list to refetch so the Sent view shows the message instantly.
+    useEmailStore.getState().bumpSentRefresh();
+    setTimeout(onClose, 1200);
+  };
+
+  const handleSend = () => void submit(null);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
 
   const renderTokenInput = (
     field: 'to' | 'cc',
@@ -369,7 +434,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             onBlur={() => setTimeout(() => setActiveField(null), 200)}
             onKeyDown={(e) => handleKeyDown(field, e, input)}
             className="w-full text-sm outline-none bg-transparent py-0.5"
-            placeholder={recipients.length === 0 ? 'Add recipients...' : ''}
+            placeholder={recipients.length === 0 ? t('compose:recipientsPlaceholder') : ''}
           />
           {activeField === field && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
@@ -402,7 +467,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden">
+    <div className="flex-1 bg-white flex flex-col overflow-hidden" onKeyDownCapture={handleSendKey}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
@@ -583,9 +648,11 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         >
           Discard
         </button>
-        <button
-          type="button"
-          onClick={handleSend}
+        <SendSplitButton
+          testId="compose-tab-send"
+          label={isSending ? t('compose:sending') : t('compose:send')}
+          onSend={handleSend}
+          onSchedule={(at) => void submit(at)}
           disabled={
             isSending ||
             sent ||
@@ -593,10 +660,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             !subject.trim() ||
             !bodyHtml.trim()
           }
-          className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isSending ? 'Sending…' : 'Send'}
-        </button>
+        />
       </div>
     </div>
   );

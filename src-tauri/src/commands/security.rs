@@ -39,6 +39,9 @@ pub async fn set_main_password(
     state
         .db
         .set_preference(PREF_KEY, &password::hash_password(&new_password)?)?;
+    // Whoever just set the password is the user: setting it mid-session must
+    // not make background work treat the open app as locked.
+    password::mark_session_unlocked();
     Ok(())
 }
 

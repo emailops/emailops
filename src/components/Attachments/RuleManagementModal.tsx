@@ -4,6 +4,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { type RuleApplyState, useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 import { RuleSuggestionList } from './RuleSuggestionList';
 import { TagPicker } from './TagPicker';
@@ -86,6 +87,7 @@ export function RuleManagementModal({
   onAcceptSuggestion,
   existingTags,
 }: RuleManagementModalProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'attachments']);
   const ids = {
     title: useId(),

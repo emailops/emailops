@@ -11,8 +11,11 @@ mod provider;
 mod reconcile;
 mod redownload;
 mod send;
+mod snooze;
+mod spam;
 mod state_refresh;
 mod sync;
+mod thread_actions;
 mod uid_validity;
 
 use std::sync::Arc;
@@ -22,6 +25,7 @@ use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
 pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
+pub(crate) use compose::load_attachments as load_draft_attachments;
 pub use compose::{
     check_webview_draft_attachments, compose_draft, delete_draft, plan_compose, pull_provider_drafts,
     refresh_provider_drafts, send_draft, ComposeInput, ComposePlan,
@@ -29,17 +33,29 @@ pub use compose::{
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
-pub use folders::{create_folder, delete_folder, move_email, rename_folder};
+pub use folders::{create_folder, delete_folder, move_email, move_emails, rename_folder, MoveFailure, MoveReport};
 pub(crate) use history_refresh::history_cursor_key;
 pub use html_sanitizer::sanitize_outgoing_html;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
-pub use send::{send_new_email, send_new_email_with_provider, send_reply, send_reply_with_provider};
+pub(crate) use send::validate_new_email;
+pub use send::{
+    outgoing_body, send_new_email, send_new_email_with_provider, send_outgoing, send_reply, send_reply_with_provider,
+};
+pub use snooze::{
+    due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
+    SNOOZES_WOKEN_EVENT,
+};
+pub use spam::{file_in_spam, restore_from_spam, SpamFiling};
 pub(crate) use state_refresh::last_refresh_key as state_refresh_last_key;
 pub use sync::{
     request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
     sync_account_with_contention, sync_account_with_provider, SyncContention,
+};
+pub use thread_actions::{
+    apply_thread_action, plan_thread_action, widen_stars_to_threads, ProviderAccess, ThreadAction, ThreadActionFailure,
+    ThreadActionReport, ThreadRef,
 };
 
 /// List emails for one account, or — when `account_id` is `None` — merged
@@ -56,7 +72,12 @@ pub fn get_emails(
         Some(id) => crate::db::AccountScope::Account(id),
         None => crate::db::AccountScope::AllEnabled,
     };
-    db.get_emails(scope, limit, offset, None, mailbox, category)
+    let mut emails = db.get_emails(scope, limit, offset, None, mailbox, category)?;
+    // The inbox lists one row per conversation: its star is the thread's.
+    if matches!(mailbox, None | Some("inbox")) {
+        widen_stars_to_threads(db, &mut emails)?;
+    }
+    Ok(emails)
 }
 
 /// List an account's custom folders for the sidebar. Well-known role folders

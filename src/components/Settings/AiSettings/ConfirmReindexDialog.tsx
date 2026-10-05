@@ -2,6 +2,7 @@
 // embedding model changed, so every stored vector is deleted and rebuilt.
 
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 import type { AiConfigState } from './types';
 
 interface ConfirmReindexDialogProps {
@@ -13,6 +14,7 @@ interface ConfirmReindexDialogProps {
 }
 
 export function ConfirmReindexDialog({ provider, embeddingModel, onCancel, onConfirm }: ConfirmReindexDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   const none = embeddingModel === '';
   return (

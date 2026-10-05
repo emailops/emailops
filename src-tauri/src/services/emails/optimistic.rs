@@ -107,6 +107,7 @@ pub fn build_optimistic_sent_email(input: &OptimisticSendInput<'_>) -> Optimisti
             category: "primary".to_string(),
             mailbox: "sent".to_string(),
             is_sent: true,
+            is_starred: false,
             // Locally-composed mail never went through a provider parse, so
             // there are no received headers to capture.
             headers: None,

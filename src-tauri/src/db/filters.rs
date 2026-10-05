@@ -97,7 +97,7 @@ impl Database {
     }
 
     /// Thread count for a single filter value, scoped exactly like
-    /// `get_filtered_emails` (inbox/sent, not deleted, case-insensitive sender
+    /// `get_filtered_emails` (inbox, Sent and Archive, not deleted, case-insensitive sender
     /// match) so a pinned filter's sidebar count matches the rows shown when
     /// it is clicked. Non-domain/sender types are tag filters: a thread counts
     /// if ANY of its emails carries the tag.
@@ -106,6 +106,7 @@ impl Database {
     /// thread ids are not globally unique across accounts.
     pub fn count_filter_threads(&self, scope: AccountScope<'_>, filter_type: &str, filter_value: &str) -> Result<i32> {
         let conn = self.reader();
+        let live = crate::db::live_mailboxes_sql!();
         // Scope condition + params. Under Account the account id binds as the
         // LAST param so the filter-value params keep stable low indices.
         let (scope_cond, scope_cond_tagged, account_param): (&str, &str, Option<&str>) = match scope {
@@ -131,7 +132,7 @@ impl Database {
                 let sql = format!(
                     "SELECT COUNT(*) FROM (SELECT DISTINCT account_id, thread_id FROM emails
                      WHERE {value_cond} AND {scope_cond} AND is_deleted = 0
-                       AND mailbox IN ('inbox', 'sent'))"
+                       AND mailbox IN {live})"
                 );
                 match account_param {
                     Some(id) => conn.query_row(&sql, params![value, id], |row| row.get(0))?,
@@ -145,7 +146,7 @@ impl Database {
                      JOIN emails e ON e.id = et.email_id
                      WHERE et.tag_type = ?1 AND et.tag_value = ?2
                        AND {scope_cond_tagged} AND e.is_deleted = 0
-                       AND e.mailbox IN ('inbox', 'sent'))"
+                       AND e.mailbox IN {live})"
                 );
                 match account_param {
                     Some(id) => conn.query_row(&sql, params![filter_type, filter_value, id], |row| row.get(0))?,
@@ -485,5 +486,26 @@ mod tests {
         let saved = db.get_filter_suggestions("acc").unwrap();
         assert_eq!(saved.len(), 1, "previous suggestions must be replaced");
         assert_eq!(saved[0].filter_value, "new.com");
+    }
+
+    #[test]
+    fn count_filter_threads_counts_archived_mail() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc");
+
+        insert_email(&db, "e1", "acc", "t1", "ana@acme.com", "inbox");
+        insert_email(&db, "e2", "acc", "t2", "ana@acme.com", "archive");
+        db.connection()
+            .execute(
+                "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at)
+                 VALUES ('e2', 'company', 'Acme', NULL, 0)",
+                [],
+            )
+            .unwrap();
+
+        let scope = crate::db::AccountScope::Account("acc");
+        assert_eq!(db.count_filter_threads(scope, "sender", "ana@acme.com").unwrap(), 2);
+        assert_eq!(db.count_filter_threads(scope, "domain", "acme.com").unwrap(), 2);
+        assert_eq!(db.count_filter_threads(scope, "company", "Acme").unwrap(), 1);
     }
 }

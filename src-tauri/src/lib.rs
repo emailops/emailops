@@ -159,6 +159,9 @@ macro_rules! app_commands {
             commands::accounts::update_account_name,
             commands::accounts::get_account_settings,
             commands::accounts::set_account_settings,
+            commands::accounts::get_account_signature,
+            commands::accounts::save_account_signature,
+            commands::accounts::import_provider_signature,
             commands::accounts::get_available_categories,
             commands::emails::get_emails,
             commands::emails::get_folders,
@@ -170,6 +173,15 @@ macro_rules! app_commands {
             commands::emails::get_email_body,
             commands::emails::mark_as_read,
             commands::emails::delete_email,
+            commands::emails::apply_thread_action,
+            commands::emails::snooze_threads,
+            commands::emails::unsnooze_threads,
+            commands::emails::list_thread_snoozes,
+            commands::outbox::queue_outgoing_email,
+            commands::outbox::cancel_outbox_message,
+            commands::outbox::send_outbox_message_now,
+            commands::outbox::list_outbox,
+            commands::emails::move_emails,
             commands::emails::send_reply,
             commands::emails::send_new_email,
             commands::emails::generate_draft,
@@ -294,6 +306,11 @@ macro_rules! app_commands {
             commands::junk::set_junk_feedback,
             commands::junk::backfill_junk_scores,
             commands::junk::report_junk_to_provider,
+            commands::sender_controls::get_sender_status,
+            commands::sender_controls::unsubscribe_from_sender,
+            commands::sender_controls::block_sender,
+            commands::sender_controls::unblock_sender,
+            commands::sender_controls::list_blocked_senders,
             commands::junk::get_junk_config,
             commands::junk::set_junk_config,
             commands::junk::get_junk_stats,
@@ -429,6 +446,8 @@ pub fn run() {
             // sources, and progress events reach the frontend. Sibling of the
             // logger install above; until this runs the global is a NoopEventSink.
             services::events::install(Arc::new(services::events::TauriEventSink::new(app.handle().clone())));
+            // Desktop notifications (new mail, snoozed conversations back).
+            services::notifier::install(Arc::new(services::notifier::TauriNotifier::new(app.handle().clone())));
 
             let t = std::time::Instant::now();
             // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.

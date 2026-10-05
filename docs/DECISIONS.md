@@ -2709,3 +2709,531 @@ while EmailOps' main password lock is up.
 **Rejected:**
 - *Hide the title only when a main password is set*: the lock screen is outside EmailOps'
   lock either way, so the main password is no signal; one plain switch is easier to explain.
+
+## 2026-10-01 — Archive is a mailbox of its own; IMAP archives into its Archive folder, or refuses
+
+**Decision:** Archiving takes a conversation's inbox messages out of the inbox at the
+provider and files them locally where the provider put them: Gmail removes the `INBOX`
+label and Graph moves to the well-known `archive` folder, both stored under a new
+`emails.mailbox = 'archive'` (an "Archive" view in the sidebar); IMAP moves to the folder
+flagged `\Archive` (RFC 6154), else one named Archive/Archives/Archiv/Archivo, stored as
+that `folder:` view like any other synced folder. An IMAP account with no such folder is
+refused with `AppError::NoArchiveFolder` ("create a folder named Archive"); the app does
+not create one. Archive and its inverse, *Move to Inbox* (Gmail adds `INBOX`, Graph and
+IMAP move to the inbox), are **provider-first** like delete and folder moves — a failure
+leaves the conversation where it was and is reported — while read state and the star stay
+local-first. Gmail mail without `INBOX` (and not in Sent/Spam/Trash) now maps to `archive`
+everywhere (`mailbox_from_labels`), so archiving in Gmail's own clients is followed by the
+History API refresh, and Graph's `archive` folder maps to `archive` when a moved message is
+located.
+**Context:** Archive was the most-reached-for missing action (docs/COMPETITOR-PARITY.md).
+Until now archived Gmail mail was deliberately filed under `inbox` ("the app has no archive
+mailbox"), so an archive could not leave the inbox view. IMAP and Graph re-key a moved
+message, so a local-first archive with a retry marker would leave a row the provider no
+longer knows under its id between the change and the retry, racing the state refresh and
+the UIDVALIDITY re-key; provider-first has nothing half-done.
+**Rejected:**
+- *A local `archived` flag on rows that stay in `inbox`*: every inbox query would need a
+  second predicate, and Gmail's own archive (no `INBOX`) has no place to land.
+- *Storing IMAP archives under `archive` too*: the Archive folder is already synced as a
+  `folder:` mailbox with its own id prefix and UIDVALIDITY; two names for one folder
+  would make the sync re-file the rows on every pass.
+- *Creating an Archive folder on IMAP servers that lack one*: a folder appearing on the
+  user's server unasked; the user can create it in one click with the existing folder
+  management, and the error says so.
+- *Archiving locally when the IMAP server has no archive folder*: the silent divergence the
+  2026-09-30 entries removed for delete.
+
+## 2026-10-01 — The star is per message, local-first with a retried push; a thread is starred when any message is
+
+**Decision:** `emails.is_starred` (V030) mirrors Gmail `STARRED`, Graph `flag.flagStatus =
+flagged` and IMAP `\Flagged`. Starring a conversation stars its latest message (spam and
+trash copies aside); unstarring clears every starred message; lists that show one row per
+conversation (inbox, tag/sender filters) widen the row's star to the thread's. The write
+follows read state exactly: `star_push_pending_since` is set in the same statement as the
+star, cleared once the provider has it, retried by every sync (same caps and one-week
+give-up as V029), and a pending star is never overwritten by the server-to-local refresh.
+Stars set in other clients are ingested where it is cheap: on download (Gmail labels,
+Graph `flag` in `$select`, IMAP `FLAGS`), from Gmail's History API, and in the IMAP/Graph
+state refresh (`FLAGS` / `$select=id,isRead,flag`). Outlook's `complete` flag is not a star.
+**Context:** "Flagged" already meant junk in the UI; the parity audit asked for Gmail-style
+stars with write-back. Gmail itself stars a message, not a conversation, and shows the
+conversation starred when any message is — per-message storage keeps the sync a plain
+mapping, and the thread view is derived.
+**Rejected:** *A thread-level `starred_threads` table*: it has no provider counterpart, so
+every sync would have to reconcile it against per-message state anyway.
+
+## 2026-10-01 — Thread actions go through one command that reports failures per thread
+
+**Decision:** Mark read/unread, star/unstar, archive and move-to-inbox are one command,
+`apply_thread_action(threads, action)`, taking any number of `(account_id, thread_id)`
+pairs. Each thread is planned on its own (`plan_thread_action`, pure) and the command never
+fails as a whole: it returns the threads it could not change with the `AppError` code and
+message, and the frontend (`emailStore` `setThreadsRead` / `setThreadsStarred` /
+`archiveThreads` / `moveThreadsToInbox`) updates optimistically and rolls back exactly those
+threads with one toast. Marking unread marks the latest received message, as Gmail does,
+and leaves the open conversation, so it is not read again the moment it is looked at.
+**Context:** Bulk selection, keyboard shortcuts and rules all need the same actions over
+many threads; one entry point with per-thread outcomes lets them share the optimistic
+update and rollback instead of each looping over single-message commands.
+**Rejected:** *One command per action*: four copies of the same grouping, provider
+resolution and reporting. *Failing the whole call on the first error*: a bulk archive with
+one refused thread would roll back the ninety-nine that went through.
+
+## 2026-10-01 — Archive and delete wait out a six-second undo window before reaching the provider
+
+**Decision:** Archive and delete (one conversation or a bulk selection, from the list menu,
+the reading pane or the bulk toolbar) take the rows out of the list at once and show a
+"Archived 3 conversations · Undo" toast for six seconds (`UNDO_WINDOW_MS`), but the
+provider call (`apply_thread_action`, which now has a `delete` action taking any number of
+threads) is **deferred until the window closes**. Undo restores the rows locally; the
+provider never hears of the action, so no provider needs an un-trash or un-archive path.
+The pending action commits early when another archive/delete starts (one undo at a time,
+as Gmail does), when a non-background list fetch opens another view (the Archive view must
+show what was just archived), and on `beforeunload`. Until it commits, a background refetch
+filters the pending conversations out (`pendingRemovals`) so a sync does not bring them
+back. **If the app quits inside the window the action simply never happened**: the mail
+is still where it was at the provider and reappears on the next launch. The queue is the
+pure `createPendingActionQueue` (`src/lib/pendingActions.ts`). A commit that fails rolls
+back exactly the refused conversations with one toast, as every thread action does.
+**Context:** The parity audit made Undo for archive/delete a High item, and every
+destructive action needs a reachable inverse. Delete and archive were provider-first and
+immediate; undoing them afterwards would have needed per-provider restore paths (Gmail
+untrash, Graph move back from Deleted Items/Archive, IMAP move back with a re-keyed UID),
+each racing the state refresh.
+**Rejected:**
+- *Commit immediately and undo with a second provider call*: three new restore paths,
+  each re-keying rows on IMAP/Graph, for a feature whose whole point is that nothing
+  should have happened.
+- *Persisting the pending action so it survives a quit*: a durable outbox for a six-second
+  window; losing an archive the user just made (it stays in the inbox) is harmless and
+  visible, unlike losing a send.
+- *Keeping the old per-message delete loop in the frontend*: N invokes with no error
+  aggregation; bulk delete is one `apply_thread_action(threads, delete)` call with a
+  per-thread report.
+
+## 2026-10-01 — Snooze is local state; a woken conversation sorts by its wake time
+
+**Decision:** Snooze is stored locally (V031 `thread_snoozes`, keyed by
+`(account_id, thread_id)`) and works the same on Gmail, Outlook and IMAP. A snoozed
+conversation is left out of the Inbox list and count (a primary-key `NOT EXISTS` seek per
+candidate row) but stays findable by search, filters and the other views; the new
+**Snoozed** view lists it, soonest wake first. A ticker in `sync_scheduler` wakes due
+snoozes every 30 s and once at start-up (a snooze that fell due while the app was closed
+wakes on the next launch). Waking does three things: the record is kept as *woken*
+(`woke_at`), the latest message is marked unread **and that is pushed to the provider**
+like any mark-unread (otherwise the next state refresh would read it back as read, and
+other clients would not see it as new), and a `snoozes-woken` event refreshes the list
+(the hook a future new-mail notifier can use). The Inbox then sorts a woken conversation by
+its **wake time** instead of its latest message's date, so a thread snoozed weeks ago comes
+back at the top, as in Gmail, while the message keeps its real timestamp. The list query
+merges two arms on a sort key: the woken conversations (a handful, driven from
+`thread_snoozes`) and every other conversation read through `idx_emails_account_mailbox`
+in date order and cut at `offset + limit`; only that small merge is sorted (pinned by an
+`EXPLAIN QUERY PLAN` test). A new inbound inbox message in a snoozed or woken conversation
+deletes the record in the ingest transaction (Gmail returns the thread on a reply; the
+thread then sorts by the new message); sent mail, spam, backfill dated before the snooze
+and re-downloads of stored messages do not. Archiving or deleting a conversation ends its
+snooze. Woken records whose conversation left the inbox are pruned on each tick. Snooze and
+unsnooze are separate commands (`snooze_threads(threads, until)`, `unsnooze_threads`,
+`list_thread_snoozes`), not `ThreadAction` variants: they carry a time and never touch the
+provider. Undo of a snooze is an unsnooze (no deferral needed — nothing reaches the
+provider).
+**Context:** Parity audit item (High). No provider exposes a portable snooze (Gmail's is not
+in its API; Graph and IMAP have none), and the audit's constraint is that snooze, mute and
+pin are local state. The inbox query must stay index-driven on 47k+ emails.
+**Rejected:**
+- *Rewriting the message timestamp to the wake time*: corrupts dates shown in the thread,
+  search ordering and every date-based feature.
+- *Ordering the inbox by `COALESCE(woke_at, timestamp)`*: defeats the index order, so every
+  page sorts the whole inbox.
+- *Normal ordering plus unread only*: a thread snoozed for a week reappears pages down,
+  which defeats the point of snoozing.
+- *Not pushing the wake's unread to the provider*: the state refresh would mark it read
+  again within minutes.
+- *Hiding snoozed mail at the provider (archive on snooze, move back on wake)*: provider
+  writes, IMAP re-keying and failure modes for a reminder, and the conversation would be
+  lost from the inbox if the app never ran again.
+
+## 2026-10-01 — Undo send and scheduled send share one local outbox; overdue mail goes out at launch, an interrupted send never resends
+
+**Decision:** A message sent with an undo window or scheduled for later waits in a local
+`outbox` table (V032) holding the composed message as JSON (recipients, subject, sanitized
+HTML, inline images and attachment bytes as base64 — files a draft referenced by path are
+read in when the message is queued) until its `send_at`. Undo send is a scheduled send
+`delay` seconds ahead (setting *Undo send*: off / 5 / 10 / 20 / 30 s, default 10, in
+`user_preferences` as `compose.undo_send_delay_secs`; off keeps the direct send). A
+dispatcher (`sync_scheduler::outbox_dispatch_loop`, every 15 s and woken when an undo
+window closes or the user picks *Send now*) sends due rows through `emails::send_outgoing`,
+i.e. the same `deliver_reply` / `deliver_new_email` path, optimistic Sent copy included.
+- **No double send:** a row is flipped `scheduled → sending` in one guarded UPDATE before
+  the provider is called; undo, edit and delete are guarded UPDATEs from `scheduled` /
+  `failed`, so the backend decides the race and a late undo answers `outbox_not_pending`.
+- **Crash mid-send:** a row still `sending` at start-up becomes `failed`
+  (`interrupted`) with "may or may not have been sent — check Sent"; it is never resent
+  automatically. A provider failure is `failed` with its error and is not retried on its
+  own either (a 5xx does not say whether the message left); *Retry* is the user's call.
+- **Overdue at launch:** a message whose time passed while the app was closed is sent
+  automatically on the next launch, as Gmail and Outlook send it — the user asked for it
+  to go out, and the Scheduled view and schedule menu say the app must be open.
+- **Drafts:** queueing a message the composer had saved as a draft deletes that draft
+  (locally and at the provider), as an immediate send does; the queued copy owns the
+  content. Undo / *Edit* reopen it in a compose tab (replies keep `replyToEmailId`, so they
+  are still sent as replies), whose auto-save creates a fresh draft.
+- The payload is emptied when a row is sent or cancelled; finished rows are deleted after
+  7 days. The payload is never logged.
+**Context:** Parity audit items (High). IMAP has no server-side scheduling and Gmail's API
+exposes none, so a local queue is the only way to offer both on every account type, and one
+queue gives both features the same send path and the same safety rules.
+**Rejected:**
+- *A frontend timer for undo send*: the message would be lost if the window closed or the
+  app quit during the delay, and a scheduled send needs persistence anyway.
+- *Asking at launch before sending overdue mail*: a prompt the user may not see for hours
+  turns "send Monday 8:00" into "send whenever I next click"; the delay is visible in Sent.
+- *Keeping the draft while a message is scheduled*: two copies of the same text, and the
+  draft sync could push or prune it while the queued copy is the one that will go out.
+- *Referencing attachment files by path*: temp files and moved files would break a send
+  hours later.
+- *Retrying a failed or interrupted send automatically*: a duplicate email is worse than a
+  visible failure with a Retry button.
+
+## 2026-10-01 — One signature per account, kept in a marked block of the composer body
+
+**Decision:** Each account has one rich-HTML signature (V033 `account_signatures`, a row
+per account, cascading with it) with two options, "insert in new messages" and "insert in
+replies and forwards". It is edited in Settings → Signatures with the compose editor and
+sanitized on save with the send allowlist (`sanitize_outgoing_html`), so pasted images are
+kept as data URLs (the send path already turns them into inline `cid:` parts) under a
+512 KB cap. Composers insert it inside `<div data-emailops-signature>`, a node the compose
+editor schema keeps:
+- **Placement:** below the text in a new message or a reply, above the forwarded message
+  in a forward (Gmail's default). No option to put it "below the quote": replies carry no
+  quoted original in the editor or at send time, and a forward's quote is part of the
+  body, where only "above" makes sense. No `-- ` separator is forced; the user can type
+  one into the signature.
+- **Swap / no double insert:** changing the From account swaps the block's content (or
+  removes it when the new account has none). A body that already exists — a reopened
+  draft, a message taken back from the outbox, a maximized composer — is never given a
+  second signature; it is only swapped if it still has the block. A fresh compose tab
+  (mailto link) inserts it.
+- **AI drafts:** a generated draft replaces the text above the block, keeping the
+  signature as the user left it; the block is left out of the brief sent to the model, of
+  the send-time "did you mean to attach?" check and of the autosave trigger (a composer
+  holding only its signature is not saved as a draft).
+- **Gmail import:** Settings offers "Import from Gmail" for Gmail accounts, reading the
+  `signature` of the account's "Send mail as" entry (the endpoint already used for the
+  sender name). It fills the editor; the user saves. Graph exposes no Outlook signature
+  and IMAP has none, so there is no import for them.
+**Context:** Parity audit item (High). The composers own their body as one HTML string,
+so the signature has to be findable inside it to be swapped or kept.
+**Rejected:** Appending the signature at send time — the user could not see or edit it
+before sending, and a draft opened in Gmail would lack it. Storing it in the
+`account_settings:` preference blob — that blob is saved whole by the account dialog, and
+a signature needs its own sanitizing save and should go with its account. Several named
+signatures per account — beyond the parity gap; one per account covers Gmail's default.
+
+## 2026-10-01 — Keyboard shortcuts come from one registry, Gmail's bindings, one root handler
+
+**Decision:** Every keyboard shortcut is a row of `SHORTCUTS` (`src/lib/shortcuts.ts`:
+id, bindings, scope, help group, i18n label). A pure matcher turns a key press into an id
+(platform modifier: Cmd on macOS, Ctrl elsewhere, strictly; two-key sequences such as
+`g i` with a 1 s timeout on an injected clock), a pure planner (`src/lib/shortcutPlan.ts`)
+turns the id into an effect for the current screen, and one hook mounted in `App`
+(`useGlobalShortcuts`) executes it. The `?` overlay is rendered from the same table, so
+the help cannot drift from the keys.
+- **Bindings follow Gmail** where Gmail has one: `j/k`, `Enter`/`o`, `u`, `x`, `* a`,
+  `* n`, `e`, `#` (plus `Delete`), `s`, `Shift+U`, `Shift+I`, `b`, `c`, `r`, `a`, `f`,
+  `/`, `?`, and `g i/s/t/d/b/a/c` (inbox, starred, sent, drafts, snoozed, archive,
+  contacts). Scheduled, which Gmail lacks a key for, is `g l` ("later"). Cmd/Ctrl+K keeps
+  opening the search overlay.
+- **Targets:** a conversation action applies to the multi-selection when there is one,
+  else to the open conversation (sent to `EmailView` as a pane command, so the toolbar's
+  own handlers — including "go back to the list" after archive/delete/mark unread — run),
+  else to the keyboard-cursor row of the full-width list. `b` opens the existing snooze
+  picker (`SnoozeMenuButton.openSignal`) rather than a second picker.
+- **When keys are not shortcuts:** in a text field, select or contenteditable (the TipTap
+  composer, the chat input) only modifier combinations fire; nothing global fires while a
+  modal is open (modals keep their own Escape/Enter), while an IME is composing, or when a
+  focused button/link would take Enter. Composers bind Cmd/Ctrl+Enter themselves, in the
+  capture phase, to their single send function (so undo send applies).
+- **Setting:** Settings → Appearance → Keyboard shortcuts, on by default, SQLite pref
+  `ui.keyboard_shortcuts_enabled`. Off means off for every binding, Cmd/Ctrl+K and the
+  composer send key included.
+**Context:** Parity audit item (High): only Cmd/Ctrl+K existed, as an ad-hoc effect.
+**Rejected:** Per-component `keydown` listeners for each shortcut — the conflicts between
+list, reading pane and composers would be resolved by mount order, and the help list would
+be a second, hand-maintained copy. A keyboard library (react-hotkeys-hook, tinykeys) —
+sequences, platform modifiers and the editable/modal rules are a few dozen lines that are
+easier to test as pure functions. User-rebindable keys and a command palette — out of the
+parity gap.
+
+## 2026-10-01 — One-click unsubscribe contacts the sender only when the user asks
+
+**Decision:** The reading pane offers "Unsubscribe" on any message whose stored
+`List-Unsubscribe` header yields a usable method, preferred in this order: RFC 8058
+one-click (an https URI plus `List-Unsubscribe-Post: List-Unsubscribe=One-Click`), then
+`mailto:`, then an https page. Only `<…>`-bracketed `https:` and `mailto:` URIs count;
+`http:`, `javascript:`, `file:`, custom schemes, credentials in the URL, multi-address
+mailtos and overlong values are refused. The raw headers stay in the backend: the webview
+receives a derived `UnsubscribeOption` (method, host or address, and the URL only for a
+page it must open), and the unsubscribe command re-parses the stored headers rather than
+trusting anything the frontend sends. One-click is a backend HTTPS POST with the body
+`List-Unsubscribe=One-Click` (form-encoded), a plain `EmailOps` user agent, no cookie
+store, 10 s connect / 20 s total timeouts and redirects followed only to https (at most
+three); only a 2xx counts. A mailto is sent from the account that received the message,
+with the list's subject and body and no "Sent with EmailOps" footer. A page is never fetched
+by the backend: it opens in the system browser through the same https check as links in
+mail. Every request is recorded per account and sender (`sender_unsubscribes`) so the pane
+says "Unsubscribed"; the confirmation offers to block the sender afterwards.
+**Context:** The privacy rule is "no external calls except to email providers or AI
+providers the user chose". An unsubscribe request goes to the *sender's* server, a third
+party, so it is allowed only as an explicit user action: the confirmation dialog names the
+host it will contact (or the address it will email) and says it is the sender, not the
+mail provider, before anything is sent — the same reasoning that lets a user open a link
+from a message. Nothing is contacted automatically (no prefetch, no background
+"unsubscribe from everything"), and the request carries nothing beyond what the list put
+in its own URI.
+**Rejected:** *Fetching the https page from the backend* — a page is meant for a person, may
+need a click or a CAPTCHA, and fetching it silently confirms the address to trackers;
+*sending the raw header to the webview to parse there* — breaks the rule that raw headers
+never reach the webview, and moves URL validation to the less trusted side; *following
+any redirect* — a one-click endpoint that bounces to plain http would leak the token in
+the clear; *recording "unsubscribed" per List-Id* — not every list sends one, and the
+sender address is what the user recognises in the banner.
+
+## 2026-10-01 — Block sender files arrivals in the provider's spam folder; blocks are per account
+
+**Decision:** "Block sender" stores the address (lowercased) per account in
+`blocked_senders`. Every message that a sync stores in that account's inbox from a blocked
+address is marked junk locally (the user's override, recorded first) and then filed in the
+provider's Spam/Junk folder before the batch is announced — Gmail adds `SPAM` and drops
+`INBOX`, Graph moves it to `junkemail`, IMAP moves it to the `\Junk` folder (or one named
+like it) and re-keys it to the id the Spam pass uses. An IMAP server with no Junk folder
+keeps the message in place, marked junk. Blocking offers to file the sender's existing
+inbox and archived mail too (checkbox, on by default, up to 500 messages); unblocking —
+from the message banner or Settings → Junk → Blocked senders — offers the inverse, bringing
+their Spam back to the inbox and forgetting the block's junk mark (checkbox, on by
+default). "Report junk" uses the same provider move (`EmailProvider::move_to_spam`), so it
+now files on Gmail and Outlook as well, not only IMAP. The old ⋮ item that only hid the
+sender's smart-filter chip is kept under its real name, "Hide from smart filters".
+**Context:** Gmail's own block creates a server-side filter, which needs the
+`gmail.settings.basic` scope; the app asks only for `gmail.modify` and should not widen
+OAuth consent for this. Outlook's blocked-senders list is not in Graph's mail API, and IMAP
+has no filters at all. Applying the block in the app on ingest works the same on all three,
+and pushing the move to the provider keeps other clients (phone, webmail) in agreement —
+a local-only hide would leave the mail sitting in every other inbox. Blocks are per
+account like Gmail's: the same address can be wanted in one mailbox and not another.
+This does not contradict the local-flag-only junk decision (2026-07-28): that one forbids
+the *detector* from moving mail on its own; a block is an explicit, attributable user rule
+with a reachable inverse.
+**Rejected:** *A local-only hide (the junk detector's "keep out of the inbox" mode)* — other
+clients disagree and the provider's own filter never learns; *creating a Gmail filter* —
+needs a broader OAuth scope for one feature; *a global (all-accounts) block list* — differs
+from both providers and makes a per-account unblock impossible to express; *deleting
+blocked mail* — irreversible, and a block entered by mistake would destroy mail.
+
+## 2026-10-01 — New-mail desktop notifications: sync-side planner, no click-to-open
+
+**Decision:** New-mail notifications are decided in the backend at the end of each
+sync (`services::mail_notifications::plan_new_mail_notifications`), after junk scoring
+and the blocked-sender hook, so junk and blocked mail never notify. Only mail from the
+sync's incremental pass qualifies — never an account's first sync, a backfill slice,
+mail older than the inbox watermark, mail already read elsewhere, mail sent by the
+user, promotions, or anything outside the inbox. 1–3 messages notify one by one; more
+become one "N new messages in <account>" summary, at most one per account per minute.
+Content defaults to sender + subject (Gmail/Outlook default), never the body; "Hide
+content" and a locked app (main password not yet entered this session) show only the
+account. Settings → Notifications holds the master switch, per-account switches, the
+content option and "only when EmailOps is not focused" (all default on, SQLite prefs).
+A snoozed conversation coming back notifies behind the same switches. Notifications go
+through a `Notifier` trait seam (`services::notifier`) so tests never hit the OS.
+**Context:** Gmail/Outlook parity (docs/COMPETITOR-PARITY.md). The notification plugin
+was already wired for meeting reminders.
+**Rejected:** Click-to-open the conversation — `tauri-plugin-notification` delivers no
+click events on desktop (same limit recorded for meeting reminders); a click only
+focuses the app, and the notification carries its thread so a future plugin can open
+it without a planner change. No workaround (custom native notification code) was built.
+A dock/taskbar unread badge was skipped: there is no unread-inbox count query to feed
+it yet, and it is optional for parity. Deciding in the frontend on `sync-progress`
+events was rejected: the webview may be hidden or locked, and it cannot see junk
+verdicts or the blocked-sender filing reliably.
+
+## 2026-10-01 — Dialogs keep the dark chrome; the app does not follow the OS theme
+
+**Decision:** The app keeps one fixed two-tone look: dark chrome — sidebar, Output bar,
+Settings and every dialog built on `Modal` (sender dialogs, shortcut help, account and
+lens dialogs, onboarding) — around light content — the list, the reading pane and the
+composers. Editors that show what a recipient will see (the composer, the signature
+editor in Settings) stay white inside dark chrome, as a page preview. No surface follows
+the OS appearance: Tailwind's `dark:` variant, which v4 drives from
+`prefers-color-scheme`, is not used anywhere (`src/lib/theme/noOsDarkMode.test.ts`).
+**Context:** The competitor-parity demo recording read the dark Settings, Block sender and
+shortcut-help dialogs next to the light list and composer as a theme mismatch. It is not
+an OS-media-query leak: there are no `dark:` classes in `src/`, and the dark dialogs come
+from `Modal`'s deliberate dark scaffold (on `main` long before this branch), which every
+dialog shares. Turning every dialog light means restyling `Modal` plus every form inside
+it (Settings alone spans some twenty tab components with dark-surface classes), which is
+the "cross-cutting restyle" that `docs/COMPETITOR-PARITY.md` scopes as its own branch
+together with a real dark mode.
+**Rejected:** Restyling only `Modal` light — the dark-surface form controls inside it
+(`Select` variant `dark`, gray-100 text, `#333` inputs) would sit unreadable on white.
+`darkMode: 'class'` / an `@custom-variant dark` — a no-op today, since nothing uses the
+variant; the guard test states the invariant more directly.
+
+## 2026-10-01 — The demo DB's schema comes from the checkout's own migrations
+
+**Decision:** `scripts/generate_demo_db.py` builds the demo DB schema by running the app's
+migration runner on a scratch data dir (the `init_db` cargo example, `Database::new`)
+and copying the result in with SQLite's backup API. The developer's production DB is read
+for schema only when `--prod-db PATH` asks for it. `scripts/ensure_demo_db.sh` rebuilds
+the demo DB when a migration file is newer than it or its schema version is behind the
+newest `V*.sql`.
+**Context:** The generator used to copy `sqlite_master` and `refinery_schema_history`
+from the production DB, which lags behind any branch that adds a migration; every
+verification run on such a branch needed the schema patched by hand.
+**Rejected:** Applying `src-tauri/migrations/*.sql` from Python — V001 creates vec0 tables
+(needs sqlite-vec loaded in Python), and refinery verifies a checksum of every applied
+migration on open, so Python would have to re-implement refinery's hashing. The CLI's
+`doctor` — read-only by design, and its bootstrap touches the keychain.
+
+## 2026-10-02 — Archive is live mail: in every search, filter and AI scope, out of only the Inbox view
+
+**Decision:** `emails.mailbox = 'archive'` is live mail. Only the Inbox view (and what is
+defined as "in the inbox": snooze, new-mail notifications, the archive action itself)
+leaves it out. Search, the chat tools, embeddings, classification, lenses, contacts,
+attachment rules and the junk detector's "not spam" training reach it, and so do the
+sidebar's sender/domain/tag filters and their counts, which used to read
+`mailbox IN ('inbox', 'sent')` and now share one list, `db::live_mailboxes_sql!()`
+(`('inbox', 'sent', 'archive')`).
+**Context:** Before the Archive mailbox, Gmail-archived mail stayed `inbox` locally, so
+"inbox + sent" meant all live mail. Once Gmail mail without `INBOX` mapped to `archive`,
+those queries silently dropped it: a sender filter missed the archived half of a
+conversation, and an attachment rule ignored an archived invoice. Gmail and Outlook search
+and labels include archived mail; only the Inbox excludes it.
+**Rejected:** *`mailbox NOT IN ('spam', 'trash')` for the smart filters*: it would also
+pull custom IMAP folders into them, a separate product change; the filters' covering
+indexes (V008) serve an `IN` list either way. *Leaving archive out of the filters*: the
+archived message of a thread would vanish from a sender filter the moment it was archived.
+
+## 2026-10-02 — Overlays register themselves; no conversation shortcut runs behind one
+
+**Decision:** Every dialog, drawer, lightbox, menu and popover calls `useOverlay(open)`
+(`src/stores/overlayStore.ts`) while it is on screen. The app-wide key handler
+(`useGlobalShortcuts`) treats a non-zero count, or any `[aria-modal="true"]` element, as
+"an overlay owns the keyboard" and runs no shortcut at all; each overlay handles its own
+Escape (the row ⋮ menu and the snooze picker gained one). The old `.fixed.inset-0` class
+sniffing is gone. `overlayStore.test.ts` fails when a component draws a `fixed inset-0`
+layer without registering, and `useGlobalShortcuts.overlays.test.tsx` presses `#`,
+`Delete`, `e`, `s`, `b` and `j` with each real overlay open. Backspace is not bound on any
+platform and stays that way.
+**Context:** A contributor PR's Delete key trashed the conversation behind dialogs because
+its "is a dialog open?" check only matched elements with a role. Probing ours with the real
+overlays showed the same class of hole: the portalled row ⋮ menu and the snooze picker
+popover (neither is `fixed inset-0`) let `#`, `Delete`, `e`, `s`, `b` and `j` act on the
+open conversation or the cursor row.
+**Rejected:** Adding more selectors to the DOM query — it only knows the overlays someone
+remembered, and a styling change silently disables it. Stopping propagation inside each
+overlay — every overlay would need it on every key, and a portalled menu is outside its
+owner's DOM subtree.
+
+## 2026-10-02 — Auto-advance: open the next conversation after it leaves the list
+
+**Decision:** When the open conversation leaves the list because of archive, delete,
+snooze (toolbar or `e`/`#`/`Delete`/`b`), a block that files it in Spam, or "Confirm
+junk", the reading pane opens the next conversation in list order (the previous one at the
+end of the list, back to the list when none is left). Settings → Appearance → "After
+archiving or deleting" offers next (default) / previous / back to the list, SQLite pref
+`ui.after_thread_leave`. Mark as unread always goes back to the list (staying would read
+it again); bulk actions never advance; a conversation shown in a tab just closes. The
+decision is the pure `planAdvance` (`src/lib/autoAdvance.ts`); `beginLeave`/`finishLeave`
+(`src/stores/autoAdvanceStore.ts`) capture the screen when the action starts and do
+nothing if the user navigated since (`selectionGeneration()`), so a slow action never
+closes or replaces a conversation opened meanwhile. Undo brings the conversation back into
+the list but reopens it only when nothing else is open.
+**Context:** Parity with Gmail's Auto-advance and Outlook's "after moving or deleting an
+item". Default "next" follows Outlook rather than Gmail (whose default is back to the
+list): EmailOps' split layout already shows a reading pane, and triaging a queue with `e`
+or `#` without a click between items is the point of the shortcuts. "Confirm junk" used to
+`await` the provider and then clear the selection, which closed whatever the user had
+opened in the meantime.
+**Rejected:** Gmail's default (back to the list) — an extra click or `Enter` per message
+during triage. Reopening the conversation on undo while another is open — it would yank
+the user away from what they are reading. Advancing after bulk actions — there is no
+single "current" conversation to step from.
+
+## 2026-10-02 — Signature images: PNG, JPEG, GIF or WebP, ≤ 200 KB and ≤ 1200 px, checked twice
+
+**Decision:** Settings → Signatures has an "Add image" button (logo or handwritten
+signature). The frontend (`src/lib/signatureImage.ts`, a pure planner plus an executor with
+the FileReader/canvas work injected) accepts only PNG, JPEG, GIF and WebP, refuses source
+files over 10 MB, and redraws an image wider than 600 px or heavier than 200 KB at most
+600 px wide (JPEG stays JPEG; anything else becomes PNG to keep transparency); a result
+still over 200 KB is refused. Small images are inserted untouched, so a GIF keeps its
+animation. The backend re-checks every `data:` URL of a signature on save
+(`services/signatures.rs::check_signature_image`): allowed MIME type, `;base64` with the
+base64 alphabet only, decoded ≤ 200 KB, magic bytes matching the declared type, and width
+≤ 1200 px read from the image header (room for a pasted high-DPI logo, which does not go
+through the upload path). A failing image refuses the save with the reason; remote
+`https:` and `cid:` images are not embedded bytes and are not checked. The 512 KB total
+cap stays.
+**Context:** A contributor PR added signature images without validation; an SVG data URL
+can carry script and external references, and an unbounded image rides along with every
+message the account sends.
+**Rejected:** Silently stripping bad images on save — the user would not learn why their
+logo vanished. Allowing SVG and sanitizing it — another sanitizer to maintain for a
+format many mail clients refuse anyway. A Rust image crate to decode and re-encode —
+header parsing is enough to check width, and resizing belongs in the webview where the
+user picks the file.
+
+## 2026-10-02 — The text/plain part marks a closing signature with "-- "
+
+**Decision:** When an outgoing message's signature block (`data-emailops-signature`)
+closes the message, the text/plain alternative carries the RFC 3676 separator line `-- `
+(dash, dash, space) before the signature text, so other clients can fold or strip it. The
+HTML part is unchanged (no visible separator). The plain text is derived in the frontend
+(`prepareOutgoingHtml` → `htmlToPlainText(html, { signatureDelimiter: true })`), where the
+marker still exists; the send sanitizer drops it later. No separator when content follows
+the block — a forward's quoted message sits below the signature, and clients would fold the
+forwarded message as signature — nor when the user typed a `--` line into the signature.
+This amends the 2026-10-01 signature entry's "no `-- ` separator is forced", which still
+holds for the HTML.
+**Context:** Contributor PR review; Thunderbird, mutt and many list archives rely on the
+separator in plain text.
+**Rejected:** Deriving the plain text in the backend — the marker is gone after
+sanitizing, and the text is already produced by the composer. A separator in the HTML too
+— Gmail and Outlook show none, and it would look like stray dashes.
+
+## 2026-10-02 — AI drafts leave the sign-off to the account signature when one applies
+
+**Decision:** The backend decides, per draft, whether the model may sign: a pure planner
+(`plan_sign_off` in `services/emails/drafts.rs`) returns "app signature" when the sending
+account has a non-empty signature that applies to the draft's kind (`use_for_new` for a new
+message, `use_for_replies` for a reply or a forward), and "unchanged" otherwise. In the
+first case one rule is added to the per-draft part of the prompt: a short closing line is
+fine, the sender's name (the account's display name, written out: with only "the sender's
+name" the 9B model still signed one English reply in three), a title, contact details or a
+"[Your name]" placeholder are not, because the app adds the signature. In the second case the prompt is byte-for-byte what it was.
+Both draft paths (the composer's "Generate draft" and the chat's `generate_email_draft`)
+go through the same service, so they get the same decision. The rule lives where the
+`{instructions}` placeholder is (the reply prompt's cached prefix is identical with and
+without it — a test pins this); a custom reply template without `{instructions}` gets the
+rule appended at its end so it is not dropped. A chat draft (plain text, saved without a
+composer) opens in a compose tab on its own draft row with the signature inserted once;
+a draft a composer saved opens as it is.
+**Context:** Signatures landed (2026-10-01 entry) and AI drafts still ended with
+"Best regards,\nName" above the inserted signature, signing twice: the template's
+"no signature" wording did not stop it (synthetic eval: 3/3 drafts signed on the demo
+model). Idea from contributor PR #127; its review asked for the rule to stay out of the
+cached prefix, for no change to accounts without a signature (a bare "Best regards," with
+no name would be a regression) and for custom templates not to drop it silently.
+Measured with `make eval-draft-cases` (synthetic, 3 drafts per case): drafts that sign
+before → after — qwen3.5-9b 9/9 → 0/9, qwen3.5-4b 9/9 → 4/9 (new messages 0/3; replies
+still sign most of the time on the 4B model, which follows the inbound message's sign-off
+over the instruction). A deterministic strip of a trailing name line is the candidate
+follow-up if the 4B replies matter; not done here.
+**Rejected:** A user setting for the sign-off ("name / none / signature") — the account's
+signature options already say whether the app signs, so a second switch could only
+contradict them. Stripping the name from the generated text afterwards — names and
+closings vary by language and the draft can legitimately end with a name (a P.S., a
+mention). Putting the rule in the system/prefix part — it varies per account and kind and
+would bust the KV-prefix cache.

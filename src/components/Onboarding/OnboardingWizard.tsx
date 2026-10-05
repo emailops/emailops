@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type Language, NATIVE_NAMES, SUPPORTED_LANGUAGES, useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
+import { useOverlay } from '@/stores/overlayStore';
 import type { InboxLayout } from '@/types';
 import { StepAddAccount } from './StepAddAccount';
 import { StepAiBackend } from './StepAiBackend';
@@ -40,6 +41,7 @@ function visibleSteps(aiEnabled: boolean): Step[] {
 }
 
 export function OnboardingWizard({ currentLayout, onChangeLayout, onComplete }: OnboardingWizardProps) {
+  useOverlay();
   const [step, setStep] = useState<Step>(1);
   // Reactive subscription — drives the Header/StepIndicator's "X of N" text.
   const { enabled: aiEnabled } = useAiStore();

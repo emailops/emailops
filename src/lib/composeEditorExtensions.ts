@@ -241,6 +241,25 @@ const Center = Node.create({
   },
 });
 
+/**
+ * The account signature a composer inserted (`src/lib/signature.ts`), kept as
+ * one block so it can be swapped when the From account changes and kept when
+ * an AI draft replaces the text. Ranked above the paragraph rule, which would
+ * otherwise read a text-only `<div>` as a plain paragraph.
+ */
+const Signature = Node.create({
+  name: 'signature',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  parseHTML() {
+    return [{ tag: 'div[data-emailops-signature]', priority: 60 }];
+  },
+  renderHTML() {
+    return ['div', { 'data-emailops-signature': '' }, 0];
+  },
+});
+
 export const composeEditorExtensions: Extensions = [
   StarterKit.configure({
     // We want StarterKit defaults but explicit about a few things.
@@ -331,5 +350,6 @@ export const composeEditorExtensions: Extensions = [
   inlineTagMark('superscript', 'sup'),
   inlineTagMark('small', 'small'),
   Center,
+  Signature,
   PreservedAttributes,
 ];

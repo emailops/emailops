@@ -1,0 +1,119 @@
+# Synthetic draft eval cases — NO private-data content.
+#
+# Each case seeds an in-memory DB with a synthetic account (optionally with a
+# saved signature) and a thread, then runs the real draft generator.
+#
+# expect_signed: whether the last lines of the draft may carry the sender's
+#   first name (or a "[Your name]" placeholder). `false` when the account's
+#   signature applies to this kind of message: the app adds it below the
+#   draft, so a name there signs the message twice. Omitted: report only
+#   (accounts without a signature keep the prompt they always had).
+#
+# Run: make eval-draft-cases ARGS="--repeat 3"
+#      (add --case <id-substring> to run a subset, --model <name> to switch)
+
+- id: reply_signature_en
+  kind: reply
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  signature:
+    html: "<p>Ulises Ortega<br>Consultant · Example Labs<br>+34 600 000 000</p>"
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Kickoff meeting
+      body: |
+        Hi Ulises,
+
+        Could we move the kickoff meeting from Wednesday to Thursday at 10:00?
+        Let me know if that works for you.
+
+        Thanks,
+        Ana
+  expect_signed: false
+
+- id: reply_no_signature_en
+  kind: reply
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Kickoff meeting
+      body: |
+        Hi Ulises,
+
+        Could we move the kickoff meeting from Wednesday to Thursday at 10:00?
+        Let me know if that works for you.
+
+        Thanks,
+        Ana
+
+- id: reply_signature_es
+  kind: reply
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  signature:
+    html: "<p>Ulises Ortega<br>Consultor · Example Labs</p>"
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Nos puedes enviar el presupuesto actualizado de la migración antes del viernes?
+        Necesitamos presentarlo en el comité.
+
+        Un saludo,
+        Bruno
+  expect_signed: false
+
+- id: reply_no_signature_es
+  kind: reply
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Nos puedes enviar el presupuesto actualizado de la migración antes del viernes?
+        Necesitamos presentarlo en el comité.
+
+        Un saludo,
+        Bruno
+
+- id: reply_signature_off_for_replies_en
+  kind: reply
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  signature:
+    html: "<p>Ulises Ortega<br>Consultant · Example Labs</p>"
+    use_for_replies: false
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Kickoff meeting
+      body: |
+        Hi Ulises,
+
+        Could we move the kickoff meeting from Wednesday to Thursday at 10:00?
+        Let me know if that works for you.
+
+        Thanks,
+        Ana
+
+- id: new_signature_en
+  kind: new
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  signature:
+    html: "<p>Ulises Ortega<br>Consultant · Example Labs</p>"
+  to: [carla@example.com]
+  subject: Proposal follow-up
+  instructions: Ask Carla whether she had time to review the proposal sent last week, and offer a short call.
+  expect_signed: false
+
+- id: new_no_signature_en
+  kind: new
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  to: [carla@example.com]
+  subject: Proposal follow-up
+  instructions: Ask Carla whether she had time to review the proposal sent last week, and offer a short call.

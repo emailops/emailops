@@ -9,6 +9,7 @@
   "trash": "Papelera",
   "spam": "Spam",
   "starred": "Destacados",
+  "snoozed": "Pospuestos",
   "search": "Buscar correos…",
   "compose": "Redactar",
   "accounts": "Cuentas",
@@ -81,5 +82,7 @@
   "allAccounts": "Todas las cuentas",
   "allAccountsFooter": "Viendo todas las cuentas",
   "newLens": "Nueva lente",
-  "skills": "Skills"
+  "skills": "Skills",
+  "archive": "Archivo",
+  "scheduled": "Programados"
 }

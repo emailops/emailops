@@ -1,5 +1,16 @@
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
+import type { MailboxView } from '@/lib/api';
 import type { InboxLayout } from '@/types';
+
+/** Views that list one mailbox (or, for `starred`, one flag; for `snoozed`,
+ *  the snoozed conversations) other than the inbox. */
+const MAILBOX_VIEWS: readonly ViewMode[] = ['sent', 'spam', 'deleted', 'starred', 'archive', 'snoozed'];
+
+/** The mailbox a list view shows; anything that is not a mailbox view is the inbox. */
+export function viewModeToMailbox(mode: ViewMode): MailboxView {
+  if (MAILBOX_VIEWS.includes(mode) || mode.startsWith('folder:')) return mode as MailboxView;
+  return 'inbox';
+}
 
 export interface ViewChangePlan {
   /** Clear search query, active smart filter, and reset categories to primary. */
@@ -13,7 +24,7 @@ export interface ViewChangePlan {
  * scoped to inbox/sent/spam/deleted/a custom folder.
  */
 export function isEmailListView(mode: ViewMode): boolean {
-  return mode === 'inbox' || mode === 'sent' || mode === 'spam' || mode === 'deleted' || mode.startsWith('folder:');
+  return mode === 'inbox' || MAILBOX_VIEWS.includes(mode) || mode.startsWith('folder:');
 }
 
 /**
@@ -21,7 +32,8 @@ export function isEmailListView(mode: ViewMode): boolean {
  * replaces the list, so any open email must be closed for the chosen view to show.
  *
  * Filters reset for every mailbox-backed view, not just the inbox: a smart
- * filter or search query is always resolved against `mailbox IN ('inbox','sent')`
+ * filter or search query is always resolved against the live mailboxes
+ * (`mailbox IN ('inbox','sent','archive')`)
  * and ignores the selected mailbox, so keeping one alive while switching to
  * Sent/Spam/Trash/a folder would highlight a view whose emails never appear.
  */

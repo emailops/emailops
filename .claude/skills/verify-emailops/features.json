@@ -14,6 +14,164 @@
   ],
   "features": [
     {
+      "id": "organizar",
+      "name": "Archivar, destacar, posponer y selección",
+      "rust": [
+        "services::emails::thread_actions",
+        "services::emails::snooze",
+        "db::emails::snoozes",
+        "db::emails::mailbox_state",
+        "commands::emails"
+      ],
+      "vitest": [
+        "src/stores/selectionStore",
+        "src/lib/bulkActions",
+        "src/lib/pendingActions",
+        "src/lib/snooze",
+        "src/components/Inbox/BulkToolbar",
+        "src/components/Inbox/SnoozePicker",
+        "src/components/Inbox/SnoozeBadge",
+        "src/components/Inbox/EmailRow.star",
+        "src/components/Inbox/EmailRow.selection",
+        "src/stores/emailStore.threadActions",
+        "src/stores/emailStore.snooze",
+        "src/components/common/MailIcons",
+        "src/components/common/ToastHost",
+        "src/lib/autoAdvance",
+        "src/stores/autoAdvanceStore",
+        "src/components/Settings/AutoAdvanceSetting",
+        "src/components/EmailView/JunkBanner.autoAdvance"
+      ],
+      "e2e": [
+        "Organizar",
+        "Vistas/Starred",
+        "Vistas/Archive",
+        "Vistas/Snoozed"
+      ],
+      "integration_names": [
+        "thread_action",
+        "archive",
+        "starred",
+        "_star_",
+        "snooze",
+        "bulk"
+      ]
+    },
+    {
+      "id": "envio",
+      "name": "Deshacer envío y envío programado",
+      "rust": [
+        "services::outbox",
+        "db::outbox",
+        "models::outbox",
+        "commands::outbox"
+      ],
+      "vitest": [
+        "src/stores/outboxStore",
+        "src/lib/outbox",
+        "src/components/ScheduledView",
+        "src/components/shared/SendSplitButton",
+        "src/components/Settings/UndoSendSetting"
+      ],
+      "e2e": [
+        "Envío",
+        "Vistas/Scheduled"
+      ],
+      "integration_names": [
+        "outbox",
+        "schedul",
+        "undo_send"
+      ]
+    },
+    {
+      "id": "firmas",
+      "name": "Firmas",
+      "rust": [
+        "services::signatures",
+        "db::signatures"
+      ],
+      "vitest": [
+        "src/lib/signature",
+        "src/stores/signatureStore",
+        "src/hooks/useComposerSignature",
+        "src/components/Settings/SignaturesSettings",
+        "src/components/EmailView/ReplyCompose.signature",
+        "src/lib/signatureImage"
+      ],
+      "e2e": [
+        "Firmas"
+      ],
+      "integration_names": [
+        "signature"
+      ]
+    },
+    {
+      "id": "atajos",
+      "name": "Atajos de teclado",
+      "rust": [],
+      "vitest": [
+        "src/lib/shortcuts",
+        "src/lib/shortcutPlan",
+        "src/stores/shortcutStore",
+        "src/components/common/ShortcutHelpModal",
+        "src/hooks/useGlobalShortcuts",
+        "src/hooks/useComposerSendKey",
+        "src/components/Settings/KeyboardShortcutsSetting",
+        "src/components/Inbox/Inbox.shortcuts",
+        "src/components/EmailView/EmailView.shortcuts",
+        "src/components/EmailView/ReplyCompose.sendShortcut",
+        "src/stores/overlayStore",
+        "src/components/EmailView/EmailView.tooltips"
+      ],
+      "e2e": [
+        "Atajos"
+      ],
+      "integration_names": []
+    },
+    {
+      "id": "remitentes",
+      "name": "Remitentes: baja y bloqueo",
+      "rust": [
+        "services::unsubscribe",
+        "services::sender_controls",
+        "db::sender_controls",
+        "commands::sender_controls",
+        "services::emails::spam"
+      ],
+      "vitest": [
+        "src/stores/senderStore",
+        "src/components/shared/SenderDialogs",
+        "src/components/EmailView/SenderControls",
+        "src/components/Settings/BlockedSendersSettings"
+      ],
+      "e2e": [
+        "Remitentes"
+      ],
+      "integration_names": [
+        "blocked_sender",
+        "unsubscribe",
+        "block_sender"
+      ]
+    },
+    {
+      "id": "notificaciones",
+      "name": "Notificaciones de correo nuevo",
+      "rust": [
+        "services::mail_notifications",
+        "services::notifier"
+      ],
+      "vitest": [
+        "src/components/Settings/NotificationsSettings"
+      ],
+      "e2e": [
+        "Notificaciones"
+      ],
+      "integration_names": [
+        "notifies",
+        "notification"
+      ]
+    },
+    {
       "id": "cuentas-sync",
       "name": "Cuentas y sincronización",
       "rust": [
@@ -41,7 +199,8 @@
         "db::folders",
         "services::sync_error_dedup",
         "sync",
-        "db::accounts"
+        "db::accounts",
+        "commands::accounts"
       ],
       "vitest": [
         "src/stores/accountStore",
@@ -52,7 +211,8 @@
         "src/components/shared/AccountScopeChip",
         "src/stores/folderStore",
         "src/stores/connectivityStore",
-        "src/lib/apiContract/cuentas.api.test"
+        "src/lib/apiContract/cuentas.api.test",
+        "src/lib/providerNames"
       ],
       "e2e": [
         "Cuentas"
@@ -171,7 +331,8 @@
         "src/lib/draftRequest",
         "src/lib/sendWarnings",
         "src/stores/translationStore",
-        "src/lib/apiContract/compose.api.test"
+        "src/lib/apiContract/compose.api.test",
+        "src/components/composerStrings"
       ],
       "e2e": [
         "Compose",
@@ -330,7 +491,8 @@
       "rust": [
         "services::junk",
         "db::junk",
-        "db::exclude_junk_sql_tests"
+        "db::exclude_junk_sql_tests",
+        "commands::junk"
       ],
       "vitest": [
         "src/stores/junkStore",
@@ -465,7 +627,8 @@
         "db::ai_enabled_tests",
         "services::clock",
         "services::events",
-        "services::logger"
+        "services::logger",
+        "commands::security"
       ],
       "vitest": [
         "src/components/Settings",
@@ -480,7 +643,8 @@
         "src/stores/featureToggleStore",
         "src/lib/privacyPolicy",
         "src/lib/version",
-        "src/lib/apiContract/ajustes.api.test"
+        "src/lib/apiContract/ajustes.api.test",
+        "src/lib/theme"
       ],
       "e2e": [
         "Ajustes"

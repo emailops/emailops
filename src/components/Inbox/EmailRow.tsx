@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { writeEmailDragPayload } from '@/lib/emailDrag';
 import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
+import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
+import { SnoozeBadge } from './SnoozeBadge';
 
 export type { RulePrefill } from './EmailActionsMenu';
 
@@ -22,7 +25,7 @@ interface EmailRowProps {
   isSelected: boolean;
   onClick: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   onOpenInTab?: (email: Email) => void;
@@ -36,6 +39,14 @@ interface EmailRowProps {
    *  the account inline — used for unified search results, where rows from
    *  several accounts are mixed and a colour alone is not enough. */
   accountBadge?: { colorClass: string; label: string; chip?: boolean };
+  /** Multi-select: the row is in the selection. */
+  isChecked?: boolean;
+  /** Some row is selected — every row then shows its checkbox, not only on hover. */
+  selectionActive?: boolean;
+  /** Multi-select is offered: the checkbox, Cmd/Ctrl-click (toggle) and
+   *  Shift-click (`range`: from the last toggled row) call this instead of
+   *  opening the conversation. */
+  onCheck?: (opts: { range: boolean }) => void;
 }
 
 export function EmailRow({
@@ -43,13 +54,16 @@ export function EmailRow({
   isSelected,
   onClick,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   onOpenInTab,
   onChatAboutThread,
   compact = false,
   accountBadge,
+  isChecked = false,
+  selectionActive = false,
+  onCheck,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox']);
   const receivedTime = formatReceptionTime(email.timestamp);
@@ -84,6 +98,27 @@ export function EmailRow({
   const companyTag = companyRaw && !companyRaw.includes('@') ? companyRaw.toUpperCase() : undefined;
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const { canMove } = useMoveTargets(email);
+
+  // Cmd/Ctrl-click toggles the row, Shift-click selects a range; a plain click
+  // opens the conversation as before.
+  const handleClick = (e: React.MouseEvent) => {
+    if (onCheck && (e.metaKey || e.ctrlKey || e.shiftKey)) {
+      e.preventDefault();
+      onCheck({ range: e.shiftKey && !e.metaKey && !e.ctrlKey });
+      return;
+    }
+    onClick();
+  };
+  // Keep Shift-click from selecting the text between two rows.
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (onCheck && e.shiftKey) e.preventDefault();
+  };
+  // Full-width rows always show the checkbox (as Gmail's list does), so
+  // multi-select is discoverable without hovering; split rows swap it with the
+  // avatar on hover or while selecting.
+  const checkbox = onCheck ? (
+    <RowCheckbox checked={isChecked} alwaysVisible={compact || selectionActive || isChecked} onCheck={onCheck} />
+  ) : null;
 
   useEffect(() => {
     if (!copyMessage) return;
@@ -121,8 +156,11 @@ export function EmailRow({
         tabIndex={0}
         className={`@container group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
           isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''}`}
-        onClick={onClick}
+        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''} ${
+          isChecked ? '!bg-primary-50' : ''
+        }`}
+        onClick={handleClick}
+        onMouseDown={handleMouseDown}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
@@ -147,12 +185,14 @@ export function EmailRow({
             the snippet gives way first, and the sender column and tag strip
             shrink to make room. */}
         <div className="flex items-center gap-3 min-w-0 min-h-[1.75rem]">
+          {checkbox}
           <span
             className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${
               !email.isRead ? 'bg-primary-600 ring-2 ring-primary-100' : 'bg-transparent'
             }`}
             aria-hidden="true"
           />
+          <StarToggle email={email} />
           <Avatar name={email.sender} email={email.senderEmail} size="sm" />
           <span
             className={`text-sm truncate w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
@@ -192,13 +232,14 @@ export function EmailRow({
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
             {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
           </div>
+          <SnoozeBadge email={email} />
           <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">
             {receivedTime}
           </span>
           <EmailActionsMenu
             email={email}
             onAddSenderFilter={onAddSenderFilter}
-            onBlockSender={onBlockSender}
+            onHideSenderFromFilters={onHideSenderFromFilters}
             onCreateAttachmentRule={onCreateAttachmentRule}
             onCreateClassificationRule={onCreateClassificationRule}
             onOpenInTab={onOpenInTab}
@@ -217,8 +258,9 @@ export function EmailRow({
       tabIndex={0}
       className={`group relative hover:z-10 w-full text-left px-4 py-3 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
         isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-      } ${!email.isRead && !isSelected ? 'bg-blue-50/50' : ''}`}
-      onClick={onClick}
+      } ${!email.isRead && !isSelected ? 'bg-blue-50/50' : ''} ${isChecked ? '!bg-primary-50' : ''}`}
+      onClick={handleClick}
+      onMouseDown={handleMouseDown}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -236,7 +278,18 @@ export function EmailRow({
     >
       {accountBar}
       <div className="flex items-start gap-3">
-        <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
+        {checkbox ? (
+          // The checkbox takes the avatar's place on hover and while selecting
+          // (as in Gmail), so the row keeps its width and measured height.
+          <div className="relative flex-shrink-0 w-9 h-9 flex items-center justify-center">
+            <div className={selectionActive || isChecked ? 'invisible' : 'group-hover:invisible'}>
+              <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center">{checkbox}</div>
+          </div>
+        ) : (
+          <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className={`text-sm truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>
@@ -244,11 +297,14 @@ export function EmailRow({
             </span>
             {accountChip}
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
-            <span className="ml-auto text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
+            <span className="ml-auto" />
+            <SnoozeBadge email={email} />
+            <span className="text-[11px] text-gray-500 flex-shrink-0 tabular-nums">{receivedTime}</span>
+            <StarToggle email={email} />
             <EmailActionsMenu
               email={email}
               onAddSenderFilter={onAddSenderFilter}
-              onBlockSender={onBlockSender}
+              onHideSenderFromFilters={onHideSenderFromFilters}
               onCreateAttachmentRule={onCreateAttachmentRule}
               onCreateClassificationRule={onCreateClassificationRule}
               onOpenInTab={onOpenInTab}
@@ -281,6 +337,65 @@ export function EmailRow({
       </div>
       {copyMessage && <div className="mt-2 text-xs text-gray-500 pl-12">{copyMessage}</div>}
     </div>
+  );
+}
+
+/** Multi-select checkbox. Unless `alwaysVisible`, hidden until the row is
+ *  hovered or focused. Never opens the row. */
+function RowCheckbox({
+  checked,
+  alwaysVisible,
+  onCheck,
+}: {
+  checked: boolean;
+  alwaysVisible: boolean;
+  onCheck: (opts: { range: boolean }) => void;
+}) {
+  const { t } = useTranslation(['inbox']);
+  return (
+    <input
+      type="checkbox"
+      data-testid="row-select"
+      checked={checked}
+      onClick={(e) => {
+        e.stopPropagation();
+        onCheck({ range: e.shiftKey });
+      }}
+      // State is owned by the selection store; the click above drives it.
+      onChange={() => {}}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={`flex-shrink-0 w-4 h-4 rounded border-gray-300 text-primary-600 cursor-pointer transition-opacity ${
+        alwaysVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+      }`}
+      aria-label={t('inbox:bulk.select')}
+      title={t('inbox:bulk.select')}
+    />
+  );
+}
+
+/** The row's star: toggles the conversation's star without opening it. */
+function StarToggle({ email }: { email: Email }) {
+  const { t } = useTranslation(['inbox']);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const label = email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star');
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        void setThreadsStarred([threadRefOf(email)], !email.isStarred);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      className={`flex-shrink-0 p-0.5 rounded transition-colors ${
+        email.isStarred ? 'text-amber-400 hover:text-amber-500' : 'text-gray-300 hover:text-gray-500'
+      }`}
+      title={label}
+      aria-label={label}
+      aria-pressed={email.isStarred}
+      data-testid="star-toggle"
+    >
+      <StarIcon filled={email.isStarred} className="w-4 h-4" />
+    </button>
   );
 }
 

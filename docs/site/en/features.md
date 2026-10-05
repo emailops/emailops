@@ -1,6 +1,6 @@
 ---
 title: 'Standard Features'
-description: 'The email client itself: accounts, unified inbox, calendar, attachments, search and junk filtering.'
+description: 'The email client itself: accounts, unified inbox, archive, snooze, scheduled send, signatures, calendar, attachments, search, junk filtering, notifications and keyboard shortcuts.'
 weight: 30
 nav:
   unified-inbox: view/inbox
@@ -9,6 +9,9 @@ nav:
   junk-and-bulk-mail: settings/junk
   privacy-and-security-controls: settings/privacy
   interface: settings/appearance
+  undo-send-and-scheduled-send: settings/appearance
+  unsubscribe-and-block-sender: settings/junk
+  keyboard-shortcuts: settings/appearance
 ---
 
 <!-- claim:feat-intro-1 -->
@@ -43,6 +46,91 @@ and drag messages between folders from inside the app.
 no recipients and carries the original message under a *Forwarded message* header with its
 sender, date and recipients, together with the original attachments (up to 20 MB in total).
 It goes out as a new message, so it does not join the recipient's existing conversations.
+
+## Organizing conversations {#organizing-conversations}
+
+<!-- claim:feat-organize-1 -->
+**Archive** takes a conversation out of the inbox without deleting it, and **Move to Inbox**
+brings it back. Both, along with **Mark as unread** and **Star**, are in the reading pane and in
+each conversation's **More actions** (⋮) menu; the star also sits on every row of the list. The
+change is made at your mail provider too, so Gmail or Outlook show the same thing.
+
+<!-- claim:feat-organize-2 -->
+**Starred** in the sidebar lists your starred conversations. **Archive** lists archived mail
+for Gmail and Outlook accounts and in **All accounts**; an IMAP account archives into its own
+Archive folder, which appears with its other folders. Archived mail is only out of the inbox:
+search, the smart filters and the AI features still reach it.
+
+<!-- claim:feat-organize-3 -->
+Tick the box at the start of a row to select it. With one or more selected, a toolbar above the
+list acts on all of them at once — archive, snooze, delete, mark as read or unread, star — and
+**Clear selection** ends it. Accounts with folders of their own also get **Move to folder**.
+
+<!-- claim:feat-organize-4 -->
+Archiving or deleting removes the conversations from the list at once and shows a notice with
+**Undo** for 6 seconds. Your mail provider is only told when those seconds are up (or sooner, if
+you archive or delete something else or open another view), so Undo simply puts them back.
+
+<!-- claim:feat-organize-5 -->
+When the conversation you are reading leaves the list — archived, deleted, snoozed, or moved to
+Spam — the next one opens. **Settings → Appearance → After archiving or deleting** chooses
+between the next conversation, the previous one, or going back to the list. Marking a
+conversation as unread always goes back to the list.
+
+## Snooze {#snooze}
+
+<!-- claim:feat-snooze-1 -->
+**Snooze** hides a conversation from the inbox until a time you choose: later today, tomorrow,
+this weekend, next week, or a date and time you pick. It is offered in the reading pane, the
+row's ⋮ menu and the selection toolbar.
+
+<!-- claim:feat-snooze-2 -->
+Snoozed conversations are listed under **Snoozed** in the sidebar, soonest first, where
+**Unsnooze** brings one back early. When the time comes, the conversation returns to the top of
+the inbox marked unread. A new message in a snoozed conversation brings it back straight away.
+
+<!-- claim:feat-snooze-3 -->
+Snoozing is kept on this computer only: other mail apps keep showing the conversation in the
+inbox. Conversations wake while EmailOps is running; one whose time passed while the app was
+closed comes back the next time you open it.
+
+## Undo send and scheduled send {#undo-send-and-scheduled-send}
+
+<!-- claim:feat-send-1 -->
+After you press **Send**, the message waits for a few seconds with an **Undo** notice; Undo
+takes it back and reopens it for editing. The wait is set in **Settings → Appearance → Undo
+send**: off, 5, 10, 20 or 30 seconds, 10 by default. EmailOps has to stay open until the message
+has gone.
+
+<!-- claim:feat-send-2 -->
+The arrow next to **Send** opens **Schedule send**: tomorrow morning, tomorrow afternoon, Monday
+morning, or a date and time you pick.
+
+<!-- claim:feat-send-3 -->
+Messages waiting to go out are listed under **Scheduled** in the sidebar, where you can **Send
+now**, **Edit** or **Delete** each one. A scheduled message only goes out while EmailOps is open;
+one whose time passed while the app was closed is sent the next time you open it. A message
+that could not be sent stays there marked **Not sent**, with **Retry**: EmailOps never resends
+on its own.
+## Signatures {#signatures}
+
+<!-- claim:feat-signatures-1 -->
+Each account has its own signature, set in **Settings → Signatures**. Two switches decide where
+it goes: **Insert in new messages** and **Insert in replies and forwards**. In a new message or a
+reply it sits below your text; in a forward, above the forwarded message. It is part of the
+message body, so you can change or delete it in any message before sending.
+
+<!-- claim:feat-signatures-2 -->
+**Add image** puts a logo or a picture of your handwritten signature into it. PNG, JPEG, GIF and
+WebP are accepted; SVG and other files are refused with the reason. A wide image is scaled down
+to 600 px, each image may be 200 KB at most and the whole signature 512 KB. Gmail accounts also
+offer **Import from Gmail**, which copies the signature Gmail has for that address into the
+editor.
+
+<!-- claim:feat-signatures-3 -->
+In the plain-text version of a message, a signature that ends it is preceded by the standard
+`-- ` line, so other mail apps can recognise it. When the account has a signature for that kind
+of message, AI drafts leave your name and contact details out and let the signature sign.
 
 ## Smart filters
 
@@ -84,8 +172,8 @@ The view collects attachments through **rules**, so it starts empty. Click **Man
 
 <!-- claim:feat-attachments-view-7 -->
 Every pattern you fill in must match. Rules run on new mail as it syncs; tick **Apply to existing
-emails after creating** to collect from the mail you already have. Rules reach the inbox, Sent and
-your own folders, never Spam or Trash. Select attachments to download them together to your
+emails after creating** to collect from the mail you already have. Rules reach the inbox, Sent, the
+archive and your own folders, never Spam or Trash. Select attachments to download them together to your
 Downloads folder.
 
 <!-- claim:feat-attachments-view-8 -->
@@ -130,7 +218,41 @@ over time. You decide what happens to flagged mail:
 
 <!-- claim:feat-junk-bulk-4 -->
 Neither option moves or deletes anything on the server; only an explicit **Confirm junk**
-does. An optional impersonation/phishing warning is available and off by default.
+or **Block sender** does. An optional impersonation/phishing warning is available and off by default.
+
+## Unsubscribe and block sender {#unsubscribe-and-block-sender}
+
+<!-- claim:feat-unsubscribe-1 -->
+A newsletter or mailing-list message that says how to leave the list shows **Unsubscribe** next
+to its sender. Before anything is sent, a confirmation says exactly what will happen: a request
+sent straight to the sender's server (not through your mail provider), an unsubscribe email sent
+from your account, or the sender's own page opened in your browser.
+
+<!-- claim:feat-block-sender-1 -->
+**Block sender**, in a conversation's ⋮ menu, sends that sender's new mail to Spam in this
+account and reports it to your mail provider as spam. **Also move their existing messages to
+Spam** files what is already there, and the conversation shows that the sender is blocked, with
+**Unblock** at hand.
+
+<!-- claim:feat-block-sender-2 -->
+**Settings → Junk → Blocked senders** lists everyone you blocked, with **Unblock**, which can
+also bring their messages back from Spam to the inbox. The ⋮ menu's **Hide from smart filters**
+is a different thing: it only removes the sender from the sidebar's smart filters.
+
+## New-mail notifications {#new-mail-notifications}
+
+<!-- claim:feat-notifications-1 -->
+EmailOps shows a desktop notification when new mail arrives in your inbox, and when a snoozed
+conversation comes back — never for an account's first sync, older mail, mail you already
+read, junk or blocked senders. More than three new messages at once become a single summary.
+Clicking a notification brings EmailOps to the front; it does not open the message.
+
+<!-- claim:feat-notifications-2 -->
+**Settings → Notifications** has the main switch, one switch per account, the **Notification
+content** (sender and subject, or **Hide content**, which shows only the account) and **Only
+when EmailOps is not focused**; all are on by default, with sender and subject shown. The message
+text is never shown, and while the app is locked with the main password neither are the sender
+and subject.
 
 ## Privacy and security controls {#privacy-and-security-controls}
 
@@ -145,3 +267,24 @@ until you allow them, and credentials live in the system keyring. All of it is c
 Split or full-width inbox layout, and a UI available in English, Spanish, French and German.
 The AI's output language is set separately, so you can read the interface in one language and
 have replies drafted in another.
+
+## Keyboard shortcuts {#keyboard-shortcuts}
+
+<!-- claim:feat-shortcuts-1 -->
+Press `?` anywhere outside a text field to see every shortcut. They follow Gmail's:
+
+| Keys | Action |
+|---|---|
+| `j` / `k` | next / previous conversation |
+| `Enter` or `o`, `u` | open the conversation, back to the list |
+| `x` | select or deselect the conversation |
+| `e`, `#`, `s`, `b` | archive, delete, star, snooze |
+| `Shift+U` / `Shift+I` | mark as unread / read |
+| `c`, `r`, `a`, `f` | new message, reply, reply all, forward |
+| `g` then `i`, `s`, `b`, `a`, `l` | go to Inbox, Starred, Snoozed, Archive, Scheduled |
+| `/` | search |
+
+<!-- claim:feat-shortcuts-2 -->
+Shortcuts pause while you type and while a dialog or menu is open. The buttons they stand for
+name their key in the tooltip, as in "Archive (E)". **Settings → Appearance → Keyboard
+shortcuts** turns them off, and **Show the list** opens the same overview as `?`.

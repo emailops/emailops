@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { PromptInfo } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useOverlay } from '@/stores/overlayStore';
 
 // ── Reset confirmation modal ───────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ function ResetConfirmModal({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   return (
     <div

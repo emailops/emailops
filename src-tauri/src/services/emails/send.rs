@@ -320,7 +320,7 @@ pub async fn send_reply(
 }
 
 /// Reject a new message that must never reach a provider.
-fn validate_new_email(to_emails: &[String], subject: &str) -> Result<()> {
+pub(crate) fn validate_new_email(to_emails: &[String], subject: &str) -> Result<()> {
     // Guard: at least one recipient required.
     if to_emails.is_empty() {
         return Err(AppError::InvalidInput(
@@ -471,6 +471,103 @@ pub async fn send_new_email(
         spawn_authoritative_refresh(Arc::clone(db), provider, provider_message_id, account.email.clone());
     }
     Ok(account_id.to_string())
+}
+
+/// Build the outgoing body from what a composer sends. `body_html`, when
+/// present, is sanitized here — frontends are not trusted to produce safe
+/// HTML, even though the compose editor only emits an allowlisted subset.
+///
+/// `inline_images` entries are normalized: each is forced to
+/// `is_inline = true` and must carry a non-empty `content_id`, otherwise the
+/// `cid:` references in the HTML body would dangle.
+pub fn outgoing_body(
+    body: String,
+    body_html: Option<String>,
+    inline_images: Vec<EmailAttachment>,
+) -> Result<EmailBody> {
+    let html = body_html.and_then(|h| {
+        let trimmed = h.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(super::sanitize_outgoing_html(trimmed))
+        }
+    });
+    let mut inline = inline_images;
+    for att in &mut inline {
+        att.is_inline = true;
+        if att.content_id.as_deref().map(str::is_empty).unwrap_or(true) {
+            return Err(AppError::InvalidInput("Inline image is missing contentId".to_string()));
+        }
+    }
+    if html.is_none() && !inline.is_empty() {
+        return Err(AppError::InvalidInput("Inline images require an HTML body".to_string()));
+    }
+    Ok(EmailBody {
+        text: body,
+        html,
+        inline_images: inline,
+        // Footer language is resolved from the user's UI preference in the send
+        // service; default here keeps this builder free of DB access.
+        language: crate::services::i18n::Language::default(),
+        append_footer: true,
+    })
+}
+
+/// Send a message the outbox held back (undo window, scheduled send) through
+/// the same delivery path as an immediate send: a reply goes through
+/// `deliver_reply` (threading headers from its parent), anything else through
+/// `deliver_new_email`; both store the optimistic Sent copy. Returns the
+/// thread the message landed in when it is a reply.
+pub async fn send_outgoing(
+    db: &Arc<Database>,
+    message: &crate::models::outbox::OutgoingMessage,
+    provider: Box<dyn EmailProvider>,
+) -> Result<Option<String>> {
+    let body = outgoing_body(
+        message.body.clone(),
+        message.body_html.clone(),
+        message.inline_images.clone(),
+    )?;
+    let account = db
+        .get_account(&message.account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", message.account_id)))?;
+    let (meta, thread_id) = match message.reply_to_email_id.as_deref() {
+        Some(email_id) => {
+            let thread_id = db.get_email(email_id)?.map(|e| e.thread_id);
+            let meta = deliver_reply(
+                db,
+                email_id,
+                &body,
+                Some(&message.account_id),
+                Some(message.to.clone()),
+                Some(message.cc.clone()),
+                Some(&message.subject),
+                message.attachments.clone(),
+                provider.as_ref(),
+            )
+            .await?;
+            (meta, thread_id)
+        }
+        None => {
+            let meta = deliver_new_email(
+                db,
+                &message.account_id,
+                message.to.clone(),
+                message.cc.clone(),
+                &message.subject,
+                &body,
+                message.attachments.clone(),
+                provider.as_ref(),
+            )
+            .await?;
+            (meta, None)
+        }
+    };
+    if let Some(provider_message_id) = meta.provider_message_id {
+        spawn_authoritative_refresh(Arc::clone(db), provider, provider_message_id, account.email.clone());
+    }
+    Ok(thread_id)
 }
 
 // The production entry points take an `AppHandle`, which only the headless

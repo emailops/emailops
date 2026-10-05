@@ -12,8 +12,10 @@ Launch the app against it with `make demo` (sets EMAILOPS_DATA_DIR).
 
 What it does
 ------------
-1. Copies the *schema only* from the current production DB into a fresh demo DB
-   so the demo always matches whatever the app currently expects.
+1. Builds the schema by running this checkout's own migrations (the `init_db`
+   cargo example opens a fresh DB the way the app does), so the demo matches
+   whatever the branch it runs on expects. `--prod-db PATH` copies the schema
+   from an existing DB instead (the old behaviour; only when asked for).
 2. Populates it with synthetic-but-plausible founder-flavored data:
    - 2 IMAP mail accounts plus a credential-less Gmail account that owns the demo calendar
    - ~180 emails across realistic SaaS/customer/investor/newsletter senders
@@ -26,7 +28,6 @@ Run:
     uv run scripts/generate_demo_db.py
     # or override targets:
     uv run scripts/generate_demo_db.py \
-        --prod-db "$HOME/Library/Application Support/com.emailops.app/emailops.db" \
         --demo-db "$HOME/Library/Application Support/com.emailops.app-demo/emailops.db"
 """
 
@@ -51,7 +52,8 @@ from pathlib import Path
 from typing import Iterable
 
 HOME = Path.home()
-DEFAULT_PROD_DB = HOME / "Library/Application Support/com.emailops.app/emailops.db"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MIGRATIONS_DIR = REPO_ROOT / "src-tauri" / "migrations"
 DEFAULT_DEMO_DIR = HOME / "Library/Application Support/com.emailops.app-demo"
 DEFAULT_DEMO_DB = DEFAULT_DEMO_DIR / "emailops.db"
 # Spanish demo lives in its own data dir so it never clobbers the English one
@@ -1831,18 +1833,74 @@ def _is_shadow_table(name: str, virtual_tables: set[str]) -> bool:
     return any(name.startswith(vt + "_") for vt in virtual_tables)
 
 
+_MIGRATION_FILE = re.compile(r"^V(\d+)__.+\.sql$")
+
+
+def latest_migration_version(migrations_dir: Path = MIGRATIONS_DIR) -> int:
+    """Highest refinery version among `V<NNN>__<name>.sql` in `migrations_dir`."""
+    versions = [int(m.group(1)) for f in migrations_dir.iterdir() if (m := _MIGRATION_FILE.match(f.name))]
+    if not versions:
+        raise SystemExit(f"no migrations found in {migrations_dir}")
+    return max(versions)
+
+
+def _reset_demo_db(demo_db: Path) -> None:
+    demo_db.parent.mkdir(parents=True, exist_ok=True)
+    for path in (demo_db, demo_db.with_suffix(".db-shm"), demo_db.with_suffix(".db-wal")):
+        if path.exists():
+            path.unlink()
+
+
+def init_db_command(data_dir: Path) -> list[str]:
+    """The `init_db` example: opens `<data_dir>/emailops.db` the way the app
+    does (every embedded migration, the vec0 tables, the FTS index). No default
+    features, so it never builds llama.cpp."""
+    return [
+        "cargo", "run", "--quiet", "--no-default-features",
+        "--manifest-path", str(REPO_ROOT / "src-tauri" / "Cargo.toml"),
+        "--example", "init_db", "--", str(data_dir),
+    ]
+
+
+def migrate_schema(demo_db: Path, run=subprocess.run) -> int:
+    """Give `demo_db` the schema of this checkout's migrations; returns its version.
+
+    The app's own migration runner writes the schema and the
+    `refinery_schema_history` rows (with the checksums refinery checks on every
+    later open), so nothing here re-implements either. The DB is built in a
+    scratch dir and copied with SQLite's backup API, which carries the vec0
+    tables over without Python having to load sqlite-vec.
+    """
+    import tempfile
+
+    expected = latest_migration_version()
+    with tempfile.TemporaryDirectory(prefix="emailops-demo-schema-") as tmp:
+        scratch = Path(tmp) / "data"
+        cmd = init_db_command(scratch)
+        print(f"[demo-db] migrating a fresh DB: {' '.join(cmd)}")
+        run(cmd, check=True, cwd=str(REPO_ROOT), stdout=subprocess.PIPE, text=True)
+        src = sqlite3.connect(str(scratch / "emailops.db"))
+        try:
+            version = src.execute("SELECT MAX(version) FROM refinery_schema_history").fetchone()[0]
+            if version != expected:
+                raise SystemExit(
+                    f"init_db migrated to V{version}, but {MIGRATIONS_DIR} goes up to V{expected:03d}"
+                )
+            _reset_demo_db(demo_db)
+            dst = sqlite3.connect(str(demo_db))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+    return expected
+
+
 def copy_schema(prod_db: Path, demo_db: Path) -> None:
     if not prod_db.exists():
-        raise SystemExit(
-            f"prod DB not found at {prod_db}. "
-            "Run the real app at least once so the schema exists, then retry."
-        )
-    demo_db.parent.mkdir(parents=True, exist_ok=True)
-    if demo_db.exists():
-        demo_db.unlink()
-    for sidecar in (demo_db.with_suffix(".db-shm"), demo_db.with_suffix(".db-wal")):
-        if sidecar.exists():
-            sidecar.unlink()
+        raise SystemExit(f"schema source DB not found at {prod_db}")
+    _reset_demo_db(demo_db)
 
     # Pull schema from sqlite_master so we can filter out:
     #   - sqlite_sequence (reserved name, auto-managed by SQLite)
@@ -2848,7 +2906,15 @@ FIXTURE_JUNK_SUBJECT = "Tessellate Hosting: payment failed, plan suspended"
 FIXTURE_REMOTE_IMAGE_SUBJECT = "Harborlight Weekly: shipping notes"
 FIXTURE_ATTACHMENT_FILENAME = "larkspur-renewal-terms.html"
 FIXTURE_SHORTCUT_FILENAME = "larkspur-client-portal.webloc"
+FIXTURE_IMAGE_FILENAME = "larkspur-dock-photo.png"
+# A real 48x32 PNG (flat slate blue), so the image viewer decodes it.
+FIXTURE_IMAGE_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAN0lEQVR4nO3OQQ0AMAgEMGQjAiVTORccjyYV0Op5p1R8ICQkJJQeCAkJ"
+    "CaUHQkJCQumBkJDQsg+AVxSX8/T1ZwAAAABJRU5ErkJggg=="
+)
 FIXTURE_TABLE_DRAFT_SUBJECT = "Milestone dates (table)"
+FIXTURE_STARRED_SUBJECT = "Corrected Larkspur Freight renewal quote"
+FIXTURE_ARCHIVED_SUBJECT = "Studio key handover confirmed"
 
 
 def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> int:
@@ -2859,13 +2925,13 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
     added = 0
 
     def email(sender_name: str, sender_email: str, subject: str, body: str, days_ago: int,
-              html_body: str | None = None) -> tuple[str, bool]:
-        email_id = demo_id("demo_", account.id, sender_email, subject, "inbox", body, length=16)
+              html_body: str | None = None, mailbox: str = "inbox") -> tuple[str, bool]:
+        email_id = demo_id("demo_", account.id, sender_email, subject, mailbox, body, length=16)
         if conn.execute("SELECT 1 FROM emails WHERE id = ?", (email_id,)).fetchone():
             return email_id, False
         insert_email(
             conn, account=account, sender_name=sender_name, sender_email=sender_email, subject=subject,
-            body=body, timestamp=now - days_ago * 86400, is_read=True, mailbox="inbox", category="primary",
+            body=body, timestamp=now - days_ago * 86400, is_read=True, mailbox=mailbox, category="primary",
             html_body=html_body,
         )
         insert_tags(conn, email_id, subject, body, sender_email)
@@ -2880,11 +2946,13 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
     added += new
     conn.execute("UPDATE emails SET is_deleted = 1 WHERE id = ?", (trashed_id,))
     quote_id, new = email(
-        "Ines Okafor", "ines@larkspur-freight.example", "Corrected Larkspur Freight renewal quote",
+        "Ines Okafor", "ines@larkspur-freight.example", FIXTURE_STARRED_SUBJECT,
         "Hi Ulises,\n\nApologies, my earlier message had the wrong figure, please delete it. The renewal "
         "quote for the Larkspur Freight support retainer is 4200 EUR for twelve months. The terms are "
         "attached as a web page.\n\nInes", 8)
     added += new
+    # The owner starred the correction (the Starred view and the star toggle).
+    conn.execute("UPDATE emails SET is_starred = 1 WHERE id = ?", (quote_id,))
 
     # The real renewal notice and a lookalike the owner marked as junk. The
     # detector only found it suspicious (below the junk band), so it is the
@@ -2915,11 +2983,31 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
     # An email whose HTML loads an image from the sender's server.
     newsletter = ("This week: customs delays at two northern ports, and a new rate card for "
                   "refrigerated freight.")
-    _, new = email(
+    newsletter_id, new = email(
         "Harborlight Weekly", "news@harborlight-weekly.example", FIXTURE_REMOTE_IMAGE_SUBJECT, newsletter, 3,
         html_body='<div style="font-family: sans-serif; font-size: 14px;">'
                   '<img src="https://images.harborlight-weekly.example/header.png" alt="Harborlight Weekly" '
                   f'width="600" height="120"><p>{newsletter}</p></div>')
+    added += new
+    # Its bulk-mail headers, as sync captures them: RFC 8058 one-click
+    # unsubscribe, so the Unsubscribe dialog offers the one-click path. Every
+    # host is `.example` (RFC 2606), so nothing can ever be posted anywhere.
+    conn.execute(
+        """INSERT OR IGNORE INTO email_headers
+           (email_id, account_id, from_raw, list_id, list_unsubscribe, list_unsubscribe_post, precedence,
+            received_count, captured_at)
+           VALUES (?, ?, ?, ?, ?, 'List-Unsubscribe=One-Click', 'bulk', 1, ?)""",
+        (newsletter_id, account.id, "Harborlight Weekly <news@harborlight-weekly.example>",
+         "<weekly.harborlight-weekly.example>",
+         "<https://harborlight-weekly.example/unsubscribe?u=demo-reader>, "
+         "<mailto:unsubscribe@harborlight-weekly.example?subject=unsubscribe>", now),
+    )
+
+    # A message the owner archived (the Archive view, and Move to Inbox).
+    _, new = email(
+        "Front Desk", "frontdesk@quayside-studios.example", FIXTURE_ARCHIVED_SUBJECT,
+        "Hi Ulises,\n\nThe spare studio key was handed over this morning and the register is "
+        "signed. Nothing else needed.\n\nFront Desk", 12, mailbox="archive")
     added += new
 
     # Attachments of types that can run code when opened. The web page is kept
@@ -2938,6 +3026,10 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
         (FIXTURE_ATTACHMENT_FILENAME, "text/html", f"INLINE::{FIXTURE_ATTACHMENT_FILENAME}", len(page), None,
          base64.b64encode(page.encode("utf-8")).decode("ascii")),
         (FIXTURE_SHORTCUT_FILENAME, "application/octet-stream", "", len(shortcut), relative, None),
+        # An image, which opens in the in-app viewer (the sweep checks that no
+        # conversation shortcut acts behind it).
+        (FIXTURE_IMAGE_FILENAME, "image/png", f"INLINE::{FIXTURE_IMAGE_FILENAME}",
+         len(base64.b64decode(FIXTURE_IMAGE_PNG_B64)), None, FIXTURE_IMAGE_PNG_B64),
     ):
         conn.execute(
             """INSERT OR IGNORE INTO email_attachment_meta
@@ -3042,10 +3134,11 @@ def insert_memory_facts(conn: sqlite3.Connection, locale: Locale) -> None:
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prod-db", type=Path, default=DEFAULT_PROD_DB,
-                        help=f"Schema source (default: {DEFAULT_PROD_DB})")
+    parser.add_argument("--prod-db", type=Path, default=None,
+                        help="Copy the schema from this existing DB instead of running this "
+                             "checkout's migrations (default: run the migrations)")
     parser.add_argument("--demo-db", type=Path, default=None,
                         help=f"Demo DB output path (default depends on --lang: "
                              f"{DEFAULT_DEMO_DB} for en, {DEFAULT_DEMO_DB_ES} for es)")
@@ -3057,7 +3150,11 @@ def main() -> int:
     parser.add_argument("--refresh-calendar", action="store_true",
                         help="Only re-anchor the demo calendar events to now in an existing demo DB "
                              "(the calendar evals ask for 'tomorrow 10:00'); everything else is left alone")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     locale = get_locale(args.lang)
     demo_db = args.demo_db or (DEFAULT_DEMO_DB if args.lang == "en" else DEFAULT_DEMO_DB_ES)
@@ -3092,10 +3189,14 @@ def main() -> int:
         return 0
 
     print(f"[demo-db] lang:          {args.lang}")
-    print(f"[demo-db] schema source: {args.prod_db}")
+    print(f"[demo-db] schema source: {args.prod_db or 'migrations of this checkout'}")
     print(f"[demo-db] writing to:    {demo_db}")
 
-    copy_schema(args.prod_db, demo_db)
+    if args.prod_db is not None:
+        copy_schema(args.prod_db, demo_db)
+    else:
+        version = migrate_schema(demo_db)
+        print(f"[demo-db] schema at migration V{version:03d}")
 
     # Wipe the per-account attachments tree so re-running the script doesn't
     # leave orphan PDFs from previous invocations.

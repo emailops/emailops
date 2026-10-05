@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { ArchiveIcon, ClockIcon, InboxIcon, StarIcon } from '@/components/common/MailIcons';
+import { SnoozeOptions } from '@/components/Inbox/SnoozePicker';
 import type { MailboxView } from '@/lib/api';
 import * as api from '@/lib/api';
 import { computeDropdownTop } from '@/lib/dropdownPosition';
 import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
-import { useEmailStore } from '@/stores/emailStore';
+import { isSnoozed, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
-import { useLogStore } from '@/stores/logStore';
+import { useOverlay } from '@/stores/overlayStore';
+import { useSenderStore } from '@/stores/senderStore';
 import type { Email } from '@/types';
 
 export interface RulePrefill {
@@ -20,7 +23,7 @@ export interface RulePrefill {
 export interface EmailActionsMenuProps {
   email: Email;
   onAddSenderFilter?: (senderEmail: string) => void;
-  onBlockSender?: (senderEmail: string) => void;
+  onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
   onCreateClassificationRule?: (prefill: RulePrefill) => void;
   onOpenInTab?: (email: Email) => void;
@@ -75,7 +78,7 @@ export function useMoveTargets(email: Email): {
 export function EmailActionsMenu({
   email,
   onAddSenderFilter,
-  onBlockSender,
+  onHideSenderFromFilters,
   onCreateAttachmentRule,
   onCreateClassificationRule,
   onOpenInTab,
@@ -84,14 +87,22 @@ export function EmailActionsMenu({
 }: EmailActionsMenuProps) {
   const { t } = useTranslation(['inbox']);
   const updateEmail = useEmailStore((s) => s.updateEmail);
-  const deleteEmailFromStore = useEmailStore((s) => s.deleteEmail);
+  const deleteThreads = useEmailStore((s) => s.deleteThreads);
   const moveEmailFromStore = useEmailStore((s) => s.moveEmail);
-  const addLog = useLogStore((s) => s.addLog);
+  const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
+  const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
+  const archiveThreads = useEmailStore((s) => s.archiveThreads);
+  const moveThreadsToInbox = useEmailStore((s) => s.moveThreadsToInbox);
+  const snoozeThreads = useEmailStore((s) => s.snoozeThreads);
+  const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
+  const snoozed = useEmailStore((s) => isSnoozed(s.snoozes, email));
+  const openSenderDialog = useSenderStore((s) => s.openDialog);
   const { moveTargets } = useMoveTargets(email);
-  const [isDeleting, setIsDeleting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  /** 'move' shows the folder-picker page of the menu. */
-  const [menuView, setMenuView] = useState<'main' | 'move'>('main');
+  useOverlay(menuOpen);
+  /** 'move' shows the folder-picker page of the menu, 'snooze' the snooze
+   *  times. */
+  const [menuView, setMenuView] = useState<'main' | 'move' | 'snooze'>('main');
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuDropdownRef = useRef<HTMLDivElement>(null);
@@ -108,8 +119,17 @@ export function EmailActionsMenu({
         setMenuOpen(false);
       }
     };
+    // The global shortcuts stand down while the menu is open (useOverlay), so
+    // Escape has to be handled here.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [menuOpen]);
 
   // The menu first renders below the button (estimate set on click), then —
@@ -158,17 +178,39 @@ export function EmailActionsMenu({
         createPortal(
           <div
             ref={menuDropdownRef}
-            className="fixed w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
+            className="fixed w-max min-w-56 max-w-[min(24rem,calc(100vw-16px))] bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-[100] max-h-[calc(100vh-8px)] overflow-y-auto"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
-            {menuView === 'move' ? (
+            {menuView === 'snooze' ? (
               <>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     setMenuView('main');
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-500 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  {t('inbox:snooze.back')}
+                </button>
+                <div className="border-t border-gray-100 my-1" />
+                <SnoozeOptions
+                  onPick={(until) => {
+                    setMenuOpen(false);
+                    void snoozeThreads([threadRefOf(email)], until);
+                  }}
+                />
+              </>
+            ) : menuView === 'move' ? (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuView('main');
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-500 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -189,7 +231,7 @@ export function EmailActionsMenu({
                       }
                     }}
                     title={target.label}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg
                       className="w-4 h-4 text-gray-400 shrink-0"
@@ -226,7 +268,7 @@ export function EmailActionsMenu({
                       onChatAboutThread(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -246,7 +288,7 @@ export function EmailActionsMenu({
                       onOpenInTab(email);
                       setMenuOpen(false);
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -260,13 +302,37 @@ export function EmailActionsMenu({
                   </button>
                 )}
                 {(onChatAboutThread || onOpenInTab) && <div className="border-t border-gray-100 my-1" />}
+                <ThreadActionItems
+                  email={email}
+                  onPick={(run) => {
+                    setMenuOpen(false);
+                    void run();
+                  }}
+                  onRead={(read) => setThreadsRead([threadRefOf(email)], read)}
+                  onStar={(starred) => setThreadsStarred([threadRefOf(email)], starred)}
+                  onArchive={() => archiveThreads([threadRefOf(email)])}
+                  onMoveToInbox={() => moveThreadsToInbox([threadRefOf(email)])}
+                  snoozed={snoozed}
+                  onSnooze={() => setMenuView('snooze')}
+                  onUnsnooze={() => unsnoozeThreads([threadRefOf(email)])}
+                />
+                <div className="border-t border-gray-100 my-1" />
+                {/* The sender items act on this address: shown once here rather
+                    than beside each label, where it squeezed them onto two lines. */}
+                <div
+                  data-testid="menu-sender"
+                  title={email.senderEmail}
+                  className="px-3 pt-1 pb-0.5 text-xs text-gray-400 truncate"
+                >
+                  {email.senderEmail}
+                </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     onAddSenderFilter?.(email.senderEmail);
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -277,27 +343,48 @@ export function EmailActionsMenu({
                     />
                   </svg>
                   {t('inbox:emailRow.addSenderFilter')}
-                  <span className="ml-auto text-xs text-gray-400 truncate max-w-[120px]">{email.senderEmail}</span>
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onBlockSender?.(email.senderEmail);
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-                    />
-                  </svg>
-                  {t('inbox:emailRow.blockSender')}
-                  <span className="ml-auto text-xs text-red-400 truncate max-w-[120px]">{email.senderEmail}</span>
-                </button>
+                {onHideSenderFromFilters && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onHideSenderFromFilters(email.senderEmail);
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                      />
+                    </svg>
+                    {t('inbox:emailRow.hideFromFilters')}
+                  </button>
+                )}
+                {!email.isSent && (
+                  <button
+                    data-testid="menu-block-sender"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openSenderDialog({ type: 'block', accountId: email.accountId, address: email.senderEmail });
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-red-600 hover:bg-red-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                      />
+                    </svg>
+                    {t('inbox:emailRow.blockSender')}
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -308,7 +395,7 @@ export function EmailActionsMenu({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -330,7 +417,7 @@ export function EmailActionsMenu({
                     });
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -353,7 +440,7 @@ export function EmailActionsMenu({
                     }
                     setMenuOpen(false);
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -381,7 +468,7 @@ export function EmailActionsMenu({
                       onStatus('Download failed');
                     }
                   }}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                 >
                   <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -399,7 +486,7 @@ export function EmailActionsMenu({
                       e.stopPropagation();
                       setMenuView('move');
                     }}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                   >
                     <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path
@@ -422,25 +509,15 @@ export function EmailActionsMenu({
                 )}
                 <div className="border-t border-gray-100 my-1" />
                 <button
-                  onClick={async (e) => {
+                  onClick={(e) => {
                     e.stopPropagation();
                     setMenuOpen(false);
-                    setIsDeleting(true);
-                    try {
-                      const thread = await api.getThread(email.accountId, email.threadId);
-                      for (const t of thread) {
-                        await deleteEmailFromStore(t.accountId, t.id);
-                      }
-                    } catch (err) {
-                      // Deleting now also removes the message at the provider,
-                      // so this can fail (offline, expired credentials) with
-                      // nothing removed — say so instead of silently resetting.
-                      addLog('error', 'sync', `Delete failed: ${err}`);
-                      setIsDeleting(false);
-                    }
+                    // The row leaves at once; the provider call waits out the
+                    // undo window, and a refusal brings the row back with a
+                    // toast (emailStore.deleteThreads).
+                    void deleteThreads([threadRefOf(email)]);
                   }}
-                  disabled={isDeleting}
-                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
+                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-red-600 hover:bg-red-50 flex items-center gap-2 disabled:opacity-50"
                 >
                   <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -458,5 +535,121 @@ export function EmailActionsMenu({
           document.body,
         )}
     </div>
+  );
+}
+
+interface ThreadActionItemsProps {
+  email: Email;
+  /** Close the menu and run the chosen action. */
+  onPick: (run: () => Promise<void>) => void;
+  onRead: (read: boolean) => Promise<void>;
+  onStar: (starred: boolean) => Promise<void>;
+  onArchive: () => Promise<void>;
+  onMoveToInbox: () => Promise<void>;
+  /** The row's conversation is snoozed (the Snoozed view lists it). */
+  snoozed: boolean;
+  /** Open the snooze-times page of the menu. */
+  onSnooze: () => void;
+  onUnsnooze: () => Promise<void>;
+}
+
+/** Read/unread, star, snooze (or unsnooze) and archive (or its inverse, move
+ *  to inbox) for the row's conversation. Errors are reported by the store
+ *  (toast + log). */
+function ThreadActionItems({
+  email,
+  onPick,
+  onRead,
+  onStar,
+  onArchive,
+  onMoveToInbox,
+  snoozed,
+  onSnooze,
+  onUnsnooze,
+}: ThreadActionItemsProps) {
+  const { t } = useTranslation(['inbox']);
+  const itemClass =
+    'w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2';
+  return (
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(() => onRead(!email.isRead));
+        }}
+        className={itemClass}
+      >
+        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+          />
+        </svg>
+        {email.isRead ? t('inbox:emailRow.markAsUnread') : t('inbox:emailRow.markAsRead')}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPick(() => onStar(!email.isStarred));
+        }}
+        className={itemClass}
+      >
+        <StarIcon filled={email.isStarred} className="w-4 h-4 text-gray-400" />
+        {email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star')}
+      </button>
+      {snoozed ? (
+        <button
+          data-testid="row-unsnooze"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onUnsnooze);
+          }}
+          className={itemClass}
+        >
+          <ClockIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:snooze.unsnooze')}
+        </button>
+      ) : (
+        email.mailbox === 'inbox' && (
+          <button
+            data-testid="row-snooze"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSnooze();
+            }}
+            className={itemClass}
+          >
+            <ClockIcon className="w-4 h-4 text-gray-400" />
+            {t('inbox:snooze.button')}
+          </button>
+        )
+      )}
+      {email.mailbox === 'inbox' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onArchive);
+          }}
+          className={itemClass}
+        >
+          <ArchiveIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:emailRow.archive')}
+        </button>
+      )}
+      {email.mailbox === 'archive' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(onMoveToInbox);
+          }}
+          className={itemClass}
+        >
+          <InboxIcon className="w-4 h-4 text-gray-400" />
+          {t('inbox:emailRow.moveArchivedToInbox')}
+        </button>
+      )}
+    </>
   );
 }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { useOverlay } from '@/stores/overlayStore';
 import type { Account } from '@/types';
 
 // Microsoft has no per-app revocation, so removing an Outlook account cannot
@@ -87,6 +88,7 @@ export function AccountSettingsDialog({
   onToggleEnabled,
   onDelete,
 }: AccountSettingsDialogProps) {
+  useOverlay();
   const { t } = useTranslation(['modal']);
   const isGmail = account.provider === 'gmail';
   const isImap = account.provider === 'imap';

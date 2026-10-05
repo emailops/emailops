@@ -6,6 +6,7 @@ import type {
   Account,
   AccountDashboard,
   AccountSettings,
+  AccountSignature,
   AiConfig,
   AiModelInfo,
   AiProviderActivity,
@@ -16,6 +17,7 @@ import type {
   AttachmentRule,
   AttachmentRuleSuggestion,
   BackfillStatus,
+  BlockedSender,
   Calendar,
   CalendarEvent,
   CalendarInvite,
@@ -68,6 +70,9 @@ import type {
   RefreshServerTotalResponse,
   ResearchEstimate,
   SendChatResponse,
+  SenderMoveReport,
+  SenderStatus,
+  SignatureInput,
   SmartFilterPref,
   SmartFilterSuggestion,
   StorageStats,
@@ -78,6 +83,7 @@ import type {
   TaskCountsSummary,
   ThreadParticipants,
   ThreadState,
+  UnsubscribeKind,
   UpdateLensInput,
 } from '@/types';
 
@@ -219,6 +225,22 @@ export async function setAccountSettings(accountId: string, settings: AccountSet
   return invoke('set_account_settings', { accountId, settings });
 }
 
+/** The account's email signature (defaults when it never saved one). */
+export async function getAccountSignature(accountId: string): Promise<AccountSignature> {
+  return invoke('get_account_signature', { accountId });
+}
+
+/** Save the account's signature; the backend sanitizes the HTML and returns what it stored. */
+export async function saveAccountSignature(accountId: string, signature: SignatureInput): Promise<AccountSignature> {
+  return invoke('save_account_signature', { accountId, signature });
+}
+
+/** The signature Gmail's own client uses for this account, sanitized and not
+ *  saved. `null` when the provider keeps none (Outlook, IMAP) or none is set. */
+export async function importProviderSignature(accountId: string): Promise<string | null> {
+  return invoke('import_provider_signature', { accountId });
+}
+
 /** Inbox category tabs to show for the given account. Provider-aware:
  *  Gmail returns the user's opt-in list, Outlook returns the fixed
  *  focused/other pair, IMAP returns []. */
@@ -227,8 +249,19 @@ export async function getAvailableCategories(accountId: string): Promise<string[
 }
 
 // Email commands
-/** `folder:<serverPath>` addresses one custom IMAP folder. */
-export type MailboxView = 'inbox' | 'sent' | 'spam' | 'deleted' | `folder:${string}`;
+/** `folder:<serverPath>` addresses one custom IMAP folder. `archive` is mail
+ *  taken out of the inbox (Gmail/Outlook; IMAP files it in its archive
+ *  folder, a `folder:` view); `starred` lists starred mail wherever it is;
+ *  `snoozed` lists snoozed conversations, soonest wake first. */
+export type MailboxView =
+  | 'inbox'
+  | 'sent'
+  | 'spam'
+  | 'deleted'
+  | 'archive'
+  | 'starred'
+  | 'snoozed'
+  | `folder:${string}`;
 
 /** A custom IMAP folder discovered on the server, as stored by sync. */
 export interface Folder {
@@ -283,6 +316,30 @@ export async function moveEmail(accountId: string, emailId: string, targetMailbo
   return invoke('move_email', { accountId, emailId, targetMailbox });
 }
 
+/** A message a bulk move could not move (`AppError` wire shape). Mirrors the
+ *  Rust `MoveFailure` in `services/emails/folders.rs`. */
+export interface MoveFailure {
+  emailId: string;
+  code: string;
+  params: Record<string, string>;
+  message: string;
+}
+
+/** Every id not listed in `failed` was moved. */
+export interface MoveReport {
+  failed: MoveFailure[];
+}
+
+/** Move several messages of one IMAP account to the inbox or a custom folder
+ *  in one call. Never rejects for a per-message failure. */
+export async function moveEmails(
+  accountId: string,
+  emailIds: string[],
+  targetMailbox: MailboxView,
+): Promise<MoveReport> {
+  return invoke('move_emails', { accountId, emailIds, targetMailbox });
+}
+
 export async function getThread(accountId: string, threadId: string): Promise<Email[]> {
   return invoke('get_thread', { accountId, threadId });
 }
@@ -293,6 +350,144 @@ export async function getEmailBody(accountId: string, emailId: string): Promise<
 
 export async function markAsRead(accountId: string, emailId: string): Promise<void> {
   return invoke('mark_as_read', { accountId, emailId });
+}
+
+/** One conversation of one account — thread ids are only unique per account.
+ *  Mirrors `ThreadRef` in `src-tauri/src/services/emails/thread_actions.rs`. */
+export interface ThreadRef {
+  accountId: string;
+  threadId: string;
+}
+
+/** Thread-level mailbox actions, pushed to the provider (Gmail labels, Graph,
+ *  IMAP flags/moves). Mirrors the Rust `ThreadAction`. */
+export type ThreadAction = 'markRead' | 'markUnread' | 'star' | 'unstar' | 'archive' | 'moveToInbox' | 'delete';
+
+/** A thread an action could not be applied to; `code`/`params`/`message` are
+ *  the `AppError` wire shape, so `errorText(failure)` renders it. */
+export interface ThreadActionFailure {
+  accountId: string;
+  threadId: string;
+  code: string;
+  params: Record<string, string>;
+  message: string;
+}
+
+/** Every thread not listed in `failed` was applied. */
+export interface ThreadActionReport {
+  failed: ThreadActionFailure[];
+}
+
+/** Apply `action` to one or many threads. Never rejects for a per-thread
+ *  failure — those come back in the report so the caller can roll back
+ *  exactly the threads that failed. */
+export async function applyThreadAction(threads: ThreadRef[], action: ThreadAction): Promise<ThreadActionReport> {
+  return invoke('apply_thread_action', { threads, action });
+}
+
+/** A snoozed conversation (local state). `wokeAt` is null while it is hidden
+ *  from the inbox, and the wake time once it came back (the inbox then sorts
+ *  it by that time). Times are unix seconds. Mirrors the Rust `ThreadSnooze`. */
+export interface ThreadSnooze {
+  accountId: string;
+  threadId: string;
+  snoozedUntil: number;
+  createdAt: number;
+  wokeAt: number | null;
+}
+
+/** Hide conversations from the inbox until `until` (unix seconds, in the
+ *  future). The report lists conversations that no longer exist. */
+export async function snoozeThreads(threads: ThreadRef[], until: number): Promise<ThreadActionReport> {
+  return invoke('snooze_threads', { threads, until });
+}
+
+/** Bring snoozed conversations back to the inbox now. */
+export async function unsnoozeThreads(threads: ThreadRef[]): Promise<void> {
+  return invoke('unsnooze_threads', { threads });
+}
+
+/** Snooze records of one account, or of every enabled account (`null`). */
+export async function listThreadSnoozes(accountId: string | null): Promise<ThreadSnooze[]> {
+  return invoke('list_thread_snoozes', { accountId: accountId ?? undefined });
+}
+
+// ── Outbox: undo send and scheduled send ────────────────────────────────────
+
+/** A composed message as the outbox stores it (mirrors Rust `OutgoingMessage`).
+ *  `replyToEmailId` set = a reply (threaded on that message); unset = a new
+ *  message, forwards included. */
+export interface OutgoingMessage {
+  accountId: string;
+  replyToEmailId?: string | null;
+  to: string[];
+  cc: string[];
+  /** For a reply, empty = the parent's subject ("Re: …"). */
+  subject: string;
+  /** Plain-text body. */
+  body: string;
+  bodyHtml?: string | null;
+  inlineImages: EmailAttachment[];
+  attachments: EmailAttachment[];
+}
+
+/** When a queued message goes out: after the undo window, or at `sendAt`
+ *  (unix seconds). */
+export type OutboxSchedule = { type: 'undo'; delaySecs: number } | { type: 'at'; sendAt: number };
+
+export type OutboxStatus = 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+
+/** One outbox row (mirrors Rust `OutboxEntry`); times are unix seconds. */
+export interface OutboxEntry {
+  id: string;
+  accountId: string;
+  kind: 'new' | 'reply';
+  replyToEmailId: string | null;
+  origin: 'undo' | 'scheduled';
+  toAddresses: string[];
+  ccAddresses: string[];
+  subject: string;
+  attachmentCount: number;
+  sendAt: number;
+  status: OutboxStatus;
+  attempts: number;
+  lastError: string | null;
+  /** `interrupted`: the app stopped mid-send — it may or may not have gone out. */
+  failureKind: 'error' | 'interrupted' | null;
+  createdAt: number;
+}
+
+/** Payload of the `outbox-updated` event. */
+export interface OutboxUpdated {
+  sent: { id: string; accountId: string; threadId: string | null }[];
+  failed: { id: string; accountId: string; interrupted: boolean; message: string }[];
+}
+
+/** Queue a message for undo send or scheduled send. `draftId` is the
+ *  composer's saved draft: it leaves Drafts once the message is queued. */
+export async function queueOutgoingEmail(
+  message: OutgoingMessage,
+  schedule: OutboxSchedule,
+  draftId?: string,
+): Promise<OutboxEntry> {
+  return invoke('queue_outgoing_email', { message, schedule, draftId });
+}
+
+/** Take a waiting or failed message of `accountId` back (undo / edit /
+ *  delete). Fails with code `outbox_not_pending` once it is being sent, and
+ *  `not_found` for a message of another account. */
+export async function cancelOutboxMessage(accountId: string, id: string): Promise<OutgoingMessage> {
+  return invoke('cancel_outbox_message', { accountId, id });
+}
+
+/** Send a waiting message of `accountId` now, or retry a failed one. */
+export async function sendOutboxMessageNow(accountId: string, id: string): Promise<void> {
+  return invoke('send_outbox_message_now', { accountId, id });
+}
+
+/** Waiting and failed messages of one account, or every enabled one (`null`). */
+export async function listOutbox(accountId: string | null): Promise<OutboxEntry[]> {
+  return invoke('list_outbox', { accountId: accountId ?? undefined });
 }
 
 export async function sendReply(
@@ -1885,12 +2080,49 @@ export async function previewLensExtraction(
 }
 
 /**
- * Confirm a message is junk and file it in the server's Junk folder where the
- * provider supports moves (IMAP today). Resolves to `false` when the account has
- * no server-side Junk folder — the local override is recorded either way.
+ * Confirm a message is junk and file it in the server's Spam/Junk folder
+ * (Gmail `SPAM` label, Outlook Junk Email, the IMAP Junk folder). Resolves to
+ * `false` when the account has no server-side Junk folder — the local override
+ * is recorded either way.
  */
 export async function reportJunkToProvider(accountId: string, emailId: string): Promise<boolean> {
   return invoke('report_junk_to_provider', { accountId, emailId });
+}
+
+/** Sender facts for the reading pane: blocked, unsubscribe option (derived
+ *  from the headers, which stay in the backend), already unsubscribed. */
+export async function getSenderStatus(accountId: string, emailId: string): Promise<SenderStatus> {
+  return invoke('get_sender_status', { accountId, emailId });
+}
+
+/**
+ * Unsubscribe from the list a message came from: a one-click POST to the
+ * list's server, or an email from the receiving account. For a `link` option
+ * the caller opens the page itself first; this only records it. Contacts a
+ * third party — call only after the user confirmed.
+ */
+export async function unsubscribeFromSender(accountId: string, emailId: string): Promise<UnsubscribeKind> {
+  return invoke('unsubscribe_from_sender', { accountId, emailId });
+}
+
+/** Block a sender in one account; with `moveExisting` their inbox and archived
+ *  mail is filed in Spam too. */
+export async function blockSender(
+  accountId: string,
+  address: string,
+  moveExisting: boolean,
+): Promise<SenderMoveReport> {
+  return invoke('block_sender', { accountId, address, moveExisting });
+}
+
+/** Unblock a sender; with `restore` their mail in Spam comes back to the inbox. */
+export async function unblockSender(accountId: string, address: string, restore: boolean): Promise<SenderMoveReport> {
+  return invoke('unblock_sender', { accountId, address, restore });
+}
+
+/** Every blocked sender, or one account's. */
+export async function listBlockedSenders(accountId: string | null): Promise<BlockedSender[]> {
+  return invoke('list_blocked_senders', { accountId });
 }
 
 export async function getJunkConfig(): Promise<JunkConfig> {

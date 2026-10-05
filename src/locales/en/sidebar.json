@@ -9,6 +9,7 @@
   "trash": "Trash",
   "spam": "Spam",
   "starred": "Starred",
+  "snoozed": "Snoozed",
   "search": "Search emails…",
   "compose": "Compose",
   "accounts": "Accounts",
@@ -81,5 +82,7 @@
   "allAccounts": "All accounts",
   "allAccountsFooter": "Viewing all accounts",
   "newLens": "New Lens",
-  "skills": "Skills"
+  "skills": "Skills",
+  "archive": "Archive",
+  "scheduled": "Scheduled"
 }

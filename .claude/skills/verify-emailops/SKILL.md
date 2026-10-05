@@ -208,6 +208,7 @@ perf budgets. Results are attributed to features through `features.json`.
 - **Models.** `VERIFY_EVAL_MODEL=<gguf stem>` selects the chat model the evals run with,
   `VERIFY_JUDGE_MODEL` the judge (defaults to the same). Unset, both fall back to the demo
   DB's `ai_model` preference. The reference run uses `qwen3.6-35b-a3b-ud-q4_k_xl` for both.
+  The judged chat suite is capped at 7200 s; set `VERIFY_EVAL_TIMEOUT=<seconds>` when it needs longer.
 - **Other evals.** `junk` runs `make eval-junk` on `src-tauri/evals/junk/cases` (47 synthetic cases
   plus the false-positive gates); `translation` runs the `translation_eval` example on
   `src-tauri/evals/translation/cases.yaml` with the same model; `lenses` runs `make eval-lenses`

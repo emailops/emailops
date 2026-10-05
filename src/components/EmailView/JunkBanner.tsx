@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import { useEmailStore } from '@/stores/emailStore';
+import { beginLeave, finishLeave } from '@/stores/autoAdvanceStore';
 import { isFlagged, useJunkStore } from '@/stores/junkStore';
 import { useLogStore } from '@/stores/logStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -83,7 +83,6 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
   const loadVerdicts = useJunkStore((s) => s.loadVerdicts);
   const setFeedback = useJunkStore((s) => s.setFeedback);
   const addLog = useLogStore((s) => s.addLog);
-  const selectEmail = useEmailStore((s) => s.selectEmail);
   const addToast = useToastStore((s) => s.addToast);
 
   useEffect(() => {
@@ -107,10 +106,13 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
   // supports it, so the server's own filter learns too — the detector never
   // moves mail on its own, but a move the user asked for is a different thing.
   //
-  // Then it closes the message: having said "yes, this is junk", the user does
-  // not want to keep looking at it. Without this the banner simply stayed put
-  // and the click appeared to do nothing.
+  // Then it leaves the message (the next conversation opens, per the
+  // auto-advance setting): having said "yes, this is junk", the user does not
+  // want to keep looking at it. Without this the banner simply stayed put and
+  // the click appeared to do nothing. What was on screen is captured now, so
+  // a late answer cannot close a conversation the user opened while waiting.
   const handleConfirmJunk = useCallback(async () => {
+    const ticket = beginLeave();
     try {
       const filed = await api.reportJunkToProvider(accountId, emailId);
       // The local override is recorded before the server is contacted, so an
@@ -121,7 +123,7 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
       // action that silently succeeds is indistinguishable from one that did
       // nothing at all.
       addToast({ message });
-      await selectEmail(null);
+      finishLeave(ticket);
     } catch (err) {
       // Never swallow this. The override is already stored, but the user asked
       // for something that did not happen and has to be told — loudly enough to
@@ -130,7 +132,7 @@ export function JunkBanner({ emailId, accountId }: JunkBannerProps) {
       addLog('error', 'system', message);
       addToast({ message, sticky: true });
     }
-  }, [accountId, emailId, addLog, addToast, selectEmail, t]);
+  }, [accountId, emailId, addLog, addToast, t]);
 
   if (!isFlagged(verdict) || !verdict) return null;
 

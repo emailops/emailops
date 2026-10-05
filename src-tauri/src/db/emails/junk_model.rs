@@ -95,13 +95,13 @@ impl Database {
                  FROM emails e LEFT JOIN email_headers h ON h.email_id = e.id
                  WHERE e.account_id = ?1 AND e.mailbox = 'spam' AND e.is_deleted = 0
                  ORDER BY e.timestamp DESC LIMIT ?2",
-                // Ordinary inbox mail. A little of it is spam the server missed;
+                // Ordinary inbox and archived mail. A little of it is spam the server missed;
                 // Naive Bayes tolerates that level of contamination, and the
                 // alternative — only mail in replied-to threads — yields far too
                 // few negatives on a young account.
                 "SELECT e.subject, e.snippet, e.sender_email, h.x_mailer
                  FROM emails e LEFT JOIN email_headers h ON h.email_id = e.id
-                 WHERE e.account_id = ?1 AND e.mailbox = 'inbox' AND e.is_sent = 0 AND e.is_deleted = 0
+                 WHERE e.account_id = ?1 AND e.mailbox IN ('inbox', 'archive') AND e.is_sent = 0 AND e.is_deleted = 0
                  ORDER BY e.timestamp DESC LIMIT ?2",
             ),
             ModelAxis::Graymail => (
@@ -311,6 +311,7 @@ mod tests {
             timestamp: 1_700_000_000,
             is_read: false,
             is_sent,
+            is_starred: false,
             triage_status: None,
             category: "primary".into(),
             mailbox: mailbox.into(),
@@ -355,6 +356,18 @@ mod tests {
 
         let rows = db.get_junk_training_rows("a1", ModelAxis::Spam, 100).expect("rows");
         assert_eq!(rows.iter().filter(|r| r.positive).count(), 1);
+        assert_eq!(rows.iter().filter(|r| !r.positive).count(), 1);
+    }
+
+    // Archived mail is mail the user kept: it is as much "not spam" as the
+    // inbox (before the Archive mailbox, Gmail-archived rows were 'inbox').
+    #[test]
+    fn archived_mail_also_supplies_spam_negatives() {
+        let db = seeded();
+        insert(&db, "s1", "spam", false, "t1");
+        insert(&db, "a1", "archive", false, "t2");
+
+        let rows = db.get_junk_training_rows("a1", ModelAxis::Spam, 100).expect("rows");
         assert_eq!(rows.iter().filter(|r| !r.positive).count(), 1);
     }
 

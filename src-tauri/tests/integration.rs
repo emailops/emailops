@@ -66,6 +66,7 @@ fn make_email(id: &str, account_id: &str, timestamp: i64) -> Email {
         category: "primary".to_string(),
         mailbox: "inbox".to_string(),
         is_sent: false,
+        is_starred: false,
         headers: None,
     }
 }
@@ -658,6 +659,7 @@ fn make_email_with(id: &str, account_id: &str, timestamp: i64, sender_email: &st
         category: "primary".to_string(),
         mailbox: mailbox.to_string(),
         is_sent: mailbox == "sent",
+        is_starred: false,
         headers: None,
     }
 }
@@ -2301,6 +2303,130 @@ async fn sync_with_provider_stores_new_emails() {
         )
         .unwrap();
     assert_eq!(emails.len(), 2, "both new emails must be stored");
+}
+
+/// New-mail notifications: the first sync of an account never notifies; a
+/// later sync notifies only unread inbox mail that is not from a blocked
+/// sender (the blocked-sender hook runs first and marks it junk).
+#[tokio::test]
+async fn sync_notifies_only_genuinely_new_mail() {
+    use emailops_lib::services::notifier;
+    emailops_lib::services::logger::install_for_testing();
+    let shown = Arc::new(notifier::VecNotifier::new());
+    notifier::install(shown.clone());
+
+    let db = test_db();
+    db.insert_account(&make_account("acc-nt", "nt@example.com")).unwrap();
+    let account = db.get_account("acc-nt").unwrap().unwrap();
+    db.insert_blocked_sender("acc-nt", "deals@shop.example", 1).unwrap();
+
+    let old = || make_email_with("nt-old", "acc-nt", 1000, "friend@example.com", "inbox");
+    let first = FakeEmailProvider::new("nt@example.com", "Nt");
+    first.add_message(old(), EmailCategory::Primary, vec![]);
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue.clone(),
+        abort_flags.clone(),
+        Box::new(first),
+    )
+    .await
+    .expect("first sync");
+    let ours = |shown: &notifier::VecNotifier| {
+        shown
+            .shown()
+            .into_iter()
+            .filter_map(|n| n.thread)
+            .filter(|t| t.account_id == "acc-nt")
+            .map(|t| t.thread_id)
+            .collect::<Vec<_>>()
+    };
+    assert!(ours(&shown).is_empty(), "the first sync never notifies");
+
+    let second = FakeEmailProvider::new("nt@example.com", "Nt");
+    second.add_message(old(), EmailCategory::Primary, vec![]);
+    second.add_message(
+        make_email_with("nt-new", "acc-nt", 5000, "friend@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    second.add_message(
+        make_email_with("nt-blocked", "acc-nt", 5001, "deals@shop.example", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    let mut read = make_email_with("nt-read", "acc-nt", 5002, "friend@example.com", "inbox");
+    read.is_read = true;
+    second.add_message(read, EmailCategory::Primary, vec![]);
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(second),
+    )
+    .await
+    .expect("second sync");
+
+    assert_eq!(ours(&shown), vec!["thread-nt-new".to_string()]);
+}
+
+/// Block sender: mail from a blocked address that arrives in a sync never
+/// stays in the inbox — it is marked junk and filed in the provider's Spam.
+#[tokio::test]
+async fn sync_files_new_mail_from_a_blocked_sender_as_spam() {
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-bl", "bl@example.com")).unwrap();
+    let account = db.get_account("acc-bl").unwrap().unwrap();
+    db.insert_blocked_sender("acc-bl", "deals@shop.example", 1).unwrap();
+
+    let provider = FakeEmailProvider::new("bl@example.com", "Bl");
+    provider.add_message(
+        make_email_with("blocked-1", "acc-bl", 1000, "Deals@Shop.example", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    provider.add_message(
+        make_email_with("friend-1", "acc-bl", 2000, "friend@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    assert_eq!(db.get_email("blocked-1").unwrap().unwrap().mailbox, "spam");
+    assert_eq!(db.get_email("friend-1").unwrap().unwrap().mailbox, "inbox");
+    let inbox = db
+        .get_emails(
+            emailops_lib::db::AccountScope::Account("acc-bl"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        inbox.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+        vec!["friend-1"]
+    );
 }
 
 /// Regression for #50: an account narrowed to a recent window must stop
@@ -6194,4 +6320,179 @@ async fn calendar_invite_card_comes_from_the_ics_part_kept_at_ingest() {
         .await
         .expect("no invite is not an error");
     assert_eq!(none, None);
+}
+
+// ── Gmail/Outlook parity: archive, snooze, outbox, signatures ──────────────
+
+fn local_only_account(id: &str) -> Account {
+    Account {
+        provider: "local".to_string(),
+        ..make_account(id, &format!("{id}@example.com"))
+    }
+}
+
+/// Archive and Move to Inbox through the command entry point: the thread
+/// leaves the inbox list for Archive and comes back, with no provider to call
+/// on an account that has no mailbox writes.
+#[tokio::test]
+async fn thread_action_archive_and_move_to_inbox_round_trip() {
+    use emailops_lib::services::emails::{apply_thread_action, ThreadAction, ThreadRef};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&local_only_account("acc-ta")).unwrap();
+    db.insert_email(&make_email("ta-1", "acc-ta", 1000)).unwrap();
+    db.insert_email(&make_email("ta-2", "acc-ta", 900)).unwrap();
+    let thread = ThreadRef {
+        account_id: "acc-ta".to_string(),
+        thread_id: "thread-ta-1".to_string(),
+    };
+    let inbox = |db: &Arc<Database>| {
+        db.get_emails(
+            emailops_lib::db::AccountScope::Account("acc-ta"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect::<Vec<_>>()
+    };
+
+    let report = apply_thread_action(&db, std::slice::from_ref(&thread), ThreadAction::Archive, None).await;
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(db.get_email("ta-1").unwrap().unwrap().mailbox, "archive");
+    assert_eq!(inbox(&db), vec!["ta-2"]);
+
+    let report = apply_thread_action(&db, std::slice::from_ref(&thread), ThreadAction::MoveToInbox, None).await;
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(inbox(&db), vec!["ta-1", "ta-2"]);
+}
+
+/// Snooze takes a thread out of the inbox list until it is due; the wake pass
+/// brings it back and reports it.
+#[tokio::test]
+async fn snooze_hides_a_thread_until_the_wake_pass_brings_it_back() {
+    use emailops_lib::services::emails::{snooze_threads, wake_due_snoozes, ThreadRef};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&local_only_account("acc-sn")).unwrap();
+    db.insert_email(&make_email("sn-1", "acc-sn", 1000)).unwrap();
+    db.insert_email(&make_email("sn-2", "acc-sn", 900)).unwrap();
+    let thread = ThreadRef {
+        account_id: "acc-sn".to_string(),
+        thread_id: "thread-sn-1".to_string(),
+    };
+    let inbox = |db: &Arc<Database>| {
+        db.get_emails(
+            emailops_lib::db::AccountScope::Account("acc-sn"),
+            50,
+            0,
+            None,
+            Some("inbox"),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect::<Vec<_>>()
+    };
+    let now = 2_000_000;
+
+    let report = snooze_threads(&db, std::slice::from_ref(&thread), now + 3600, now).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(inbox(&db), vec!["sn-2"]);
+
+    assert!(
+        wake_due_snoozes(&db, now + 60, None).await.unwrap().is_empty(),
+        "not due yet"
+    );
+    let woken = wake_due_snoozes(&db, now + 3600, None).await.unwrap();
+    assert_eq!(woken, vec![thread]);
+    assert_eq!(inbox(&db), vec!["sn-1", "sn-2"]);
+}
+
+struct FreshFakeProviders;
+
+#[async_trait::async_trait]
+impl emailops_lib::services::outbox::OutboxProviders for FreshFakeProviders {
+    async fn provider_for(&self, account: &Account) -> emailops_lib::models::error::Result<Box<dyn EmailProvider>> {
+        Ok(Box::new(FakeEmailProvider::new(&account.email, "Sender")))
+    }
+}
+
+/// Undo send: a queued message waits for its window, Undo takes it back, and
+/// one left alone is sent by the dispatcher once due.
+#[tokio::test]
+async fn outbox_undo_send_cancels_or_sends_once_the_window_closes() {
+    use emailops_lib::models::outbox::{OutboxSchedule, OutboxStatus, OutgoingMessage};
+    use emailops_lib::services::outbox::{cancel_outbox_message, dispatch_due_outbox, queue_outgoing};
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-ob", "ob@example.com")).unwrap();
+    let message = OutgoingMessage {
+        account_id: "acc-ob".to_string(),
+        reply_to_email_id: None,
+        to: vec!["ben@example.com".to_string()],
+        cc: vec![],
+        subject: "Lunch".to_string(),
+        body: "Friday?".to_string(),
+        body_html: None,
+        inline_images: vec![],
+        attachments: vec![],
+    };
+    let now = 2_000_000;
+    let undo = OutboxSchedule::Undo { delay_secs: 10 };
+
+    let taken_back = queue_outgoing(&db, message.clone(), undo, None, None, now)
+        .await
+        .unwrap();
+    let restored = cancel_outbox_message(&db, "acc-ob", &taken_back.id, now + 2).unwrap();
+    assert_eq!(restored.subject, "Lunch");
+
+    let left = queue_outgoing(&db, message, undo, None, None, now).await.unwrap();
+    let early = dispatch_due_outbox(&db, now + 5, &FreshFakeProviders).await.unwrap();
+    assert!(early.sent.is_empty(), "nothing goes out inside the undo window");
+    let due = dispatch_due_outbox(&db, now + 10, &FreshFakeProviders).await.unwrap();
+    assert_eq!(
+        due.sent.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec![left.id.as_str()]
+    );
+    assert_eq!(
+        db.get_outbox_entry(&left.id).unwrap().unwrap().status,
+        OutboxStatus::Sent
+    );
+    assert_eq!(
+        db.get_outbox_entry(&taken_back.id).unwrap().unwrap().status,
+        OutboxStatus::Cancelled
+    );
+}
+
+/// A signature saved for an account is read back cleaned of active content,
+/// with its insertion choices.
+#[test]
+fn signature_saved_for_an_account_is_read_back_without_scripts() {
+    use emailops_lib::models::SignatureInput;
+    use emailops_lib::services::signatures::{get_signature, save_signature};
+    let db = test_db();
+    db.insert_account(&make_account("acc-sig", "sig@example.com")).unwrap();
+    save_signature(
+        &db,
+        "acc-sig",
+        SignatureInput {
+            html: "<p>Ana Demo</p><script>alert(1)</script>".to_string(),
+            use_for_new: true,
+            use_for_replies: false,
+        },
+        1_000,
+    )
+    .unwrap();
+
+    let read = get_signature(&db, "acc-sig").unwrap();
+    assert!(read.html.contains("Ana Demo"));
+    assert!(!read.html.contains("script"));
+    assert!(read.use_for_new);
+    assert!(!read.use_for_replies);
 }
