@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import {
   columnLabel,
+  DEFAULT_COL_WIDTH,
   deleteColumn,
   deleteRow,
   ensureGrid,
@@ -11,6 +12,7 @@ import {
   pasteBlock,
   readGrid,
   setCell,
+  setColumnWidth,
 } from './sheetModel';
 
 function ids(prefix: string) {
@@ -126,6 +128,15 @@ describe('gridToHtml', () => {
     );
   });
 
+  it('shows formulas as their results, as the copy is read without EmailOps', () => {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 2, 1, ids('f'));
+    const { rowIds, colIds } = readGrid(doc);
+    setCell(doc, rowIds[0], colIds[0], '2');
+    setCell(doc, rowIds[1], colIds[0], '=SUM(A1:A1)');
+    expect(gridToHtml(readGrid(doc), 'en')).toContain('<td>2</td></tr><tr><td>2</td>');
+  });
+
   it('renders a table with every value escaped', () => {
     const doc = new Y.Doc();
     ensureGrid(doc, 1, 2, ids('h'));
@@ -191,5 +202,20 @@ describe('pasteBlock', () => {
       ids('u'),
     );
     expect(updates).toBe(1);
+  });
+});
+
+describe('column widths', () => {
+  it('default, then follow a resize, clamped to a usable size, and travel to peers', () => {
+    const a = new Y.Doc();
+    ensureGrid(a, 1, 2, ids('w'));
+    const [first, second] = readGrid(a).colIds;
+    expect(readGrid(a).widths).toEqual([DEFAULT_COL_WIDTH, DEFAULT_COL_WIDTH]);
+    setColumnWidth(a, first, 250);
+    setColumnWidth(a, second, 5);
+    expect(readGrid(a).widths).toEqual([250, 40]);
+    const b = new Y.Doc();
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+    expect(readGrid(b).widths).toEqual([250, 40]);
   });
 });

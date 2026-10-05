@@ -1,4 +1,5 @@
 import type * as Y from 'yjs';
+import { displayValue } from '@/lib/sheetFormula';
 
 /**
  * A shared sheet inside a Yjs document. Rows and columns are ordered lists of
@@ -16,11 +17,18 @@ export interface Grid {
   colIds: string[];
   /** `values[row][col]`, `''` for an empty cell. */
   values: string[][];
+  /** Column widths in pixels, shared with everyone editing the sheet. */
+  widths: number[];
 }
 
 const ROWS = 'rows';
 const COLS = 'cols';
 const CELLS = 'cells';
+const WIDTHS = 'colWidths';
+
+export const DEFAULT_COL_WIDTH = 128;
+export const MIN_COL_WIDTH = 40;
+export const MAX_COL_WIDTH = 800;
 
 export const DEFAULT_ROWS = 20;
 export const DEFAULT_COLS = 8;
@@ -30,6 +38,7 @@ function parts(doc: Y.Doc) {
     rows: doc.getArray<string>(ROWS),
     cols: doc.getArray<string>(COLS),
     cells: doc.getMap<string>(CELLS),
+    widths: doc.getMap<number>(WIDTHS),
   };
 }
 
@@ -59,6 +68,7 @@ export function readGrid(doc: Y.Doc): Grid {
     rowIds,
     colIds,
     values: rowIds.map((r) => colIds.map((c) => p.cells.get(key(r, c)) ?? '')),
+    widths: colIds.map((c) => p.widths.get(c) ?? DEFAULT_COL_WIDTH),
   };
 }
 
@@ -67,6 +77,13 @@ export function setCell(doc: Y.Doc, rowId: string, colId: string, value: string)
   const { cells } = parts(doc);
   if (value === '') cells.delete(key(rowId, colId));
   else if (cells.get(key(rowId, colId)) !== value) cells.set(key(rowId, colId), value);
+}
+
+/** Set a column's width, kept between a usable minimum and maximum. */
+export function setColumnWidth(doc: Y.Doc, colId: string, px: number): void {
+  const width = Math.round(Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, px)));
+  const { widths } = parts(doc);
+  if (widths.get(colId) !== width) widths.set(colId, width);
 }
 
 export function insertRow(doc: Y.Doc, index: number, makeId = newId): void {
@@ -93,7 +110,12 @@ export function deleteRow(doc: Y.Doc, index: number): void {
 }
 
 export function deleteColumn(doc: Y.Doc, index: number): void {
-  deleteLine(doc, parts(doc).cols, index, (col, row) => key(row, col));
+  const p = parts(doc);
+  const colId = p.cols.get(index);
+  doc.transact(() => {
+    deleteLine(doc, p.cols, index, (col, row) => key(row, col));
+    if (colId !== undefined) p.widths.delete(colId);
+  });
 }
 
 /**
@@ -110,7 +132,9 @@ export function pasteBlock(doc: Y.Doc, row: number, col: number, values: string[
     const rowIds = p.rows.toArray();
     const colIds = p.cols.toArray();
     values.forEach((line, r) => {
-      line.forEach((value, c) => setCell(doc, rowIds[row + r], colIds[col + c], value));
+      line.forEach((value, c) => {
+        setCell(doc, rowIds[row + r], colIds[col + c], value);
+      });
     });
   });
 }
@@ -133,17 +157,17 @@ function escapeHtml(text: string): string {
 
 /** The sheet as an HTML table: the readable copy an invitation carries. Empty
  *  rows and columns after the last value are left out. */
-export function gridToHtml(grid: Grid): string {
+export function gridToHtml(grid: Grid, locale = 'en'): string {
   const rows = grid.values.reduce((n, row, r) => (row.some((v) => v) ? r + 1 : n), 0);
   const cols = grid.values.reduce((n, row) => row.reduce((m, v, c) => (v ? Math.max(m, c + 1) : m), n), 0);
   const head = Array.from({ length: cols }, (_, i) => `<th>${columnLabel(i)}</th>`).join('');
   const body = grid.values
     .slice(0, rows)
     .map(
-      (row) =>
+      (row, r) =>
         `<tr>${row
           .slice(0, cols)
-          .map((v) => `<td>${escapeHtml(v)}</td>`)
+          .map((_, c) => `<td>${escapeHtml(displayValue(grid.values, r, c, locale))}</td>`)
           .join('')}</tr>`,
     )
     .join('');

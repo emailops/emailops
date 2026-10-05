@@ -1,14 +1,16 @@
 // Pasting a block copied from Excel (tab-separated) into a cell fills the
-// sheet from that cell; plain text stays an ordinary paste.
+// sheet from that cell; plain text stays an ordinary paste. Formula cells show
+// their result, column widths are dragged into the document, and column
+// filters hide rows from this view only.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
 
-import { readGrid } from '@/lib/sheetModel';
+import { ensureGrid, readGrid, setCell } from '@/lib/sheetModel';
 import { SheetEditor } from './SheetEditor';
 
 function paste(target: Element, text: string): boolean {
@@ -20,7 +22,7 @@ function paste(target: Element, text: string): boolean {
   return event.defaultPrevented;
 }
 
-describe('SheetEditor paste', () => {
+describe('SheetEditor', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -63,5 +65,65 @@ describe('SheetEditor paste', () => {
       handled = paste(container.querySelector('[data-cell="0:0"]') as Element, 'just text');
     });
     expect(handled).toBe(false);
+  });
+
+  function sheetWith(rows: string[][]): Y.Doc {
+    const doc = new Y.Doc();
+    ensureGrid(doc, 4, 2);
+    const { rowIds, colIds } = readGrid(doc);
+    rows.forEach((row, r) => {
+      row.forEach((value, c) => {
+        setCell(doc, rowIds[r], colIds[c], value);
+      });
+    });
+    return doc;
+  }
+
+  const cell = (ref: string) => container.querySelector(`[data-cell="${ref}"]`) as HTMLInputElement;
+
+  it('shows the result of a formula and the formula while focused', async () => {
+    const doc = sheetWith([
+      ['Item', 'Price'],
+      ['Desk', '69'],
+      ['Lamp', '31'],
+      ['Total', '=SUM(B2:B3)'],
+    ]);
+    await mount(doc);
+    expect(cell('3:1').value).toBe('100');
+    act(() => cell('3:1').focus());
+    expect(cell('3:1').value).toBe('=SUM(B2:B3)');
+  });
+
+  it('writes the dragged width of a column into the document', async () => {
+    const doc = sheetWith([['Item', 'Price']]);
+    await mount(doc);
+    const handle = container.querySelector('[data-testid="sheet-resize-0"]') as Element;
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 100 }));
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 160 }));
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent('pointerup', {}));
+    });
+    expect(readGrid(doc).widths[0]).toBe(188);
+  });
+
+  it('hides the rows whose value is unchecked in a column filter, keeping the header', async () => {
+    const doc = sheetWith([
+      ['Item', 'Room'],
+      ['Desk', 'Office'],
+      ['Lamp', 'Hall'],
+      ['Chair', 'Office'],
+    ]);
+    await mount(doc);
+    act(() => (container.querySelector('[data-testid="sheet-filter-1"]') as HTMLButtonElement).click());
+    act(() => (container.querySelector('[data-testid="sheet-filter-value-Office"]') as HTMLInputElement).click());
+    expect(cell('0:0')).not.toBeNull();
+    expect(cell('1:0')).toBeNull();
+    expect(cell('2:0').value).toBe('Lamp');
+    expect(cell('3:0')).toBeNull();
+    expect(readGrid(doc).values[1][0]).toBe('Desk');
   });
 });

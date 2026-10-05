@@ -45,7 +45,13 @@
     "addColumn": "Add column",
     "deleteRow": "Delete row",
     "deleteColumn": "Delete column",
-    "cell": "Cell {{ref}}"
+    "cell": "Cell {{ref}}",
+    "filterColumn": "Filter column {{col}}",
+    "selectAll": "Select all",
+    "selectNone": "Clear",
+    "blank": "(Blank)",
+    "filteredRows": "Showing {{shown}} of {{total}} rows",
+    "resizeColumn": "Drag to resize column {{col}}"
   },
   "toolbar": {
     "bold": "Bold",

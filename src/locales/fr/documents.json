@@ -45,7 +45,13 @@
     "addColumn": "Ajouter une colonne",
     "deleteRow": "Supprimer la ligne",
     "deleteColumn": "Supprimer la colonne",
-    "cell": "Cellule {{ref}}"
+    "cell": "Cellule {{ref}}",
+    "filterColumn": "Filtrer la colonne {{col}}",
+    "selectAll": "Tout sélectionner",
+    "selectNone": "Effacer",
+    "blank": "(Vides)",
+    "filteredRows": "{{shown}} lignes sur {{total}} affichées",
+    "resizeColumn": "Faites glisser pour redimensionner la colonne {{col}}"
   },
   "toolbar": {
     "bold": "Gras",

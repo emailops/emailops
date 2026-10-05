@@ -45,7 +45,13 @@
     "addColumn": "Añadir columna",
     "deleteRow": "Eliminar fila",
     "deleteColumn": "Eliminar columna",
-    "cell": "Celda {{ref}}"
+    "cell": "Celda {{ref}}",
+    "filterColumn": "Filtrar columna {{col}}",
+    "selectAll": "Seleccionar todo",
+    "selectNone": "Borrar",
+    "blank": "(Vacías)",
+    "filteredRows": "Mostrando {{shown}} de {{total}} filas",
+    "resizeColumn": "Arrastra para cambiar el ancho de la columna {{col}}"
   },
   "toolbar": {
     "bold": "Negrita",

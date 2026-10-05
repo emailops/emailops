@@ -45,7 +45,13 @@
     "addColumn": "Spalte hinzufügen",
     "deleteRow": "Zeile löschen",
     "deleteColumn": "Spalte löschen",
-    "cell": "Zelle {{ref}}"
+    "cell": "Zelle {{ref}}",
+    "filterColumn": "Spalte {{col}} filtern",
+    "selectAll": "Alle auswählen",
+    "selectNone": "Leeren",
+    "blank": "(Leer)",
+    "filteredRows": "{{shown}} von {{total}} Zeilen angezeigt",
+    "resizeColumn": "Ziehen, um die Breite von Spalte {{col}} zu ändern"
   },
   "toolbar": {
     "bold": "Fett",

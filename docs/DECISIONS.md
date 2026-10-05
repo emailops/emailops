@@ -3342,3 +3342,22 @@ audit and update. Parsing spreadsheets in the webview — the backend keeps an u
 binary format out of the page. Live formulas — they need a calculation engine; the best
 known one (HyperFormula) is GPLv3 or paid. A Rust .docx reader (`docx-rs`) — it gives the
 structure but no HTML, so the conversion would have to be written by hand.
+
+## 2026-10-05 — EO sheets: shared column widths, local filters, formulas evaluated on display
+
+**Decision:** Column widths live in the shared `Y.Doc` (`colWidths` map), so everyone
+sees the same layout. Column filters (first row as header, Excel-style value checklist)
+are view state of the person filtering and are never written to the document. A cell
+whose value starts with `=` is a formula stored as text and evaluated in the webview on
+display (`src/lib/sheetFormula.ts`): `SUM`/`SUMA`, `AVERAGE`/`PROMEDIO`, `MIN`, `MAX`,
+`COUNT`/`CONTAR` over ranges, with `#REF!`, `#NAME?`, `#DIV/0!` and `#CYCLE!` errors.
+**Context:** The developer asked for column resizing, basic aggregation formulas
+(starting with sum) and column filters. Widths are part of how a shared sheet reads;
+a filter is a question one person is asking of it. Storing the formula text keeps the
+CRDT the only source of truth: every peer computes the same result from the same cells.
+Numbers are parsed leniently (European "1.287,81 €" and "$1,234.50") because pasted
+Excel blocks arrive as display text.
+**Rejected:** Shared filters (one person's filter would hide rows from everyone);
+storing computed results next to the formula (two values that can disagree after a
+merge); a formula library such as HyperFormula (a new dependency for five functions);
+keeping Excel formulas on import (imports still bring values, see the entry above).

@@ -27,7 +27,7 @@ interface DocumentPaneProps {
 
 /** One open document: its header (sharing, status) and its editor. */
 export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
-  const { t } = useTranslation(['documents']);
+  const { t, i18n } = useTranslation(['documents']);
   const addLog = useLogStore((s) => s.addLog);
   const share = useSharedDocsStore((s) => s.share);
   const accept = useSharedDocsStore((s) => s.accept);
@@ -67,7 +67,11 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
 
   const handleShare = async (recipients: string[]) => {
     const snapshot =
-      doc.kind === 'sheet' ? (ydoc ? gridToHtml(readGrid(ydoc)) : null) : (editorRef.current?.getHTML() ?? null);
+      doc.kind === 'sheet'
+        ? ydoc
+          ? gridToHtml(readGrid(ydoc), i18n.language)
+          : null
+        : (editorRef.current?.getHTML() ?? null);
     await share(doc.id, recipients, snapshot);
     addLog('success', 'sync', `Shared "${doc.title}" with ${recipients.join(', ')}`);
   };
