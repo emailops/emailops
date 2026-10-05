@@ -6,16 +6,41 @@ the OS quarantine mark, and opening one whose type can run code asks first.
 
 ## Sub-features
 
-- `lens.create` / `lens.run` create from a template or from the chat, backfill, incremental extraction after each sync; one failing Lens does not stop the others.
+- `lens.create` create a Lens from a template or from the chat.
+- `lens.run` backfill, incremental extraction after each sync; one failing Lens does not stop the others.
+- `lens.read` a Lens's table lists its rows with sort and column filters; the chat answers from a Lens's rows.
 - `tasks.list` extracted tasks with status.
+- `tasks.create` the user adds a task by typing it, or asks the chat to.
+- `tasks.status` a task is marked done, snoozed or dismissed.
 - `attachments.rules` rules collect files by sender / subject / filename, with suggestions.
 - `attachments.open` a stored file opens with the OS default app; a program, script, installer, shortcut or web page is refused until confirmed (`DangerousAttachmentDialog`).
 - `attachments.preview` images, PDF and HTML open inside the app; HTML in an iframe with an empty `sandbox`.
+- `attachments.download` a file is saved to Downloads (one from an email, several from the Attachments view).
+- `attachments.quarantine` every attachment file written to disk carries the OS quarantine mark.
 
 ## How to get to it (user POV)
 
-- Sidebar → **Lenses**, **Tasks**, **Attachments**.
-- An open email → **Attachments (n)** chips under the body.
+Three entry points, the columns of `## Parity`:
+
+- **Sidebar view** — Sidebar → **Lenses**, **Tasks** or **Attachments**, whichever the row is about.
+- **Open email** — the **Attachments (n)** strip under a message, its preview tab and the image lightbox.
+- **Chat** — a lens request fills the Create Lens form; attachment chips in answers; tools `list_lenses`, `get_lens_data`, `list_pending_tasks`, `create_task`.
+
+## Parity
+
+| Capability | Sidebar view (Lenses / Tasks / Attachments) | Open email (attachment strip) | Chat |
+|---|---|---|---|
+| lens.create | vitest:src/components/Lenses/LensCreateModal.template.test.tsx::opens the prefilled form instead of creating the Lens | n/a: a Lens is defined over a scope of mail, not from one open email | e2e:Chat/Formularios/rellenar Crear Lens desde el chat |
+| lens.run | integration:lens_on_emails_synced_extracts_matching | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point |
+| lens.read | vitest:src/components/Lenses/LensColumnFilterMenu.test.tsx::applies the ticked values | n/a: Lens rows are read in the Lens table, not from one email | gap: untested — get_lens_data / list_lenses only have validation and gating tests; none returns rows |
+| tasks.list | e2e:Vistas/Tasks | n/a: tasks are listed per account; the Tasks view previews the source email | gap: untested — the list_pending_tasks tool has no test; only the DB query is tested |
+| tasks.create | gap: untested — the add-task form has no component test; only the store is tested | gap: missing — an open email offers no add-task action, although create_task accepts a source email | gap: untested — the create_task tool has no test; only the service is tested |
+| tasks.status | gap: untested — done / snooze / dismiss have no component test | n/a: status is changed on the task, which an open email does not list | gap: missing — no chat tool changes a task's status |
+| attachments.rules | vitest:src/components/Attachments/RuleManagementModal.suggestions.test.tsx::creating the reviewed rule applies it to existing mail and accepts the suggestion | gap: missing — the strip offers no rule; the prefilled rule is only on the inbox row / card ⋮ menu | gap: missing — the chat can fill only the Create Lens form |
+| attachments.open | gap: untested — Open externally in the Attachments viewer is never driven | e2e:Adjuntos/tipo peligroso pide confirmación | gap: untested — chat chips open through the same hook with a fallback; no test clicks one |
+| attachments.preview | gap: missing — the Attachments view previews HTML in an iframe with sandbox="allow-same-origin", not the empty sandbox | e2e:Adjuntos/página web en vista previa aislada | gap: missing — chat chips always hand the file to the OS; no in-app preview |
+| attachments.download | gap: untested — bulk download has no test; the toolbar's only test is the suggestion badge | gap: untested — the strip's download and the preview tab's download have no test | gap: missing — a chat attachment chip can only open |
+| attachments.quarantine | rust:src-tauri/src/services/attachment_safety.rs::an_opened_file_carries_the_quarantine_mark | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point |
 
 ## Driving it with verify.sh
 

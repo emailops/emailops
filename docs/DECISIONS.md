@@ -3237,3 +3237,22 @@ contradict them. Stripping the name from the generated text afterwards — names
 closings vary by language and the draft can legitimately end with a name (a P.S., a
 mention). Putting the rule in the system/prefix part — it varies per account and kind and
 would bust the KV-prefix cache.
+
+## 2026-10-01 — Feature parity matrix gates verification
+
+**Decision:** Every feature file in the verify-emailops skill carries a `## Parity` table
+(capability × entry point; each cell a test reference, `n/a: <reason>` or `gap`), checked
+by `check_parity.py` in the static layer of `make verify`. Every `gap`, empty cell or
+broken reference is a failing result. A read-only `completeness-reviewer` subagent runs
+with `privacy-reviewer` before commits and pushes to flag undeclared capabilities, entry
+points and skipped siblings.
+**Context:** Features landed on the component a change touched and not on its siblings:
+draft autosave reached the Compose modal and tab but not Reply/Reply all/Forward, save-on-close
+only the modal, pre-send warnings only Reply. Specs and the e2e sweep listed entry points
+in prose and checked that the Reply buttons existed, never what they did.
+**Rejected:**
+- *LLM reviewer alone*: it can miss a sibling the same way the implementing agent did; a
+  table a script checks cannot be forgotten.
+- *Gaps blocking only at release*: the developer chose to have every gap fail every run.
+- *Merging the three composers now*: removes the cause for compose only; deferred until
+  the audit shows where shared components would remove the most gaps.

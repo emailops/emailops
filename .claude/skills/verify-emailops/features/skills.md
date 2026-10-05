@@ -13,12 +13,35 @@ optional `.md`/`.txt` reference files). Experimental and **off by default**.
 - `skills.delete` **Delete** (`skill-delete` → `skill-delete-confirm` / `skill-delete-cancel`) moves the folder to `skills/.deleted`.
 - `skills.slash` typing `/` in the chat input lists enabled skills (`slash-option-<name>`); Enter/Tab fills `/name `, Escape dismisses.
 - `skills.apply` a turn applies a skill via the query planner (`"skill"` next to its verdict), `/name`, or the model's `load_skill`; the reasoning trace shows a **Skill** step.
+- `skills.list` every entry lists the skills found in the folder as `/name` with its description.
+- `skills.switchOne` a per-skill switch turns one skill off: it leaves the `/` list and the planner's skill index but stays listed.
+- `skills.loadErrors` a `SKILL.md` that fails to parse is listed with its translated reason instead of silently missing.
+- `skills.folder` the skills folder is shown; **Open folder** creates it if needed and opens it; **Reload** re-reads it.
 
 ## How to get to it (user POV)
 
-- Settings (gear, `aria/Application settings`) → **AI Skills** → **Enable skills** on.
-- Sidebar → AI Features → **Skills**.
-- In the chat, start a message with `/`.
+Four entry points, the columns of `## Parity`:
+
+- **Chat input /** — start a message with `/` in the docked panel or the full chat view (the same ChatInput).
+- **Skills view** — Sidebar → AI Features → **Skills** (only while skills are on).
+- **Settings → AI Skills** — gear (`aria/Application settings`) → **AI Skills**: **Enable skills**, the folder path, Open folder / Reload, a read-only list.
+- **emailops-cli skills** — `make cli-demo ARGS="skills --json"`, a read-only list plus load errors; skills are applied from `emailops-cli chat "/name …"` through the same backend.
+
+## Parity
+
+| Capability | Chat input / | Skills view | Settings → AI Skills | emailops-cli skills |
+|---|---|---|---|---|
+| skills.toggle | vitest:src/components/Chat/ChatInput.slash.test.tsx::stays out of the way while skills are off | n/a: the view only exists while skills are on | e2e:Skills/activar | gap: missing — the CLI only reports that skills are off; no command switches them |
+| skills.view | n/a: an invocation surface, not a skill browser; its list is skills.slash | e2e:Skills/vista | n/a: Settings is read-only by design; the two-pane editor belongs to the view | n/a: no two-pane editor in a terminal; the listing is skills.list |
+| skills.list | n/a: the / menu lists enabled skills; that is skills.slash | vitest:src/components/Skills/SkillsView.test.tsx::lists every skill and opens the first one in the editor | vitest:src/components/Settings/SkillsSettings.test.tsx::lists each skill as its slash command with its description | gap: untested — the only dispatch test runs with no data dir and asserts Ok; the renderer is untested |
+| skills.switchOne | vitest:src/components/Chat/ChatInput.slash.test.tsx::offers the enabled skills that match what is typed | vitest:src/components/Skills/SkillsView.test.tsx::switches a skill off from its toggle | gap: missing — lists every skill as /name with no on/off state or switch | gap: missing — pretty mode ignores enabled and no command switches a skill |
+| skills.new | n/a: an invocation surface, not an editor | vitest:src/components/Skills/SkillsView.test.tsx::creates a new skill and opens it | n/a: by design Settings only opens the folder; creating belongs to the view | gap: missing — skills is list-only; no create subcommand |
+| skills.save | n/a: an invocation surface, not an editor | vitest:src/components/Skills/SkillsView.test.tsx::loads the selected skill into the editor and saves the edit | n/a: by design Settings does not edit skills | gap: missing — no save or validate subcommand |
+| skills.delete | n/a: an invocation surface, not an editor | vitest:src/components/Skills/SkillsView.test.tsx::deletes a skill only after the user confirms | n/a: by design Settings does not edit skills | gap: missing — no delete subcommand |
+| skills.slash | vitest:src/components/Chat/ChatInput.slash.test.tsx::Enter picks the highlighted skill instead of sending | n/a: the view has no chat input | n/a: Settings has no chat input | n/a: no input completion; in the REPL / already means a REPL command |
+| skills.apply | rust:src-tauri/src/services/chat/planner.rs::plan_search_returns_the_skill_the_planner_named | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point | n/a: backend, same path for every entry point |
+| skills.loadErrors | n/a: a broken skill is never offered | vitest:src/components/Skills/SkillsView.test.tsx::shows why a skill in the folder failed to load, translated | vitest:src/components/Settings/SkillsSettings.test.tsx::shows why a skill failed to load | gap: untested — the not-loaded lines have no test |
+| skills.folder | n/a: the chat input does not manage files | gap: missing — the view shows no folder path and cannot open it | vitest:src/components/Settings/SkillsSettings.test.tsx::opens the skills folder and re-reads it on demand | gap: untested — prints the folder, untested |
 
 ## Driving it with verify.sh
 

@@ -16,8 +16,23 @@ afternoon, Monday morning, a custom time) with a note that EmailOps must be open
 
 ## How to get to it (user POV)
 
-- Any composer (new message modal, compose tab, inline reply): **Send**, or the chevron → **Schedule send**.
-- Sidebar → Views → **Scheduled**.
+Six entry points, the columns of `## Parity`:
+
+- **Compose modal** — Sidebar → **Compose**.
+- **Compose tab** — open-in-tab, Drafts → Continue editing, or what Undo / Scheduled → Edit reopens.
+- **Reply**, **Reply all**, **Forward** — the buttons of an open thread; the thread hands the message to the outbox.
+- **CLI compose --send** — `emailops-cli compose … --send`.
+- In each GUI composer: **Send**, or the chevron → **Schedule send**. Sidebar → Views → **Scheduled** lists what is waiting.
+
+## Parity
+
+| Capability | Compose modal | Compose tab | Reply | Reply all | Forward | CLI compose --send |
+|---|---|---|---|---|---|---|
+| outbox.undo | e2e:Envío/enviar y deshacer | vitest:src/components/EmailView/ComposeTabView.pendingRecipient.test.tsx::queues the message for the undo window, hands over its draft, and closes | gap: untested — the thread queues replies but no test sends a reply through it | gap: untested — same path, no reply-all send test | gap: untested — no test queues a forward | n/a: --send is a one-shot immediate send; there is no window to undo in |
+| outbox.schedule | gap: untested — the modal's chevron is never driven; Envío/programar envío runs on the tab that Undo reopened | e2e:Envío/programar envío | gap: untested — the reply composer's Schedule send has no test | gap: untested — same, no reply-all test | gap: untested — same, no forward test | gap: missing — compose has no schedule flag; it sends at once |
+| outbox.view | e2e:Envío/vista Scheduled y borrar | n/a: the Scheduled view lists outbox rows the same way whichever composer queued them | n/a: the Scheduled view lists outbox rows the same way whichever composer queued them | n/a: the Scheduled view lists outbox rows the same way whichever composer queued them | n/a: the Scheduled view lists outbox rows the same way whichever composer queued them | gap: missing — no CLI command lists, retries or deletes outbox rows |
+| outbox.failure | e2e:Compose/enviar sin credenciales | n/a: the dispatcher and the outbox-updated toast are the same whichever composer queued the message | n/a: the dispatcher and the outbox-updated toast are the same whichever composer queued the message | n/a: the dispatcher and the outbox-updated toast are the same whichever composer queued the message | n/a: the dispatcher and the outbox-updated toast are the same whichever composer queued the message | n/a: --send fails synchronously (error envelope and exit code); nothing is queued to fail later |
+| outbox.setting | gap: untested — with Undo send Off the modal's direct send is never driven | vitest:src/components/EmailView/ComposeTabView.pendingRecipient.test.tsx::sends to the pending address | gap: untested — the thread's direct send for replies has no test | gap: untested — same path, no reply-all test | gap: untested — same path, no forward test | n/a: the CLI never reads the undo delay; --send is an explicit immediate send |
 
 ## Driving it with verify.sh
 

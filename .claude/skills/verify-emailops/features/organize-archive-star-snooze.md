@@ -15,12 +15,33 @@ chosen time (Snoozed view); Unsnooze brings it back at once.
 - `organize.undo` the 6 s undo window on archive and delete, and the error + rollback when the provider refuses.
 - `organize.advance` after archive, delete, snooze, block or Confirm junk of the open conversation the next one opens (Settings → Appearance → *After archiving or deleting*: next / previous / back to the list; pref `ui.after_thread_leave`). Mark as unread and bulk actions never advance; a slow action never replaces a conversation opened meanwhile.
 - `organize.snooze` ⋮ → Snooze presets (later today, tomorrow, this weekend, next week, custom), the Snoozed view with its badge, Unsnooze.
+- `organize.read` ⋮ / toolbar / bulk / `Shift+U`·`Shift+I` mark a conversation read or unread (local-first like stars).
+- `organize.delete` Delete thread from ⋮, the toolbar, the bulk bar or `#`; provider-first behind the undo window (`organize.undo`).
 
 ## How to get to it (user POV)
 
-- Inbox row: star at the right, checkbox at the left, ⋮ menu (Archive, Snooze, Mark as unread, Star…).
-- Sidebar → Views → **Starred**, **Snoozed**; **Archive** with All accounts or a Gmail/Outlook account.
-- Keyboard: `e` archive, `s` star, `b` snooze, `x` select (see the shortcuts feature).
+Six entry points, the columns of `## Parity`:
+
+- **Inbox row** — star at the right, checkbox at the left, ⋮ menu (Archive, Snooze, Mark as unread, Star…).
+- **Open thread** — the reading pane toolbar: Archive, Snooze/Unsnooze, read/unread, Star, Delete.
+- **Multi-select bar** — checkboxes, then the bulk toolbar.
+- **Keyboard** — `e` archive, `s` star, `b` snooze, `x` select (see the shortcuts feature).
+- **Tag Board** — a card's ⋮ menu (same menu) and the board's reading pane.
+- **All accounts** — the unified inbox.
+- Views: Sidebar → Views → **Starred**, **Snoozed**; **Archive** with All accounts or a Gmail/Outlook account.
+
+## Parity
+
+| Capability | Inbox row | Open thread | Multi-select bar | Keyboard | Tag Board | All accounts |
+|---|---|---|---|---|---|---|
+| organize.star | e2e:Organizar/destacar desde la fila | gap: untested — the toolbar star is never clicked; EmailView.shortcuts only sends the pane command | gap: untested — bulk Star/Unstar is never clicked; the sweep only checks the button exists | e2e:Atajos/s destaca la conversación del cursor | gap: untested — cards have no star toggle; card ⋮ → Star and the board pane's star are never driven | gap: untested — no test or step stars a row in unified mode |
+| organize.archive | e2e:Organizar/archivar sin credenciales | gap: untested — the toolbar Archive is never clicked; a step only reads its title | e2e:Organizar/archivar en bloque y deshacer | vitest:src/hooks/useGlobalShortcuts.test.tsx::e archives the selected conversations and clears the selection | gap: untested — card ⋮ → Archive and the board pane's Archive are never driven | e2e:Organizar/vista Archive |
+| organize.select | vitest:src/components/Inbox/EmailRow.selection.test.tsx::the checkbox toggles the row without opening it | n/a: the open thread is one conversation; selection belongs to the list | e2e:Organizar/selección múltiple | vitest:src/hooks/useGlobalShortcuts.test.tsx::x selects the cursor row and Escape clears the selection | gap: missing — cards have no checkbox and the board mounts no bulk toolbar | gap: untested — checkboxes and the bulk bar are never driven in unified mode |
+| organize.undo | e2e:Organizar/archivar sin credenciales | gap: untested — no test or step archives or deletes from the toolbar and then clicks Undo | e2e:Organizar/archivar en bloque y deshacer | e2e:Atajos/e archiva y abre la siguiente | gap: untested — undo and rollback are never driven from a card or the board pane | gap: untested — undo and rollback are never driven in unified mode |
+| organize.advance | gap: missing — ⋮ Archive/Delete/Snooze on the open conversation's own row skip the leave planner: the pane closes instead of advancing | vitest:src/components/EmailView/EmailView.shortcuts.test.tsx::snoozing from the toolbar opens the next conversation | n/a: bulk actions never advance, by design (this sub-feature's own rule) | e2e:Atajos/e archiva y abre la siguiente | gap: missing — the board publishes no list, so leaving always closes the board's pane | gap: untested — auto-advance is never driven in unified mode |
+| organize.snooze | e2e:Organizar/posponer desde el menú | vitest:src/components/EmailView/EmailView.shortcuts.test.tsx::snoozing from the toolbar opens the next conversation | vitest:src/components/Inbox/BulkToolbar.test.tsx::snoozes the selected inbox conversations and clears the selection | vitest:src/components/EmailView/EmailView.shortcuts.test.tsx::b opens the snooze picker | gap: untested — card ⋮ → Snooze and the board pane's Snooze are never driven | gap: untested — snooze is never driven in unified mode |
+| organize.read | gap: untested — ⋮ → Mark as read/unread is never clicked | gap: untested — the toolbar read/unread button is never clicked; only the pane command is tested | vitest:src/components/Inbox/BulkToolbar.test.tsx::marks read and keeps the selection | vitest:src/hooks/useGlobalShortcuts.test.tsx::Shift+U on the cursor row marks it unread; s unstars a starred row | gap: untested — never driven from a card or the board pane | gap: untested — never driven in unified mode |
+| organize.delete | gap: untested — ⋮ → Delete thread is never clicked | gap: untested — the toolbar Delete is never clicked | vitest:src/components/Inbox/BulkToolbar.test.tsx::deletes the selected conversations in one call and clears the selection | vitest:src/hooks/useGlobalShortcuts.test.tsx::# deletes the cursor row in the full-width list | gap: untested — never driven from a card or the board pane | gap: untested — never driven in unified mode |
 
 ## Driving it with verify.sh
 

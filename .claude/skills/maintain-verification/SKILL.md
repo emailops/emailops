@@ -37,6 +37,7 @@ Read the signals a diff carries, each with the layer it demands:
 | DB migration (`src-tauri/migrations/V*.sql`) | contract: schema parity runs automatically; **oracle SQL** in `tagboard_check.mjs` (and any other `*_check.mjs`) if it reads a touched table |
 | New chat tool, prompt edit, retrieval tweak | eval: a case in `src-tauri/evals/<kind>/cases/` (synthetic); drive the change itself through the `build-ai-feature` skill |
 | Layout/CSS change in a pane the sweep measures | ui: a measurement step (see the Tag Board toolbar check) |
+| New entry point (component, button, route, CLI command) or new user-visible capability | `## Parity` in the feature file: a column or a row, every cell a test, `n/a: <reason>` or `gap` |
 | New list/grid of user data | oracle: `<feature>_check.mjs` with the three layers (backend ↔ DB, UI ↔ backend, UI ↔ DB) and `data-*` hooks on rows |
 
 ## 2. Coverage check before writing anything
@@ -48,7 +49,8 @@ make verify ARGS="--tier quick"        # static + rust + vitest + contract, ~5 m
 Open `src-tauri/reports/verify/current-full/informe.html` → "Huecos de cobertura". For every
 touched feature decide per missing layer: **add** (default), or **n/a with a written reason**
 in the feature file (e.g. "no integration seam: pure UI"). A feature touched in this change
-never keeps a missing layer silently.
+never keeps a missing layer silently. The same holds for `## Parity` cells: a `gap` is
+closed by a test (and a fix when it is `missing`), never by rewriting it as `n/a`.
 
 ## 3. Add or update tests, one layer at a time
 
@@ -92,6 +94,9 @@ Red first: run the new test, watch it fail for the right reason, then make it pa
 - `features.json`: new prefixes, new feature, new `integration_names`, budgets.
 - `features/*.md`: the four H2s (`Sub-features`, `How to get to it (user POV)`,
   `Driving it with verify.sh`, `Gotchas`) and the "test kind per case" table.
+- `## Parity`: one row per sub-feature, one column per entry point;
+  `python3 .claude/skills/verify-emailops/scripts/check_parity.py` shows only the gaps you
+  meant to leave.
 - Selectors in `sweep.mjs` / `*_check.mjs` when a string or placeholder changed.
 
 ## 5. Full run, then triage

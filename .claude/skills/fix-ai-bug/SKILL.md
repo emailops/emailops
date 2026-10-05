@@ -141,6 +141,10 @@ When the symptom reproduces, walk the user through the root cause in 2-4
 sentences with `file:line` references. Quote at most one short line of the
 failing output (e.g. the malformed tool-call JSON) — never the full trace.
 
+Then open the feature's `## Parity` table (`.claude/skills/verify-emailops/features/`)
+and check the sibling columns of the affected row: if the same defect exists on another
+entry point, the fix covers it too, or the report says why not.
+
 ## Phase 4 — Propose the fix
 
 Two sentences: the change + the main tradeoff. **Skip the confirmation

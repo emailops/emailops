@@ -1,5 +1,5 @@
 {
-  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule; the longest matching prefix across features wins, as for `vitest`), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes (vitest: matched against the file path; `src/lib/apiContract/<feature>.api.test.ts` holds each feature's api.ts ↔ Rust command contract) that count as contract tests instead of unit tests. `integration_names` = keywords looked up in an integration test's name, first feature in file order wins. Unmatched tests land in `Transversal`.",
+  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule; the longest matching prefix across features wins, as for `vitest`), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes (vitest: matched against the file path; `src/lib/apiContract/<feature>.api.test.ts` holds each feature's api.ts ↔ Rust command contract) that count as contract tests instead of unit tests. `integration_names` = keywords looked up in an integration test's name, first feature in file order wins. Unmatched tests land in `Transversal`. `doc` = the feature file under features/ whose `## Parity` table check_parity.py reads.",
   "types": [
     "unit",
     "integration",
@@ -16,6 +16,7 @@
     {
       "id": "organizar",
       "name": "Archivar, destacar, posponer y selección",
+      "doc": "organize-archive-star-snooze.md",
       "rust": [
         "services::emails::thread_actions",
         "services::emails::snooze",
@@ -60,6 +61,7 @@
     {
       "id": "envio",
       "name": "Deshacer envío y envío programado",
+      "doc": "outbox-undo-schedule.md",
       "rust": [
         "services::outbox",
         "db::outbox",
@@ -86,6 +88,7 @@
     {
       "id": "firmas",
       "name": "Firmas",
+      "doc": "signatures.md",
       "rust": [
         "services::signatures",
         "db::signatures"
@@ -108,6 +111,7 @@
     {
       "id": "atajos",
       "name": "Atajos de teclado",
+      "doc": "keyboard-shortcuts.md",
       "rust": [],
       "vitest": [
         "src/lib/shortcuts",
@@ -131,6 +135,7 @@
     {
       "id": "remitentes",
       "name": "Remitentes: baja y bloqueo",
+      "doc": "sender-controls.md",
       "rust": [
         "services::unsubscribe",
         "services::sender_controls",
@@ -156,6 +161,7 @@
     {
       "id": "notificaciones",
       "name": "Notificaciones de correo nuevo",
+      "doc": "new-mail-notifications.md",
       "rust": [
         "services::mail_notifications",
         "services::notifier"
@@ -174,6 +180,7 @@
     {
       "id": "cuentas-sync",
       "name": "Cuentas y sincronización",
+      "doc": "accounts-sync.md",
       "rust": [
         "services::accounts",
         "services::sync_scheduler",
@@ -231,6 +238,7 @@
     {
       "id": "inbox",
       "name": "Inbox y lectura",
+      "doc": "inbox-open-email.md",
       "rust": [
         "db::emails",
         "services::emails",
@@ -281,6 +289,7 @@
     {
       "id": "busqueda",
       "name": "Búsqueda",
+      "doc": "search.md",
       "rust": [
         "db::emails::search",
         "services::retrieval",
@@ -311,6 +320,7 @@
     {
       "id": "compose",
       "name": "Redacción y borradores",
+      "doc": "compose.md",
       "rust": [
         "db::drafts",
         "sync::draft_plan",
@@ -352,6 +362,7 @@
     {
       "id": "skills",
       "name": "Skills del chat",
+      "doc": "skills.md",
       "rust": [
         "services::skills",
         "commands::skills",
@@ -378,6 +389,7 @@
     {
       "id": "chat",
       "name": "Chat con el buzón",
+      "doc": "chat.md",
       "rust": [
         "services::chat",
         "services::prompts",
@@ -424,6 +436,7 @@
     {
       "id": "ia-proveedores",
       "name": "IA: proveedores y modelos",
+      "doc": "ai-providers.md",
       "rust": [
         "ai",
         "services::ai",
@@ -455,6 +468,7 @@
     {
       "id": "tagboard",
       "name": "Tag Board y clasificación",
+      "doc": "tag-board.md",
       "rust": [
         "db::tags",
         "services::filters",
@@ -488,6 +502,7 @@
     {
       "id": "junk",
       "name": "Correo no deseado",
+      "doc": "junk.md",
       "rust": [
         "services::junk",
         "db::junk",
@@ -513,6 +528,7 @@
     {
       "id": "calendario",
       "name": "Calendario",
+      "doc": "calendar.md",
       "rust": [
         "services::calendar",
         "db::calendar",
@@ -541,6 +557,7 @@
     {
       "id": "lenses-tasks",
       "name": "Lenses, tareas y adjuntos",
+      "doc": "lenses-tasks-attachments.md",
       "rust": [
         "services::lenses",
         "db::lenses",
@@ -588,6 +605,7 @@
     {
       "id": "contactos-dashboard",
       "name": "Contactos y Dashboard",
+      "doc": "contacts-dashboard.md",
       "rust": [
         "services::contacts",
         "db::contacts",
@@ -617,6 +635,7 @@
     {
       "id": "ajustes",
       "name": "Ajustes, idioma y actualizaciones",
+      "doc": "settings.md",
       "rust": [
         "commands::preferences",
         "services::i18n",
@@ -656,6 +675,7 @@
     {
       "id": "cli",
       "name": "CLI y agentes",
+      "doc": "cli.md",
       "rust": [
         "cli",
         "evals",

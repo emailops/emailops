@@ -11,12 +11,33 @@ the list.
 - `inbox.categories` the Primary/Social/Updates/Forums/Promotions tabs filter the list.
 - `inbox.open` clicking a row shows the thread with its subject as the page H1.
 - `inbox.close` Back hides the thread and shows the list again.
+- `inbox.rowMenu` a row's ⋮ menu offers Chat about this thread, Open in new tab, sender filter, hide from smart filters, block sender (with confirmation), read/unread, star, snooze, archive, rules, copy id, redownload, move (IMAP) and delete thread.
+- `inbox.toolbar` an open thread shows Reply, Reply All, Forward and AI Draft plus archive, snooze, read/unread, star, search-in-thread and delete; tooltips name the shortcut key.
+- `inbox.openInTab` "Open in new tab" (row ⋮ or the thread header) opens the thread in its own tab next to the main one; the tab's ✕ closes it.
+- `inbox.remoteImages` remote images are blocked with "Show images" / "Always trust this sender", and the frame's CSP allows only `data: blob: cid:`.
 
 ## How to get to it (user POV)
 
-- Sidebar → Views → **Inbox** (default view after launch).
-- Clicking an account in the sidebar switches the list to that account; **All accounts** merges them.
-- A row's ⋮ menu also offers "Open in new tab" and "Chat about this thread".
+Five ways to reach a thread, the columns of `## Parity`; every opener renders the same `ReadingPane` → `EmailView`:
+
+- **Inbox (one account)** — Sidebar → Views → **Inbox** with one account selected (default view after launch).
+- **All accounts** — Sidebar → Accounts → **All accounts**: one list, each row with an account-colour stripe.
+- **Tag Board** — Sidebar → **Tag Board**; clicking a card opens the thread in a reading pane beside the board.
+- **Search overlay (⌘K)** — sidebar **Search emails…** or ⌘K; clicking a hit opens that thread in the inbox.
+- **Chat source** — a source/citation pill or `email://` link in a chat answer opens the thread as a tab in the reading pane.
+
+## Parity
+
+| Capability | Inbox (one account) | All accounts | Tag Board | Search overlay (⌘K) | Chat source |
+|---|---|---|---|---|---|
+| inbox.list | e2e:Inbox/lista inicial | e2e:Cuentas/All accounts | n/a: the board lists tag blocks, not the inbox list (tagboard.blocks / tagboard.rows) | n/a: the overlay lists search hits (search.results), not the inbox | n/a: a pill names one email; there is no list |
+| inbox.categories | gap: untested — e2e:Inbox/pestañas de categoría always SKIPs on the IMAP demo accounts and no Inbox component test clicks a tab | gap: untested — unified mode shows the tabs when any enabled account is not IMAP; no test or step | gap: untested — the toolbar's category chips have no test or step | n/a: the overlay searches every category by design | n/a: a pill opens one thread; there is no list to filter |
+| inbox.open | e2e:Inbox/abrir hilo | gap: untested — no step opens a row while All accounts is selected | e2e:Tag Board/abrir hilo desde un bloque | gap: untested — clicking a hit has no test or step | gap: untested — the pills open a thread tab; MarkdownContent tests render pills but never click one |
+| inbox.close | e2e:Inbox/volver con Back | gap: untested — Back is never driven in unified mode | gap: untested — the board's pane closes with ✕ Close; the sweep clicks it without asserting the pane closed | gap: untested — Back after opening from the overlay is not driven | gap: untested — closing the thread tab has no test |
+| inbox.rowMenu | e2e:Inbox/menú ⋮ de una fila | gap: untested — the menu is not opened in unified mode | gap: untested — cards render the same EmailActionsMenu; TagEmailCard.testids only checks data attributes | n/a: overlay hits are a picker with no per-row actions; picking one lands in the list, whose rows have the menu | n/a: a pill is a link to one email, not a row |
+| inbox.toolbar | e2e:Inbox/menú del hilo | gap: untested — not driven in unified mode | gap: untested — same EmailView via ReadingPane, never checked there | gap: untested — not checked after opening from the overlay | gap: untested — not checked in a thread tab |
+| inbox.openInTab | gap: untested — the sweep only sees the Open in new tab label in the ⋮ menu; nothing opens or closes the tab | gap: untested — not driven in unified mode | gap: missing — the board's reading pane gets no onOpenInTab, so its header has no Open in new tab; only the card ⋮ offers it | gap: untested — the overlay opens into the inbox pane, whose header has the button | n/a: the pill already opens the thread in its own tab |
+| inbox.remoteImages | e2e:Inbox/imágenes remotas bloqueadas | gap: untested — not driven in unified mode | gap: untested — not driven from a Tag Board card | gap: untested — not driven from an overlay hit | gap: untested — not driven in a thread tab |
 
 ## Driving it with verify.sh
 

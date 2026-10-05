@@ -16,12 +16,38 @@ progress asks first; a change of embedding model asks before re-indexing.
 - `ai.workInProgress` changing provider or model while Embeddings/classification/extraction work is queued opens the stop-or-wait dialog; stopping is cooperative (each task ends at its next email).
 - `ai.reindexConfirm` saving another embedding model asks before the index is rebuilt.
 - `ai.onboarding` the onboarding AI step offers the same OpenRouter fields, probe and recommended models.
+- `ai.chatModel` the chat model can be chosen: Settings' model list, the bar's `AI Model` selector, the onboarding step, or the CLI's `--model` / REPL `/model`.
+- `ai.current` the backend and chat model in use are reported: the bar's label, Settings opening on the saved provider, and `doctor`.
+- `ai.download` in-app catalog models can be downloaded or linked with progress; a finished model becomes selectable.
+- `ai.masterSwitch` the **AI features** switch turns every AI surface on or off, and asks before turning it off.
+- `ai.connectionTest` **Test** sends a real request to the chosen provider and model and reports the result.
 
 ## How to get to it (user POV)
 
-- Gear (`aria/Application settings`) → **AI Backend & Models**.
-- Bottom **Logs** bar, right side: backend label and model selector.
-- First run: onboarding → "Use AI" → backend step.
+Four entry points, the columns of `## Parity`:
+
+- **Settings → AI Backend & Models** — gear (`aria/Application settings`) → **AI Backend & Models**: AI features switch, In-app / Ollama / OpenRouter tabs, Test and Save.
+- **Logs status bar** — bottom **Logs** bar, right side: backend label and model selector.
+- **Onboarding AI step** — first run: onboarding → "Use AI" → backend step, before any account exists.
+- **emailops-cli** — `doctor --json` reports AI readiness; the global `--model` overrides the model for one run; REPL `/model` lists the catalog or saves the chat model.
+
+## Parity
+
+| Capability | Settings → AI Backend & Models | Logs status bar | Onboarding AI step | emailops-cli |
+|---|---|---|---|---|
+| ai.backendTabs | e2e:IA/pestaña In-app | n/a: by design the bar only names the backend; a backend change needs the Embeddings checks done in Settings | vitest:src/components/Onboarding/StepAiBackend.openrouter.test.tsx::starts with no embedding model and says what choosing one sends to OpenRouter | gap: missing — no CLI way to choose In-app, Ollama or OpenRouter |
+| ai.openrouter | e2e:IA/pestaña OpenRouter | n/a: the bar holds no provider config and hides the model list for OpenRouter | vitest:src/components/Onboarding/StepAiBackend.openrouter.test.tsx::offers none, the recommended models with what mail they suit, and another model | gap: missing — key, chat and embedding model, context budget and zero data retention cannot be set from the CLI |
+| ai.embeddingProbe | vitest:src/components/Settings/AiSettings.embedding.test.tsx::checks a newly chosen OpenRouter embedding model before saving it, then re-indexes | n/a: the bar never changes the embedding model | vitest:src/components/Onboarding/StepAiBackend.openrouter.test.tsx::checks a recommended model with the typed key before saving it | n/a: the CLI cannot choose an embedding model (see ai.openrouter) |
+| ai.modelMemory | vitest:src/components/Settings/AiSettings.embedding.test.tsx::returning to the saved provider restores its chat model | n/a: the bar never switches provider | vitest:src/components/Onboarding/StepAiBackend.openrouter.test.tsx::offers the OpenRouter models remembered while another provider is saved, without a second check | n/a: the CLI cannot switch provider (see ai.backendTabs) |
+| ai.statusBar | n/a: the bar is its own entry point | e2e:IA/barra de Logs | n/a: the bar is its own entry point | n/a: no status bar; doctor reports the same (ai.current) |
+| ai.workInProgress | vitest:src/components/Settings/AiSettings.embedding.test.tsx::asks about the work in progress first, and about the re-index only after it | vitest:src/components/LogPanel/ModelSelector.test.tsx::asks before changing the chat model while AI work uses it, and changes nothing on cancel | n/a: onboarding runs before any account exists, so no AI work can be queued | gap: missing — REPL /model saves the model without checking queued AI work |
+| ai.reindexConfirm | vitest:src/components/Settings/AiSettings.embedding.test.tsx::asks before replacing the Embeddings, and does nothing until answered | n/a: the bar never changes the embedding model | n/a: no index exists before an account is added | n/a: the CLI cannot change the embedding model |
+| ai.onboarding | n/a: onboarding-only | n/a: onboarding-only | vitest:src/components/Onboarding/StepAiBackend.openrouter.test.tsx::stays on the step and shows why when the model fails the check | n/a: the CLI has no first-run wizard |
+| ai.chatModel | gap: untested — no AiSettings test picks a chat model; only provider-switch defaults are tested | vitest:src/components/LogPanel/ModelSelector.test.tsx::changes the chat model straight away when no AI work uses it | vitest:src/components/Onboarding/StepAiBackend.autoSelect.test.tsx::submits the newly-linked non-recommended model on Continue, not the never-downloaded recommended default | rust:src-tauri/src/cli/repl.rs::switch_model_persists_to_ai_model_pref |
+| ai.current | gap: untested — that Settings opens on the saved provider's tab is never checked in the UI | vitest:src/components/LogPanel/ModelSelector.test.tsx::names the backend in use without offering to change it | gap: untested — the step preselects the saved provider, untested | rust:src-tauri/src/cli/doctor.rs::report_reflects_provider_and_model_preferences |
+| ai.download | gap: untested — download and link in the in-app panel have no test; the sweep avoids multi-GB downloads | n/a: the bar lists downloaded models only | gap: untested — starting a download is untested; a test only simulates the completion event | gap: missing — no download command; REPL /model saves the preference even for a model not downloaded |
+| ai.masterSwitch | gap: untested — the AI features switch and its confirm dialog have no test; the aiOff test only starts from the off state | n/a: the bar has no AI switch | gap: untested — Use AI / skip has no test beyond the download size label | gap: missing — doctor reports aiEnabled but no command turns it on or off |
+| ai.connectionTest | gap: untested — Test has no test, and the sweep forbids it because it calls the provider | n/a: the bar has no test action | gap: untested — Continue on OpenRouter calls the provider test; untested | gap: missing — doctor loads no model and calls no provider |
 
 ## Driving it with verify.sh
 
