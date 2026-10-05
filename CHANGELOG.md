@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **What's new after an update.** The first time you open EmailOps after
+  updating, a dialog shows the release notes in your language (English,
+  Spanish, French or German).
+
+### Changed
+
+- **The update notice comes back.** Closing the "new version available"
+  notice hides it for 24 hours; it returns until you install the update.
 
 ## [0.6.12] — 2026-09-29
 

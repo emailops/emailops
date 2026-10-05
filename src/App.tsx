@@ -16,6 +16,7 @@ import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
+import { ReleaseNotesDialog } from '@/components/common/ReleaseNotesDialog';
 import { ShortcutHelpModal } from '@/components/common/ShortcutHelpModal';
 import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
@@ -53,7 +54,7 @@ import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
 import type { OutboxUpdated } from '@/lib/api';
 import * as api from '@/lib/api';
-import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
+import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { chatDockMode } from '@/lib/chatPanelLayout';
@@ -108,7 +109,7 @@ import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
-import { useUpdateStore } from '@/stores/updateStore';
+import { type UpdateToastHost, useUpdateStore } from '@/stores/updateStore';
 import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
   ActiveFilter,
@@ -144,6 +145,27 @@ function isLogLevel(value: string): value is LogLevel {
 function isLogSource(value: string): value is LogSource {
   return LOG_SOURCES.includes(value as LogSource);
 }
+
+/** How often a snoozed update toast is re-checked; the 24-hour snooze itself
+ *  lives in `shouldShowUpdateToast`. */
+const UPDATE_REMINDER_CHECK_MS = 3_600_000;
+
+function nowSecs(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** Where the update store shows its toast. The i18n singleton resolves the
+ *  message in the current language at show time. */
+const UPDATE_TOAST_HOST: UpdateToastHost = {
+  addToast: (toast) => useToastStore.getState().addToast(toast),
+  isToastOpen: (id) => useToastStore.getState().toasts.some((t) => t.id === id),
+  t: (key, opts) => i18n.t(key, opts),
+  openUrl: (url) => {
+    void openExternal(url).catch((err) => {
+      useLogStore.getState().addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
+    });
+  },
+};
 
 function App() {
   const [isLocked, setIsLocked] = useState(false);
@@ -849,24 +871,23 @@ function AppInner() {
     );
 
     // New-release notification — the backend checks GitHub daily and emits
-    // this at most once per version. Validation + toast routing live in the
-    // pure handler (`appUpdate.ts`); the i18n singleton resolves the message
-    // in the current language at event time. The sticky toast announces; the
-    // update store feeds the persistent sidebar link, seeded at startup from
-    // the prefs the backend check persists.
-    void useUpdateStore.getState().load();
+    // this when it first sees a newer release; the update store is seeded at
+    // startup from the prefs that check persists. The store owns the sticky
+    // toast (`remind`): shown until the user updates, snoozed for 24 hours
+    // whenever they close it. It also feeds the persistent sidebar link.
+    void useUpdateStore
+      .getState()
+      .load()
+      .then(() => useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs()));
     unlisteners.push(
       listen<UpdateAvailablePayload>('app-update-available', (event) => {
-        handleUpdateAvailable(event.payload, {
-          addToast: useToastStore.getState().addToast,
-          t: (key, opts) => i18n.t(key, opts),
-          openUrl: (url) => {
-            void openExternal(url).catch((err) => {
-              addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
-            });
-          },
-          onAvailable: useUpdateStore.getState().setAvailable,
-        });
+        const update = sanitizeAvailableUpdate(event.payload);
+        if (!update) {
+          console.error('Ignoring malformed or unsafe app-update-available payload', event.payload);
+          return;
+        }
+        useUpdateStore.getState().setAvailable(update);
+        useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs());
       }),
     );
 
@@ -1066,6 +1087,16 @@ function AppInner() {
       });
     };
   }, [addLog]);
+
+  // Bring a snoozed update toast back once its 24 hours are up, also in
+  // sessions that stay open for days.
+  useEffect(() => {
+    const timer = setInterval(
+      () => useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs()),
+      UPDATE_REMINDER_CHECK_MS,
+    );
+    return () => clearInterval(timer);
+  }, []);
 
   // Sync emails when active account changes
   useEffect(() => {
@@ -1856,6 +1887,7 @@ function AppInner() {
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
       <ToastHost />
       <ShortcutHelpModal />
+      <ReleaseNotesDialog onboardingCompleted={onboardingCompleted} />
       <SenderDialogs />
 
       {isSearchOpen && (

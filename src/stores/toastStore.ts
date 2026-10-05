@@ -12,6 +12,9 @@ export interface Toast {
   /** How long the toast stays up (default `DEFAULT_TOAST_MS`) — an undo
    *  toast lasts exactly as long as its undo window. */
   durationMs?: number;
+  /** Runs when the toast is dismissed — by the user, its action button or
+   *  the timeout (e.g. to snooze the app-update reminder). */
+  onDismiss?: () => void;
 }
 
 export const DEFAULT_TOAST_MS = 8000;
@@ -41,5 +44,9 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     return id;
   },
 
-  dismissToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+  dismissToast: (id) => {
+    const toast = get().toasts.find((t) => t.id === id);
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }));
+    toast?.onDismiss?.();
+  },
 }));

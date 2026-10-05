@@ -53,5 +53,10 @@
   "updates": {
     "available": "EmailOps {{version}} is available",
     "download": "Download"
+  },
+  "releaseNotes": {
+    "title": "What's new in EmailOps {{version}}",
+    "version": "Version {{version}}",
+    "close": "Got it"
   }
 }

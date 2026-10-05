@@ -3459,3 +3459,24 @@ reading the document in the webview covers sheets that were closed when the chan
 since the stored state still holds both values. Last-writer-wins by wall clock — clocks
 differ between machines and the CRDT's own choice is already the same everywhere. Locking
 cells — impossible without a server.
+
+## 2026-10-05 — Bundled, translated release notes after an update; update toast returns every 24h
+
+**Decision:** On the first launch after an update, a dialog shows the release notes of every
+version since the last one seen, in the UI language. The notes ship inside the app as
+`src/releaseNotes/<version>/{en,es,fr,de}.md`, written by the release skill next to the
+CHANGELOG section; a vitest guard fails while the `package.json` version lacks a file in any
+language. The `release_notes_seen_version` pref records the version once the dialog is
+closed; a fresh install (onboarding wizard showing) records it silently, and an upgrade from
+a build that never recorded one shows only the running version's notes. The update toast is
+no longer once per version: it shows at startup and on the backend event until the user
+updates, and closing it (X or Download) snoozes it for 24 hours
+(`app_update_dismissed_version` / `app_update_dismissed_at` prefs, re-checked hourly). A
+release newer than the dismissed one shows at once. This supersedes the "once per version"
+part of the 2026-07-24 update-notification entry; the backend check is unchanged.
+**Context:** The developer asked for the notes in the user's language on first open after
+updating, and for a closed update notification to come back every 24h until they update.
+**Rejected:** Fetching the GitHub release body — English only, needs the network at startup,
+and the dialog would trust remote markdown. Translating the CHANGELOG at runtime with the
+local model — slow on first launch and not reviewable. Moving the snooze into the backend
+check — it fetches at most once per 24h, so a snooze measured there would drift up to 48h.
