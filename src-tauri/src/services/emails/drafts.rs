@@ -1354,6 +1354,46 @@ mod tests {
     }
 
     #[test]
+    fn reply_prompt_rule_follows_a_custom_templates_last_line_after_a_blank_line() {
+        let template = "You help {persona}.\n{thread_context}\nReply now:";
+        let p = plan_signed(&[msg("Alice", "hi")], None, signed(), template, "");
+        assert!(p.suffix.ends_with(&format!("Reply now:\n\n{}", rule())), "{}", p.suffix);
+    }
+
+    #[test]
+    fn reply_prompt_rule_adds_no_blank_line_after_a_template_ending_in_a_newline() {
+        let template = "You help {persona}.\n{thread_context}\nReply now:\n";
+        let p = plan_signed(&[msg("Alice", "hi")], None, signed(), template, "");
+        assert!(p.suffix.ends_with(&format!("Reply now:\n{}", rule())), "{}", p.suffix);
+    }
+
+    #[test]
+    fn reply_prompt_rule_is_the_whole_suffix_of_a_template_without_placeholders() {
+        let p = plan_signed(&[msg("Alice", "hi")], None, signed(), "Just write something nice.", "");
+        assert_eq!(p.prefix, "Just write something nice.");
+        assert_eq!(p.suffix, rule());
+    }
+
+    #[test]
+    fn the_saved_signature_is_loaded_for_the_sign_off() {
+        let db = Database::new_for_testing().expect("test db");
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acc-1', 'gmail', 'ana@example.com', 'Ana Example', 0)",
+                [],
+            )
+            .expect("insert account");
+        assert_eq!(load_signature(&db, "acc-1"), None);
+        db.upsert_account_signature("acc-1", "<p>Ana Example</p>", true, false, 1)
+            .unwrap();
+        assert_eq!(
+            load_signature(&db, "acc-1"),
+            Some(signature("<p>Ana Example</p>", true, false))
+        );
+    }
+
+    #[test]
     fn reply_prompt_custom_template_without_instructions_is_unchanged_without_a_signature() {
         let template = "You help {persona}.\n{thread_context}\nReply now:";
         let p = plan_signed(&[msg("Alice", "hi")], Some("say yes"), SignOff::Unchanged, template, "");

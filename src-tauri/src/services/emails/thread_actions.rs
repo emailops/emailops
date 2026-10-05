@@ -806,6 +806,65 @@ mod tests {
         assert_eq!(db.pending_snoozes().unwrap().len(), 1);
     }
 
+    fn interactions(db: &Database, kind: &str) -> Vec<Option<String>> {
+        db.recent_interaction_events("acc-1", 50)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == kind)
+            .map(|e| e.email_id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn mark_read_records_a_read_signal_for_each_message_it_reads() {
+        let unread = |m: Email| with(m, |e| e.is_read = false);
+        let db = test_db(&[
+            unread(message("a", 1, "inbox")),
+            unread(message("b", 2, "inbox")),
+            message("c", 3, "inbox"),
+        ]);
+        run(&db, ThreadAction::MarkRead, ProviderAccess::LocalOnly)
+            .await
+            .unwrap();
+        let mut read = interactions(&db, "read");
+        read.sort();
+        assert_eq!(read, vec![Some("a".to_string()), Some("b".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn archive_resolves_the_thread_through_its_latest_message() {
+        let db = test_db(&[message("a", 1, "inbox"), message("b", 2, "inbox")]);
+        run(&db, ThreadAction::Archive, ProviderAccess::LocalOnly)
+            .await
+            .unwrap();
+        assert_eq!(interactions(&db, "archive"), vec![Some("b".to_string())]);
+        assert_eq!(
+            db.get_thread_state("acc-1", "t-1").unwrap().unwrap().awaiting,
+            "resolved"
+        );
+    }
+
+    #[tokio::test]
+    async fn archiving_a_thread_with_nothing_in_the_inbox_records_no_archive() {
+        let db = test_db(&[message("a", 1, "archive")]);
+        run(&db, ThreadAction::Archive, ProviderAccess::LocalOnly)
+            .await
+            .unwrap();
+        assert!(interactions(&db, "archive").is_empty());
+        assert!(db.get_thread_state("acc-1", "t-1").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_resolves_the_thread_like_an_archive() {
+        let db = test_db(&[message("a", 1, "inbox"), message("b", 2, "inbox")]);
+        run(&db, ThreadAction::Delete, ProviderAccess::LocalOnly).await.unwrap();
+        assert_eq!(interactions(&db, "archive"), vec![Some("b".to_string())]);
+        assert_eq!(
+            db.get_thread_state("acc-1", "t-1").unwrap().unwrap().awaiting,
+            "resolved"
+        );
+    }
+
     #[tokio::test]
     async fn move_to_inbox_brings_an_archived_thread_back_through_the_provider() {
         let archived = message("a", 1, "archive");
