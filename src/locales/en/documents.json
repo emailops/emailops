@@ -115,5 +115,7 @@
     "shared_many": "It is shared: you will stop sending and receiving its changes. The {{count}} other people keep their copy.",
     "shared_other": "It is shared: you will stop sending and receiving its changes. The {{count}} other people keep their copy.",
     "confirm": "Delete"
-  }
+  },
+  "exportPdf": "Export PDF",
+  "exportPdfHint": "Opens the print dialog: choose “Save as PDF”."
 }

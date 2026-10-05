@@ -115,5 +115,7 @@
     "shared_many": "Está compartido: dejarás de enviar y recibir sus cambios. Las otras {{count}} personas conservan su copia.",
     "shared_other": "Está compartido: dejarás de enviar y recibir sus cambios. Las otras {{count}} personas conservan su copia.",
     "confirm": "Eliminar"
-  }
+  },
+  "exportPdf": "Exportar PDF",
+  "exportPdfHint": "Abre el diálogo de impresión: elige «Guardar como PDF»."
 }

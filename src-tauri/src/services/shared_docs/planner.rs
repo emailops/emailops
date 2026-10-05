@@ -3,6 +3,7 @@
 
 use super::envelope::Envelope;
 pub use crate::models::shared_docs::DocStatus;
+use crate::services::junk::auth::{AuthAssessment, AuthResult};
 
 /// Seconds without a local edit before a document's changes are mailed, so a
 /// burst of typing goes out as one message.
@@ -89,11 +90,82 @@ pub fn due_flushes(candidates: &[FlushCandidate], now: i64) -> Vec<String> {
     due.into_iter().map(|c| c.id.clone()).collect()
 }
 
+/// Pure: why a message must not be taken as coming from the participant its
+/// `From` names, if it must not — judged on what the receiving server recorded
+/// in `Authentication-Results` ([`AuthAssessment`]). Refused: the sender's
+/// domain failed DMARC, or it publishes no DMARC policy and the message failed
+/// SPF without a valid DKIM signature. A verdict we cannot attribute to the
+/// account's own mail server proves nothing either way, so it is accepted.
+pub fn sender_rejection(auth: &AuthAssessment) -> Option<&'static str> {
+    if !auth.trusted {
+        return None;
+    }
+    if auth.dmarc_hard_fail() {
+        return Some("the sender's domain failed DMARC");
+    }
+    let no_dmarc = matches!(auth.dmarc, None | Some(AuthResult::None));
+    if no_dmarc && auth.spf_hard_fail() && auth.dkim != Some(AuthResult::Pass) {
+        return Some("the sender failed SPF and has no valid DKIM signature");
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::shared_docs::DocKind;
     use crate::services::shared_docs::crdt;
+
+    fn auth(
+        trusted: bool,
+        spf: Option<AuthResult>,
+        dkim: Option<AuthResult>,
+        dmarc: Option<AuthResult>,
+    ) -> AuthAssessment {
+        AuthAssessment {
+            trusted,
+            spf,
+            dkim,
+            dmarc,
+        }
+    }
+
+    #[test]
+    fn a_sender_whose_domain_fails_dmarc_is_refused() {
+        use AuthResult::*;
+        let cases = [
+            (
+                auth(true, Some(Pass), Some(Pass), Some(Pass)),
+                false,
+                "everything passes",
+            ),
+            (auth(true, Some(Pass), Some(Fail), Some(Fail)), true, "DMARC fails"),
+            (
+                auth(true, Some(Fail), Option::None, Some(None)),
+                true,
+                "no DMARC policy, SPF fails, no DKIM",
+            ),
+            (
+                auth(true, Some(Fail), Some(Pass), Option::None),
+                false,
+                "SPF fails but DKIM passes",
+            ),
+            (
+                auth(true, Some(SoftFail), Option::None, Option::None),
+                false,
+                "a soft fail is not proof",
+            ),
+            (
+                auth(false, Some(Fail), Some(Fail), Some(Fail)),
+                false,
+                "an unattributable verdict is not proof",
+            ),
+            (AuthAssessment::default(), false, "no header at all"),
+        ];
+        for (assessment, refused, case) in cases {
+            assert_eq!(sender_rejection(&assessment).is_some(), refused, "{case}");
+        }
+    }
 
     fn envelope(participants: &[&str]) -> Envelope {
         Envelope {

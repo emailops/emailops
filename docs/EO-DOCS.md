@@ -10,7 +10,7 @@ EO Docs permite que varios usuarios de EmailOps editen juntos documentos de text
 
 El núcleo (CRDT, transporte, consentimiento, sincronización) está implementado y probado con tests y con dos instancias reales contra un servidor IMAP/SMTP local. Alrededor hay una capa de producto razonable (carpetas, historial, búsqueda, importación de Word/Excel, fórmulas básicas, filtros, deshacer). **Los huecos principales no están en la edición, sino en el transporte con proveedores reales (Gmail y Outlook sin probar), en la experiencia de quien no tiene EmailOps, en la seguridad (sin cifrado ni verificación del remitente) y en el escalado con documentos grandes.**
 
-La funcionalidad está detrás de un interruptor experimental, apagado por defecto (Ajustes → EO Docs; preferencia `shared_docs_enabled`).
+La funcionalidad lleva la etiqueta experimental y está **activada por defecto** desde el 05/10/2026; se desactiva en Ajustes → EO Docs (preferencia `shared_docs_enabled`).
 
 ## 2. Cómo funciona
 
@@ -107,7 +107,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 
 | # | Gap | Impacto | Prioridad |
 |---|---|---|---|
-| S1 | **Sin verificación DMARC/DKIM del remitente.** El plan inicial preveía descartar mensajes con `fail`, pero no está implementado (no hay referencias a DMARC/DKIM en `services/shared_docs/`). Un cambio se acepta si el `From` es un participante, y un `From` falsificado lo cumple cuando el proveedor no lo rechaza | Un tercero podría inyectar cambios | P0 |
+| S1 | **Verificación del remitente solo en Gmail y Outlook.** Resuelto en parte el 05/10/2026: se rechazan las llegadas con DMARC en `fail`, o sin política DMARC con SPF en `fail` y sin DKIM válido (`planner::sender_rejection`). En cuentas IMAP no se puede atribuir el `Authentication-Results` al servidor propio (`junk::auth::expected_authserv` devuelve `None`), así que ahí un `From` falsificado sigue pasando | Un tercero podría inyectar cambios en cuentas IMAP | P1 |
 | S2 | **Sin cifrado de extremo a extremo.** El contenido es tan privado como el resto del correo. El sobre tiene versión (`v`) para añadirlo después | Riesgo con documentos sensibles | P1 |
 | S3 | **Sin roles ni propietario.** Cualquier participante activo puede añadir personas, y nadie puede quitar a un participante | Difusión no controlada | P1 |
 | S4 | Abandonar o eliminar no avisa a los demás, que siguen enviándote cambios (tu app los ignora y los archiva) | Correo inútil; los demás no saben que te fuiste | P2 |
@@ -116,7 +116,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 
 | # | Gap | Prioridad |
 |---|---|---|
-| D1 | Sin exportación (Word, PDF) ni impresión: lo importado no se puede devolver a un formato de oficina | P1 |
+| D1 | Exportación a PDF resuelta (05/10/2026) con el diálogo de impresión del sistema («Guardar como PDF»). Sigue sin haber exportación a Word o Excel | P2 |
 | D2 | Sin comentarios, sugerencias ni menciones | P2 |
 | D3 | Sin presencia (quién está editando) ni cursores remotos: el transporte por correo no lo permite en tiempo real | P2 |
 | D4 | No se puede renombrar un documento una vez creado (solo las carpetas) | P1 |
@@ -139,7 +139,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 | # | Gap | Prioridad |
 |---|---|---|
 | P1 | **La IA no conoce EO Docs:** el chat y la búsqueda semántica no leen documentos ni hojas | P1 |
-| P2 | Sin documentación de usuario (`docs/site`, 4 idiomas) ni entrada en el ROADMAP | P0 para salir de experimental |
+| P2 | Documentación de usuario añadida (05/10/2026, sección «EO Docs» de `features.md` en 4 idiomas). Falta la entrada en el ROADMAP y que la ayuda integrada pueda abrir la vista (no está en `help_docs::nav::VIEWS`) | P2 |
 | P3 | La justificación de `gmail.send` y `gmail.modify` ante Google (verificación OAuth, CASA) no menciona el envío automático de documentos | P0 si se publica en una versión verificada |
 | P4 | Sin plantillas ni duplicar documento | P2 |
 
@@ -169,9 +169,9 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 
 1. **Prueba extremo a extremo con Gmail y Outlook** entre dos cuentas de prueba (T1). Requiere permiso explícito porque envía correo real. Hay que comprobar el envío del `.eodoc`, la detección en la sync, el archivado y la copia en Enviados.
 2. **No enviar actualizaciones a quien no tiene EmailOps** (T2). Propuesta: tratar a un participante como «lector» hasta recibir de él un mensaje `.eodoc`, y enviarle solo un resumen periódico con la copia HTML actualizada (cierra también T3).
-3. **Verificar el remitente** (S1): descartar llegadas con DMARC o DKIM en `fail` usando el `Authentication-Results` que la sync ya guarda (`RawHeaders::auth_results`, `sync/header_capture.rs`), con tests en el planner.
+3. **Verificar el remitente en IMAP** (S1): Gmail y Outlook ya están cubiertos; para IMAP, aprender el `authserv-id` del servidor de la cuenta o firmar los sobres entre instalaciones.
 4. **Ocultar o archivar las copias en Enviados** de las actualizaciones (T4) y decidir el comportamiento sin carpeta Archive en IMAP (T5).
-5. **Documentación de usuario y justificación OAuth** (P2, P3).
+5. **Justificación OAuth** (P3) y entrada en el ROADMAP (P2).
 
 ### Fase 2: escalar y completar la experiencia
 

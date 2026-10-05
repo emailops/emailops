@@ -202,6 +202,53 @@ adelante desde otra dirección; **Deshacer**, o **Restaurar** en **Sugerencias d
 recupera. Nunca se sugiere el correo de tu propia dirección ni el de
 compañeros de tu propia empresa.
 
+## EO Docs {#eo-docs}
+
+<!-- claim:feat-eo-docs-1 -->
+**EO Docs** te permite escribir documentos y hojas de cálculo junto con otros usuarios de
+EmailOps, sin nube de por medio: cada cambio viaja como un email normal entre vuestras cuentas
+y cada copia fusiona lo que llega sin conflictos. Es experimental y viene activado;
+**Ajustes → EO Docs** lo desactiva, y mientras está desactivado no se recibe ni se envía nada.
+
+<!-- claim:feat-eo-docs-2 -->
+Abre **EO Docs** en la barra lateral y pulsa **Nuevo** para crear un documento o una hoja. Los
+documentos admiten títulos, negrita, cursiva, subrayado, listas, enlaces, tablas e imágenes. Las
+hojas crecen en filas y columnas, aceptan un bloque pegado desde Excel, y una columna se
+ensancha arrastrando el borde de su cabecera. Deshacer y rehacer solo revierten tus propios cambios.
+
+<!-- claim:feat-eo-docs-3 -->
+Una celda que empieza por `=` es una fórmula: `SUMA`, `PROMEDIO`, `MIN`, `MAX` y `CONTAR`
+(o `SUM`, `AVERAGE` y `COUNT`) sobre rangos como `=SUMA(B2:B10)`. Al insertar o eliminar filas
+los rangos siguen apuntando a las mismas celdas. El botón de filtro de la cabecera de una
+columna oculta las filas que desmarcas; los filtros solo cambian tu vista.
+
+<!-- claim:feat-eo-docs-4 -->
+**Compartir** pide las direcciones de email, sugiriendo primero a compañeros de tu empresa, y tu
+consentimiento: desde entonces EmailOps les envía tus cambios por su cuenta, unos dos minutos
+después de que dejes de escribir, o al momento con **Enviar cambios ahora**. Otros usuarios de
+EmailOps reciben una invitación para **Aceptar**; el resto recibe una copia de solo lectura en la
+invitación. Los cambios llegan con la siguiente sincronización, se fusionan y sus emails se
+marcan como leídos y se archivan.
+
+<!-- claim:feat-eo-docs-5 -->
+Un cambio solo se aplica si viene de alguien con quien se comparte el documento. En cuentas de
+Gmail y Outlook además se rechaza si el remitente no supera la comprobación de autenticación de
+tu proveedor (DMARC, o SPF sin una firma DKIM válida). Los emails no van cifrados de extremo a
+extremo: son tan privados como el resto de tu correo.
+
+<!-- claim:feat-eo-docs-6 -->
+Tus propias carpetas (nunca se comparten) ordenan los documentos; arrastra un documento sobre una
+carpeta, o usa **Mover a**. La búsqueda encuentra documentos por título y contenido, y
+**Historial** muestra versiones anteriores. **Exportar PDF** abre el diálogo de impresión, donde
+guardas el documento como PDF. **Eliminar** pide confirmación; eliminar un documento compartido
+solo borra tu copia, y los demás conservan la suya.
+
+<!-- claim:feat-eo-docs-7 -->
+**Importar** convierte un documento de Word (`.docx`) o una hoja de cálculo (`.xlsx`, `.xls`,
+`.ods`) en EO Docs, una hoja por pestaña y las fórmulas como sus valores; **Abrir en EO Docs** hace
+lo mismo con un adjunto de un email. En el editor de emails, **Desde EO Docs** adjunta un
+documento, lo que lo comparte con los destinatarios del email.
+
 ## Búsqueda
 
 <!-- claim:feat-search-1 -->

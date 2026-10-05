@@ -115,5 +115,7 @@
     "shared_many": "Es ist geteilt: Sie senden und empfangen keine Änderungen mehr. Die {{count}} anderen Personen behalten ihre Kopie.",
     "shared_other": "Es ist geteilt: Sie senden und empfangen keine Änderungen mehr. Die {{count}} anderen Personen behalten ihre Kopie.",
     "confirm": "Löschen"
-  }
+  },
+  "exportPdf": "Als PDF exportieren",
+  "exportPdfHint": "Öffnet den Druckdialog: Wählen Sie „Als PDF sichern“."
 }

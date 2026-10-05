@@ -34,8 +34,8 @@ use crate::sync::provider::{
 use envelope::{Envelope, Purpose};
 use planner::{Arrival, FlushCandidate, KnownDoc};
 
-/// The preference that turns the feature on. Experimental: off until the
-/// user enables it, and while off nothing is ingested or mailed.
+/// The preference that turns the feature off. Experimental, but on unless the
+/// user turns it off; while off nothing is ingested or mailed.
 pub const SHARED_DOCS_ENABLED_PREF: &str = "shared_docs_enabled";
 
 /// Emitted when documents changed outside the editor (a peer's changes
@@ -48,11 +48,15 @@ struct SharedDocsChanged<'a> {
     doc_ids: &'a [String],
 }
 
+/// Whether EO Docs is on: experimental, but on until the user turns it off.
 pub fn is_enabled(db: &Database) -> bool {
-    db.get_preference(SHARED_DOCS_ENABLED_PREF)
-        .ok()
-        .flatten()
-        .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+    match db.get_preference(SHARED_DOCS_ENABLED_PREF) {
+        Ok(value) => value.is_none_or(|v| v.eq_ignore_ascii_case("true")),
+        Err(e) => {
+            logger::log("error", "system", format!("Could not read the EO Docs setting: {e}"));
+            false
+        }
+    }
 }
 
 fn b64() -> base64::engine::GeneralPurpose {
@@ -821,6 +825,23 @@ pub async fn ingest_arrivals(
         };
         let outcome = async {
             if db.shared_doc_message_seen(&account.id, &email.id)? {
+                return Ok(None);
+            }
+            // Only a message that really comes from its `From` may change a
+            // document: a participant's address is easy to forge.
+            let auth = crate::services::junk::auth::assess(
+                email.headers.as_ref(),
+                crate::services::junk::auth::expected_authserv(&account.provider),
+            );
+            if let Some(reason) = planner::sender_rejection(&auth) {
+                logger::log(
+                    "warn",
+                    "sync",
+                    format!(
+                        "[{}] A shared document message from {} was refused: {reason}",
+                        account.email, email.sender_email
+                    ),
+                );
                 return Ok(None);
             }
             let env = envelope::decode(&envelope_bytes(provider, email, info).await?)?;

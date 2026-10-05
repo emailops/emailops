@@ -3397,3 +3397,24 @@ mailing a delete would let any participant destroy the others' work); a soft-del
 on `shared_docs` (every list, search and flush query would need to filter it); a hard
 delete without a tombstone (the next change from a peer would bring the document back as
 an invitation).
+
+## 2026-10-05 — EO Docs refuses changes whose sender fails DMARC; on by default, still experimental; PDF through the print dialog
+
+**Decision:** An arriving `.eodoc` message is refused, before it touches any document,
+when the receiving server's `Authentication-Results` (read with the junk detector's
+`junk::auth::assess`, so only a verdict attributable to the account's own MTA counts)
+says the sender's domain failed DMARC, or publishes no DMARC policy and the message
+failed SPF without a valid DKIM signature. EO Docs is now on by default and keeps its
+Experimental label; turning it off still stops all ingest and mail. "Export PDF" prints
+the document alone through the system print dialog (`window.print()`, which Tauri routes
+to the native webview print on macOS; capability `core:webview:allow-print`), where the
+user picks "Save as PDF".
+**Context:** The developer asked for sender verification, PDF export and the feature on
+by default while it stays experimental. The analysis in `docs/EO-DOCS.md` listed a forged
+`From` as the main security gap.
+**Rejected:** Refusing on `softfail`, `neutral` or a missing header (much legitimate mail
+lands there, and an IMAP account cannot attribute any verdict, which would make EO Docs
+unusable on IMAP). A PDF library (jsPDF, printpdf) writing the file directly — a new
+dependency for what the system dialog already does, and a second renderer to keep in step
+with the editor. Known gap: on IMAP accounts no verdict can be attributed, so a forged
+`From` there is still accepted.

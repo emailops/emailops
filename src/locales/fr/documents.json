@@ -115,5 +115,7 @@
     "shared_many": "Il est partagé : vous n’enverrez ni ne recevrez plus ses modifications. Les {{count}} autres personnes gardent leur copie.",
     "shared_other": "Il est partagé : vous n’enverrez ni ne recevrez plus ses modifications. Les {{count}} autres personnes gardent leur copie.",
     "confirm": "Supprimer"
-  }
+  },
+  "exportPdf": "Exporter en PDF",
+  "exportPdfHint": "Ouvre la fenêtre d’impression : choisissez « Enregistrer au format PDF »."
 }

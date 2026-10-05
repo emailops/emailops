@@ -6,6 +6,7 @@ import { useSharedYDoc } from '@/hooks/useSharedYDoc';
 import { useVersionDoc } from '@/hooks/useVersionDoc';
 import * as api from '@/lib/api';
 import { folderOptions } from '@/lib/docFolders';
+import { printDocument } from '@/lib/docPrint';
 import { errorText } from '@/lib/errors';
 import { gridToHtml, readGrid } from '@/lib/sheetModel';
 import { useLogStore } from '@/stores/logStore';
@@ -77,6 +78,17 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
     await share(doc.id, recipients, snapshot);
     addLog('success', 'sync', `Shared "${doc.title}" with ${recipients.join(', ')}`);
   };
+
+  const handleExportPdf = () =>
+    act('The PDF could not be made', async () => {
+      const html =
+        doc.kind === 'sheet'
+          ? ydoc
+            ? gridToHtml(readGrid(ydoc), i18n.language)
+            : ''
+          : (editorRef.current?.getHTML() ?? '');
+      await printDocument(doc.title, html);
+    });
 
   const handleSendNow = () =>
     act('The changes could not be sent', async () => {
@@ -177,6 +189,16 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             {t('documents:leave')}
           </button>
         )}
+        <button
+          type="button"
+          data-testid="shared-doc-export-pdf"
+          title={t('documents:exportPdfHint')}
+          onClick={() => void handleExportPdf()}
+          disabled={!ydoc}
+          className={BUTTON}
+        >
+          {t('documents:exportPdf')}
+        </button>
         <button
           type="button"
           data-testid="shared-doc-delete"

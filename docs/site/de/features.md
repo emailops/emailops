@@ -206,6 +206,54 @@ Absender später von einer anderen Adresse schreibt; **Rückgängig** oder **Wie
 **Verworfene Vorschläge** holt ihn zurück. E-Mails von Ihrer eigenen Adresse oder von
 Kollegen Ihres eigenen Unternehmens werden nie vorgeschlagen.
 
+## EO Docs {#eo-docs}
+
+<!-- claim:feat-eo-docs-1 -->
+Mit **EO Docs** schreiben Sie Dokumente und Tabellen gemeinsam mit anderen EmailOps-Nutzern, ohne
+Cloud dazwischen: Jede Änderung reist als gewöhnliche E-Mail zwischen Ihren Konten, und jede Kopie
+führt Eingehendes ohne Konflikte zusammen. Die Funktion ist experimentell und standardmäßig an;
+**Einstellungen → EO Docs** schaltet sie ab, und solange sie aus ist, wird nichts empfangen oder gesendet.
+
+<!-- claim:feat-eo-docs-2 -->
+Öffnen Sie **EO Docs** in der Seitenleiste und klicken Sie auf **Neu**, um ein Dokument oder eine
+Tabelle anzulegen. Dokumente kennen Überschriften, Fett, Kursiv, Unterstreichen, Listen, Links,
+Tabellen und Bilder. Tabellen wachsen um Zeilen und Spalten, übernehmen einen aus Excel eingefügten
+Block, und eine Spalte wird breiter, wenn Sie den Rand ihres Kopfes ziehen. Rückgängig und
+Wiederholen betreffen nur Ihre eigenen Änderungen.
+
+<!-- claim:feat-eo-docs-3 -->
+Eine Zelle, die mit `=` beginnt, ist eine Formel: `SUM`, `AVERAGE`, `MIN`, `MAX` und `COUNT`
+(oder `SUMA`, `PROMEDIO` und `CONTAR`) über Bereiche wie `=SUM(B2:B10)`. Beim Einfügen oder Löschen
+von Zeilen zeigen die Bereiche weiter auf dieselben Zellen. Die Filterschaltfläche im Spaltenkopf
+blendet die Zeilen aus, deren Haken Sie entfernen; Filter ändern nur Ihre eigene Ansicht.
+
+<!-- claim:feat-eo-docs-4 -->
+**Teilen** fragt nach den E-Mail-Adressen, schlägt zuerst Kollegen aus Ihrem Unternehmen vor, und
+nach Ihrer Zustimmung: Von da an mailt EmailOps Ihre Änderungen von selbst, etwa zwei Minuten nachdem
+Sie aufgehört haben zu tippen, oder sofort mit **Änderungen jetzt senden**. Andere EmailOps-Nutzer
+erhalten eine Einladung zum **Annehmen**; alle anderen erhalten in der Einladung eine
+schreibgeschützte Kopie. Änderungen kommen mit der nächsten Synchronisierung, werden zusammengeführt,
+und ihre E-Mails werden als gelesen markiert und archiviert.
+
+<!-- claim:feat-eo-docs-5 -->
+Eine Änderung wird nur übernommen, wenn sie von jemandem kommt, mit dem das Dokument geteilt ist. Bei
+Gmail- und Outlook-Konten wird sie außerdem abgelehnt, wenn der Absender die
+Authentifizierungsprüfung Ihres Anbieters nicht besteht (DMARC, oder SPF ohne gültige
+DKIM-Signatur). Die E-Mails sind nicht Ende-zu-Ende-verschlüsselt: Sie sind so privat wie Ihre übrige Post.
+
+<!-- claim:feat-eo-docs-6 -->
+Eigene Ordner (nie geteilt) halten die Dokumente in Ordnung; ziehen Sie ein Dokument auf einen
+Ordner, oder nutzen Sie **Verschieben nach**. Die Suche findet Dokumente nach Titel und Inhalt, und
+**Verlauf** zeigt frühere Versionen. **Als PDF exportieren** öffnet den Druckdialog, in dem Sie das
+Dokument als PDF sichern. **Löschen** fragt vorher nach; ein geteiltes Dokument zu löschen entfernt
+nur Ihre Kopie, die anderen behalten ihre.
+
+<!-- claim:feat-eo-docs-7 -->
+**Importieren** macht aus einem Word-Dokument (`.docx`) oder einer Tabelle (`.xlsx`, `.xls`, `.ods`)
+EO Docs, eine Tabelle pro Blatt und Formeln als ihre Werte; **In EO Docs öffnen** tut dasselbe mit
+einem E-Mail-Anhang. Im E-Mail-Editor hängt **Aus EO Docs** ein Dokument an und teilt es damit mit
+den Empfängern der E-Mail.
+
 ## Suche
 
 <!-- claim:feat-search-1 -->

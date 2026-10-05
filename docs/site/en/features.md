@@ -187,6 +187,52 @@ good, even when the sender later mails from another address; **Undo**, or **Rest
 **Dismissed suggestions**, brings it back. Mail from your own address, or
 from colleagues at your own company, is never suggested.
 
+## EO Docs {#eo-docs}
+
+<!-- claim:feat-eo-docs-1 -->
+**EO Docs** lets you write documents and spreadsheets together with other EmailOps users,
+with no cloud in between: every change travels as an ordinary email between your accounts,
+and each copy merges what arrives without conflicts. It is experimental and on by default;
+**Settings → EO Docs** turns it off, and while it is off nothing is received or sent.
+
+<!-- claim:feat-eo-docs-2 -->
+Open **EO Docs** in the sidebar and click **New** to create a document or a sheet. Documents
+have headings, bold, italic, underline, lists, links, tables and images. Sheets grow with
+rows and columns, take a block pasted from Excel, and a column is resized by dragging the
+edge of its header. Undo and redo only take back your own changes.
+
+<!-- claim:feat-eo-docs-3 -->
+A sheet cell that starts with `=` is a formula: `SUM`, `AVERAGE`, `MIN`, `MAX` and `COUNT`
+(or `SUMA`, `PROMEDIO` and `CONTAR`) over ranges such as `=SUM(B2:B10)`. Inserting or deleting
+rows keeps the ranges pointing at the same cells. The filter button on a column header hides
+the rows you untick; filters only change your own view.
+
+<!-- claim:feat-eo-docs-4 -->
+**Share** asks for the email addresses, suggesting colleagues from your company first, and for
+your consent: from then on EmailOps emails your changes to them on its own, about two minutes
+after you stop typing, or straight away with **Send changes now**. Other EmailOps users get an
+invitation to **Accept**; anyone else gets a read-only copy in the invitation. Changes arrive
+with the next sync, are merged, and their emails are marked read and archived.
+
+<!-- claim:feat-eo-docs-5 -->
+A change is only applied when it comes from someone the document is shared with. On Gmail and
+Outlook accounts it is also refused when the sender fails your provider's authentication check
+(DMARC, or SPF without a valid DKIM signature). The emails are not end-to-end encrypted: they
+are as private as the rest of your mail.
+
+<!-- claim:feat-eo-docs-6 -->
+Folders of your own (never shared) keep documents in order; drag a document onto a folder, or
+use **Move to**. Search finds documents by title and content, and **History** shows earlier
+versions. **Export PDF** opens the print dialog, where you save the document as a PDF.
+**Delete** asks first; deleting a shared document removes only your copy, and the others keep
+theirs.
+
+<!-- claim:feat-eo-docs-7 -->
+**Import** turns a Word document (`.docx`) or a spreadsheet (`.xlsx`, `.xls`, `.ods`) into EO Docs,
+one sheet per tab and formulas as their values; **Open in EO Docs** does the same for an email
+attachment. In the composer, **From EO Docs** attaches a document, which shares it with the
+email's recipients.
+
 ## Search
 
 <!-- claim:feat-search-1 -->

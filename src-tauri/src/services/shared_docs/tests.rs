@@ -19,6 +19,8 @@ struct Install {
     provider: FakeEmailProvider,
     /// Messages of other installs already delivered here, per sender.
     delivered: std::sync::Mutex<std::collections::HashMap<String, usize>>,
+    /// The headers this install's mail server records on what arrives.
+    arriving_headers: std::sync::Mutex<Option<crate::models::headers::RawHeaders>>,
 }
 
 fn install(address: &str) -> Install {
@@ -36,6 +38,7 @@ fn install(address: &str) -> Install {
         account,
         provider: FakeEmailProvider::new(address, ""),
         delivered: Default::default(),
+        arriving_headers: Default::default(),
     }
 }
 
@@ -76,7 +79,7 @@ async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
             mailbox: if own { "sent" } else { "inbox" }.into(),
             is_sent: own,
             is_starred: false,
-            headers: None,
+            headers: to.arriving_headers.lock().unwrap().clone(),
         };
         let infos: Vec<AttachmentInfo> = msg
             .attachments
@@ -685,4 +688,42 @@ async fn a_deleted_shared_document_does_not_come_back_with_later_changes() {
 
     assert!(bob.db.get_shared_doc(&doc).unwrap().is_none());
     assert!(bob.db.list_shared_docs(Some(&bob.account.id)).unwrap().is_empty());
+}
+
+/// What Gmail's server records on a message, as captured by the sync.
+fn gmail_verdict(results: &str) -> crate::models::headers::RawHeaders {
+    let block = format!("Authentication-Results: mx.google.com; {results}\n");
+    crate::sync::header_capture::capture(&crate::sync::header_capture::parse_header_block(&block))
+}
+
+#[tokio::test]
+async fn a_change_whose_sender_fails_dmarc_is_not_applied() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), " forged");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    *bob.arriving_headers.lock().unwrap() = Some(gmail_verdict("spf=fail; dkim=fail; dmarc=fail"));
+    deliver(&alice, &bob).await;
+
+    assert_eq!(stored_text(&bob, &doc), "Hello");
+
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 2), " real");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    *bob.arriving_headers.lock().unwrap() = Some(gmail_verdict("spf=pass; dkim=pass; dmarc=pass"));
+    deliver(&alice, &bob).await;
+    // The authenticated change builds on the refused one: Bob asks for what
+    // he lacks and Alice sends it again, this time authenticated.
+    flush(&bob.db, &bob.account, &bob.provider, &doc).await.unwrap();
+    deliver(&bob, &alice).await;
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    deliver(&alice, &bob).await;
+
+    assert_eq!(stored_text(&bob, &doc), stored_text(&alice, &doc));
+}
+
+#[test]
+fn eo_docs_is_on_until_the_user_turns_it_off() {
+    let db = Database::new_for_testing().unwrap();
+    assert!(is_enabled(&db), "on by default");
+    db.set_preference(SHARED_DOCS_ENABLED_PREF, "false").unwrap();
+    assert!(!is_enabled(&db));
 }
