@@ -2,7 +2,7 @@
 
 **Fecha:** 05/10/2026
 **Rama analizada:** `feature/shared-docs` (commit `7c78f5a4`)
-**Alcance:** backend `src-tauri/src/services/shared_docs/`, `src-tauri/src/db/shared_docs.rs`, migraciones V036–V038; frontend `src/components/Documents/`, `src/lib/sheet*.ts`, `src/lib/officeImport.ts`, `src/stores/sharedDocsStore.ts`, `src/hooks/useSharedYDoc.ts`.
+**Alcance:** backend `src-tauri/src/services/shared_docs/`, `src-tauri/src/db/shared_docs.rs`, migraciones V037–V039; frontend `src/components/Documents/`, `src/lib/sheet*.ts`, `src/lib/officeImport.ts`, `src/stores/sharedDocsStore.ts`, `src/hooks/useSharedYDoc.ts`.
 
 ## 1. Resumen
 
@@ -51,7 +51,7 @@ Decisiones registradas en `docs/DECISIONS.md`, entradas del 04/10/2026 y del 05/
 |---|---|
 | Carpetas | Personales y anidables; no se envían por correo. Se pueden crear, renombrar y eliminar (al eliminar una, su contenido sube un nivel) |
 | Mover | Arrastrando a una carpeta o a la ruta superior, o con el selector «Mover a» |
-| Eliminar | Con confirmación. Solo en este equipo; queda una lápida (V038) para que no reaparezca |
+| Eliminar | Con confirmación. Solo en este equipo; queda una lápida (V039) para que no reaparezca |
 | Búsqueda | FTS5 por título y contenido, por prefijo de cada palabra |
 | Historial | Panel lateral de solo lectura. Las ediciones locales del mismo autor se agrupan en ventanas de 5 minutos; cada llegada es una versión. Máximo 200 versiones por documento |
 
@@ -159,8 +159,8 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 
 ## 7. Riesgos de integración y publicación
 
-- **Numeración de migraciones:** otra rama tiene `V036__agent_draft_review.sql`, que choca con `V036__shared_docs.sql`. Hay que renumerar V036–V038 al integrar.
-- **Acoplamiento de release:** V036, V037 y V038 crean tablas nuevas. Una versión instalada sin ellas no abre una base de datos que ya las tenga, el problema conocido de las migraciones aplicadas por builds de desarrollo.
+- **Numeración de migraciones:** renumeradas a V037–V039 el 05/10/2026, para dejar V035 y V036 a `feature/email-agent` (`V035__email_agent.sql`, `V036__agent_draft_review.sql`). Si otra rama añade migraciones antes de fusionar esta, hay que volver a comprobarlo.
+- **Acoplamiento de release:** V037, V038 y V039 crean tablas nuevas. Una versión instalada sin ellas no abre una base de datos que ya las tenga, el problema conocido de las migraciones aplicadas por builds de desarrollo.
 - **Gate `outdated`:** bloquea el pre-push de la rama hasta actualizar `ammonia`, `libc`, `mailparse`, `reedline`, `refinery`, `tokio` y `uuid`. `main` ya tiene la subida de `refinery` 0.10.
 - **Dependencias nuevas:** `yrs`, `calamine`, `yjs`, `@tiptap/extension-collaboration`, `@tiptap/y-tiptap`, `mammoth` y `pdfmake`.
 

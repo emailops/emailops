@@ -1,4 +1,4 @@
-//! Shared documents (V036). Storage only — the CRDT, the envelope and the
+//! Shared documents (V037). Storage only — the CRDT, the envelope and the
 //! mail transport live in `services::shared_docs`.
 
 use rusqlite::{params, OptionalExtension, Row};
@@ -453,7 +453,7 @@ impl Database {
     }
 
     /// One account's documents that have no search-index entry yet (they
-    /// predate the index, V037).
+    /// predate the index, V038).
     pub fn unindexed_shared_doc_ids(&self, account_id: &str) -> Result<Vec<String>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(

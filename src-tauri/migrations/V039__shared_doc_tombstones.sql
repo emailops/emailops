@@ -1,4 +1,4 @@
--- V038: documents deleted on this install (services::shared_docs::delete).
+-- V039: documents deleted on this install (services::shared_docs::delete).
 --
 -- A deleted document's row, history and search entry are removed; only its id
 -- is remembered here, so later mail about it from other participants is

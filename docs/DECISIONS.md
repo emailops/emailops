@@ -3273,7 +3273,7 @@ versioned (`v`) so it can be added without breaking older messages.
 
 **Decision:** Shared documents are presented as "EO Docs" (the feature's name in every
 language; code identifiers keep `shared_docs`). Folders are personal to each install
-(V037 `shared_doc_folders`): they are never mailed, sharing stays per document, and
+(V038 `shared_doc_folders`): they are never mailed, sharing stays per document, and
 deleting a folder moves what it holds up one level rather than deleting documents. Each
 change is kept as a version (`shared_doc_versions`: local edits by the same person within
 5 minutes are one version, each change that arrives by email is its own, 200 kept per
