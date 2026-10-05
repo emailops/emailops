@@ -103,6 +103,7 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import { useOverlay } from '@/stores/overlayStore';
 import { useReminderStore } from '@/stores/reminderStore';
+import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -303,6 +304,13 @@ function AppInner() {
     else if (viewMode === 'chat' && !aiEnabled) setViewMode('inbox');
     else if (viewMode === 'tagboard' && !aiEnabled) setViewMode('inbox');
   }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, skillsEnabled, sharedDocsEnabled, aiEnabled]);
+
+  // Another view asked to show a document in EO Docs (an attachment imported
+  // from an email): switch to it.
+  const docsOpenRequests = useSharedDocsStore((s) => s.openRequests);
+  useEffect(() => {
+    if (docsOpenRequests > 0 && sharedDocsEnabled) setViewMode('documents');
+  }, [docsOpenRequests, sharedDocsEnabled]);
   const addLog = useLogStore((s) => s.addLog);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const tabs = useEmailStore((s) => s.tabs);

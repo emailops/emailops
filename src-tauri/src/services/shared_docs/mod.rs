@@ -10,6 +10,7 @@
 
 pub mod crdt;
 pub mod envelope;
+pub mod import;
 mod mail_text;
 pub mod planner;
 
@@ -492,6 +493,52 @@ pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProvi
         }
     }
     sent
+}
+
+// ── Import ───────────────────────────────────────────────────────────────────
+
+/// Import a spreadsheet file (base64) as EO Docs sheets: one per non-empty
+/// tab, in `folder_id` when given. Each starts unshared, like a new document.
+pub fn import_spreadsheet(
+    db: &Database,
+    account: &Account,
+    filename: &str,
+    data: &str,
+    folder_id: Option<&str>,
+    now: i64,
+) -> Result<Vec<SharedDoc>> {
+    if !is_enabled(db) {
+        return Err(AppError::InvalidInput("EO Docs is turned off in Settings".into()));
+    }
+    if let Some(folder) = folder_id {
+        doc_folder_in_account(db, &account.id, folder)?;
+    }
+    let bytes = crate::services::attachments::decode_inline_base64(data)?;
+    let tabs = import::read_workbook(&bytes)?;
+    if tabs.is_empty() {
+        return Err(AppError::InvalidInput("The file has no values to import".into()));
+    }
+    let mut docs = Vec::with_capacity(tabs.len());
+    for tab in &tabs {
+        let title = import::tab_title(filename, &tab.name, tabs.len());
+        let doc = create(db, account, DocKind::Sheet, &title, now)?;
+        let state = import::sheet_state(&tab.rows, || uuid::Uuid::new_v4().to_string());
+        apply_local_update(db, &account.id, &doc.id, &b64().encode(state), now)?;
+        docs.push(match folder_id {
+            Some(folder) => move_doc(db, &account.id, &doc.id, Some(folder))?,
+            None => shared_doc_in_account(db, &account.id, &doc.id)?,
+        });
+    }
+    logger::log(
+        "success",
+        "sync",
+        format!(
+            "[{}] Imported {filename} into EO Docs ({} sheet(s))",
+            account.email,
+            docs.len()
+        ),
+    );
+    Ok(docs)
 }
 
 // ── Attached to an email ─────────────────────────────────────────────────────

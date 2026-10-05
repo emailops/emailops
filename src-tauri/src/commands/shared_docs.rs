@@ -240,3 +240,23 @@ pub async fn get_shared_doc_version(
 ) -> Result<String, AppError> {
     shared_docs::version_state(&state.db, &account_id, &doc_id, version_id)
 }
+
+/// Import a spreadsheet file (base64) as one EO Docs sheet per tab.
+#[tauri::command]
+pub async fn import_spreadsheet(
+    state: State<'_, AppState>,
+    account_id: String,
+    filename: String,
+    data: String,
+    folder_id: Option<String>,
+) -> Result<Vec<SharedDoc>, AppError> {
+    let account = account(&state, &account_id)?;
+    shared_docs::import_spreadsheet(
+        &state.db,
+        &account,
+        &filename,
+        &data,
+        folder_id.as_deref(),
+        crate::services::clock::now_secs(),
+    )
+}

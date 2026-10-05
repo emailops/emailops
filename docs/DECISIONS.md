@@ -3323,3 +3323,22 @@ EO Docs is for EmailOps users only, and chose sharing over attaching a frozen co
 invitation email next to the user's email — two messages for one action, and it would go
 out even when the email is undone. Archiving any message whose document is already known
 — it would file away emails people wrote.
+
+## 2026-10-05 — EO Docs imports Word with mammoth (webview) and spreadsheets with calamine (backend)
+
+**Decision:** "Import" in EO Docs, and "Open in EO Docs" on a .docx / .xlsx / .xlsm / .xls /
+.ods email attachment, turn the file into EO Docs. Word goes through mammoth (BSD-2-Clause,
+attributed in THIRD_PARTY_LICENSES.md) in the webview: its HTML is parsed with the doc
+editor's own TipTap schema (`src/lib/docSchema.ts`: headings, marks, lists, links, tables,
+images) and written into a new document as one Yjs update; images over ~1 MB of base64
+are left out (the document travels by email) and the user is told how many. Spreadsheets
+are read in the backend with calamine (MIT): one EO Docs sheet per non-empty tab, values
+only, formulas as their stored result (or their formula text when the file stores none),
+capped at 5,000 rows × 100 columns. Imported documents start unshared.
+**Context:** The developer asked to import Word and Excel and approved these two libraries
+after weighing BSD-2 against MIT.
+**Rejected:** SheetJS — Apache-2.0 but no longer published on npm (CDN only), harder to
+audit and update. Parsing spreadsheets in the webview — the backend keeps an untrusted
+binary format out of the page. Live formulas — they need a calculation engine; the best
+known one (HyperFormula) is GPLv3 or paid. A Rust .docx reader (`docx-rs`) — it gives the
+structure but no HTML, so the conversion would have to be written by hand.

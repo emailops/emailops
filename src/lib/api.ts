@@ -2215,6 +2215,16 @@ export async function getSharedDocVersion(accountId: string, docId: string, vers
   return invoke('get_shared_doc_version', { accountId, docId, versionId });
 }
 
+/** Import a spreadsheet file (standard base64) as one EO Docs sheet per tab. */
+export async function importSpreadsheet(
+  accountId: string,
+  filename: string,
+  data: string,
+  folderId: string | null,
+): Promise<SharedDoc[]> {
+  return invoke('import_spreadsheet', { accountId, filename, data, folderId });
+}
+
 export async function getJunkConfig(): Promise<JunkConfig> {
   return invoke('get_junk_config');
 }

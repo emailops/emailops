@@ -634,3 +634,25 @@ async fn an_attached_document_of_another_account_stops_the_send() {
     assert!(result.is_err());
     assert!(alice.provider.sent().is_empty());
 }
+
+#[tokio::test]
+async fn a_workbook_imports_as_searchable_sheets_in_the_chosen_folder() {
+    let alice = install("alice@example.com");
+    let folder = create_folder(&alice.db, &alice.account.id, "Imports", None, NOW).unwrap();
+    let data = b64().encode(include_bytes!("../../../tests/fixtures/eodocs/budget.xlsx"));
+
+    let docs = import_spreadsheet(&alice.db, &alice.account, "budget.xlsx", &data, Some(&folder.id), NOW).unwrap();
+
+    let titles: Vec<_> = docs.iter().map(|d| d.title.as_str()).collect();
+    assert_eq!(titles, vec!["budget · Budget", "budget · Notes"]);
+    assert!(docs
+        .iter()
+        .all(|d| d.kind == DocKind::Sheet && d.folder_id.as_deref() == Some(folder.id.as_str())));
+    let found: Vec<String> = search(&alice.db, &alice.account.id, "flights")
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(found, vec![docs[0].id.clone()]);
+    assert!(import_spreadsheet(&alice.db, &alice.account, "x.xlsx", "bm90IGEgc2hlZXQ=", None, NOW).is_err());
+}

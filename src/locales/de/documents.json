@@ -85,5 +85,17 @@
     "warning": "EO Docs funktioniert nur zwischen EmailOps-Nutzern. Wer EmailOps nicht hat, erhält eine .eodoc-Datei, die sich nicht öffnen lässt.",
     "consent": "Beim Senden dieser E-Mail werden die Dokumente mit den Empfängern geteilt, und EmailOps schickt ihnen deine Änderungen automatisch per E-Mail.",
     "submit": "Anhängen"
+  },
+  "import": {
+    "button": "Importieren",
+    "hint": "Eine Word- (.docx) oder Excel-Datei (.xlsx, .xls, .ods) importieren",
+    "done_one": "In EO Docs importiert: {{count}} Dokument",
+    "done_many": "In EO Docs importiert: {{count}} Dokumente",
+    "done_other": "In EO Docs importiert: {{count}} Dokumente",
+    "skippedImages_one": "{{count}} Bild war zu groß zum Importieren",
+    "skippedImages_many": "{{count}} Bilder waren zu groß zum Importieren",
+    "skippedImages_other": "{{count}} Bilder waren zu groß zum Importieren",
+    "openInEoDocs": "In EO Docs öffnen",
+    "show": "Öffnen"
   }
 }

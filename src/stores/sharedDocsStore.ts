@@ -23,6 +23,9 @@ export interface SharedDocsState {
   /** The latest search typed, and its results (`null` while not searching). */
   searchQuery: string;
   searchResults: SharedDoc[] | null;
+  /** Bumped when another view asks to show a document (an import from an
+   *  email attachment): the app switches to EO Docs. */
+  openRequests: number;
 }
 
 export type SharedDocsAction =
@@ -36,7 +39,8 @@ export type SharedDocsAction =
   | { type: 'foldersLoaded'; folders: DocFolder[] }
   | { type: 'folderOpened'; folderId: string | null }
   | { type: 'searchStarted'; query: string }
-  | { type: 'searched'; query: string; results: SharedDoc[] };
+  | { type: 'searched'; query: string; results: SharedDoc[] }
+  | { type: 'openRequested'; doc: SharedDoc };
 
 export const initialSharedDocsState: SharedDocsState = {
   accountId: null,
@@ -49,6 +53,7 @@ export const initialSharedDocsState: SharedDocsState = {
   folderId: null,
   searchQuery: '',
   searchResults: null,
+  openRequests: 0,
 };
 
 function newestFirst(docs: SharedDoc[]): SharedDoc[] {
@@ -58,7 +63,12 @@ function newestFirst(docs: SharedDoc[]): SharedDoc[] {
 export function sharedDocsReducer(state: SharedDocsState, action: SharedDocsAction): SharedDocsState {
   switch (action.type) {
     case 'accountChanged':
-      return { ...initialSharedDocsState, accountId: action.accountId, changes: state.changes };
+      return {
+        ...initialSharedDocsState,
+        accountId: action.accountId,
+        changes: state.changes,
+        openRequests: state.openRequests,
+      };
     case 'loading':
       return { ...state, isLoading: true, error: null };
     case 'loaded':
@@ -87,6 +97,16 @@ export function sharedDocsReducer(state: SharedDocsState, action: SharedDocsActi
       return { ...state, folderId: action.folderId };
     case 'searchStarted':
       return { ...state, searchQuery: action.query, searchResults: null };
+    case 'openRequested':
+      return {
+        ...state,
+        docs: newestFirst([action.doc, ...state.docs.filter((d) => d.id !== action.doc.id)]),
+        selectedId: action.doc.id,
+        folderId: action.doc.folderId,
+        searchQuery: '',
+        searchResults: null,
+        openRequests: state.openRequests + 1,
+      };
     case 'searched':
       if (action.query !== state.searchQuery || !action.query.trim()) return state;
       return { ...state, searchResults: action.results };
@@ -116,6 +136,8 @@ interface SharedDocsStore extends SharedDocsState {
   deleteFolder: (folderId: string) => Promise<void>;
   moveDoc: (docId: string, folderId: string | null) => Promise<SharedDoc>;
   search: (query: string) => Promise<void>;
+  /** Show `doc` in EO Docs, from any view. */
+  requestOpen: (doc: SharedDoc) => void;
 }
 
 export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
@@ -179,6 +201,7 @@ export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
       await Promise.all([get().reloadFolders(), get().reload()]);
     },
     moveDoc: async (docId, folderId) => upsert(await api.moveSharedDoc(requireAccount(), docId, folderId)),
+    requestOpen: (doc) => dispatch({ type: 'openRequested', doc }),
     search: async (query) => {
       dispatch({ type: 'searchStarted', query });
       if (!query.trim()) return;
@@ -193,11 +216,14 @@ export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
 
 // Subscribe once (module scope): a peer's changes or a new invitation arrived
 // during a sync. Open editors pull the diff (`changes`), the list reloads.
-void listen<{ docIds?: unknown }>('shared-docs-changed', (event) => {
+listen<{ docIds?: unknown }>('shared-docs-changed', (event) => {
   const ids = event.payload?.docIds;
   if (!Array.isArray(ids)) return;
   const docIds = ids.filter((id): id is string => typeof id === 'string');
   if (docIds.length === 0) return;
   useSharedDocsStore.setState((s) => sharedDocsReducer(s, { type: 'changed', docIds }));
   void useSharedDocsStore.getState().reload();
+}).catch((err) => {
+  // Outside the app (a unit test importing a view) there is no event bus.
+  console.error('EO Docs could not subscribe to shared-docs-changed:', err);
 });

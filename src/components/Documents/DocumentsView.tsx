@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { childFolders, folderPath } from '@/lib/docFolders';
 import { errorText } from '@/lib/errors';
+import { fileToBase64 } from '@/lib/fileBase64';
+import { importOfficeFile } from '@/lib/officeImport';
 import { useAccountStore } from '@/stores/accountStore';
 import { useLogStore } from '@/stores/logStore';
 import { selectFolderDocs, selectInvitations, selectSelectedDoc, useSharedDocsStore } from '@/stores/sharedDocsStore';
@@ -173,6 +175,8 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
   const [title, setTitle] = useState('');
   const [kind, setKind] = useState<DocKind>('doc');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const searching = searchQuery.trim() !== '';
   const path = folderPath(folders, folderId);
 
@@ -214,6 +218,22 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
     }
   };
 
+  const handleImport = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (importInputRef.current) importInputRef.current.value = '';
+    if (!file || !accountId) return;
+    setNotice(null);
+    await run(`${file.name} could not be imported`, async () => {
+      const result = await importOfficeFile(accountId, file.name, await fileToBase64(file), folderId);
+      await state.reload();
+      if (result.docs[0]) select(result.docs[0].id);
+      addLog('success', 'sync', `Imported ${file.name} into EO Docs`);
+      const parts = [t('documents:import.done', { count: result.docs.length })];
+      if (result.skippedImages > 0) parts.push(t('documents:import.skippedImages', { count: result.skippedImages }));
+      setNotice(parts.join(' · '));
+    });
+  };
+
   const locationOf = (doc: SharedDoc) =>
     [t('documents:root'), ...folderPath(folders, doc.folderId).map((f) => f.name)].join(' › ');
 
@@ -223,7 +243,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
     <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]" data-testid="documents-view">
       <aside className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col min-h-0">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-200 flex-1">{t('documents:title')}</h2>
+          <h2 className="text-sm font-semibold text-gray-200 flex-1 whitespace-nowrap">{t('documents:title')}</h2>
           <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 text-[10px] font-semibold uppercase">
             {t('settings:dialog.experimental')}
           </span>
@@ -244,6 +264,31 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
               />
             </svg>
           </button>
+          <button
+            type="button"
+            data-testid="shared-doc-import"
+            title={t('documents:import.hint')}
+            aria-label={t('documents:import.button')}
+            onClick={() => importInputRef.current?.click()}
+            className="p-1 rounded text-gray-300 hover:text-white hover:bg-gray-700"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+              />
+            </svg>
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".docx,.xlsx,.xlsm,.xls,.ods"
+            className="hidden"
+            data-testid="shared-doc-import-input"
+            onChange={(e) => void handleImport(e.target.files)}
+          />
           <button
             type="button"
             data-testid="shared-doc-new"
@@ -267,6 +312,14 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
         {shownError && (
           <div className="mx-3 mt-3 p-2 bg-red-900/30 border border-red-800 rounded text-red-300 text-xs">
             {shownError}
+          </div>
+        )}
+        {notice && !shownError && (
+          <div
+            data-testid="shared-doc-notice"
+            className="mx-3 mt-3 p-2 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs"
+          >
+            {notice}
           </div>
         )}
         {creating && (

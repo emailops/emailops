@@ -4,7 +4,10 @@ import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { saveToDownloads } from '@/lib/download';
 import { errorText } from '@/lib/errors';
+import { importKind, importOfficeFile } from '@/lib/officeImport';
+import { useSharedDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
+import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import type { EmailAttachmentMeta } from '@/types';
 
 function isViewableAttachment(mimeType: string): boolean {
@@ -32,7 +35,9 @@ export function EmailAttachments({
   accountId: string;
   onOpenAttachment: (meta: EmailAttachmentMeta) => void;
 }) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'documents']);
+  const { enabled: eoDocs } = useSharedDocsEnabledStore();
+  const requestOpen = useSharedDocsStore((s) => s.requestOpen);
   const addLog = useLogStore((s) => s.addLog);
   const [metas, setMetas] = useState<EmailAttachmentMeta[]>([]);
   const [downloading, setDownloading] = useState<Set<string>>(new Set());
@@ -83,6 +88,16 @@ export function EmailAttachments({
     await withDownloadLock(meta, async () => {
       const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
       await saveToDownloads(meta.filename, b64);
+    });
+  };
+
+  // Word and Excel attachments can be turned into EO Docs and opened there.
+  const handleOpenInEoDocs = async (meta: EmailAttachmentMeta) => {
+    await withDownloadLock(meta, async () => {
+      const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
+      const { docs } = await importOfficeFile(accountId, meta.filename, b64, null);
+      addLog('success', 'sync', `Imported ${meta.filename} into EO Docs`);
+      if (docs[0]) requestOpen(docs[0]);
     });
   };
 
@@ -160,6 +175,26 @@ export function EmailAttachments({
                 <span className="truncate max-w-[200px]">{meta.filename}</span>
                 <span className="text-xs text-gray-400 flex-shrink-0">{formatFileSize(meta.fileSize)}</span>
               </button>
+              {eoDocs && importKind(meta.filename) && (
+                <button
+                  type="button"
+                  data-testid={`attachment-open-eodocs-${meta.id}`}
+                  onClick={() => handleOpenInEoDocs(meta)}
+                  disabled={isLoading}
+                  className="p-1.5 mr-1 text-gray-400 hover:text-primary-600 hover:bg-gray-200 rounded transition-colors disabled:opacity-60 flex-shrink-0"
+                  title={t('documents:import.openInEoDocs')}
+                  aria-label={t('documents:import.openInEoDocs')}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+                    />
+                  </svg>
+                </button>
+              )}
               {isViewable && (
                 <button
                   type="button"

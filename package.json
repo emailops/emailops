@@ -53,6 +53,7 @@
     "date-fns": "^4.4.0",
     "dompurify": "^3.4.16",
     "i18next": "^26.4.2",
+    "mammoth": "^1.13.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-i18next": "^17.0.15",

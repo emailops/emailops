@@ -1,12 +1,11 @@
 import Collaboration from '@tiptap/extension-collaboration';
 import { type Editor, EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
+import { DOC_FIELD, docSchemaExtensions } from '@/lib/docSchema';
 
-/** The Yjs fragment a document's text lives in. */
-export const DOC_FIELD = 'body';
+export { DOC_FIELD };
 
 interface DocEditorProps {
   doc: Y.Doc;
@@ -50,13 +49,10 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       editable,
       // The toolbar shows the marks at the caret, so it follows every change.
       shouldRerenderOnTransaction: true,
-      extensions: [
-        StarterKit.configure({ undoRedo: false, link: { openOnClick: false } }),
-        Collaboration.configure({ document: doc, field: DOC_FIELD }),
-      ],
+      extensions: [...docSchemaExtensions, Collaboration.configure({ document: doc, field: DOC_FIELD })],
       editorProps: {
         attributes: {
-          class: 'prose prose-sm prose-invert max-w-none min-h-[60vh] text-gray-200 focus:outline-none px-6 py-4',
+          class: 'eo-doc max-w-none min-h-[60vh] text-sm text-gray-200 focus:outline-none px-6 py-4',
           'data-testid': 'shared-doc-editor',
         },
       },

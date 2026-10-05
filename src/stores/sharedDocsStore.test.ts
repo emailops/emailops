@@ -116,3 +116,16 @@ describe('folders and search', () => {
     expect(state.searchResults).toBeNull();
   });
 });
+
+describe('opening a document from elsewhere', () => {
+  it('selects it, shows its folder, leaves search and counts the request', () => {
+    let state = sharedDocsReducer(loaded([doc('a', 1)]), { type: 'searchStarted', query: 'x' });
+    const imported = { ...doc('n', 9), folderId: 'trips' };
+    state = sharedDocsReducer(state, { type: 'openRequested', doc: imported });
+    expect(state.selectedId).toBe('n');
+    expect(state.folderId).toBe('trips');
+    expect(state.searchQuery).toBe('');
+    expect(state.openRequests).toBe(1);
+    expect(state.docs[0].id).toBe('n');
+  });
+});
