@@ -73,6 +73,7 @@
     "skill_already_exists": "A skill named {{name}} already exists. Pick another name.",
     "no_archive_folder": "This account has no Archive folder. Create a folder named “Archive” to archive mail.",
     "outbox_not_pending": "This message is already being sent and can no longer be changed.",
-    "no_spam_folder": "This account has no Junk folder to file spam in."
+    "no_spam_folder": "This account has no Junk folder to file spam in.",
+    "file_not_downloaded": "“{{filename}}” is still in iCloud (or another cloud folder) and did not download in time. Download it in Finder and try again."
   }
 }

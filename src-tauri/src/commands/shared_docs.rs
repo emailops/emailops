@@ -281,5 +281,8 @@ pub async fn pick_import_file(app: AppHandle) -> Result<Option<shared_docs::impo
     let path = file
         .into_path()
         .map_err(|e| AppError::InvalidInput(format!("Not a local file: {e}")))?;
-    shared_docs::import::read_picked_file(&path).map(Some)
+    tauri::async_runtime::spawn_blocking(move || shared_docs::import::read_picked_file(&path))
+        .await
+        .map_err(|e| AppError::IoError(format!("Reading the file failed: {e}")))?
+        .map(Some)
 }

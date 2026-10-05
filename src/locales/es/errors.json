@@ -73,6 +73,7 @@
     "skill_already_exists": "Ya existe una skill llamada {{name}}. Elige otro nombre.",
     "no_archive_folder": "Esta cuenta no tiene carpeta de archivo. Crea una carpeta llamada «Archive» para archivar correo.",
     "outbox_not_pending": "Este mensaje ya se está enviando y no se puede cambiar.",
-    "no_spam_folder": "Esta cuenta no tiene carpeta de correo no deseado donde archivar el spam."
+    "no_spam_folder": "Esta cuenta no tiene carpeta de correo no deseado donde archivar el spam.",
+    "file_not_downloaded": "«{{filename}}» sigue en iCloud (u otra carpeta en la nube) y no se descargó a tiempo. Descárgalo desde el Finder y vuelve a intentarlo."
   }
 }

@@ -163,8 +163,33 @@ pub struct PickedFile {
     pub data: String,
 }
 
+/// How many times a read that timed out is tried again. A file kept in iCloud
+/// Drive (or another cloud folder) with only a placeholder on disk is
+/// downloaded on the first read; when that takes longer than the system
+/// waits, the read fails with a timeout while the download carries on.
+const READ_ATTEMPTS: usize = 3;
+
+/// Pure over `read`: the file's bytes, trying again while it is still being
+/// downloaded from the cloud, and saying so if it never arrives.
+fn read_downloading(filename: &str, mut read: impl FnMut() -> std::io::Result<Vec<u8>>) -> Result<Vec<u8>> {
+    for _ in 1..READ_ATTEMPTS {
+        match read() {
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            other => return other.map_err(|e| AppError::IoError(format!("Could not read {filename}: {e}"))),
+        }
+    }
+    read().map_err(|e| match e.kind() {
+        std::io::ErrorKind::TimedOut => AppError::FileNotDownloaded {
+            filename: filename.to_string(),
+        },
+        _ => AppError::IoError(format!("Could not read {filename}: {e}")),
+    })
+}
+
 /// Read the file the user picked in the native dialog. Only importable
-/// extensions and sizes up to [`MAX_IMPORT_BYTES`] are read.
+/// extensions and sizes up to [`MAX_IMPORT_BYTES`] are read. Blocks, possibly
+/// for a while on a file that is still in the cloud: call it off the async
+/// runtime.
 pub fn read_picked_file(path: &std::path::Path) -> Result<PickedFile> {
     use base64::Engine;
     let filename = path
@@ -186,7 +211,7 @@ pub fn read_picked_file(path: &std::path::Path) -> Result<PickedFile> {
     if size > MAX_IMPORT_BYTES as u64 {
         return Err(AppError::InvalidInput("The file is too large to import".into()));
     }
-    let bytes = std::fs::read(path).map_err(|e| AppError::IoError(format!("Could not read {filename}: {e}")))?;
+    let bytes = read_downloading(&filename, || std::fs::read(path))?;
     Ok(PickedFile {
         filename,
         data: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -200,6 +225,50 @@ mod tests {
     use yrs::Out;
 
     const BUDGET: &[u8] = include_bytes!("../../../tests/fixtures/eodocs/budget.xlsx");
+
+    fn timed_out() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::TimedOut)
+    }
+
+    #[test]
+    fn a_cloud_file_still_downloading_is_read_again_until_it_arrives() {
+        let mut calls = 0;
+        let bytes = read_downloading("plan.docx", || {
+            calls += 1;
+            if calls < READ_ATTEMPTS {
+                Err(timed_out())
+            } else {
+                Ok(vec![1, 2])
+            }
+        })
+        .unwrap();
+        assert_eq!(bytes, vec![1, 2]);
+        assert_eq!(calls, READ_ATTEMPTS);
+    }
+
+    #[test]
+    fn a_cloud_file_that_never_arrives_says_it_is_not_downloaded() {
+        let mut calls = 0;
+        let err = read_downloading("plan.docx", || {
+            calls += 1;
+            Err(timed_out())
+        })
+        .unwrap_err();
+        assert!(matches!(err, AppError::FileNotDownloaded { ref filename } if filename == "plan.docx"));
+        assert_eq!(calls, READ_ATTEMPTS);
+    }
+
+    #[test]
+    fn any_other_read_error_fails_at_once() {
+        let mut calls = 0;
+        let err = read_downloading("plan.docx", || {
+            calls += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert!(matches!(err, AppError::IoError(_)));
+        assert_eq!(calls, 1);
+    }
 
     #[test]
     fn a_workbook_reads_as_one_tab_per_used_sheet_with_its_values() {
