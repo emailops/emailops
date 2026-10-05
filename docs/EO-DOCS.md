@@ -116,7 +116,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 
 | # | Gap | Prioridad |
 |---|---|---|
-| D1 | Exportación a PDF resuelta (05/10/2026) con el diálogo de impresión del sistema («Guardar como PDF»). Sigue sin haber exportación a Word o Excel | P2 |
+| D1 | Exportación a PDF resuelta (05/10/2026): se genera con pdfmake y se guarda en Descargas. Sigue sin haber exportación a Word o Excel | P2 |
 | D2 | Sin comentarios, sugerencias ni menciones | P2 |
 | D3 | Sin presencia (quién está editando) ni cursores remotos: el transporte por correo no lo permite en tiempo real | P2 |
 | D4 | No se puede renombrar un documento una vez creado (solo las carpetas) | P1 |
@@ -161,7 +161,7 @@ Prioridad: **P0** bloquea un lanzamiento fuera de experimental, **P1** afecta de
 - **Numeración de migraciones:** otra rama tiene `V036__agent_draft_review.sql`, que choca con `V036__shared_docs.sql`. Hay que renumerar V036–V038 al integrar.
 - **Acoplamiento de release:** V036, V037 y V038 crean tablas nuevas. Una versión instalada sin ellas no abre una base de datos que ya las tenga, el problema conocido de las migraciones aplicadas por builds de desarrollo.
 - **Gate `outdated`:** bloquea el pre-push de la rama hasta actualizar `ammonia`, `libc`, `mailparse`, `reedline`, `refinery`, `tokio` y `uuid`. `main` ya tiene la subida de `refinery` 0.10.
-- **Dependencias nuevas:** `yrs`, `calamine`, `yjs`, `@tiptap/extension-collaboration`, `@tiptap/y-tiptap` y `mammoth`, añadida a `THIRD_PARTY_LICENSES.md`.
+- **Dependencias nuevas:** `yrs`, `calamine`, `yjs`, `@tiptap/extension-collaboration`, `@tiptap/y-tiptap`, `mammoth` y `pdfmake`.
 
 ## 8. Siguientes pasos
 

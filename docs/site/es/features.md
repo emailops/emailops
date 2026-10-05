@@ -239,8 +239,8 @@ extremo: son tan privados como el resto de tu correo.
 <!-- claim:feat-eo-docs-6 -->
 Tus propias carpetas (nunca se comparten) ordenan los documentos; arrastra un documento sobre una
 carpeta, o usa **Mover a**. La búsqueda encuentra documentos por título y contenido, y
-**Historial** muestra versiones anteriores. **Exportar PDF** abre el diálogo de impresión, donde
-guardas el documento como PDF. **Eliminar** pide confirmación; eliminar un documento compartido
+**Historial** muestra versiones anteriores. **Exportar PDF** guarda el documento como PDF en tu carpeta
+Descargas. **Eliminar** pide confirmación; eliminar un documento compartido
 solo borra tu copia, y los demás conservan la suya.
 
 <!-- claim:feat-eo-docs-7 -->

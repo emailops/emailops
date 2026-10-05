@@ -6,9 +6,11 @@ import { useSharedYDoc } from '@/hooks/useSharedYDoc';
 import { useVersionDoc } from '@/hooks/useVersionDoc';
 import * as api from '@/lib/api';
 import { folderOptions } from '@/lib/docFolders';
-import { printDocument } from '@/lib/docPrint';
+import { docContent, pdfDefinition, pdfFilename, renderPdf, sheetContent } from '@/lib/docPdf';
+import { saveToDownloads } from '@/lib/download';
 import { errorText } from '@/lib/errors';
 import { gridToHtml, readGrid } from '@/lib/sheetModel';
+import { bytesToBase64 } from '@/lib/yjsBytes';
 import { useLogStore } from '@/stores/logStore';
 import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import type { DocVersion, SharedDoc } from '@/types';
@@ -54,6 +56,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
     editorRef.current = editor;
   }, []);
   const [sharing, setSharing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const others = doc.participants.filter((p) => p !== accountEmail.toLowerCase());
 
@@ -81,13 +84,19 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
 
   const handleExportPdf = () =>
     act('The PDF could not be made', async () => {
-      const html =
-        doc.kind === 'sheet'
-          ? ydoc
-            ? gridToHtml(readGrid(ydoc), i18n.language)
-            : ''
-          : (editorRef.current?.getHTML() ?? '');
-      await printDocument(doc.title, html);
+      setExporting(true);
+      try {
+        const content =
+          doc.kind === 'sheet'
+            ? ydoc
+              ? sheetContent(readGrid(ydoc).values, i18n.language)
+              : []
+            : docContent(editorRef.current?.getJSON() ?? { type: 'doc' });
+        const pdf = await renderPdf(pdfDefinition(doc.title, content));
+        await saveToDownloads(pdfFilename(doc.title), bytesToBase64(pdf));
+      } finally {
+        setExporting(false);
+      }
     });
 
   const handleSendNow = () =>
@@ -194,7 +203,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
           data-testid="shared-doc-export-pdf"
           title={t('documents:exportPdfHint')}
           onClick={() => void handleExportPdf()}
-          disabled={!ydoc}
+          disabled={!ydoc || exporting}
           className={BUTTON}
         >
           {t('documents:exportPdf')}

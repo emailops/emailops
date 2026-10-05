@@ -244,8 +244,8 @@ DKIM-Signatur). Die E-Mails sind nicht Ende-zu-Ende-verschlüsselt: Sie sind so 
 <!-- claim:feat-eo-docs-6 -->
 Eigene Ordner (nie geteilt) halten die Dokumente in Ordnung; ziehen Sie ein Dokument auf einen
 Ordner, oder nutzen Sie **Verschieben nach**. Die Suche findet Dokumente nach Titel und Inhalt, und
-**Verlauf** zeigt frühere Versionen. **Als PDF exportieren** öffnet den Druckdialog, in dem Sie das
-Dokument als PDF sichern. **Löschen** fragt vorher nach; ein geteiltes Dokument zu löschen entfernt
+**Verlauf** zeigt frühere Versionen. **Als PDF exportieren** speichert das Dokument als PDF in Ihrem
+Downloads-Ordner. **Löschen** fragt vorher nach; ein geteiltes Dokument zu löschen entfernt
 nur Ihre Kopie, die anderen behalten ihre.
 
 <!-- claim:feat-eo-docs-7 -->

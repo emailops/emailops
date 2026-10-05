@@ -617,7 +617,6 @@ checks = [
   { app = true },
   { tests = ['services::shared_docs::tests::folders_are_per_account_and_deleting_one_keeps_its_documents', 'services::shared_docs::tests::search_finds_documents_by_title_and_by_what_was_written_in_them', 'services::shared_docs::tests::local_edits_are_versions_by_this_account'], covers = ["Search finds documents by title and content"] },
   { tests = ['services::shared_docs::tests::a_deleted_shared_document_does_not_come_back_with_later_changes'], covers = ["deleting a shared document removes only your copy, and the others keep theirs"] },
-  { manual = 'Opening the print dialog would block the WebDriver session (a native modal), so the demo case only sees the button.', covers = ["opens the print dialog, where you save the document as a PDF"] },
 ]
 
 [feat-eo-docs-7]

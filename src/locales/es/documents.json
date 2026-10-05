@@ -117,5 +117,5 @@
     "confirm": "Eliminar"
   },
   "exportPdf": "Exportar PDF",
-  "exportPdfHint": "Abre el diálogo de impresión: elige «Guardar como PDF»."
+  "exportPdfHint": "Guarda el documento como PDF en tu carpeta Descargas."
 }

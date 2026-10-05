@@ -117,5 +117,5 @@
     "confirm": "Delete"
   },
   "exportPdf": "Export PDF",
-  "exportPdfHint": "Opens the print dialog: choose “Save as PDF”."
+  "exportPdfHint": "Saves the document as a PDF in your Downloads folder."
 }

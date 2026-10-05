@@ -117,5 +117,5 @@
     "confirm": "Supprimer"
   },
   "exportPdf": "Exporter en PDF",
-  "exportPdfHint": "Ouvre la fenêtre d’impression : choisissez « Enregistrer au format PDF »."
+  "exportPdfHint": "Enregistre le document en PDF dans votre dossier Téléchargements."
 }

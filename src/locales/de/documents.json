@@ -117,5 +117,5 @@
     "confirm": "Löschen"
   },
   "exportPdf": "Als PDF exportieren",
-  "exportPdfHint": "Öffnet den Druckdialog: Wählen Sie „Als PDF sichern“."
+  "exportPdfHint": "Speichert das Dokument als PDF in Ihrem Downloads-Ordner."
 }

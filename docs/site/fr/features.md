@@ -247,8 +247,8 @@ sont pas chiffrés de bout en bout : ils sont aussi privés que le reste de votr
 <!-- claim:feat-eo-docs-6 -->
 Vos propres dossiers (jamais partagés) rangent les documents ; faites glisser un document sur un
 dossier, ou utilisez **Déplacer vers**. La recherche trouve les documents par titre et par contenu,
-et **Historique** montre les versions précédentes. **Exporter en PDF** ouvre la fenêtre
-d'impression, où vous enregistrez le document en PDF. **Supprimer** demande d'abord confirmation ;
+et **Historique** montre les versions précédentes. **Exporter en PDF** enregistre le document
+en PDF dans votre dossier Téléchargements. **Supprimer** demande d'abord confirmation ;
 supprimer un document partagé n'efface que votre copie, et les autres gardent la leur.
 
 <!-- claim:feat-eo-docs-7 -->

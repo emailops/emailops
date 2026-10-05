@@ -223,7 +223,7 @@ are as private as the rest of your mail.
 <!-- claim:feat-eo-docs-6 -->
 Folders of your own (never shared) keep documents in order; drag a document onto a folder, or
 use **Move to**. Search finds documents by title and content, and **History** shows earlier
-versions. **Export PDF** opens the print dialog, where you save the document as a PDF.
+versions. **Export PDF** saves the document as a PDF in your Downloads folder.
 **Delete** asks first; deleting a shared document removes only your copy, and the others keep
 theirs.
 

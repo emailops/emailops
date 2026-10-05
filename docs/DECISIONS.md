@@ -3418,3 +3418,21 @@ unusable on IMAP). A PDF library (jsPDF, printpdf) writing the file directly —
 dependency for what the system dialog already does, and a second renderer to keep in step
 with the editor. Known gap: on IMAP accounts no verdict can be attributed, so a forged
 `From` there is still accepted.
+
+## 2026-10-05 — EO Docs "Export PDF" writes the file with pdfmake instead of opening the print dialog
+
+**Decision:** "Export PDF" builds the PDF in the webview with pdfmake (MIT, 0.3.11) from
+the document's own structure — `editor.getJSON()` for a text document, the cells' shown
+values for a sheet (`src/lib/docPdf.ts`) — and saves it to Downloads through the existing
+`save_attachment_to_downloads` path, with the usual "Show in Finder" toast. pdfmake and its
+fonts (~2 MB) load on first export only. Only images carried in the document (`data:`
+URLs) are drawn; a remote image would be a request to someone else's server. This
+replaces the print-dialog export of the entry above, and the `core:webview:allow-print`
+capability is gone with it.
+**Context:** The developer found that "Export PDF" opened the print dialog and wanted the
+file directly. The app had no PDF generator (it only displays PDF attachments), so a
+dependency was needed; the developer chose pdfmake.
+**Rejected:** The webview's own PDF engine (WebKit `createPDF`, WebView2 `PrintToPdf`,
+WebKitGTK) — no new library, but three native implementations, two only testable in CI.
+jsPDF — lighter, but its layout (line wrapping, lists, tables) would have to be written by
+hand.
