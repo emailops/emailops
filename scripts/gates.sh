@@ -90,7 +90,8 @@ run_gate() {
     #   - reqwest  (--ignore):  oauth2 5.x's AsyncHttpClient is wired against
     #                           reqwest 0.12. Reporting is hidden but the
     #                           scratch resolver still sees the constraint.
-    #   - rusqlite (--exclude): refinery 0.9 caps its rusqlite range at <=0.39.
+    #   - rusqlite (--exclude): pinned to 0.39 (refinery 0.9 capped it there;
+    #                           refinery 0.10 allows 0.40, bump pending).
     #                           Must --exclude (not --ignore) so cargo-outdated's
     #                           scratch resolver doesn't try to bump rusqlite to
     #                           0.40 and crash on the libsqlite3-sys links clash.
