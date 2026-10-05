@@ -3303,3 +3303,23 @@ company from the domain.
 **Rejected:** A configurable organization domain or list — not asked for, and the address
 already says it. Treating free-provider domains as an organization — everyone on
 gmail.com would become a "colleague".
+
+## 2026-10-05 — Attaching an EO Doc to an email shares it with the email's recipients
+
+**Decision:** The composer's attach button offers "From this computer" and "From EO Docs"
+(only while EO Docs is on). Attaching an EO Doc shares it with the email's To and Cc, as
+attaching from Drive does: the picker warns that EO Docs only works between EmailOps
+users and asks for the same consent to automatic mail as sharing. The composer sends a
+placeholder attachment (`application/vnd.emailops.doc-ref`, data = document id); the
+send path (`deliver_new_email` / `deliver_reply`, shared by immediate sends, undo send and
+scheduled send) swaps it for the document's envelope only when the email actually goes
+out, then records the recipients as participants — so an undone or cancelled email shares
+nothing. The envelope now says why it was sent (`purpose`: invitation, update, message);
+only background `update` messages are archived on arrival, so a person's own email with a
+document attached stays in the inbox.
+**Context:** The developer asked to attach from local files or EO Docs, with a warning that
+EO Docs is for EmailOps users only, and chose sharing over attaching a frozen copy.
+**Rejected:** Attaching a frozen copy — not what was chosen. Sharing as a separate
+invitation email next to the user's email — two messages for one action, and it would go
+out even when the email is undone. Archiving any message whose document is already known
+— it would file away emails people wrote.

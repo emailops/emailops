@@ -223,6 +223,9 @@ async fn deliver_reply(
     // already-prefixed subject is untouched. Outlook's `/reply` sets the prefix
     // server-side and ignores ours.
     let subject = crate::sync::mime_builder::reply_subject(subject.unwrap_or(&email.subject));
+    let recipients: Vec<String> = to.iter().chain(&cc).cloned().collect();
+    let (attachments, shared_docs) =
+        crate::services::shared_docs::resolve_doc_refs(db, &account, attachments, &recipients)?;
 
     let meta = provider
         .send_reply(
@@ -249,6 +252,7 @@ async fn deliver_reply(
         &account.email,
         &format!("Reply sent to {}", to.join(", ")),
     );
+    crate::services::shared_docs::record_shared_by_mail(db, &account, &shared_docs, crate::services::clock::now_secs());
 
     insert_optimistic_sent(
         db,
@@ -395,6 +399,9 @@ async fn deliver_new_email(
     emit_account_log("info", "sync", &account.email, &log_msg);
 
     let body = body.clone().with_language(footer_language(db)?);
+    let recipients: Vec<String> = to_emails.iter().chain(&cc_emails).cloned().collect();
+    let (attachments, shared_docs) =
+        crate::services::shared_docs::resolve_doc_refs(db, &account, attachments, &recipients)?;
     let meta = provider
         .send_new_email(
             &account.email,
@@ -414,6 +421,7 @@ async fn deliver_new_email(
         &account.email,
         &format!("Email sent to {}", to_emails.join(", ")),
     );
+    crate::services::shared_docs::record_shared_by_mail(db, &account, &shared_docs, crate::services::clock::now_secs());
 
     insert_optimistic_sent(
         db,

@@ -77,5 +77,13 @@
     "viewing": "Viendo la versión del {{date}} · solo lectura",
     "backToCurrent": "Volver a la versión actual",
     "close": "Cerrar historial"
+  },
+  "attachDialog": {
+    "title": "Adjuntar desde EO Docs",
+    "search": "Buscar en EO Docs",
+    "empty": "No hay documentos para adjuntar.",
+    "warning": "EO Docs solo funciona entre usuarios de EmailOps. Quien no lo use recibirá un archivo .eodoc que no podrá abrir.",
+    "consent": "Al enviar este correo, los documentos se compartirán con sus destinatarios y EmailOps les enviará tus cambios por email automáticamente.",
+    "submit": "Adjuntar"
   }
 }

@@ -2445,32 +2445,35 @@ async fn sync_applies_shared_document_messages_and_archives_the_updates() {
     let account = db.get_account("acc-sd").unwrap().unwrap();
 
     let doc_id = "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
-    let bytes = envelope::encode(&envelope::Envelope {
-        doc_id: doc_id.into(),
-        kind: DocKind::Doc,
-        title: "Plan".into(),
-        participants: vec!["alice@example.com".into(), "bob@example.org".into()],
-        state_vector: crdt::empty_state_vector(),
-        update: crdt::empty_state(),
-    })
-    .unwrap();
-    let attachment = AttachmentInfo {
-        attachment_id: "att-1".into(),
-        filename: envelope::file_name(doc_id),
-        mime_type: envelope::ENVELOPE_MIME.into(),
-        size: bytes.len() as i64,
-        inline_data: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+    let attachment = |purpose| {
+        let bytes = envelope::encode(&envelope::Envelope {
+            purpose,
+            doc_id: doc_id.into(),
+            kind: DocKind::Doc,
+            title: "Plan".into(),
+            participants: vec!["alice@example.com".into(), "bob@example.org".into()],
+            state_vector: crdt::empty_state_vector(),
+            update: crdt::empty_state(),
+        })
+        .unwrap();
+        AttachmentInfo {
+            attachment_id: "att-1".into(),
+            filename: envelope::file_name(doc_id),
+            mime_type: envelope::ENVELOPE_MIME.into(),
+            size: bytes.len() as i64,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        }
     };
     let provider = FakeEmailProvider::new("bob@example.org", "Bob");
     provider.add_message(
         make_email_with("invite", "acc-sd", 1000, "alice@example.com", "inbox"),
         EmailCategory::Primary,
-        vec![attachment.clone()],
+        vec![attachment(envelope::Purpose::Invitation)],
     );
     provider.add_message(
         make_email_with("change", "acc-sd", 2000, "alice@example.com", "inbox"),
         EmailCategory::Primary,
-        vec![attachment],
+        vec![attachment(envelope::Purpose::Update)],
     );
 
     let (abort_flags, ai_queue) = test_sync_state();

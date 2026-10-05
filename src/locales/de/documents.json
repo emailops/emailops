@@ -77,5 +77,13 @@
     "viewing": "Version vom {{date}} · schreibgeschützt",
     "backToCurrent": "Zur aktuellen Version",
     "close": "Verlauf schließen"
+  },
+  "attachDialog": {
+    "title": "Aus EO Docs anhängen",
+    "search": "In EO Docs suchen",
+    "empty": "Keine Dokumente zum Anhängen.",
+    "warning": "EO Docs funktioniert nur zwischen EmailOps-Nutzern. Wer EmailOps nicht hat, erhält eine .eodoc-Datei, die sich nicht öffnen lässt.",
+    "consent": "Beim Senden dieser E-Mail werden die Dokumente mit den Empfängern geteilt, und EmailOps schickt ihnen deine Änderungen automatisch per E-Mail.",
+    "submit": "Anhängen"
   }
 }

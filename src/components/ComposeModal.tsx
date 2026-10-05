@@ -2,6 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
@@ -27,6 +28,7 @@ import {
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
 import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
 import { useLogStore } from '@/stores/logStore';
@@ -752,10 +754,11 @@ export function ComposeModal({
 
         {/* Footer */}
         <div className="px-5 py-4 border-t border-gray-200 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
+          <AttachMenu
+            accountId={fromAccountId}
             disabled={isSending || sent}
+            onPickFiles={() => fileInputRef.current?.click()}
+            onPickEoDocs={(docs) => setAttachments((prev) => [...prev, ...docs.map(eoDocAttachment)])}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
             title={t('compose:attachFiles')}
           >
@@ -767,7 +770,7 @@ export function ComposeModal({
                 d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
               />
             </svg>
-          </button>
+          </AttachMenu>
           {aiDraftsEnabled && (
             <button
               type="button"

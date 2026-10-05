@@ -149,5 +149,7 @@
     "edit": "Bearbeiten",
     "delete": "Löschen",
     "sending": "Wird gesendet…"
-  }
+  },
+  "attachFromComputer": "Vom Computer",
+  "attachFromEoDocs": "Aus EO Docs"
 }

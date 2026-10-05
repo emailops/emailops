@@ -30,7 +30,7 @@ use crate::services::ownership::{doc_folder_in_account, shared_doc_in_account};
 use crate::sync::provider::{
     provider_supports_mailbox_writes, AttachmentInfo, EmailAttachment, EmailBody, EmailProvider,
 };
-use envelope::Envelope;
+use envelope::{Envelope, Purpose};
 use planner::{Arrival, FlushCandidate, KnownDoc};
 
 /// The preference that turns the feature on. Experimental: off until the
@@ -298,12 +298,14 @@ async fn mail_envelope(
     update: Vec<u8>,
     state_vector: Vec<u8>,
     body: EmailBody,
+    purpose: Purpose,
 ) -> Result<Vec<String>> {
     let to = planner::recipients(&doc.participants, &account.email);
     if to.is_empty() {
         return Ok(to);
     }
     let bytes = envelope::encode(&Envelope {
+        purpose,
         doc_id: doc.id.clone(),
         kind: doc.kind,
         title: doc.title.clone(),
@@ -369,7 +371,17 @@ pub async fn share(
     db.mark_shared_doc_dirty(doc_id, now)?;
     let dirty_since = db.get_shared_doc(doc_id)?.and_then(|d| d.dirty_since);
     let body = invitation_body(db, account, &doc, snapshot_html)?;
-    let to = mail_envelope(db, account, provider, &doc, state, ours.state_vector.clone(), body).await?;
+    let to = mail_envelope(
+        db,
+        account,
+        provider,
+        &doc,
+        state,
+        ours.state_vector.clone(),
+        body,
+        Purpose::Invitation,
+    )
+    .await?;
     if let Some(at) = dirty_since {
         db.claim_shared_doc_flush(doc_id, at)?;
     }
@@ -418,6 +430,7 @@ pub async fn flush(db: &Arc<Database>, account: &Account, provider: &dyn EmailPr
             update,
             ours.state_vector.clone(),
             update_body(db, &doc)?,
+            Purpose::Update,
         )
         .await?;
         db.set_participant_state_vectors(doc_id, &sent_to, &ours.state_vector)?;
@@ -479,6 +492,145 @@ pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProvi
         }
     }
     sent
+}
+
+// ── Attached to an email ─────────────────────────────────────────────────────
+
+/// MIME type of the placeholder a composer puts in an email's attachments to
+/// attach an EO Doc. Its data is the document id (base64). It never reaches a
+/// provider: [`resolve_doc_refs`] swaps it for the document's envelope when
+/// the email actually goes out (so an undone or cancelled send shares nothing).
+pub const DOC_REF_MIME: &str = "application/vnd.emailops.doc-ref";
+
+/// The placeholder attachment for a document.
+pub fn doc_ref_attachment(doc_id: &str) -> EmailAttachment {
+    EmailAttachment {
+        filename: envelope::file_name(doc_id),
+        mime_type: DOC_REF_MIME.to_string(),
+        data: b64().encode(doc_id),
+        content_id: None,
+        is_inline: false,
+    }
+}
+
+/// A document an outgoing email shares, to record once the email is sent.
+pub struct SharedByMail {
+    doc_id: String,
+    recipients: Vec<String>,
+    state_vector: Vec<u8>,
+}
+
+/// Pure: a file name for the attachment from the document title.
+fn attachment_name(title: &str) -> String {
+    let safe: String = title
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    format!("{}{}", safe.trim(), envelope::ENVELOPE_EXTENSION)
+}
+
+/// Swap each EO Doc placeholder in `attachments` for the document's
+/// envelope, shared with `recipients` (the email's To and Cc). Attaching a
+/// document is the user's consent to sharing it with them, given in the
+/// composer. Fails — and the email is not sent — for a document that is not
+/// this account's or not editable here.
+pub fn resolve_doc_refs(
+    db: &Database,
+    account: &Account,
+    attachments: Vec<EmailAttachment>,
+    recipients: &[String],
+) -> Result<(Vec<EmailAttachment>, Vec<SharedByMail>)> {
+    if !attachments.iter().any(|a| a.mime_type == DOC_REF_MIME) {
+        return Ok((attachments, Vec::new()));
+    }
+    if !is_enabled(db) {
+        return Err(AppError::InvalidInput("EO Docs is turned off in Settings".into()));
+    }
+    let added = envelope::normalize_participants(recipients)?;
+    let mut out = Vec::with_capacity(attachments.len());
+    let mut shared = Vec::new();
+    for attachment in attachments {
+        if attachment.mime_type != DOC_REF_MIME {
+            out.push(attachment);
+            continue;
+        }
+        let doc_id = b64()
+            .decode(&attachment.data)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .ok_or_else(|| AppError::InvalidInput("Not a valid EO Docs attachment".into()))?;
+        let doc = shared_doc_in_account(db, &account.id, &doc_id)?;
+        if doc.status != DocStatus::Active {
+            return Err(AppError::InvalidInput(format!("\"{}\" is read-only here", doc.title)));
+        }
+        let state = db
+            .shared_doc_state(&doc_id)?
+            .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
+        let ours = crdt::integrate(&state)?;
+        let participants = planner::merged_participants(&doc.participants, &added);
+        envelope::normalize_participants(&participants)?;
+        let bytes = envelope::encode(&Envelope {
+            purpose: Purpose::Message,
+            doc_id: doc.id.clone(),
+            kind: doc.kind,
+            title: doc.title.clone(),
+            participants,
+            state_vector: ours.state_vector.clone(),
+            update: state,
+        })?;
+        out.push(EmailAttachment {
+            filename: attachment_name(&doc.title),
+            mime_type: envelope::ENVELOPE_MIME.to_string(),
+            data: b64().encode(bytes),
+            content_id: None,
+            is_inline: false,
+        });
+        shared.push(SharedByMail {
+            doc_id,
+            recipients: planner::recipients(&added, &account.email),
+            state_vector: ours.state_vector,
+        });
+    }
+    Ok((out, shared))
+}
+
+/// After the email went out: the documents it carried are shared with its
+/// recipients, who now hold everything up to the state that was sent. The
+/// email is already sent, so a failure here is logged, not returned.
+pub fn record_shared_by_mail(db: &Database, account: &Account, shared: &[SharedByMail], now: i64) {
+    for item in shared {
+        let outcome = (|| {
+            db.add_shared_doc_participants(&item.doc_id, &item.recipients)?;
+            db.set_shared_doc_status(&item.doc_id, DocStatus::Active, Some(now), now)?;
+            db.set_participant_state_vectors(&item.doc_id, &item.recipients, &item.state_vector)
+        })();
+        match outcome {
+            Ok(()) => logger::log(
+                "success",
+                "sync",
+                format!(
+                    "[{}] Shared an EO Doc with {}",
+                    account.email,
+                    item.recipients.join(", ")
+                ),
+            ),
+            Err(e) => logger::log(
+                "error",
+                "sync",
+                format!(
+                    "[{}] An EO Doc went out but its sharing was not recorded: {e}",
+                    account.email
+                ),
+            ),
+        }
+    }
+    notify_changed(&shared.iter().map(|s| s.doc_id.clone()).collect::<Vec<_>>());
 }
 
 // ── Ingest ───────────────────────────────────────────────────────────────────
@@ -577,8 +729,9 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
 }
 
 /// Sync hook: apply the document messages of a freshly stored batch, then
-/// mark them read and archive them so they do not clutter the inbox. An
-/// invitation stays in the inbox so the user sees it. Never fails the sync:
+/// mark the background change messages read and archive them so they do not
+/// clutter the inbox. An invitation, or an email with a document attached,
+/// stays in the inbox. Never fails the sync:
 /// each failure is logged. Returns how many documents changed.
 pub async fn ingest_arrivals(
     db: &Arc<Database>,
@@ -605,17 +758,19 @@ pub async fn ingest_arrivals(
                 return Ok(None);
             }
             let env = envelope::decode(&envelope_bytes(provider, email, info).await?)?;
-            let was_known = db.get_shared_doc(&env.doc_id)?.is_some();
             let applied = apply_arrival(db, account, &email.sender_email, &env, now)?;
             db.record_shared_doc_message(&account.id, &email.id, &env.doc_id, now)?;
-            Ok::<_, AppError>(Some((env.doc_id, was_known, applied)))
+            Ok::<_, AppError>(Some((env.doc_id, env.purpose, applied)))
         };
         match outcome.await {
-            Ok(Some((doc_id, was_known, Applied::Changed))) => {
+            Ok(Some((doc_id, purpose, Applied::Changed))) => {
                 if !changed.contains(&doc_id) {
                     changed.push(doc_id);
                 }
-                if was_known && email.mailbox == "inbox" && !email.is_sent {
+                // Only background change messages are tidied away; an
+                // invitation, or an email a person wrote with a document
+                // attached, is mail the user should see.
+                if purpose == Purpose::Update && email.mailbox == "inbox" && !email.is_sent {
                     tidy.push(ThreadRef {
                         account_id: account.id.clone(),
                         thread_id: email.thread_id.clone(),

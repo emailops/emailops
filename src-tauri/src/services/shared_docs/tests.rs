@@ -290,6 +290,7 @@ async fn a_forged_participant_is_ignored() {
     let (alice, bob, doc) = shared_pair().await;
     let eve = install("eve@example.net");
     let forged = Envelope {
+        purpose: envelope::Purpose::Update,
         doc_id: doc.clone(),
         kind: DocKind::Doc,
         title: "Plan".into(),
@@ -568,4 +569,68 @@ async fn documents_from_before_the_index_existed_are_found_too() {
         .map(|d| d.id)
         .collect();
     assert_eq!(found, vec![doc.id]);
+}
+
+// ── EO Docs attached to an email ─────────────────────────────────────────
+
+#[tokio::test]
+async fn a_document_attached_to_an_email_is_shared_with_its_recipients() {
+    let alice = install("alice@example.com");
+    let bob = install("bob@example.org");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Proposal", NOW).unwrap();
+    write_paragraph(&alice, &doc.id, 1, "Scope and price", NOW);
+
+    crate::services::emails::send_new_email_with_provider(
+        &alice.db,
+        &alice.account.id,
+        vec!["bob@example.org".into()],
+        vec![],
+        "Our proposal",
+        &EmailBody::plain("Here it is, edit away."),
+        vec![doc_ref_attachment(&doc.id)],
+        &alice.provider,
+    )
+    .await
+    .unwrap();
+
+    let sent = &alice.provider.sent()[0];
+    assert_eq!(
+        sent.subject, "Our proposal",
+        "the person's own email, not a document notice"
+    );
+    assert_eq!(sent.attachments.len(), 1);
+    assert!(envelope::is_envelope_file(&sent.attachments[0].filename));
+    assert_eq!(sent.attachments[0].mime_type, envelope::ENVELOPE_MIME);
+    let shared = alice.db.get_shared_doc(&doc.id).unwrap().unwrap();
+    assert_eq!(shared.participants, vec!["alice@example.com", "bob@example.org"]);
+    assert!(shared.consented_at.is_some());
+
+    deliver(&alice, &bob).await;
+    let invited = bob.db.get_shared_doc(&doc.id).unwrap().unwrap();
+    assert_eq!(invited.status, DocStatus::Invited);
+    assert!(bob.provider.mailbox_ops().is_empty(), "the email stays in Bob's inbox");
+    let text = crdt::plain_text(&bob.db.shared_doc_state(&doc.id).unwrap().unwrap(), DocKind::Doc).unwrap();
+    assert_eq!(text.trim(), "Scope and price");
+}
+
+#[tokio::test]
+async fn an_attached_document_of_another_account_stops_the_send() {
+    let alice = install("alice@example.com");
+    let bob = install("bob@example.org");
+    let bobs = create(&bob.db, &bob.account, DocKind::Doc, "Not yours", NOW).unwrap();
+
+    let result = crate::services::emails::send_new_email_with_provider(
+        &alice.db,
+        &alice.account.id,
+        vec!["carl@example.net".into()],
+        vec![],
+        "Hi",
+        &EmailBody::plain("x"),
+        vec![doc_ref_attachment(&bobs.id)],
+        &alice.provider,
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(alice.provider.sent().is_empty());
 }

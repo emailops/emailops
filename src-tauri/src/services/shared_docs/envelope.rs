@@ -29,9 +29,24 @@ pub const MAX_TITLE_CHARS: usize = 200;
 
 const VERSION: u32 = 1;
 
+/// Why a message carries an envelope, which decides what the receiving inbox
+/// does with the message itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Purpose {
+    /// "X shared a document with you": stays in the inbox.
+    Invitation,
+    /// Changes only, mailed in the background: archived once applied.
+    Update,
+    /// A document the user attached to an email they wrote: the email is
+    /// theirs, so it stays in the inbox like any other.
+    Message,
+}
+
 /// A decoded, validated envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Envelope {
+    pub purpose: Purpose,
     pub doc_id: String,
     pub kind: DocKind,
     pub title: String,
@@ -47,6 +62,7 @@ pub struct Envelope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Wire {
     v: u32,
+    purpose: Purpose,
     doc_id: String,
     kind: DocKind,
     title: String,
@@ -102,6 +118,7 @@ pub fn encode(envelope: &Envelope) -> Result<Vec<u8>> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let bytes = serde_json::to_vec(&Wire {
         v: VERSION,
+        purpose: envelope.purpose,
         doc_id: envelope.doc_id.clone(),
         kind: envelope.kind,
         title: envelope.title.clone(),
@@ -137,6 +154,7 @@ pub fn decode(bytes: &[u8]) -> Result<Envelope> {
     super::crdt::validate_update(&update)?;
     super::crdt::lacks(&state_vector, &state_vector)?;
     Ok(Envelope {
+        purpose: wire.purpose,
         doc_id: wire.doc_id,
         kind: wire.kind,
         title: normalize_title(&wire.title)?,
@@ -155,6 +173,7 @@ mod tests {
 
     fn envelope() -> Envelope {
         Envelope {
+            purpose: Purpose::Update,
             doc_id: DOC_ID.into(),
             kind: DocKind::Sheet,
             title: "Budget 2027".into(),
@@ -181,6 +200,7 @@ mod tests {
             ("v", serde_json::json!(2)),
             ("docId", serde_json::json!("../../etc")),
             ("kind", serde_json::json!("slides")),
+            ("purpose", serde_json::json!("spam")),
             ("title", serde_json::json!("   ")),
             ("title", serde_json::json!("two\nlines")),
             ("participants", serde_json::json!([])),

@@ -77,5 +77,13 @@
     "viewing": "Version du {{date}} · lecture seule",
     "backToCurrent": "Revenir à la version actuelle",
     "close": "Fermer l'historique"
+  },
+  "attachDialog": {
+    "title": "Joindre depuis EO Docs",
+    "search": "Rechercher dans EO Docs",
+    "empty": "Aucun document à joindre.",
+    "warning": "EO Docs ne fonctionne qu'entre utilisateurs d'EmailOps. Les autres reçoivent un fichier .eodoc qu'ils ne pourront pas ouvrir.",
+    "consent": "À l'envoi de cet e-mail, les documents sont partagés avec ses destinataires et EmailOps leur envoie automatiquement vos modifications par e-mail.",
+    "submit": "Joindre"
   }
 }

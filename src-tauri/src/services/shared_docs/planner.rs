@@ -97,6 +97,7 @@ mod tests {
 
     fn envelope(participants: &[&str]) -> Envelope {
         Envelope {
+            purpose: crate::services::shared_docs::envelope::Purpose::Update,
             doc_id: "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b".into(),
             kind: DocKind::Doc,
             title: "Notes".into(),
