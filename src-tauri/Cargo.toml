@@ -94,7 +94,7 @@ async-trait = "0.1"
 imap = { version = "2", features = ["native-tls"] }
 native-tls = "0.2"
 lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "builder"] }
-mailparse = "0.17"
+mailparse = "0.18"
 ammonia = "4"
 futures = "0.3"
 sys-locale = "0.3"
@@ -130,6 +130,8 @@ ts-rs = { version = "12", optional = true }
 opentelemetry      = { version = "0.33", optional = true }
 opentelemetry_sdk  = { version = "0.33", optional = true }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+yrs = "0.28"
+calamine = { version = "0.36", features = ["dates"] }
 
 [features]
 # Enables tauri::test::mock_builder for the eval examples so they can build an

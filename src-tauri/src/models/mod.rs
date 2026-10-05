@@ -9,6 +9,7 @@ pub mod error;
 pub mod headers;
 pub mod lens;
 pub mod outbox;
+pub mod shared_docs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]

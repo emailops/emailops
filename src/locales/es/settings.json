@@ -27,6 +27,8 @@
     "aisearchDesc": "Embeddings y búsqueda semántica",
     "skills": "Skills de IA",
     "skillsDesc": "Instrucciones que el chat carga cuando las necesita",
+    "documents": "EO Docs",
+    "documentsDesc": "Documentos y hojas editados juntos por email",
     "privacy": "Privacidad y seguridad",
     "privacyDesc": "Contraseña, contenido remoto",
     "junk": "Basura",
@@ -646,5 +648,9 @@
     "onlyUnfocusedLabel": "Solo cuando EmailOps no está en primer plano",
     "onlyUnfocusedDesc": "No avisa mientras trabajas en EmailOps.",
     "footnote": "Más de tres mensajes nuevos a la vez se agrupan en un único resumen. Mientras la app está bloqueada con la contraseña principal, las notificaciones nunca muestran remitente ni asunto."
+  },
+  "documents": {
+    "enable": "Activar EO Docs",
+    "enableDesc": "Experimental. EO Docs: edita documentos y hojas de cálculo junto con otros usuarios de EmailOps, sin nube: los cambios viajan como emails entre vuestras cuentas. Al activarlo aparece EO Docs en la barra lateral. No se envía nada hasta que compartes o aceptas un documento."
   }
 }

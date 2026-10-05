@@ -37,6 +37,8 @@
     "noGroupings": "Noch keine Unternehmensgruppen — Unternehmens-Tags entstehen während der Synchronisation.",
     "modeList": "Liste",
     "modeCompany": "Nach Unternehmen",
+    "modeOrganization": "Meine Organisation",
+    "organizationHint": "Personen bei {{domain}}",
     "searchPlaceholder": "Kontakte suchen...",
     "sortPrefix": "Sortieren: {{label}}",
     "allCompanies": "Alle Unternehmen",

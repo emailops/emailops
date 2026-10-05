@@ -1,6 +1,7 @@
 import { format } from 'date-fns';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
 import { SendSplitButton } from '@/components/shared/SendSplitButton';
@@ -19,6 +20,7 @@ import {
 } from '@/lib/composeDraft';
 import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
+import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
 import { hasSignature, insertSignature, replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
@@ -677,10 +679,11 @@ export function ReplyCompose({
 
       {/* Actions */}
       <div className="mt-3 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
+        <AttachMenu
+          accountId={fromAccountId}
           disabled={isSending}
+          onPickFiles={() => fileInputRef.current?.click()}
+          onPickEoDocs={(docs) => setAttachments((prev) => [...prev, ...docs.map(eoDocAttachment)])}
           className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
           title={t('compose:attachFiles')}
         >
@@ -692,7 +695,7 @@ export function ReplyCompose({
               d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
             />
           </svg>
-        </button>
+        </AttachMenu>
         <input
           ref={fileInputRef}
           type="file"

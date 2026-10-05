@@ -81,6 +81,7 @@ pub(crate) fn opens_read_only(command: Option<&Command>) -> bool {
             Command::Doctor
                 | Command::Stats
                 | Command::Skills
+                | Command::Docs { flush: false }
                 | Command::Drafts
                 | Command::Show { .. }
                 | Command::Emails { .. }
@@ -373,6 +374,7 @@ mod tests {
             Command::Doctor,
             Command::Stats,
             Command::Skills,
+            Command::Docs { flush: false },
             Command::Drafts,
             Command::Accounts { action: None },
             Command::Accounts {

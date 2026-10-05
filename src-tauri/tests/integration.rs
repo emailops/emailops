@@ -2429,6 +2429,73 @@ async fn sync_files_new_mail_from_a_blocked_sender_as_spam() {
     );
 }
 
+/// Shared documents: a sync merges the `.eodoc` messages into their document.
+/// An invitation stays in the inbox for the user to see; a later change to a
+/// known document is archived out of it.
+#[tokio::test]
+async fn sync_applies_shared_document_messages_and_archives_the_updates() {
+    use base64::Engine;
+    use emailops_lib::models::shared_docs::{DocKind, DocStatus};
+    use emailops_lib::services::shared_docs::{crdt, envelope, SHARED_DOCS_ENABLED_PREF};
+
+    emailops_lib::services::logger::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-sd", "bob@example.org")).unwrap();
+    db.set_preference(SHARED_DOCS_ENABLED_PREF, "true").unwrap();
+    let account = db.get_account("acc-sd").unwrap().unwrap();
+
+    let doc_id = "6f1c2a7e-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
+    let attachment = |purpose| {
+        let bytes = envelope::encode(&envelope::Envelope {
+            purpose,
+            doc_id: doc_id.into(),
+            kind: DocKind::Doc,
+            title: "Plan".into(),
+            participants: vec!["alice@example.com".into(), "bob@example.org".into()],
+            state_vector: crdt::empty_state_vector(),
+            update: crdt::empty_state(),
+        })
+        .unwrap();
+        AttachmentInfo {
+            attachment_id: "att-1".into(),
+            filename: envelope::file_name(doc_id),
+            mime_type: envelope::ENVELOPE_MIME.into(),
+            size: bytes.len() as i64,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        }
+    };
+    let provider = FakeEmailProvider::new("bob@example.org", "Bob");
+    provider.add_message(
+        make_email_with("invite", "acc-sd", 1000, "alice@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![attachment(envelope::Purpose::Invitation)],
+    );
+    provider.add_message(
+        make_email_with("change", "acc-sd", 2000, "alice@example.com", "inbox"),
+        EmailCategory::Primary,
+        vec![attachment(envelope::Purpose::Update)],
+    );
+
+    let (abort_flags, ai_queue) = test_sync_state();
+    emailops_lib::services::emails::sync_account_with_provider(
+        &db,
+        &account,
+        std::path::Path::new("/tmp"),
+        None,
+        ai_queue,
+        abort_flags,
+        Box::new(provider),
+    )
+    .await
+    .expect("sync_account_with_provider");
+
+    let doc = db.get_shared_doc(doc_id).unwrap().expect("the invitation is stored");
+    assert_eq!(doc.status, DocStatus::Invited);
+    assert_eq!(db.get_email("invite").unwrap().unwrap().mailbox, "inbox");
+    let change = db.get_email("change").unwrap().unwrap();
+    assert_eq!((change.mailbox.as_str(), change.is_read), ("archive", true));
+}
+
 /// Regression for #50: an account narrowed to a recent window must stop
 /// re-listing its whole history on every sync.
 ///

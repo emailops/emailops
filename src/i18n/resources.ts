@@ -14,6 +14,7 @@ import deCommon from '../locales/de/common.json';
 import deCompose from '../locales/de/compose.json';
 import deContacts from '../locales/de/contacts.json';
 import deDashboard from '../locales/de/dashboard.json';
+import deDocuments from '../locales/de/documents.json';
 import deErrors from '../locales/de/errors.json';
 import deInbox from '../locales/de/inbox.json';
 import deLenses from '../locales/de/lenses.json';
@@ -33,6 +34,7 @@ import enCommon from '../locales/en/common.json';
 import enCompose from '../locales/en/compose.json';
 import enContacts from '../locales/en/contacts.json';
 import enDashboard from '../locales/en/dashboard.json';
+import enDocuments from '../locales/en/documents.json';
 import enErrors from '../locales/en/errors.json';
 import enInbox from '../locales/en/inbox.json';
 import enLenses from '../locales/en/lenses.json';
@@ -52,6 +54,7 @@ import esCommon from '../locales/es/common.json';
 import esCompose from '../locales/es/compose.json';
 import esContacts from '../locales/es/contacts.json';
 import esDashboard from '../locales/es/dashboard.json';
+import esDocuments from '../locales/es/documents.json';
 import esErrors from '../locales/es/errors.json';
 import esInbox from '../locales/es/inbox.json';
 import esLenses from '../locales/es/lenses.json';
@@ -71,6 +74,7 @@ import frCommon from '../locales/fr/common.json';
 import frCompose from '../locales/fr/compose.json';
 import frContacts from '../locales/fr/contacts.json';
 import frDashboard from '../locales/fr/dashboard.json';
+import frDocuments from '../locales/fr/documents.json';
 import frErrors from '../locales/fr/errors.json';
 import frInbox from '../locales/fr/inbox.json';
 import frLenses from '../locales/fr/lenses.json';
@@ -115,6 +119,7 @@ export const NAMESPACES = [
   'notifications',
   'lenses',
   'dashboard',
+  'documents',
   'attachments',
   'tagboard',
   'shortcuts',
@@ -141,6 +146,7 @@ export const resources = {
     notifications: enNotifications,
     lenses: enLenses,
     dashboard: enDashboard,
+    documents: enDocuments,
     attachments: enAttachments,
     shortcuts: enShortcuts,
   },
@@ -162,6 +168,7 @@ export const resources = {
     notifications: esNotifications,
     lenses: esLenses,
     dashboard: esDashboard,
+    documents: esDocuments,
     attachments: esAttachments,
     shortcuts: esShortcuts,
   },
@@ -183,6 +190,7 @@ export const resources = {
     notifications: frNotifications,
     lenses: frLenses,
     dashboard: frDashboard,
+    documents: frDocuments,
     attachments: frAttachments,
     shortcuts: frShortcuts,
   },
@@ -204,6 +212,7 @@ export const resources = {
     notifications: deNotifications,
     lenses: deLenses,
     dashboard: deDashboard,
+    documents: deDocuments,
     attachments: deAttachments,
     shortcuts: deShortcuts,
   },

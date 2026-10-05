@@ -33,6 +33,9 @@ import type {
   ContactsQuery,
   CreateLensInput,
   CreatePendingTaskRequest,
+  DocFolder,
+  DocKind,
+  DocVersion,
   Draft,
   DraftAttachment,
   Email,
@@ -72,6 +75,7 @@ import type {
   SendChatResponse,
   SenderMoveReport,
   SenderStatus,
+  SharedDoc,
   SignatureInput,
   SmartFilterPref,
   SmartFilterSuggestion,
@@ -1515,6 +1519,12 @@ export async function listContactsByCompany(accountId: string): Promise<CompanyC
   return invoke('list_contacts_by_company', { accountId });
 }
 
+/** The account's organization domain ("Mi organización"); `null` for a free
+ *  personal provider such as gmail.com. */
+export async function getOrganizationDomain(accountId: string): Promise<string | null> {
+  return invoke('get_organization_domain', { accountId });
+}
+
 // Drafts
 export async function listDrafts(accountId: string): Promise<Draft[]> {
   return invoke('list_drafts', { accountId });
@@ -2123,6 +2133,113 @@ export async function unblockSender(accountId: string, address: string, restore:
 /** Every blocked sender, or one account's. */
 export async function listBlockedSenders(accountId: string | null): Promise<BlockedSender[]> {
   return invoke('list_blocked_senders', { accountId });
+}
+
+// ── Shared documents ─────────────────────────────────────────────────────────
+// Content crosses as base64 Yjs v1 updates.
+
+export async function listSharedDocs(accountId: string | null): Promise<SharedDoc[]> {
+  return invoke('list_shared_docs', { accountId });
+}
+
+export async function createSharedDoc(accountId: string, kind: DocKind, title: string): Promise<SharedDoc> {
+  return invoke('create_shared_doc', { accountId, kind, title });
+}
+
+export async function getSharedDocState(accountId: string, docId: string): Promise<string> {
+  return invoke('get_shared_doc_state', { accountId, docId });
+}
+
+export async function getSharedDocDiff(accountId: string, docId: string, stateVector: string): Promise<string> {
+  return invoke('get_shared_doc_diff', { accountId, docId, stateVector });
+}
+
+export async function applySharedDocUpdate(accountId: string, docId: string, update: string): Promise<void> {
+  return invoke('apply_shared_doc_update', { accountId, docId, update });
+}
+
+/** Share and mail the invitation. Only call after the user confirmed that the
+ *  document's changes will be mailed to these addresses automatically. */
+export async function shareSharedDoc(
+  accountId: string,
+  docId: string,
+  recipients: string[],
+  snapshotHtml: string | null,
+): Promise<SharedDoc> {
+  return invoke('share_shared_doc', { accountId, docId, recipients, snapshotHtml });
+}
+
+export async function acceptSharedDoc(accountId: string, docId: string): Promise<SharedDoc> {
+  return invoke('accept_shared_doc', { accountId, docId });
+}
+
+export async function leaveSharedDoc(accountId: string, docId: string): Promise<SharedDoc> {
+  return invoke('leave_shared_doc', { accountId, docId });
+}
+
+/** Delete a document from this install; other participants keep their copies. */
+export async function deleteSharedDoc(accountId: string, docId: string): Promise<void> {
+  return invoke('delete_shared_doc', { accountId, docId });
+}
+
+/** Mail pending changes now. Resolves to whether a message went out. */
+export async function flushSharedDoc(accountId: string, docId: string): Promise<boolean> {
+  return invoke('flush_shared_doc', { accountId, docId });
+}
+
+export async function searchSharedDocs(accountId: string, query: string): Promise<SharedDoc[]> {
+  return invoke('search_shared_docs', { accountId, query });
+}
+
+export async function listDocFolders(accountId: string): Promise<DocFolder[]> {
+  return invoke('list_doc_folders', { accountId });
+}
+
+export async function createDocFolder(accountId: string, name: string, parentId: string | null): Promise<DocFolder> {
+  return invoke('create_doc_folder', { accountId, name, parentId });
+}
+
+export async function renameDocFolder(accountId: string, folderId: string, name: string): Promise<DocFolder> {
+  return invoke('rename_doc_folder', { accountId, folderId, name });
+}
+
+/** Deletes the folder only: its documents and subfolders move up one level. */
+export async function deleteDocFolder(accountId: string, folderId: string): Promise<void> {
+  return invoke('delete_doc_folder', { accountId, folderId });
+}
+
+export async function moveSharedDoc(accountId: string, docId: string, folderId: string | null): Promise<SharedDoc> {
+  return invoke('move_shared_doc', { accountId, docId, folderId });
+}
+
+export async function listSharedDocVersions(accountId: string, docId: string): Promise<DocVersion[]> {
+  return invoke('list_shared_doc_versions', { accountId, docId });
+}
+
+export async function getSharedDocVersion(accountId: string, docId: string, versionId: number): Promise<string> {
+  return invoke('get_shared_doc_version', { accountId, docId, versionId });
+}
+
+/** A file picked in the native dialog for import into EO Docs. */
+export interface PickedImportFile {
+  filename: string;
+  /** Standard base64. */
+  data: string;
+}
+
+/** Open the native file dialog for a Word or spreadsheet file; `null` when cancelled. */
+export async function pickImportFile(): Promise<PickedImportFile | null> {
+  return invoke('pick_import_file');
+}
+
+/** Import a spreadsheet file (standard base64) as one EO Docs sheet per tab. */
+export async function importSpreadsheet(
+  accountId: string,
+  filename: string,
+  data: string,
+  folderId: string | null,
+): Promise<SharedDoc[]> {
+  return invoke('import_spreadsheet', { accountId, filename, data, folderId });
 }
 
 export async function getJunkConfig(): Promise<JunkConfig> {

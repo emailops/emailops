@@ -352,6 +352,15 @@ pub enum Command {
     /// `SKILL.md`) and any that failed to load. Read-only; loads no model.
     Skills,
 
+    /// List the account's shared documents (title, kind, status, participants,
+    /// pending changes). Read-only unless `--flush`.
+    Docs {
+        /// Mail every shared document's pending changes now instead of
+        /// waiting for the pause after the last edit.
+        #[arg(long)]
+        flush: bool,
+    },
+
     /// Compose an email. Saves it as a draft by default (and pushes it to the
     /// provider's Drafts folder when supported); pass `--send` to deliver now.
     Compose {
@@ -924,6 +933,8 @@ mod tests {
     fn skills_parses() {
         let cli = Cli::parse_from(["emailops-cli", "skills"]);
         assert!(matches!(cli.command, Some(Command::Skills)));
+        let cli = Cli::try_parse_from(["emailops-cli", "docs", "--flush"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Docs { flush: true })));
     }
 
     #[test]

@@ -3237,3 +3237,225 @@ contradict them. Stripping the name from the generated text afterwards — names
 closings vary by language and the draft can legitimately end with a name (a P.S., a
 mention). Putting the rule in the system/prefix part — it varies per account and kind and
 would bust the KV-prefix cache.
+
+## 2026-10-04 — Shared documents sync over email, sent automatically once the user consents
+
+**Decision:** Users can edit documents and sheets together without any server: each
+install keeps a Yjs CRDT (`yrs` in the backend, `yjs` in the webview) and changes travel
+as an `.eodoc` JSON attachment on ordinary messages between the participants' own
+accounts (`services/shared_docs`). Sharing a document (a dialog that names the recipients
+and says changes will be mailed to them automatically) or accepting an invitation is the
+consent; after it, pending changes are mailed in the background after a 2-minute pause in
+editing, with no click per message. This is the first mail the app sends without a click
+per message, and it is limited to exactly that: the document's participants, about that
+document, only while it is active and consented. A failed send stays pending and is
+retried on the next pass (a duplicate update is harmless to the CRDT), unlike the outbox,
+which never retries. Only EmailOps users can edit; anyone else gets an invitation with a
+readable copy. Update messages are marked read and archived; the invitation stays in the
+inbox. No new OAuth scope: it uses `gmail.send` / `gmail.modify` (archive) as sending and
+archiving already do. Messages are not end-to-end encrypted: they are as private as the
+user's other mail, and acceptance of a change rests on the sender being a stored
+participant, which a forged `From` can fake when the provider does not reject it.
+**Context:** The developer wants Google Docs/Sheets-style collaboration with no cloud,
+consistent with the privacy-first rule of no external calls beyond mail and AI providers.
+A message is recognised by its attachment rather than an `X-` header because none of the
+three send paths can set headers and the sync keeps only an allowlist. The update sent is
+the diff against the least up-to-date recipient's known state vector, so a lost message is
+made good by the next one.
+**Rejected:** A relay or peer-to-peer server — a cloud dependency by another name. A
+"Send changes" button per edit — safe but too clumsy for collaboration. Letting people
+without EmailOps edit by replying — free-text replies cannot be merged reliably. A custom
+`X-EmailOps-*` header — not settable on any provider today. End-to-end encryption in the
+first version — needs key exchange between participants; left for later, the envelope is
+versioned (`v`) so it can be added without breaking older messages.
+
+## 2026-10-05 — EO Docs: personal folders, view-only history, title-and-text search
+
+**Decision:** Shared documents are presented as "EO Docs" (the feature's name in every
+language; code identifiers keep `shared_docs`). Folders are personal to each install
+(V037 `shared_doc_folders`): they are never mailed, sharing stays per document, and
+deleting a folder moves what it holds up one level rather than deleting documents. Each
+change is kept as a version (`shared_doc_versions`: local edits by the same person within
+5 minutes are one version, each change that arrives by email is its own, 200 kept per
+document) and shown in a right-hand history panel; a version can be viewed read-only,
+not restored. Search covers titles and text (a sheet's cell values) through an FTS5
+index refreshed on every content change.
+**Context:** The developer asked for Google Docs-style folders, a change history and
+search. Shared folders would need per-folder membership travelling by email; a restore
+would have to be mailed as a new change to everyone.
+**Rejected:** Shared folders — membership and moves between shared folders over email,
+for organisation each person can do alone. Restoring a version — left out on request;
+viewing covers looking back. Diff highlighting between versions — more work than the
+view-only need justifies today. Title-only search — the text is what people remember.
+
+## 2026-10-05 — "My organization" is the account's own domain, unless it is a free provider
+
+**Decision:** An account's organization is the domain of its address
+(`services::contacts::organization_domain`), except when that domain is a free personal
+provider (`util::email_addr::PERSONAL_EMAIL_DOMAINS`: gmail.com, outlook.com…), in which
+case the account has none. Contacts gets a "My organization" tab listing the people on
+that domain (only shown when there is one), and the EO Docs share dialog suggests them
+first: before anything is typed, and ranked first among the matches while typing (the
+existing `autocomplete_recipients` domain boost). People already sharing the document are
+not suggested.
+**Context:** The developer asked for colleagues to come first when sharing, inferring the
+company from the domain.
+**Rejected:** A configurable organization domain or list — not asked for, and the address
+already says it. Treating free-provider domains as an organization — everyone on
+gmail.com would become a "colleague".
+
+## 2026-10-05 — Attaching an EO Doc to an email shares it with the email's recipients
+
+**Decision:** The composer's attach button offers "From this computer" and "From EO Docs"
+(only while EO Docs is on). Attaching an EO Doc shares it with the email's To and Cc, as
+attaching from Drive does: the picker warns that EO Docs only works between EmailOps
+users and asks for the same consent to automatic mail as sharing. The composer sends a
+placeholder attachment (`application/vnd.emailops.doc-ref`, data = document id); the
+send path (`deliver_new_email` / `deliver_reply`, shared by immediate sends, undo send and
+scheduled send) swaps it for the document's envelope only when the email actually goes
+out, then records the recipients as participants — so an undone or cancelled email shares
+nothing. The envelope now says why it was sent (`purpose`: invitation, update, message);
+only background `update` messages are archived on arrival, so a person's own email with a
+document attached stays in the inbox.
+**Context:** The developer asked to attach from local files or EO Docs, with a warning that
+EO Docs is for EmailOps users only, and chose sharing over attaching a frozen copy.
+**Rejected:** Attaching a frozen copy — not what was chosen. Sharing as a separate
+invitation email next to the user's email — two messages for one action, and it would go
+out even when the email is undone. Archiving any message whose document is already known
+— it would file away emails people wrote.
+
+## 2026-10-05 — EO Docs imports Word with mammoth (webview) and spreadsheets with calamine (backend)
+
+**Decision:** "Import" in EO Docs, and "Open in EO Docs" on a .docx / .xlsx / .xlsm / .xls /
+.ods email attachment, turn the file into EO Docs. Word goes through mammoth (BSD-2-Clause,
+attributed in THIRD_PARTY_LICENSES.md) in the webview: its HTML is parsed with the doc
+editor's own TipTap schema (`src/lib/docSchema.ts`: headings, marks, lists, links, tables,
+images) and written into a new document as one Yjs update; images over ~1 MB of base64
+are left out (the document travels by email) and the user is told how many. Spreadsheets
+are read in the backend with calamine (MIT): one EO Docs sheet per non-empty tab, values
+only, formulas as their stored result (or their formula text when the file stores none),
+capped at 5,000 rows × 100 columns. Imported documents start unshared.
+**Context:** The developer asked to import Word and Excel and approved these two libraries
+after weighing BSD-2 against MIT.
+**Rejected:** SheetJS — Apache-2.0 but no longer published on npm (CDN only), harder to
+audit and update. Parsing spreadsheets in the webview — the backend keeps an untrusted
+binary format out of the page. Live formulas — they need a calculation engine; the best
+known one (HyperFormula) is GPLv3 or paid. A Rust .docx reader (`docx-rs`) — it gives the
+structure but no HTML, so the conversion would have to be written by hand.
+
+## 2026-10-05 — EO sheets: shared column widths, local filters, formulas evaluated on display
+
+**Decision:** Column widths live in the shared `Y.Doc` (`colWidths` map), so everyone
+sees the same layout. Column filters (first row as header, Excel-style value checklist)
+are view state of the person filtering and are never written to the document. A cell
+whose value starts with `=` is a formula stored as text and evaluated in the webview on
+display (`src/lib/sheetFormula.ts`): `SUM`/`SUMA`, `AVERAGE`/`PROMEDIO`, `MIN`, `MAX`,
+`COUNT`/`CONTAR` over ranges, with `#REF!`, `#NAME?`, `#DIV/0!` and `#CYCLE!` errors.
+**Context:** The developer asked for column resizing, basic aggregation formulas
+(starting with sum) and column filters. Widths are part of how a shared sheet reads;
+a filter is a question one person is asking of it. Storing the formula text keeps the
+CRDT the only source of truth: every peer computes the same result from the same cells.
+Numbers are parsed leniently (European "1.234,56 €" and "$1,234.50") because pasted
+Excel blocks arrive as display text.
+**Rejected:** Shared filters (one person's filter would hide rows from everyone);
+storing computed results next to the formula (two values that can disagree after a
+merge); a formula library such as HyperFormula (a new dependency for five functions);
+keeping Excel formulas on import (imports still bring values, see the entry above).
+
+## 2026-10-05 — EO sheets: formulas follow inserted and deleted rows; undo is per person
+
+**Decision:** Inserting or deleting a row or column rewrites every formula's A1
+references in the same Yjs transaction, as a spreadsheet does: references past the
+change move, a range spanning it grows or shrinks, a reference to a deleted cell becomes
+`#REF!`. Undo and redo in sheets and documents use Yjs's `UndoManager`, which only
+tracks this person's own transactions; changes merged from other people are never
+undone. Both editors answer the toolbar, Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z (and Ctrl+Y in
+sheets) and the native Edit menu, which reaches the webview as a
+`historyUndo`/`historyRedo` input event. A row added while a filter is on stays in
+view until the filters change.
+**Context:** The developer reported that sums went stale after creating or deleting
+rows, that undo/redo was missing, and that "Add row" seemed to do nothing with a filter
+on (the new, empty row was filtered out).
+**Rejected:** Storing references by row/column id (immune to concurrent inserts, but
+every formula would need translating between ids and A1 text on each edit); the known
+cost of the A1 rewrite is that two people inserting rows at the same time both rewrite
+the same formula cell and the last write wins, which can leave a range off by one.
+
+## 2026-10-05 — Deleting an EO Doc is local, with a tombstone; moving is drag-and-drop
+
+**Decision:** Deleting a document (after a confirmation that says what happens to a
+shared one) removes it from this install with its history and search entry, and records
+its id in `shared_doc_tombstones` so later mail from the other participants is ignored
+instead of reappearing as an invitation. Nothing is mailed about the deletion: the others
+keep their copies and go on editing among themselves. Edits still pending in an open
+editor are discarded, not mailed. Documents move between folders by dragging them onto a
+folder or a breadcrumb entry, besides the "Move to" menu of an open document.
+**Context:** The developer asked to move documents to other folders and to delete them
+with confirmation.
+**Rejected:** Deleting for everyone (no owner exists in a peer-to-peer document, and
+mailing a delete would let any participant destroy the others' work); a soft-delete flag
+on `shared_docs` (every list, search and flush query would need to filter it); a hard
+delete without a tombstone (the next change from a peer would bring the document back as
+an invitation).
+
+## 2026-10-05 — EO Docs refuses changes whose sender fails DMARC; on by default, still experimental; PDF through the print dialog
+
+**Decision:** An arriving `.eodoc` message is refused, before it touches any document,
+when the receiving server's `Authentication-Results` (read with the junk detector's
+`junk::auth::assess`, so only a verdict attributable to the account's own MTA counts)
+says the sender's domain failed DMARC, or publishes no DMARC policy and the message
+failed SPF without a valid DKIM signature. EO Docs is now on by default and keeps its
+Experimental label; turning it off still stops all ingest and mail. "Export PDF" prints
+the document alone through the system print dialog (`window.print()`, which Tauri routes
+to the native webview print on macOS; capability `core:webview:allow-print`), where the
+user picks "Save as PDF".
+**Context:** The developer asked for sender verification, PDF export and the feature on
+by default while it stays experimental. The analysis in `docs/EO-DOCS.md` listed a forged
+`From` as the main security gap.
+**Rejected:** Refusing on `softfail`, `neutral` or a missing header (much legitimate mail
+lands there, and an IMAP account cannot attribute any verdict, which would make EO Docs
+unusable on IMAP). A PDF library (jsPDF, printpdf) writing the file directly — a new
+dependency for what the system dialog already does, and a second renderer to keep in step
+with the editor. Known gap: on IMAP accounts no verdict can be attributed, so a forged
+`From` there is still accepted.
+
+## 2026-10-05 — EO Docs "Export PDF" writes the file with pdfmake instead of opening the print dialog
+
+**Decision:** "Export PDF" builds the PDF in the webview with pdfmake (MIT, 0.3.11) from
+the document's own structure — `editor.getJSON()` for a text document, the cells' shown
+values for a sheet (`src/lib/docPdf.ts`) — and saves it to Downloads through the existing
+`save_attachment_to_downloads` path, with the usual "Show in Finder" toast. pdfmake and its
+fonts (~2 MB) load on first export only. Only images carried in the document (`data:`
+URLs) are drawn; a remote image would be a request to someone else's server. This
+replaces the print-dialog export of the entry above, and the `core:webview:allow-print`
+capability is gone with it.
+**Context:** The developer found that "Export PDF" opened the print dialog and wanted the
+file directly. The app had no PDF generator (it only displays PDF attachments), so a
+dependency was needed; the developer chose pdfmake.
+**Rejected:** The webview's own PDF engine (WebKit `createPDF`, WebView2 `PrintToPdf`,
+WebKitGTK) — no new library, but three native implementations, two only testable in CI.
+jsPDF — lighter, but its layout (line wrapping, lists, tables) would have to be written by
+hand.
+
+## 2026-10-05 — EO sheets surface concurrent cell edits instead of dropping a value silently
+
+**Decision:** When two people change the same cell before either saw the other's value,
+the CRDT still keeps one value on every copy, but the dropped value is now shown: the cell
+is marked, a banner names the dropped and the kept value with "bring back" / "keep"
+buttons, a toast and log line fire when such a change arrives in an open sheet, and the
+History panel lists every such cell, settled or not. Detection reads the document itself
+(`src/lib/sheetConflicts.ts`): a map entry whose `origin` is not the entry it replaced was
+written without seeing it. The choice is stored in the shared document
+(`resolvedConflicts`), so it is settled for everyone. This needs the replaced values kept:
+the editor's `Y.Doc` runs with `gc: false`, and the backend keeps storing merged updates
+(`merge_updates_v1` / `diff_updates_v1`), never re-encoding the state through a collected
+`yrs::Doc` — a Rust test guards that.
+**Context:** The developer asked to mark the overwritten cells in the history and to warn
+when changes arrive in a cell one just edited, after the explanation that a concurrent cell
+edit loses a value without notice.
+**Rejected:** Detecting in the backend at merge time — `yrs` keeps an item's `origin`
+crate-private, and the app would also have to know which client ids are "this person's";
+reading the document in the webview covers sheets that were closed when the change arrived,
+since the stored state still holds both values. Last-writer-wins by wall clock — clocks
+differ between machines and the CRDT's own choice is already the same everywhere. Locking
+cells — impossible without a server.

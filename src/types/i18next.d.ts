@@ -18,6 +18,7 @@ import type common from '../locales/en/common.json';
 import type compose from '../locales/en/compose.json';
 import type contacts from '../locales/en/contacts.json';
 import type dashboard from '../locales/en/dashboard.json';
+import type documents from '../locales/en/documents.json';
 import type errors from '../locales/en/errors.json';
 import type inbox from '../locales/en/inbox.json';
 import type lenses from '../locales/en/lenses.json';
@@ -48,6 +49,7 @@ declare module 'i18next' {
       calendar: typeof calendar;
       errors: typeof errors;
       notifications: typeof notifications;
+      documents: typeof documents;
       lenses: typeof lenses;
       dashboard: typeof dashboard;
       attachments: typeof attachments;

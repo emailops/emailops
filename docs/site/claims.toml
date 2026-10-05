@@ -577,6 +577,61 @@ checks = [
   { manual = 'The demo mailbox already has a rule for every recurring sender, so no suggestion shows there; the Suggested rules section, the sidebar badge and the prefilled Review form are covered by src/components/Attachments/RuleManagementModal.suggestions.test.tsx and were checked by hand on 2026-09-25.' },
 ]
 
+[feat-eo-docs-1]
+checks = [
+  { app = true },
+  { tests = ['services::shared_docs::tests::eo_docs_is_on_until_the_user_turns_it_off', 'services::shared_docs::tests::nothing_is_ingested_while_the_feature_is_off'], covers = ["while it is off nothing is received or sent"] },
+  { tests = ['services::shared_docs::tests::concurrent_edits_on_both_sides_converge', 'services::shared_docs::tests::a_lost_message_is_made_good_by_the_next_exchange'], covers = ["every change travels as an ordinary email between your accounts, and each copy merges what arrives without conflicts"] },
+]
+
+[feat-eo-docs-2]
+checks = [
+  { app = true },
+  { manual = 'Pasting from Excel, resizing a column and undo/redo are covered by src/components/Documents/SheetEditor.test.tsx and DocEditor.test.tsx (vitest, which the docs check does not run); the demo case only creates a sheet.', covers = ["take a block pasted from Excel, and a column is resized by dragging the edge of its header", "Undo and redo only take back your own changes."] },
+  { manual = 'The text formatting a document offers is the editor schema in src/lib/docSchema.ts; the demo case does not type into a document.', covers = ["Documents have headings, bold, italic, underline, lists, links, tables and images."] },
+]
+
+[feat-eo-docs-3]
+checks = [
+  { app = true },
+  { manual = 'Reference shifting and column filters are covered by src/lib/sheetFormula.test.ts, sheetModel.test.ts and SheetEditor.test.tsx (vitest).', covers = ["Inserting or deleting rows keeps the ranges pointing at the same cells.", "The filter button on a column header hides the rows you untick; filters only change your own view."] },
+]
+
+[feat-eo-docs-8]
+checks = [
+  { tests = ['services::shared_docs::crdt::tests::a_merged_state_keeps_the_value_a_concurrent_write_replaced'], covers = ["every copy keeps the same one of the two values"] },
+  { manual = 'A concurrent edit needs a second install: detection, the marked cell, the notice, bringing a value back and the History list are covered by src/lib/sheetConflicts.test.ts, SheetEditor.test.tsx and HistoryPanel.test.tsx (vitest).' },
+]
+
+[feat-eo-docs-4]
+checks = [
+  { tests = ['services::shared_docs::planner::tests::a_document_is_due_once_edits_have_paused', 'services::shared_docs::tests::due_documents_are_flushed_after_the_pause_and_failures_retried'], covers = ["about two minutes after you stop typing"] },
+  { tests = ['services::shared_docs::tests::an_invitation_carries_the_whole_document_and_waits_for_acceptance', 'services::shared_docs::planner::tests::nothing_is_mailed_without_consent_or_while_invited_or_left'], covers = ["from then on EmailOps emails your changes to them on its own"] },
+  { tests = ['services::shared_docs::tests::a_message_seen_twice_is_applied_once_and_updates_are_archived'], covers = ["Changes arrive with the next sync, are merged, and their emails are marked read and archived."] },
+  { manual = 'Sharing sends real email: the demo case cannot run it. Verified by hand between two installs on a local mail server (2026-10-04); the colleague suggestions are covered by ShareDialog.test.tsx.' },
+]
+
+[feat-eo-docs-5]
+checks = [
+  { tests = ['services::shared_docs::tests::a_forged_participant_is_ignored', 'services::shared_docs::planner::tests::a_known_document_applies_only_from_a_stored_participant'], covers = ["A change is only applied when it comes from someone the document is shared with."] },
+  { tests = ['services::shared_docs::planner::tests::a_sender_whose_domain_fails_dmarc_is_refused', 'services::shared_docs::tests::a_change_whose_sender_fails_dmarc_is_not_applied'], covers = ["On Gmail and Outlook accounts it is also refused when the sender fails your provider's authentication check (DMARC, or SPF without a valid DKIM signature)."] },
+  { manual = 'A design property recorded in docs/DECISIONS.md (2026-10-04): the envelope carries the update in clear.', covers = ["The emails are not end-to-end encrypted: they are as private as the rest of your mail."] },
+]
+
+[feat-eo-docs-6]
+checks = [
+  { app = true },
+  { tests = ['services::shared_docs::tests::folders_are_per_account_and_deleting_one_keeps_its_documents', 'services::shared_docs::tests::search_finds_documents_by_title_and_by_what_was_written_in_them', 'services::shared_docs::tests::local_edits_are_versions_by_this_account'], covers = ["Search finds documents by title and content"] },
+  { tests = ['services::shared_docs::tests::a_deleted_shared_document_does_not_come_back_with_later_changes'], covers = ["deleting a shared document removes only your copy, and the others keep theirs"] },
+]
+
+[feat-eo-docs-7]
+checks = [
+  { tests = ['services::shared_docs::tests::a_workbook_imports_as_searchable_sheets_in_the_chosen_folder', 'services::shared_docs::import::tests::a_workbook_reads_as_one_tab_per_used_sheet_with_its_values'], covers = ["one sheet per tab and formulas as their values"] },
+  { tests = ['services::shared_docs::tests::a_document_attached_to_an_email_is_shared_with_its_recipients'], covers = ["attaches a document, which shares it with the email's recipients"] },
+  { manual = 'Importing opens a native file dialog the demo case cannot drive; Word import is covered by src/lib/officeImport.test.ts (vitest) and was checked by hand in the app (2026-10-05).' },
+]
+
 [feat-search-1]
 checks = [
   { app = true },

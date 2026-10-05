@@ -73,6 +73,7 @@
     "skill_already_exists": "Ein Skill namens {{name}} existiert bereits. Wähle einen anderen Namen.",
     "no_archive_folder": "Dieses Konto hat keinen Archivordner. Legen Sie einen Ordner namens „Archive“ an, um E-Mails zu archivieren.",
     "outbox_not_pending": "Diese Nachricht wird bereits gesendet und kann nicht mehr geändert werden.",
-    "no_spam_folder": "Dieses Konto hat keinen Junk-Ordner, in dem Spam abgelegt werden kann."
+    "no_spam_folder": "Dieses Konto hat keinen Junk-Ordner, in dem Spam abgelegt werden kann.",
+    "file_not_downloaded": "„{{filename}}“ liegt noch in iCloud (oder einem anderen Cloud-Ordner) und wurde nicht rechtzeitig geladen. Laden Sie die Datei im Finder herunter und versuchen Sie es erneut."
   }
 }
