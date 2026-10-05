@@ -559,7 +559,7 @@ async fn documents_from_before_the_index_existed_are_found_too() {
     let alice = install("alice@example.com");
     let doc = create(&alice.db, &alice.account, DocKind::Doc, "Old notes", NOW).unwrap();
     write_paragraph(&alice, &doc.id, 1, "harbour visit", NOW);
-    // As after the V038 upgrade: the document exists, its index entry does not.
+    // As after the V037 upgrade: the document exists, its index entry does not.
     alice
         .db
         .connection()

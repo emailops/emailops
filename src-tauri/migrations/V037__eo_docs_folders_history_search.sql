@@ -1,5 +1,5 @@
--- V038: EO Docs — personal folders, version history and full-text search for
--- shared documents (V037).
+-- V037: EO Docs — personal folders, version history and full-text search for
+-- shared documents (V036).
 --
 -- `shared_doc_folders`: this install's own folders, nestable (`parent_id`).
 -- Never mailed: each person organizes their documents their own way, and

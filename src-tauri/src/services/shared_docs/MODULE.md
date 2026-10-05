@@ -31,7 +31,7 @@ email as the only transport: no server, no cloud.
 - `reindex` refreshes the FTS5 entry (title + `crdt::plain_text`) after every
   content change; `search` matches every word as a prefix.
 - `delete` removes the document, its history and its search entry, and keeps a
-  tombstone (`shared_doc_tombstones`, V039) so `ingest_arrivals` ignores later
+  tombstone (`shared_doc_tombstones`, V038) so `ingest_arrivals` ignores later
   mail about it instead of storing it as a new invitation. Nothing is mailed:
   the other participants keep their copies.
 
@@ -55,7 +55,7 @@ email as the only transport: no server, no cloud.
 
 ## Depends on
 
-`db::shared_docs` (V037), `services::emails` (send, thread archive),
+`db::shared_docs` (V036), `services::emails` (send, thread archive),
 `services::outbox::OutboxProviders` (provider per account for the background
 flush, run by `sync_scheduler::outbox_dispatch_loop`), `sync::provider`.
 

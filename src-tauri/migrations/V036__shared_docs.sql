@@ -1,4 +1,4 @@
--- V037: shared documents and sheets, kept in sync between EmailOps installs by
+-- V036: shared documents and sheets, kept in sync between EmailOps installs by
 -- email (services::shared_docs).
 --
 -- `shared_docs`: one row per document on this install. `state` is the merged

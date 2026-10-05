@@ -1,4 +1,4 @@
-//! Shared documents (V037): documents and sheets kept in sync between EmailOps
+//! Shared documents (V036): documents and sheets kept in sync between EmailOps
 //! installs by email. The sync itself lives in `services::shared_docs`.
 
 use serde::{Deserialize, Serialize};
