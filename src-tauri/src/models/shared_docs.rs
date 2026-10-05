@@ -85,4 +85,33 @@ pub struct SharedDoc {
     pub dirty_since: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// The folder it sits in on this install (folders are personal, never
+    /// mailed); `None` is the top level.
+    pub folder_id: Option<String>,
+}
+
+/// A personal folder of EO Docs, nestable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct DocFolder {
+    pub id: String,
+    pub account_id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub created_at: i64,
+}
+
+/// One entry of a document's history: who changed it and when. The content
+/// of that version is fetched separately.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct DocVersion {
+    pub id: i64,
+    /// The address that made the change.
+    pub author: String,
+    /// `local`: edited on this install; `remote`: arrived by email.
+    pub origin: String,
+    pub created_at: i64,
 }

@@ -1,6 +1,6 @@
 {
-  "title": "Documents",
-  "intro": "Des documents et des feuilles de calcul que vous modifiez avec d'autres utilisateurs d'EmailOps. Les modifications voyagent par e-mail entre vos comptes, sans cloud.",
+  "title": "EO Docs",
+  "intro": "EO Docs : des documents et des feuilles de calcul que vous modifiez avec d'autres utilisateurs d'EmailOps. Les modifications voyagent par e-mail entre vos comptes, sans cloud.",
   "new": "Nouveau",
   "newTitlePlaceholder": "Titre",
   "kind": {
@@ -52,5 +52,28 @@
     "heading": "Titre",
     "bulletList": "Liste à puces",
     "orderedList": "Liste numérotée"
+  },
+  "searchPlaceholder": "Rechercher dans EO Docs",
+  "noResults": "Aucun document ne correspond à « {{query}} »",
+  "root": "EO Docs",
+  "folders": {
+    "new": "Nouveau dossier",
+    "name": "Nom du dossier",
+    "rename": "Renommer",
+    "delete": "Supprimer le dossier",
+    "deleteConfirm": "Supprimer ce dossier ? Son contenu remonte d'un niveau.",
+    "moveTo": "Déplacer vers",
+    "none": "Aucun dossier"
+  },
+  "history": {
+    "open": "Historique",
+    "title": "Historique des modifications",
+    "you": "Vous",
+    "local": "Modifié ici",
+    "remote": "Reçu par e-mail",
+    "empty": "Aucune modification enregistrée pour l'instant.",
+    "viewing": "Version du {{date}} · lecture seule",
+    "backToCurrent": "Revenir à la version actuelle",
+    "close": "Fermer l'historique"
   }
 }

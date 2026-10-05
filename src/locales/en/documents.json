@@ -1,6 +1,6 @@
 {
-  "title": "Documents",
-  "intro": "Documents and sheets you edit together with other EmailOps users. Changes travel by email between your accounts, with no cloud.",
+  "title": "EO Docs",
+  "intro": "EO Docs: documents and sheets you edit together with other EmailOps users. Changes travel by email between your accounts, with no cloud.",
   "new": "New",
   "newTitlePlaceholder": "Title",
   "kind": {
@@ -52,5 +52,28 @@
     "heading": "Heading",
     "bulletList": "Bulleted list",
     "orderedList": "Numbered list"
+  },
+  "searchPlaceholder": "Search EO Docs",
+  "noResults": "No document matches “{{query}}”",
+  "root": "EO Docs",
+  "folders": {
+    "new": "New folder",
+    "name": "Folder name",
+    "rename": "Rename",
+    "delete": "Delete folder",
+    "deleteConfirm": "Delete this folder? What it holds moves up one level.",
+    "moveTo": "Move to",
+    "none": "No folder"
+  },
+  "history": {
+    "open": "History",
+    "title": "Change history",
+    "you": "You",
+    "local": "Edited here",
+    "remote": "Received by email",
+    "empty": "No saved changes yet.",
+    "viewing": "Viewing the version of {{date}} · read-only",
+    "backToCurrent": "Back to the current version",
+    "close": "Close history"
   }
 }

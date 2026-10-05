@@ -5,7 +5,7 @@ use rusqlite::{params, OptionalExtension, Row};
 
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::models::shared_docs::{DocKind, DocStatus, SharedDoc};
+use crate::models::shared_docs::{DocFolder, DocKind, DocStatus, DocVersion, SharedDoc};
 
 /// A new document row.
 pub struct NewSharedDoc<'a> {
@@ -26,7 +26,8 @@ pub struct Participant {
     pub state_vector: Option<Vec<u8>>,
 }
 
-const DOC_COLUMNS: &str = "id, account_id, kind, title, status, consented_at, dirty_since, created_at, updated_at";
+const DOC_COLUMNS: &str =
+    "id, account_id, kind, title, status, consented_at, dirty_since, created_at, updated_at, folder_id";
 
 fn doc_from_row(r: &Row<'_>) -> rusqlite::Result<SharedDoc> {
     let parse_err = |i: usize, e: crate::models::error::AppError| {
@@ -43,6 +44,7 @@ fn doc_from_row(r: &Row<'_>) -> rusqlite::Result<SharedDoc> {
         dirty_since: r.get(6)?,
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
+        folder_id: r.get(9)?,
     })
 }
 
@@ -243,6 +245,216 @@ impl Database {
     }
 }
 
+/// Local edits by the same person this close together are one version.
+pub const VERSION_COALESCE_SECS: i64 = 300;
+/// Versions kept per document; older ones are dropped.
+pub const MAX_VERSIONS: i64 = 200;
+
+fn folder_from_row(r: &Row<'_>) -> rusqlite::Result<DocFolder> {
+    Ok(DocFolder {
+        id: r.get(0)?,
+        account_id: r.get(1)?,
+        parent_id: r.get(2)?,
+        name: r.get(3)?,
+        created_at: r.get(4)?,
+    })
+}
+
+impl Database {
+    // ── Folders ──────────────────────────────────────────────────────────
+
+    pub fn insert_doc_folder(&self, folder: &DocFolder) -> Result<()> {
+        self.connection().execute(
+            "INSERT INTO shared_doc_folders (id, account_id, parent_id, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                folder.id,
+                folder.account_id,
+                folder.parent_id,
+                folder.name,
+                folder.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_doc_folder(&self, folder_id: &str) -> Result<Option<DocFolder>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT id, account_id, parent_id, name, created_at FROM shared_doc_folders WHERE id = ?1",
+                params![folder_id],
+                folder_from_row,
+            )
+            .optional()?)
+    }
+
+    /// Every folder of one account, by name.
+    pub fn list_doc_folders(&self, account_id: &str) -> Result<Vec<DocFolder>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, account_id, parent_id, name, created_at FROM shared_doc_folders
+             WHERE account_id = ?1 ORDER BY name COLLATE NOCASE, id",
+        )?;
+        let rows = stmt.query_map(params![account_id], folder_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn rename_doc_folder(&self, folder_id: &str, name: &str) -> Result<()> {
+        self.connection().execute(
+            "UPDATE shared_doc_folders SET name = ?2 WHERE id = ?1",
+            params![folder_id, name],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a folder: its subfolders and documents move up to its parent,
+    /// so deleting a folder never deletes a document.
+    pub fn delete_doc_folder(&self, folder_id: &str) -> Result<()> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        let parent: Option<String> = tx.query_row(
+            "SELECT parent_id FROM shared_doc_folders WHERE id = ?1",
+            params![folder_id],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "UPDATE shared_doc_folders SET parent_id = ?2 WHERE parent_id = ?1",
+            params![folder_id, parent],
+        )?;
+        tx.execute(
+            "UPDATE shared_docs SET folder_id = ?2 WHERE folder_id = ?1",
+            params![folder_id, parent],
+        )?;
+        tx.execute("DELETE FROM shared_doc_folders WHERE id = ?1", params![folder_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_shared_doc_folder(&self, doc_id: &str, folder_id: Option<&str>) -> Result<()> {
+        self.connection().execute(
+            "UPDATE shared_docs SET folder_id = ?2 WHERE id = ?1",
+            params![doc_id, folder_id],
+        )?;
+        Ok(())
+    }
+
+    // ── Versions ─────────────────────────────────────────────────────────
+
+    /// Record what the document looks like after a change. A local edit by
+    /// the same author within [`VERSION_COALESCE_SECS`] of the last local
+    /// version updates that version instead of adding one.
+    pub fn record_doc_version(&self, doc_id: &str, author: &str, origin: &str, state: &[u8], now: i64) -> Result<()> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        let latest: Option<(i64, String, String, i64)> = tx
+            .query_row(
+                "SELECT id, author, origin, created_at FROM shared_doc_versions WHERE doc_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![doc_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        match latest {
+            Some((id, a, o, at))
+                if origin == "local" && o == "local" && a == author && now - at < VERSION_COALESCE_SECS =>
+            {
+                tx.execute(
+                    "UPDATE shared_doc_versions SET state = ?2, created_at = ?3 WHERE id = ?1",
+                    params![id, state, now],
+                )?;
+            }
+            _ => {
+                tx.execute(
+                    "INSERT INTO shared_doc_versions (doc_id, author, origin, created_at, state) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![doc_id, author, origin, now, state],
+                )?;
+                tx.execute(
+                    "DELETE FROM shared_doc_versions WHERE doc_id = ?1 AND id NOT IN
+                       (SELECT id FROM shared_doc_versions WHERE doc_id = ?1 ORDER BY id DESC LIMIT ?2)",
+                    params![doc_id, MAX_VERSIONS],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A document's history, newest first.
+    pub fn list_doc_versions(&self, doc_id: &str) -> Result<Vec<DocVersion>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id, author, origin, created_at FROM shared_doc_versions WHERE doc_id = ?1 ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map(params![doc_id], |r| {
+            Ok(DocVersion {
+                id: r.get(0)?,
+                author: r.get(1)?,
+                origin: r.get(2)?,
+                created_at: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn doc_version_state(&self, doc_id: &str, version_id: i64) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT state FROM shared_doc_versions WHERE doc_id = ?1 AND id = ?2",
+                params![doc_id, version_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────
+
+    /// Replace a document's entry in the search index.
+    pub fn index_shared_doc(&self, doc_id: &str, title: &str, body: &str) -> Result<()> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM shared_docs_fts WHERE doc_id = ?1", params![doc_id])?;
+        tx.execute(
+            "INSERT INTO shared_docs_fts (doc_id, title, body) VALUES (?1, ?2, ?3)",
+            params![doc_id, title, body],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// One account's documents that have no search-index entry yet (they
+    /// predate the index, V037).
+    pub fn unindexed_shared_doc_ids(&self, account_id: &str) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM shared_docs WHERE account_id = ?1
+               AND id NOT IN (SELECT doc_id FROM shared_docs_fts)",
+        )?;
+        let rows = stmt.query_map(params![account_id], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// One account's documents matching an FTS5 query, best match first.
+    pub fn search_shared_docs(&self, account_id: &str, fts_query: &str, limit: usize) -> Result<Vec<SharedDoc>> {
+        let ids: Vec<String> = {
+            let conn = self.reader();
+            let mut stmt = conn.prepare(
+                "SELECT d.id FROM shared_docs_fts f JOIN shared_docs d ON d.id = f.doc_id
+                 WHERE shared_docs_fts MATCH ?1 AND d.account_id = ?2
+                 ORDER BY bm25(shared_docs_fts, 0.0, 5.0, 1.0) LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![fts_query, account_id, limit as i64], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut docs = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(doc) = self.get_shared_doc(&id)? {
+                docs.push(doc);
+            }
+        }
+        Ok(docs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +590,123 @@ mod tests {
             .unwrap();
         assert!(db.get_shared_doc("d1").unwrap().is_none());
         assert!(db.shared_doc_participants("d1").unwrap().is_empty());
+    }
+
+    fn folder(id: &str, parent: Option<&str>, name: &str) -> DocFolder {
+        DocFolder {
+            id: id.into(),
+            account_id: "acc-1".into(),
+            parent_id: parent.map(str::to_string),
+            name: name.into(),
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn deleting_a_folder_moves_its_contents_up_and_keeps_every_document() {
+        let db = db();
+        db.insert_doc_folder(&folder("top", None, "Trips")).unwrap();
+        db.insert_doc_folder(&folder("mid", Some("top"), "Lisbon")).unwrap();
+        db.insert_doc_folder(&folder("low", Some("mid"), "Receipts")).unwrap();
+        insert(&db, "d1", "acc-1", 10);
+        db.set_shared_doc_folder("d1", Some("mid")).unwrap();
+
+        db.delete_doc_folder("mid").unwrap();
+
+        assert_eq!(
+            db.get_shared_doc("d1").unwrap().unwrap().folder_id.as_deref(),
+            Some("top")
+        );
+        assert_eq!(
+            db.get_doc_folder("low").unwrap().unwrap().parent_id.as_deref(),
+            Some("top")
+        );
+        assert!(db.get_doc_folder("mid").unwrap().is_none());
+    }
+
+    #[test]
+    fn folders_list_per_account_by_name() {
+        let db = db();
+        db.insert_doc_folder(&folder("b", None, "beta")).unwrap();
+        db.insert_doc_folder(&folder("a", None, "Alpha")).unwrap();
+        db.rename_doc_folder("b", "Zeta").unwrap();
+        let names: Vec<_> = db
+            .list_doc_folders("acc-1")
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, vec!["Alpha", "Zeta"]);
+        assert!(db.list_doc_folders("acc-2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn local_edits_in_one_sitting_are_one_version_and_arrivals_are_their_own() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        db.record_doc_version("d1", "me@example.com", "local", b"v1", 100)
+            .unwrap();
+        db.record_doc_version("d1", "me@example.com", "local", b"v2", 200)
+            .unwrap();
+        db.record_doc_version("d1", "you@example.org", "remote", b"v3", 250)
+            .unwrap();
+        db.record_doc_version("d1", "me@example.com", "local", b"v4", 260)
+            .unwrap();
+        db.record_doc_version("d1", "me@example.com", "local", b"v5", 260 + VERSION_COALESCE_SECS)
+            .unwrap();
+
+        let versions = db.list_doc_versions("d1").unwrap();
+        let summary: Vec<_> = versions.iter().map(|v| (v.origin.as_str(), v.created_at)).collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("local", 260 + VERSION_COALESCE_SECS),
+                ("local", 260),
+                ("remote", 250),
+                ("local", 200)
+            ]
+        );
+        assert_eq!(db.doc_version_state("d1", versions[3].id).unwrap().unwrap(), b"v2");
+        assert!(db.doc_version_state("other", versions[3].id).unwrap().is_none());
+    }
+
+    #[test]
+    fn only_the_newest_versions_are_kept() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        for i in 0..(MAX_VERSIONS + 5) {
+            db.record_doc_version("d1", "you@example.org", "remote", b"s", i)
+                .unwrap();
+        }
+        let versions = db.list_doc_versions("d1").unwrap();
+        assert_eq!(versions.len() as i64, MAX_VERSIONS);
+        assert_eq!(versions.last().unwrap().created_at, 5);
+    }
+
+    #[test]
+    fn search_finds_titles_and_text_of_one_account_only() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        insert(&db, "d2", "acc-1", 10);
+        insert(&db, "d3", "acc-2", 10);
+        db.index_shared_doc("d1", "Trip budget", "flights hotel dinners")
+            .unwrap();
+        db.index_shared_doc("d2", "Agenda", "talk on Wednesday about the hotel")
+            .unwrap();
+        db.index_shared_doc("d3", "Hotel list", "").unwrap();
+        db.index_shared_doc("d1", "Trip budget", "flights hotel dinners trains")
+            .unwrap();
+
+        let ids = |q: &str| -> Vec<String> {
+            db.search_shared_docs("acc-1", q, 10)
+                .unwrap()
+                .into_iter()
+                .map(|d| d.id)
+                .collect()
+        };
+        assert_eq!(ids("\"train\"*"), vec!["d1"]);
+        let hotel = ids("\"hotel\"*");
+        assert_eq!(hotel.len(), 2);
+        assert!(ids("\"zebra\"*").is_empty());
     }
 }

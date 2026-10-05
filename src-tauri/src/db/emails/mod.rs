@@ -323,7 +323,7 @@ pub(super) fn thread_order_clause(alias: &str, ascending: bool) -> String {
 
 /// Sanitize a user query for FTS5 MATCH.
 /// Escapes special characters and converts to a prefix query so partial words match.
-pub(super) fn sanitize_fts_query(query: &str) -> String {
+pub(crate) fn sanitize_fts_query(query: &str) -> String {
     let words: Vec<String> = query
         .split_whitespace()
         .filter(|w| !w.is_empty())

@@ -1,18 +1,23 @@
 import type { Editor } from '@tiptap/react';
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import { useSharedYDoc } from '@/hooks/useSharedYDoc';
+import { useVersionDoc } from '@/hooks/useVersionDoc';
 import * as api from '@/lib/api';
+import { folderOptions } from '@/lib/docFolders';
 import { errorText } from '@/lib/errors';
 import { gridToHtml, readGrid } from '@/lib/sheetModel';
 import { useLogStore } from '@/stores/logStore';
 import { useSharedDocsStore } from '@/stores/sharedDocsStore';
-import type { SharedDoc } from '@/types';
+import type { DocVersion, SharedDoc } from '@/types';
 import { DocEditor } from './DocEditor';
+import { HistoryPanel } from './HistoryPanel';
 import { ShareDialog } from './ShareDialog';
 import { SheetEditor } from './SheetEditor';
 
 const BUTTON = 'px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-40';
+const NOOP = () => {};
 
 interface DocumentPaneProps {
   doc: SharedDoc;
@@ -28,6 +33,12 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
   const accept = useSharedDocsStore((s) => s.accept);
   const leave = useSharedDocsStore((s) => s.leave);
   const reload = useSharedDocsStore((s) => s.reload);
+  const folders = useSharedDocsStore((s) => s.folders);
+  const moveDoc = useSharedDocsStore((s) => s.moveDoc);
+  const fmt = useFormatters();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [version, setVersion] = useState<DocVersion | null>(null);
+  const { doc: versionDoc, error: versionError } = useVersionDoc(doc.accountId, doc.id, version?.id ?? null);
   const consented = doc.consentedAt !== null;
   const editable = doc.status === 'active';
   const { doc: ydoc, error: syncError } = useSharedYDoc({
@@ -68,7 +79,7 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
       await reload();
     });
 
-  const shownError = error ?? syncError;
+  const shownError = error ?? syncError ?? versionError;
 
   return (
     <section className="flex-1 min-w-0 flex flex-col min-h-0">
@@ -123,6 +134,33 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
             {t('documents:share')}
           </button>
         )}
+        <select
+          data-testid="shared-doc-move"
+          aria-label={t('documents:folders.moveTo')}
+          title={t('documents:folders.moveTo')}
+          value={doc.folderId ?? ''}
+          onChange={(e) => void act('The document could not be moved', () => moveDoc(doc.id, e.target.value || null))}
+          className="max-w-40 px-1 py-1 text-xs rounded bg-gray-700 text-gray-200 border border-gray-600"
+        >
+          <option value="">{t('documents:folders.none')}</option>
+          {folderOptions(folders).map(({ folder, depth }) => (
+            <option key={folder.id} value={folder.id}>
+              {`${'\u2003'.repeat(depth)}${folder.name}`}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          data-testid="shared-doc-history-toggle"
+          aria-pressed={historyOpen}
+          onClick={() => {
+            setHistoryOpen((o) => !o);
+            setVersion(null);
+          }}
+          className={historyOpen ? 'px-2 py-1 text-xs rounded bg-gray-500 text-white' : BUTTON}
+        >
+          {t('documents:history.open')}
+        </button>
         {editable && others.length > 0 && (
           <button
             type="button"
@@ -147,12 +185,51 @@ export function DocumentPane({ doc, accountEmail }: DocumentPaneProps) {
           {doc.status === 'invited' ? t('documents:readOnlyInvitation') : t('documents:readOnlyLeft')}
         </p>
       )}
-      {ydoc &&
-        (doc.kind === 'sheet' ? (
-          <SheetEditor doc={ydoc} editable={editable} />
-        ) : (
-          <DocEditor doc={ydoc} editable={editable} onEditor={onEditor} />
-        ))}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-w-0 min-h-0">
+          {version ? (
+            <>
+              <div
+                data-testid="shared-doc-version-banner"
+                className="flex items-center gap-3 mx-3 mt-3 p-2 rounded bg-amber-900/30 border border-amber-800 text-xs text-amber-200"
+              >
+                <span className="flex-1">
+                  {t('documents:history.viewing', { date: fmt.dateTime(version.createdAt) })}
+                </span>
+                <button type="button" onClick={() => setVersion(null)} className={BUTTON}>
+                  {t('documents:history.backToCurrent')}
+                </button>
+              </div>
+              {versionDoc &&
+                (doc.kind === 'sheet' ? (
+                  <SheetEditor key={version.id} doc={versionDoc} editable={false} />
+                ) : (
+                  <DocEditor key={version.id} doc={versionDoc} editable={false} onEditor={NOOP} />
+                ))}
+            </>
+          ) : (
+            ydoc &&
+            (doc.kind === 'sheet' ? (
+              <SheetEditor doc={ydoc} editable={editable} />
+            ) : (
+              <DocEditor doc={ydoc} editable={editable} onEditor={onEditor} />
+            ))
+          )}
+        </div>
+        {historyOpen && (
+          <HistoryPanel
+            accountId={doc.accountId}
+            docId={doc.id}
+            me={accountEmail.toLowerCase()}
+            selectedId={version?.id ?? null}
+            onSelect={setVersion}
+            onClose={() => {
+              setHistoryOpen(false);
+              setVersion(null);
+            }}
+          />
+        )}
+      </div>
       {sharing && (
         <ShareDialog
           title={doc.title}

@@ -5,7 +5,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::shared_docs::{DocKind, SharedDoc};
+use crate::models::shared_docs::{DocFolder, DocKind, DocVersion, SharedDoc};
 use crate::models::Account;
 use crate::services::emails::build_provider;
 use crate::services::shared_docs;
@@ -156,4 +156,87 @@ pub async fn flush_shared_doc(
     crate::services::ownership::shared_doc_in_account(&state.db, &account_id, &doc_id)?;
     let provider = build_provider(&account, Some(app)).await?;
     shared_docs::flush(&state.db, &account, provider.as_ref(), &doc_id).await
+}
+
+/// Documents whose title or text matches `query`.
+#[tauri::command]
+pub async fn search_shared_docs(
+    state: State<'_, AppState>,
+    account_id: String,
+    query: String,
+) -> Result<Vec<SharedDoc>, AppError> {
+    shared_docs::search(&state.db, &account_id, &query)
+}
+
+#[tauri::command]
+pub async fn list_doc_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<DocFolder>, AppError> {
+    shared_docs::list_folders(&state.db, &account_id)
+}
+
+#[tauri::command]
+pub async fn create_doc_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<DocFolder, AppError> {
+    shared_docs::create_folder(
+        &state.db,
+        &account_id,
+        &name,
+        parent_id.as_deref(),
+        crate::services::clock::now_secs(),
+    )
+}
+
+#[tauri::command]
+pub async fn rename_doc_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder_id: String,
+    name: String,
+) -> Result<DocFolder, AppError> {
+    shared_docs::rename_folder(&state.db, &account_id, &folder_id, &name)
+}
+
+/// Delete a folder; its documents and subfolders move up one level.
+#[tauri::command]
+pub async fn delete_doc_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder_id: String,
+) -> Result<(), AppError> {
+    shared_docs::delete_folder(&state.db, &account_id, &folder_id)
+}
+
+/// Move a document into a folder, or to the top level with `None`.
+#[tauri::command]
+pub async fn move_shared_doc(
+    state: State<'_, AppState>,
+    account_id: String,
+    doc_id: String,
+    folder_id: Option<String>,
+) -> Result<SharedDoc, AppError> {
+    shared_docs::move_doc(&state.db, &account_id, &doc_id, folder_id.as_deref())
+}
+
+/// A document's history, newest first.
+#[tauri::command]
+pub async fn list_shared_doc_versions(
+    state: State<'_, AppState>,
+    account_id: String,
+    doc_id: String,
+) -> Result<Vec<DocVersion>, AppError> {
+    shared_docs::versions(&state.db, &account_id, &doc_id)
+}
+
+/// The document as it was at one version, base64 Yjs bytes.
+#[tauri::command]
+pub async fn get_shared_doc_version(
+    state: State<'_, AppState>,
+    account_id: String,
+    doc_id: String,
+    version_id: i64,
+) -> Result<String, AppError> {
+    shared_docs::version_state(&state.db, &account_id, &doc_id, version_id)
 }

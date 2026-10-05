@@ -89,6 +89,58 @@ pub fn lacks(ours: &[u8], theirs: &[u8]) -> Result<bool> {
     Ok(ours.iter().any(|(client, clock)| theirs.get(client) < *clock))
 }
 
+/// The words a document holds, for the search index: a document's text
+/// (one line per block) or a sheet's cell values. Formatting is dropped.
+pub fn plain_text(state: &[u8], kind: crate::models::shared_docs::DocKind) -> Result<String> {
+    use yrs::types::text::YChange;
+    use yrs::{Any, Map, Out, Text, XmlFragment, XmlOut};
+
+    fn walk<T: ReadTxn>(nodes: yrs::types::xml::XmlNodes<'_, T>, txn: &T, out: &mut String) {
+        for node in nodes {
+            match node {
+                XmlOut::Element(e) => {
+                    walk(e.children(txn), txn, out);
+                    if !out.ends_with('\n') {
+                        out.push('\n');
+                    }
+                }
+                XmlOut::Fragment(f) => walk(f.children(txn), txn, out),
+                XmlOut::Text(t) => {
+                    for chunk in t.diff(txn, YChange::identity) {
+                        if let Out::Any(Any::String(s)) = chunk.insert {
+                            out.push_str(&s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let update = Update::decode_v1(state).map_err(|_| invalid("state"))?;
+    let doc = Doc::new();
+    doc.transact_mut().apply_update(update).map_err(|_| invalid("state"))?;
+    let txn = doc.transact();
+    let mut out = String::new();
+    match kind {
+        crate::models::shared_docs::DocKind::Doc => {
+            if let Some(body) = txn.get_xml_fragment("body") {
+                walk(body.children(&txn), &txn, &mut out);
+            }
+        }
+        crate::models::shared_docs::DocKind::Sheet => {
+            if let Some(cells) = txn.get_map("cells") {
+                for (_, value) in cells.iter(&txn) {
+                    if let Out::Any(Any::String(s)) = value {
+                        out.push_str(&s);
+                        out.push(' ');
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     //! Build real Yjs updates the way the webview does, for tests.
@@ -114,6 +166,22 @@ pub(crate) mod test_support {
             {
                 let mut txn = self.doc.transact_mut();
                 body.insert(&mut txn, index, text);
+            }
+            self.doc.transact().encode_state_as_update_v1(&before)
+        }
+
+        /// Append a paragraph to the `body` XmlFragment, as the doc editor
+        /// does, and return the update this produced.
+        pub fn paragraph(&self, text: &str) -> Vec<u8> {
+            use yrs::{XmlElementPrelim, XmlFragment, XmlTextPrelim};
+            let body = self.doc.get_or_insert_xml_fragment("body");
+            let before = self.doc.transact().state_vector();
+            {
+                let mut txn = self.doc.transact_mut();
+                body.push_back(
+                    &mut txn,
+                    XmlElementPrelim::new("paragraph", [XmlTextPrelim::new(text).into()]),
+                );
             }
             self.doc.transact().encode_state_as_update_v1(&before)
         }
@@ -247,6 +315,23 @@ mod tests {
             other => format!("{other:?}"),
         };
         assert_eq!((cell("0:0"), cell("0:1")), ("Total".to_string(), "42".to_string()));
+    }
+
+    #[test]
+    fn plain_text_reads_a_documents_paragraphs_and_a_sheets_cells() {
+        use crate::models::shared_docs::DocKind;
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let state = merge(
+            &b64.decode(YJS_PARAGRAPH_AND_CELL).unwrap(),
+            &b64.decode(YJS_SECOND_CELL).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(plain_text(&state, DocKind::Doc).unwrap().trim(), "Hola ñandú");
+        let cells = plain_text(&state, DocKind::Sheet).unwrap();
+        assert!(cells.contains("Total") && cells.contains("42"), "{cells}");
+        assert_eq!(plain_text(&empty_state(), DocKind::Doc).unwrap(), "");
     }
 
     #[test]

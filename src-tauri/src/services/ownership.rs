@@ -11,7 +11,7 @@
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::outbox::OutboxEntry;
-use crate::models::shared_docs::SharedDoc;
+use crate::models::shared_docs::{DocFolder, SharedDoc};
 use crate::models::{AttachmentRule, Draft, Email};
 
 fn not_found(kind: &str, id: &str) -> AppError {
@@ -78,6 +78,14 @@ pub fn shared_doc_in_account(db: &Database, account_id: &str, doc_id: &str) -> R
         .ok_or_else(|| not_found("Shared document", doc_id))?;
     owned_by(Some(doc.account_id.clone()), account_id, "Shared document", doc_id)?;
     Ok(doc)
+}
+
+pub fn doc_folder_in_account(db: &Database, account_id: &str, folder_id: &str) -> Result<DocFolder> {
+    let folder = db
+        .get_doc_folder(folder_id)?
+        .ok_or_else(|| not_found("Folder", folder_id))?;
+    owned_by(Some(folder.account_id.clone()), account_id, "Folder", folder_id)?;
+    Ok(folder)
 }
 
 /// A thread exists in `account_id` when at least one of its emails does.

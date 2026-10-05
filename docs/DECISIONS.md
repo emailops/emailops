@@ -3268,3 +3268,22 @@ without EmailOps edit by replying — free-text replies cannot be merged reliabl
 `X-EmailOps-*` header — not settable on any provider today. End-to-end encryption in the
 first version — needs key exchange between participants; left for later, the envelope is
 versioned (`v`) so it can be added without breaking older messages.
+
+## 2026-10-05 — EO Docs: personal folders, view-only history, title-and-text search
+
+**Decision:** Shared documents are presented as "EO Docs" (the feature's name in every
+language; code identifiers keep `shared_docs`). Folders are personal to each install
+(V037 `shared_doc_folders`): they are never mailed, sharing stays per document, and
+deleting a folder moves what it holds up one level rather than deleting documents. Each
+change is kept as a version (`shared_doc_versions`: local edits by the same person within
+5 minutes are one version, each change that arrives by email is its own, 200 kept per
+document) and shown in a right-hand history panel; a version can be viewed read-only,
+not restored. Search covers titles and text (a sheet's cell values) through an FTS5
+index refreshed on every content change.
+**Context:** The developer asked for Google Docs-style folders, a change history and
+search. Shared folders would need per-folder membership travelling by email; a restore
+would have to be mailed as a new change to everyone.
+**Rejected:** Shared folders — membership and moves between shared folders over email,
+for organisation each person can do alone. Restoring a version — left out on request;
+viewing covers looking back. Diff highlighting between versions — more work than the
+view-only need justifies today. Title-only search — the text is what people remember.

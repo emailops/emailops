@@ -21,12 +21,12 @@ use serde::Serialize;
 use crate::db::shared_docs::NewSharedDoc;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::shared_docs::{DocKind, DocStatus, SharedDoc};
+use crate::models::shared_docs::{DocFolder, DocKind, DocStatus, DocVersion, SharedDoc};
 use crate::models::{Account, Email};
 use crate::services::emails::{ProviderAccess, ThreadAction, ThreadActionReport, ThreadRef};
 use crate::services::logger;
 use crate::services::outbox::OutboxProviders;
-use crate::services::ownership::shared_doc_in_account;
+use crate::services::ownership::{doc_folder_in_account, shared_doc_in_account};
 use crate::sync::provider::{
     provider_supports_mailbox_writes, AttachmentInfo, EmailAttachment, EmailBody, EmailProvider,
 };
@@ -89,6 +89,7 @@ pub fn create(db: &Database, account: &Account, kind: DocKind, title: &str, now:
         "sync",
         format!("[{}] Created a shared {}", account.email, kind.as_str()),
     );
+    reindex(db, &id)?;
     db.get_shared_doc(&id)?
         .ok_or_else(|| AppError::NotFound(format!("Shared document {id} not found")))
 }
@@ -128,7 +129,11 @@ pub fn apply_local_update(db: &Database, account_id: &str, doc_id: &str, update:
     let state = db
         .shared_doc_state(doc_id)?
         .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
-    db.set_shared_doc_state(doc_id, &crdt::merge(&state, &update)?, true, now)
+    let merged = crdt::merge(&state, &update)?;
+    db.set_shared_doc_state(doc_id, &merged, true, now)?;
+    let author = db.get_account(account_id)?.map(|a| me(&a)).unwrap_or_default();
+    db.record_doc_version(doc_id, &author, "local", &merged, now)?;
+    reindex(db, doc_id)
 }
 
 /// Accept an invitation: the document becomes editable and its changes are
@@ -148,6 +153,104 @@ pub fn leave(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result<
     shared_doc_in_account(db, account_id, doc_id)?;
     db.set_shared_doc_status(doc_id, DocStatus::Left, None, now)?;
     shared_doc_in_account(db, account_id, doc_id)
+}
+
+// ── Folders, history and search ──────────────────────────────────────────────
+
+/// Refresh a document's entry in the search index from its current content.
+fn reindex(db: &Database, doc_id: &str) -> Result<()> {
+    let doc = db
+        .get_shared_doc(doc_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
+    let state = db
+        .shared_doc_state(doc_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
+    db.index_shared_doc(doc_id, &doc.title, &crdt::plain_text(&state, doc.kind)?)
+}
+
+/// Documents of one account whose title or text matches `query` (every word,
+/// as a prefix), best match first. A blank query matches nothing.
+pub fn search(db: &Database, account_id: &str, query: &str) -> Result<Vec<SharedDoc>> {
+    let fts = crate::db::emails::sanitize_fts_query(query);
+    if fts.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Documents from before the index existed are indexed on first search.
+    for doc_id in db.unindexed_shared_doc_ids(account_id)? {
+        reindex(db, &doc_id)?;
+    }
+    db.search_shared_docs(account_id, &fts, 50)
+}
+
+/// Pure: a folder name as stored — trimmed, one line, at most 100 characters.
+pub fn normalize_folder_name(raw: &str) -> Result<String> {
+    let name = raw.trim();
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err(AppError::InvalidInput("A folder needs a one-line name".into()));
+    }
+    Ok(name.chars().take(100).collect())
+}
+
+pub fn list_folders(db: &Database, account_id: &str) -> Result<Vec<DocFolder>> {
+    db.list_doc_folders(account_id)
+}
+
+pub fn create_folder(
+    db: &Database,
+    account_id: &str,
+    name: &str,
+    parent_id: Option<&str>,
+    now: i64,
+) -> Result<DocFolder> {
+    if let Some(parent) = parent_id {
+        doc_folder_in_account(db, account_id, parent)?;
+    }
+    let folder = DocFolder {
+        id: uuid::Uuid::new_v4().to_string(),
+        account_id: account_id.to_string(),
+        parent_id: parent_id.map(str::to_string),
+        name: normalize_folder_name(name)?,
+        created_at: now,
+    };
+    db.insert_doc_folder(&folder)?;
+    Ok(folder)
+}
+
+pub fn rename_folder(db: &Database, account_id: &str, folder_id: &str, name: &str) -> Result<DocFolder> {
+    doc_folder_in_account(db, account_id, folder_id)?;
+    db.rename_doc_folder(folder_id, &normalize_folder_name(name)?)?;
+    doc_folder_in_account(db, account_id, folder_id)
+}
+
+/// Delete a folder; what it held moves up one level.
+pub fn delete_folder(db: &Database, account_id: &str, folder_id: &str) -> Result<()> {
+    doc_folder_in_account(db, account_id, folder_id)?;
+    db.delete_doc_folder(folder_id)
+}
+
+/// Put a document in a folder of the same account, or at the top level.
+pub fn move_doc(db: &Database, account_id: &str, doc_id: &str, folder_id: Option<&str>) -> Result<SharedDoc> {
+    shared_doc_in_account(db, account_id, doc_id)?;
+    if let Some(folder) = folder_id {
+        doc_folder_in_account(db, account_id, folder)?;
+    }
+    db.set_shared_doc_folder(doc_id, folder_id)?;
+    shared_doc_in_account(db, account_id, doc_id)
+}
+
+/// A document's history, newest first.
+pub fn versions(db: &Database, account_id: &str, doc_id: &str) -> Result<Vec<DocVersion>> {
+    shared_doc_in_account(db, account_id, doc_id)?;
+    db.list_doc_versions(doc_id)
+}
+
+/// The whole document as it was at one version, base64 Yjs v1.
+pub fn version_state(db: &Database, account_id: &str, doc_id: &str, version_id: i64) -> Result<String> {
+    shared_doc_in_account(db, account_id, doc_id)?;
+    let state = db
+        .doc_version_state(doc_id, version_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Version {version_id} not found")))?;
+    Ok(b64().encode(state))
 }
 
 // ── Mail transport ───────────────────────────────────────────────────────────
@@ -462,6 +565,8 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
     if sender != me(account) {
         db.set_participant_state_vectors(&env.doc_id, std::slice::from_ref(&sender), &env.state_vector)?;
     }
+    db.record_doc_version(&env.doc_id, &sender, "remote", &state, now)?;
+    reindex(db, &env.doc_id)?;
     // Ask for a catch-up when something is missing here, or send one when the
     // sender lacks what this install has: either way, mail our state vector.
     let ours = crdt::integrate(&state)?;

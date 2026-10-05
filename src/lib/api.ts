@@ -33,7 +33,9 @@ import type {
   ContactsQuery,
   CreateLensInput,
   CreatePendingTaskRequest,
+  DocFolder,
   DocKind,
+  DocVersion,
   Draft,
   DraftAttachment,
   Email,
@@ -2172,6 +2174,39 @@ export async function leaveSharedDoc(accountId: string, docId: string): Promise<
 /** Mail pending changes now. Resolves to whether a message went out. */
 export async function flushSharedDoc(accountId: string, docId: string): Promise<boolean> {
   return invoke('flush_shared_doc', { accountId, docId });
+}
+
+export async function searchSharedDocs(accountId: string, query: string): Promise<SharedDoc[]> {
+  return invoke('search_shared_docs', { accountId, query });
+}
+
+export async function listDocFolders(accountId: string): Promise<DocFolder[]> {
+  return invoke('list_doc_folders', { accountId });
+}
+
+export async function createDocFolder(accountId: string, name: string, parentId: string | null): Promise<DocFolder> {
+  return invoke('create_doc_folder', { accountId, name, parentId });
+}
+
+export async function renameDocFolder(accountId: string, folderId: string, name: string): Promise<DocFolder> {
+  return invoke('rename_doc_folder', { accountId, folderId, name });
+}
+
+/** Deletes the folder only: its documents and subfolders move up one level. */
+export async function deleteDocFolder(accountId: string, folderId: string): Promise<void> {
+  return invoke('delete_doc_folder', { accountId, folderId });
+}
+
+export async function moveSharedDoc(accountId: string, docId: string, folderId: string | null): Promise<SharedDoc> {
+  return invoke('move_shared_doc', { accountId, docId, folderId });
+}
+
+export async function listSharedDocVersions(accountId: string, docId: string): Promise<DocVersion[]> {
+  return invoke('list_shared_doc_versions', { accountId, docId });
+}
+
+export async function getSharedDocVersion(accountId: string, docId: string, versionId: number): Promise<string> {
+  return invoke('get_shared_doc_version', { accountId, docId, versionId });
 }
 
 export async function getJunkConfig(): Promise<JunkConfig> {

@@ -4,39 +4,35 @@
 
 use crate::services::i18n::Language;
 
-pub fn subject(language: Language, title: &str) -> String {
-    match language {
-        Language::En => format!("{title} (EmailOps shared document)"),
-        Language::Es => format!("{title} (documento compartido de EmailOps)"),
-        Language::Fr => format!("{title} (document partagé EmailOps)"),
-        Language::De => format!("{title} (geteiltes EmailOps-Dokument)"),
-    }
+pub fn subject(_language: Language, title: &str) -> String {
+    // "EO Docs" is the feature's name in every language.
+    format!("{title} · EO Docs")
 }
 
 /// The invitation text: who shared what, and that it can only be edited in EmailOps.
 pub fn invitation(language: Language, sharer: &str, title: &str) -> String {
     match language {
         Language::En => format!(
-            "{sharer} shared \"{title}\" with you in EmailOps.\n\n\
+            "{sharer} shared \"{title}\" with you in EO Docs, part of EmailOps.\n\n\
              Open EmailOps to edit it together: changes travel between the people \
              sharing it as email, with no server in between. Without EmailOps you \
              can read the copy below, but not edit it."
         ),
         Language::Es => format!(
-            "{sharer} ha compartido «{title}» contigo en EmailOps.\n\n\
+            "{sharer} ha compartido «{title}» contigo en EO Docs, de EmailOps.\n\n\
              Ábrelo en EmailOps para editarlo juntos: los cambios viajan por email \
              entre quienes lo comparten, sin ningún servidor intermedio. Sin EmailOps \
              puedes leer la copia de abajo, pero no editarla."
         ),
         Language::Fr => format!(
-            "{sharer} a partagé « {title} » avec vous dans EmailOps.\n\n\
+            "{sharer} a partagé « {title} » avec vous dans EO Docs, d'EmailOps.\n\n\
              Ouvrez-le dans EmailOps pour le modifier ensemble : les modifications \
              voyagent par e-mail entre les personnes qui le partagent, sans serveur \
              intermédiaire. Sans EmailOps, vous pouvez lire la copie ci-dessous, mais \
              pas la modifier."
         ),
         Language::De => format!(
-            "{sharer} hat „{title}“ in EmailOps mit dir geteilt.\n\n\
+            "{sharer} hat „{title}“ in EO Docs von EmailOps mit dir geteilt.\n\n\
              Öffne es in EmailOps, um es gemeinsam zu bearbeiten: Änderungen gehen per \
              E-Mail zwischen den Beteiligten hin und her, ohne Server dazwischen. Ohne \
              EmailOps kannst du die Kopie unten lesen, aber nicht bearbeiten."
@@ -74,7 +70,7 @@ mod tests {
     #[test]
     fn every_language_names_the_document_and_the_sharer() {
         for language in Language::ALL {
-            assert!(subject(language, "Plan").starts_with("Plan ("), "{language:?}");
+            assert_eq!(subject(language, "Plan"), "Plan · EO Docs");
             let text = invitation(language, "Ana", "Plan");
             assert!(
                 text.contains("Ana") && text.contains("Plan") && text.contains("EmailOps"),
@@ -86,7 +82,6 @@ mod tests {
 
     #[test]
     fn spanish_reads_spanish() {
-        assert_eq!(subject(Language::Es, "Plan"), "Plan (documento compartido de EmailOps)");
-        assert!(invitation(Language::Es, "Ana", "Plan").starts_with("Ana ha compartido «Plan» contigo"));
+        assert!(invitation(Language::Es, "Ana", "Plan").starts_with("Ana ha compartido «Plan» contigo en EO Docs"));
     }
 }

@@ -27,7 +27,7 @@
     "aisearchDesc": "Embeddings et recherche sémantique",
     "skills": "Skills IA",
     "skillsDesc": "Instructions que le chat charge à la demande",
-    "documents": "Documents partagés",
+    "documents": "EO Docs",
     "documentsDesc": "Documents et feuilles modifiés ensemble par e-mail",
     "privacy": "Confidentialité et sécurité",
     "privacyDesc": "Mot de passe, contenu distant",
@@ -650,7 +650,7 @@
     "footnote": "Plus de trois nouveaux messages à la fois sont regroupés en un seul résumé. Tant que l'application est verrouillée par le mot de passe principal, les notifications n'affichent jamais l'expéditeur ni l'objet."
   },
   "documents": {
-    "enable": "Activer les documents partagés",
-    "enableDesc": "Expérimental. Modifiez des documents et des feuilles de calcul avec d'autres utilisateurs d'EmailOps, sans cloud : les modifications voyagent par e-mail entre vos comptes. Une fois activé, la vue Documents apparaît dans la barre latérale. Rien n'est envoyé tant que vous n'avez pas partagé ou accepté un document."
+    "enable": "Activer EO Docs",
+    "enableDesc": "Expérimental. EO Docs : modifiez des documents et des feuilles de calcul avec d'autres utilisateurs d'EmailOps, sans cloud : les modifications voyagent par e-mail entre vos comptes. Une fois activé, EO Docs apparaît dans la barre latérale. Rien n'est envoyé tant que vous n'avez pas partagé ou accepté un document."
   }
 }

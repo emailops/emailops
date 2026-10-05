@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import type { DocKind, SharedDoc } from '@/types';
+import type { DocFolder, DocKind, SharedDoc } from '@/types';
 
 /**
  * Shared documents of the account the Documents view shows. The list and the
@@ -17,6 +17,12 @@ export interface SharedDocsState {
   isLoading: boolean;
   error: string | null;
   changes: Record<string, number>;
+  /** The account's personal folders, and the one the list shows (`null`: top level). */
+  folders: DocFolder[];
+  folderId: string | null;
+  /** The latest search typed, and its results (`null` while not searching). */
+  searchQuery: string;
+  searchResults: SharedDoc[] | null;
 }
 
 export type SharedDocsAction =
@@ -26,7 +32,11 @@ export type SharedDocsAction =
   | { type: 'failed'; error: string }
   | { type: 'upserted'; doc: SharedDoc }
   | { type: 'selected'; id: string | null }
-  | { type: 'changed'; docIds: string[] };
+  | { type: 'changed'; docIds: string[] }
+  | { type: 'foldersLoaded'; folders: DocFolder[] }
+  | { type: 'folderOpened'; folderId: string | null }
+  | { type: 'searchStarted'; query: string }
+  | { type: 'searched'; query: string; results: SharedDoc[] };
 
 export const initialSharedDocsState: SharedDocsState = {
   accountId: null,
@@ -35,6 +45,10 @@ export const initialSharedDocsState: SharedDocsState = {
   isLoading: false,
   error: null,
   changes: {},
+  folders: [],
+  folderId: null,
+  searchQuery: '',
+  searchResults: null,
 };
 
 function newestFirst(docs: SharedDoc[]): SharedDoc[] {
@@ -62,11 +76,28 @@ export function sharedDocsReducer(state: SharedDocsState, action: SharedDocsActi
       for (const id of action.docIds) changes[id] = (changes[id] ?? 0) + 1;
       return { ...state, changes };
     }
+    case 'foldersLoaded': {
+      // The open folder was deleted: show the nearest ancestor still there.
+      let folderId = state.folderId;
+      const exists = (id: string | null) => id === null || action.folders.some((f) => f.id === id);
+      while (!exists(folderId)) folderId = state.folders.find((f) => f.id === folderId)?.parentId ?? null;
+      return { ...state, folders: action.folders, folderId };
+    }
+    case 'folderOpened':
+      return { ...state, folderId: action.folderId };
+    case 'searchStarted':
+      return { ...state, searchQuery: action.query, searchResults: null };
+    case 'searched':
+      if (action.query !== state.searchQuery || !action.query.trim()) return state;
+      return { ...state, searchResults: action.results };
   }
 }
 
 export const selectInvitations = (s: SharedDocsState) => s.docs.filter((d) => d.status === 'invited');
 export const selectDocuments = (s: SharedDocsState) => s.docs.filter((d) => d.status !== 'invited');
+/** The documents of the open folder (invitations are listed apart). */
+export const selectFolderDocs = (s: SharedDocsState) =>
+  s.docs.filter((d) => d.status !== 'invited' && d.folderId === s.folderId);
 export const selectSelectedDoc = (s: SharedDocsState) => s.docs.find((d) => d.id === s.selectedId) ?? null;
 
 interface SharedDocsStore extends SharedDocsState {
@@ -78,6 +109,13 @@ interface SharedDocsStore extends SharedDocsState {
   share: (docId: string, recipients: string[], snapshotHtml: string | null) => Promise<SharedDoc>;
   accept: (docId: string) => Promise<SharedDoc>;
   leave: (docId: string) => Promise<SharedDoc>;
+  reloadFolders: () => Promise<void>;
+  openFolder: (folderId: string | null) => void;
+  createFolder: (name: string) => Promise<DocFolder>;
+  renameFolder: (folderId: string, name: string) => Promise<void>;
+  deleteFolder: (folderId: string) => Promise<void>;
+  moveDoc: (docId: string, folderId: string | null) => Promise<SharedDoc>;
+  search: (query: string) => Promise<void>;
 }
 
 export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
@@ -97,7 +135,7 @@ export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
     setAccount: async (accountId) => {
       if (accountId === get().accountId) return;
       dispatch({ type: 'accountChanged', accountId });
-      await get().reload();
+      await Promise.all([get().reload(), get().reloadFolders()]);
     },
     reload: async () => {
       const { accountId } = get();
@@ -115,6 +153,41 @@ export const useSharedDocsStore = create<SharedDocsStore>((set, get) => {
       upsert(await api.shareSharedDoc(requireAccount(), docId, recipients, snapshotHtml)),
     accept: async (docId) => upsert(await api.acceptSharedDoc(requireAccount(), docId)),
     leave: async (docId) => upsert(await api.leaveSharedDoc(requireAccount(), docId)),
+    reloadFolders: async () => {
+      const { accountId } = get();
+      if (!accountId) return;
+      try {
+        const folders = await api.listDocFolders(accountId);
+        if (get().accountId === accountId) dispatch({ type: 'foldersLoaded', folders });
+      } catch (err) {
+        dispatch({ type: 'failed', error: errorText(err) });
+      }
+    },
+    openFolder: (folderId) => dispatch({ type: 'folderOpened', folderId }),
+    createFolder: async (name) => {
+      const folder = await api.createDocFolder(requireAccount(), name, get().folderId);
+      await get().reloadFolders();
+      return folder;
+    },
+    renameFolder: async (folderId, name) => {
+      await api.renameDocFolder(requireAccount(), folderId, name);
+      await get().reloadFolders();
+    },
+    deleteFolder: async (folderId) => {
+      await api.deleteDocFolder(requireAccount(), folderId);
+      // Its documents moved up: both lists change.
+      await Promise.all([get().reloadFolders(), get().reload()]);
+    },
+    moveDoc: async (docId, folderId) => upsert(await api.moveSharedDoc(requireAccount(), docId, folderId)),
+    search: async (query) => {
+      dispatch({ type: 'searchStarted', query });
+      if (!query.trim()) return;
+      try {
+        dispatch({ type: 'searched', query, results: await api.searchSharedDocs(requireAccount(), query) });
+      } catch (err) {
+        dispatch({ type: 'failed', error: errorText(err) });
+      }
+    },
   };
 });
 

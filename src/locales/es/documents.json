@@ -1,6 +1,6 @@
 {
-  "title": "Documentos",
-  "intro": "Documentos y hojas de cálculo que editas junto con otros usuarios de EmailOps. Los cambios viajan por email entre vuestras cuentas, sin nube.",
+  "title": "EO Docs",
+  "intro": "EO Docs: documentos y hojas de cálculo que editas junto con otros usuarios de EmailOps. Los cambios viajan por email entre vuestras cuentas, sin nube.",
   "new": "Nuevo",
   "newTitlePlaceholder": "Título",
   "kind": {
@@ -52,5 +52,28 @@
     "heading": "Título",
     "bulletList": "Lista con viñetas",
     "orderedList": "Lista numerada"
+  },
+  "searchPlaceholder": "Buscar en EO Docs",
+  "noResults": "Ningún documento coincide con «{{query}}»",
+  "root": "EO Docs",
+  "folders": {
+    "new": "Nueva carpeta",
+    "name": "Nombre de la carpeta",
+    "rename": "Renombrar",
+    "delete": "Eliminar carpeta",
+    "deleteConfirm": "¿Eliminar esta carpeta? Lo que contiene sube un nivel.",
+    "moveTo": "Mover a",
+    "none": "Sin carpeta"
+  },
+  "history": {
+    "open": "Historial",
+    "title": "Historial de cambios",
+    "you": "Tú",
+    "local": "Editado aquí",
+    "remote": "Recibido por email",
+    "empty": "Aún no hay cambios guardados.",
+    "viewing": "Viendo la versión del {{date}} · solo lectura",
+    "backToCurrent": "Volver a la versión actual",
+    "close": "Cerrar historial"
   }
 }

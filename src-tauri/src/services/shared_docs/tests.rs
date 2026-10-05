@@ -429,3 +429,143 @@ async fn the_owners_other_install_picks_the_document_up_from_sent_as_its_own() {
     assert!(alice_laptop.provider.mailbox_ops().is_empty(), "Sent is left alone");
     drop(bob);
 }
+
+// ── Folders, history, search ──────────────────────────────────────────────
+
+/// Save a paragraph typed in the doc editor of `inst`.
+fn write_paragraph(inst: &Install, doc_id: &str, client: u64, text: &str, now: i64) {
+    let editor = Peer::new(client);
+    editor.apply(
+        &b64()
+            .decode(state(&inst.db, &inst.account.id, doc_id).unwrap())
+            .unwrap(),
+    );
+    let update = editor.paragraph(text);
+    apply_local_update(&inst.db, &inst.account.id, doc_id, &b64().encode(update), now).unwrap();
+}
+
+#[tokio::test]
+async fn search_finds_documents_by_title_and_by_what_was_written_in_them() {
+    let alice = install("alice@example.com");
+    let plan = create(&alice.db, &alice.account, DocKind::Doc, "Lisbon plan", NOW).unwrap();
+    let notes = create(&alice.db, &alice.account, DocKind::Doc, "Notes", NOW).unwrap();
+    write_paragraph(&alice, &notes.id, 1, "Book the ferry to Cacilhas", NOW);
+
+    let found = |q: &str| -> Vec<String> {
+        search(&alice.db, &alice.account.id, q)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.id)
+            .collect()
+    };
+    assert_eq!(found("lisb"), vec![plan.id.clone()]);
+    assert_eq!(found("ferry"), vec![notes.id.clone()]);
+    assert!(found("   ").is_empty());
+    assert!(search(&alice.db, "acc-other", "ferry").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_change_that_arrives_by_email_is_searchable_and_in_the_history() {
+    let alice = install("alice@example.com");
+    let bob = install("bob@example.org");
+    let fresh = create(&alice.db, &alice.account, DocKind::Doc, "Minutes", NOW).unwrap();
+    share(
+        &alice.db,
+        &alice.account,
+        &alice.provider,
+        &fresh.id,
+        &["bob@example.org".into()],
+        None,
+        NOW,
+    )
+    .await
+    .unwrap();
+    write_paragraph(&alice, &fresh.id, 1, "Decision: travel on Tuesday", NOW + 10);
+    flush(&alice.db, &alice.account, &alice.provider, &fresh.id)
+        .await
+        .unwrap();
+    deliver(&alice, &bob).await;
+
+    let hits: Vec<String> = search(&bob.db, &bob.account.id, "tuesday")
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(hits, vec![fresh.id.clone()]);
+    let history = versions(&bob.db, &bob.account.id, &fresh.id).unwrap();
+    assert!(history
+        .iter()
+        .all(|v| v.author == "alice@example.com" && v.origin == "remote"));
+    let newest = &history[0];
+    let then = b64()
+        .decode(version_state(&bob.db, &bob.account.id, &fresh.id, newest.id).unwrap())
+        .unwrap();
+    assert_eq!(
+        crdt::plain_text(&then, DocKind::Doc).unwrap().trim(),
+        "Decision: travel on Tuesday"
+    );
+    assert!(version_state(&alice.db, &alice.account.id, &fresh.id, newest.id + 999).is_err());
+}
+
+#[tokio::test]
+async fn local_edits_are_versions_by_this_account() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Draft", NOW).unwrap();
+    write_paragraph(&alice, &doc.id, 1, "First idea", NOW);
+    write_paragraph(&alice, &doc.id, 2, "Second idea", NOW + 1_000);
+
+    let history = versions(&alice.db, &alice.account.id, &doc.id).unwrap();
+    assert_eq!(history.len(), 2);
+    assert!(history
+        .iter()
+        .all(|v| v.author == "alice@example.com" && v.origin == "local"));
+    let first = b64()
+        .decode(version_state(&alice.db, &alice.account.id, &doc.id, history[1].id).unwrap())
+        .unwrap();
+    assert_eq!(crdt::plain_text(&first, DocKind::Doc).unwrap().trim(), "First idea");
+}
+
+#[tokio::test]
+async fn folders_are_per_account_and_deleting_one_keeps_its_documents() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Sheet, "Budget", NOW).unwrap();
+    let trips = create_folder(&alice.db, &alice.account.id, "  Trips ", None, NOW).unwrap();
+    let lisbon = create_folder(&alice.db, &alice.account.id, "Lisbon", Some(&trips.id), NOW).unwrap();
+    assert_eq!(trips.name, "Trips");
+
+    let moved = move_doc(&alice.db, &alice.account.id, &doc.id, Some(&lisbon.id)).unwrap();
+    assert_eq!(moved.folder_id.as_deref(), Some(lisbon.id.as_str()));
+    assert!(create_folder(&alice.db, &alice.account.id, "\n", None, NOW).is_err());
+    assert!(move_doc(&alice.db, "acc-other", &doc.id, None).is_err());
+    assert!(create_folder(&alice.db, "acc-other", "X", Some(&trips.id), NOW).is_err());
+
+    delete_folder(&alice.db, &alice.account.id, &lisbon.id).unwrap();
+    let after = alice.db.get_shared_doc(&doc.id).unwrap().unwrap();
+    assert_eq!(after.folder_id.as_deref(), Some(trips.id.as_str()));
+    assert_eq!(
+        rename_folder(&alice.db, &alice.account.id, &trips.id, "Travel")
+            .unwrap()
+            .name,
+        "Travel"
+    );
+}
+
+#[tokio::test]
+async fn documents_from_before_the_index_existed_are_found_too() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Old notes", NOW).unwrap();
+    write_paragraph(&alice, &doc.id, 1, "harbour visit", NOW);
+    // As after the V037 upgrade: the document exists, its index entry does not.
+    alice
+        .db
+        .connection()
+        .execute("DELETE FROM shared_docs_fts", [])
+        .unwrap();
+
+    let found: Vec<String> = search(&alice.db, &alice.account.id, "harbour")
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(found, vec![doc.id]);
+}

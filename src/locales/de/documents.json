@@ -1,6 +1,6 @@
 {
-  "title": "Dokumente",
-  "intro": "Dokumente und Tabellen, die du gemeinsam mit anderen EmailOps-Nutzern bearbeitest. Änderungen gehen per E-Mail zwischen euren Konten hin und her, ohne Cloud.",
+  "title": "EO Docs",
+  "intro": "EO Docs: Dokumente und Tabellen, die du gemeinsam mit anderen EmailOps-Nutzern bearbeitest. Änderungen gehen per E-Mail zwischen euren Konten hin und her, ohne Cloud.",
   "new": "Neu",
   "newTitlePlaceholder": "Titel",
   "kind": {
@@ -52,5 +52,28 @@
     "heading": "Überschrift",
     "bulletList": "Aufzählung",
     "orderedList": "Nummerierte Liste"
+  },
+  "searchPlaceholder": "In EO Docs suchen",
+  "noResults": "Kein Dokument passt zu „{{query}}“",
+  "root": "EO Docs",
+  "folders": {
+    "new": "Neuer Ordner",
+    "name": "Ordnername",
+    "rename": "Umbenennen",
+    "delete": "Ordner löschen",
+    "deleteConfirm": "Diesen Ordner löschen? Sein Inhalt rückt eine Ebene nach oben.",
+    "moveTo": "Verschieben nach",
+    "none": "Kein Ordner"
+  },
+  "history": {
+    "open": "Verlauf",
+    "title": "Änderungsverlauf",
+    "you": "Du",
+    "local": "Hier bearbeitet",
+    "remote": "Per E-Mail erhalten",
+    "empty": "Noch keine gespeicherten Änderungen.",
+    "viewing": "Version vom {{date}} · schreibgeschützt",
+    "backToCurrent": "Zur aktuellen Version",
+    "close": "Verlauf schließen"
   }
 }

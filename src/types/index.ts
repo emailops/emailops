@@ -1507,4 +1507,23 @@ export interface SharedDoc {
   dirtySince: number | null;
   createdAt: number;
   updatedAt: number;
+  /** Personal folder on this install; `null` is the top level. */
+  folderId: string | null;
+}
+
+/** A personal EO Docs folder (never mailed), nestable. */
+export interface DocFolder {
+  id: string;
+  accountId: string;
+  parentId: string | null;
+  name: string;
+  createdAt: number;
+}
+
+/** One entry of a document's history. */
+export interface DocVersion {
+  id: number;
+  author: string;
+  origin: 'local' | 'remote';
+  createdAt: number;
 }

@@ -27,7 +27,7 @@
     "aisearchDesc": "Embeddings und semantische Suche",
     "skills": "KI-Skills",
     "skillsDesc": "Anweisungen, die der Chat bei Bedarf lädt",
-    "documents": "Geteilte Dokumente",
+    "documents": "EO Docs",
     "documentsDesc": "Dokumente und Tabellen gemeinsam per E-Mail bearbeiten",
     "privacy": "Datenschutz & Sicherheit",
     "privacyDesc": "Passwort, externe Inhalte",
@@ -650,7 +650,7 @@
     "footnote": "Mehr als drei neue Nachrichten auf einmal werden zu einer Zusammenfassung. Solange die App mit dem Hauptpasswort gesperrt ist, zeigen Benachrichtigungen nie Absender oder Betreff."
   },
   "documents": {
-    "enable": "Geteilte Dokumente aktivieren",
-    "enableDesc": "Experimentell. Bearbeite Dokumente und Tabellen gemeinsam mit anderen EmailOps-Nutzern, ohne Cloud: Änderungen gehen als E-Mails zwischen euren Konten hin und her. Wenn aktiviert, erscheint die Ansicht Dokumente in der Seitenleiste. Es wird nichts gesendet, bevor du ein Dokument teilst oder annimmst."
+    "enable": "EO Docs aktivieren",
+    "enableDesc": "Experimentell. EO Docs: Bearbeite Dokumente und Tabellen gemeinsam mit anderen EmailOps-Nutzern, ohne Cloud: Änderungen gehen als E-Mails zwischen euren Konten hin und her. Wenn aktiviert, erscheint EO Docs in der Seitenleiste. Es wird nichts gesendet, bevor du ein Dokument teilst oder annimmst."
   }
 }

@@ -27,7 +27,7 @@
     "aisearchDesc": "Embedding & semantic search options",
     "skills": "AI Skills",
     "skillsDesc": "Instructions the chat loads on demand",
-    "documents": "Shared documents",
+    "documents": "EO Docs",
     "documentsDesc": "Docs and sheets edited together by email",
     "privacy": "Privacy & Security",
     "privacyDesc": "Password, remote content",
@@ -650,7 +650,7 @@
     "footnote": "More than three new messages at once become a single summary. While the app is locked with the main password, notifications never show the sender or subject."
   },
   "documents": {
-    "enable": "Enable shared documents",
-    "enableDesc": "Experimental. Edit documents and sheets together with other EmailOps users, with no cloud: changes travel as emails between your accounts. When on, the Documents view appears in the sidebar. Nothing is sent until you share or accept a document."
+    "enable": "Enable EO Docs",
+    "enableDesc": "Experimental. EO Docs: edit documents and sheets together with other EmailOps users, with no cloud: changes travel as emails between your accounts. When on, EO Docs appears in the sidebar. Nothing is sent until you share or accept a document."
   }
 }

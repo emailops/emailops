@@ -21,6 +21,16 @@ email as the only transport: no server, no cloud.
   `flush` / `flush_due` (mail pending changes) and `ingest_arrivals` (the sync
   hook).
 
+## Folders, history and search (EO Docs)
+
+- Folders (`create_folder`, `move_doc`, …) are this install's own; nothing
+  about them is mailed.
+- Every change is recorded as a version (`record_doc_version`): local edits by
+  the same author within 5 minutes collapse into one, each arrival is its own.
+  Versions are read-only (`versions`, `version_state`).
+- `reindex` refreshes the FTS5 entry (title + `crdt::plain_text`) after every
+  content change; `search` matches every word as a prefix.
+
 ## How changes travel
 
 1. Sharing mails an invitation with the whole document. Sharing (or accepting

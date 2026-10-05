@@ -2,7 +2,7 @@
 // calls, no React, no Tauri.
 
 import { describe, expect, it, vi } from 'vitest';
-import type { SharedDoc } from '@/types';
+import type { DocFolder, SharedDoc } from '@/types';
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -12,6 +12,7 @@ import {
   initialSharedDocsState,
   type SharedDocsState,
   selectDocuments,
+  selectFolderDocs,
   selectInvitations,
   sharedDocsReducer,
 } from './sharedDocsStore';
@@ -28,7 +29,12 @@ function doc(id: string, updatedAt: number, status: SharedDoc['status'] = 'activ
     dirtySince: null,
     createdAt: 0,
     updatedAt,
+    folderId: null,
   };
+}
+
+function folder(id: string, parentId: string | null = null): DocFolder {
+  return { id, accountId: 'acc-1', parentId, name: id, createdAt: 0 };
 }
 
 function loaded(docs: SharedDoc[]): SharedDocsState {
@@ -78,5 +84,35 @@ describe('selectors', () => {
     const state = loaded([doc('a', 3), doc('i', 2, 'invited'), doc('l', 1, 'left')]);
     expect(selectInvitations(state).map((d) => d.id)).toEqual(['i']);
     expect(selectDocuments(state).map((d) => d.id)).toEqual(['a', 'l']);
+  });
+});
+
+describe('folders and search', () => {
+  it('shows the documents of the open folder only', () => {
+    let state = loaded([{ ...doc('a', 2), folderId: 'trips' }, doc('b', 1), doc('i', 3, 'invited')]);
+    expect(selectFolderDocs(state).map((d) => d.id)).toEqual(['b']);
+    state = sharedDocsReducer(state, { type: 'folderOpened', folderId: 'trips' });
+    expect(selectFolderDocs(state).map((d) => d.id)).toEqual(['a']);
+  });
+
+  it('a deleted open folder sends the view back to its parent', () => {
+    let state = sharedDocsReducer(loaded([]), {
+      type: 'foldersLoaded',
+      folders: [folder('trips'), folder('lisbon', 'trips')],
+    });
+    state = sharedDocsReducer(state, { type: 'folderOpened', folderId: 'lisbon' });
+    state = sharedDocsReducer(state, { type: 'foldersLoaded', folders: [folder('trips')] });
+    expect(state.folderId).toBe('trips');
+  });
+
+  it('keeps only the answer to the latest search', () => {
+    let state = sharedDocsReducer(loaded([]), { type: 'searchStarted', query: 'hot' });
+    state = sharedDocsReducer(state, { type: 'searchStarted', query: 'hotel' });
+    state = sharedDocsReducer(state, { type: 'searched', query: 'hot', results: [doc('x', 1)] });
+    expect(state.searchResults).toBeNull();
+    state = sharedDocsReducer(state, { type: 'searched', query: 'hotel', results: [doc('y', 1)] });
+    expect(state.searchResults?.map((d) => d.id)).toEqual(['y']);
+    state = sharedDocsReducer(state, { type: 'searchStarted', query: '  ' });
+    expect(state.searchResults).toBeNull();
   });
 });
