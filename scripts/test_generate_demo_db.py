@@ -318,6 +318,99 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         self.assertEqual((counts(), ids()), (before, before_ids))
 
 
+class TheDemoChatShowsItsReasoning(unittest.TestCase):
+    """The docs say every chat answer has a Show reasoning panel, and the docs
+    check proves it by opening a saved conversation. The demo mailbox had none:
+    the check only passed while a chat saved by hand survived in a local demo
+    DB, and failed after the next `make demo-db`. One answered question is now
+    seeded, with a real trace (`demo_fixtures/chat_reasoning_en.json`)."""
+
+    MARISOL = "marisol@farologistics.com"
+
+    def _db(self, with_thread=True):
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            """
+            CREATE TABLE emails (id TEXT PRIMARY KEY, account_id TEXT, thread_id TEXT, subject TEXT,
+                sender TEXT, sender_email TEXT, timestamp INTEGER);
+            CREATE TABLE chat_conversations (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL,
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+            CREATE TABLE chat_messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, role TEXT NOT NULL,
+                content TEXT NOT NULL, model TEXT, token_count INTEGER, latency_ms INTEGER, trace TEXT,
+                created_at INTEGER NOT NULL, referenced_email_ids TEXT, referenced_draft_ids TEXT,
+                prompt_content TEXT);
+            CREATE TABLE chat_message_sources (message_id TEXT NOT NULL, citation_number INTEGER NOT NULL,
+                email_id TEXT NOT NULL, relevance_score REAL, subject TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL DEFAULT '', sender_email TEXT NOT NULL DEFAULT '',
+                email_timestamp INTEGER NOT NULL DEFAULT 0, body_excerpt TEXT,
+                PRIMARY KEY (message_id, citation_number));
+            """
+        )
+        if with_thread:
+            work = gen.LOCALE_EN.work.id
+            subject = "Re: Production bug: orders stuck in 'processing'"
+            conn.executemany(
+                "INSERT INTO emails VALUES (?, ?, 'thread_bug', ?, ?, ?, ?)",
+                [("e_first", work, subject[4:], "Marisol Vega", self.MARISOL, 100),
+                 ("e_reply", work, subject, "Ulises", gen.LOCALE_EN.work.email, 200),
+                 ("e_last", work, subject, "Marisol Vega", self.MARISOL, 300)])
+        return conn
+
+    def _assistant(self, conn):
+        return conn.execute("SELECT id, content, trace FROM chat_messages WHERE role = 'assistant'").fetchone()
+
+    def test_one_conversation_on_the_work_account_asks_a_question(self):
+        conn = self._db()
+        self.assertEqual(gen.insert_demo_chat(conn, gen.LOCALE_EN), 1)
+        rows = conn.execute("SELECT account_id, title FROM chat_conversations").fetchall()
+        self.assertEqual(len(rows), 1)
+        account, title = rows[0]
+        self.assertEqual(account, gen.LOCALE_EN.work.id)
+        # The docs case picks the saved conversation by its title ending in "?".
+        self.assertTrue(title.endswith("?"), title)
+        roles = [r for (r,) in conn.execute("SELECT role FROM chat_messages ORDER BY created_at")]
+        self.assertEqual(roles, ["user", "assistant"])
+
+    def test_the_answer_carries_the_trace_with_the_cited_email(self):
+        import json
+
+        conn = self._db()
+        gen.insert_demo_chat(conn, gen.LOCALE_EN)
+        _, content, trace = self._assistant(conn)
+        self.assertNotIn("{EMAIL_ID}", trace)
+        self.assertNotIn("{THREAD_ID}", trace)
+        self.assertIn("id=e_last thread_id=thread_bug", trace)
+        self.assertTrue(json.loads(trace)["steps"], "the reasoning panel walks the trace's steps")
+        self.assertIn("(email://e_last)", content)
+
+    def test_the_answer_cites_marisols_last_message(self):
+        conn = self._db()
+        gen.insert_demo_chat(conn, gen.LOCALE_EN)
+        message_id, _, _ = self._assistant(conn)
+        source = conn.execute(
+            "SELECT message_id, citation_number, email_id, sender_email, email_timestamp "
+            "FROM chat_message_sources").fetchall()
+        self.assertEqual(source, [(message_id, 1, "e_last", self.MARISOL, 300)])
+
+    def test_seeding_twice_changes_nothing(self):
+        conn = self._db()
+        gen.insert_demo_chat(conn, gen.LOCALE_EN)
+        rows = lambda: [conn.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
+                        for t in ("chat_conversations", "chat_messages", "chat_message_sources")]
+        before = rows()
+        self.assertEqual(gen.insert_demo_chat(conn, gen.LOCALE_EN), 0)
+        self.assertEqual(rows(), before)
+
+    def test_a_mailbox_without_the_thread_gets_no_chat(self):
+        # The Spanish demo has no such thread; a chat citing nothing would
+        # render a broken source link.
+        conn = self._db(with_thread=False)
+        self.assertEqual(gen.insert_demo_chat(conn, gen.LOCALE_EN), 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0], 0)
+
+
 class TheSchemaComesFromThisCheckoutsMigrations(unittest.TestCase):
     """The demo DB used to copy its schema from the developer's production DB,
     which lags behind any branch that adds a migration: the app then failed to
