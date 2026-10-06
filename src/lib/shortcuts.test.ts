@@ -77,6 +77,34 @@ describe('matchKey — single keys', () => {
     expect(one(key('e', { altKey: true }))).toBeNull();
   });
 
+  it('a symbol typed with Option/AltGr still matches (# is Option+3 on a Spanish Mac)', () => {
+    expect(one(key('#', { altKey: true }))).toBe('thread.delete');
+    // AltGr reaches the webview as Ctrl+Alt on Windows and Linux.
+    expect(one(key('#', { altKey: true, ctrlKey: true }), ctx({ platform: 'windows' }))).toBe('thread.delete');
+    expect(one(key('#', { altKey: true, metaKey: true }))).toBeNull();
+  });
+
+  it('every symbol shortcut works whether its layout types it plain, with Option or with AltGr', () => {
+    const symbols = SHORTCUTS.flatMap((s) => s.keys.map((k) => k.split(' ')[0])).filter(
+      (k) => k.length === 1 && !/[a-z]/i.test(k),
+    );
+    expect(symbols.sort()).toEqual(['#', '*', '*', '/', '?']);
+    for (const s of new Set(symbols)) {
+      const plain = matchKey(key(s), ctx(), null);
+      expect(plain.id ?? plain.pending, s).not.toBeNull();
+      expect(matchKey(key(s, { altKey: true }), ctx(), null), `Option ${s}`).toEqual(plain);
+      const win = ctx({ platform: 'windows' });
+      expect(matchKey(key(s, { altKey: true, ctrlKey: true }), win, null), `AltGr ${s}`).toEqual(
+        matchKey(key(s), win, null),
+      );
+    }
+  });
+
+  it('Alt still blocks named keys and letters', () => {
+    expect(one(key('Delete', { altKey: true }))).toBeNull();
+    expect(one(key('e', { altKey: true, shiftKey: true }))).toBeNull();
+  });
+
   it('unknown keys match nothing', () => {
     expect(one(key('q'))).toBeNull();
     expect(one(key('Shift', { shiftKey: true }))).toBeNull();

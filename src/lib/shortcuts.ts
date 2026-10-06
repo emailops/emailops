@@ -146,6 +146,13 @@ const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'O
 /** Whether one key press matches one (non-sequence) binding. */
 function pressMatches(event: KeyEventLike, binding: Binding, platform: string): boolean {
   const isMac = platform === 'macos';
+  // Many layouts type symbols with Option (macOS) or AltGr, which reaches the
+  // webview as Ctrl+Alt on Windows and Linux: `#` is Option+3 on a Spanish Mac.
+  // The character produced is what counts, as with Shift below.
+  const altGr = event.altKey && !event.metaKey && (isMac ? !event.ctrlKey : true);
+  if (altGr && !binding.mod && binding.key.length === 1 && !isLetter(binding.key)) {
+    return event.key === binding.key;
+  }
   const modDown = isMac ? event.metaKey : event.ctrlKey;
   const otherMod = isMac ? event.ctrlKey : event.metaKey;
   if (binding.mod !== modDown || otherMod || event.altKey) return false;
