@@ -4,7 +4,7 @@
 //   node tagboard_check.mjs <run_dir>        (env TAURI_WEBDRIVER_PORT, default 4445)
 //
 // The oracle reproduces `Database::tag_board_stats_query` (src-tauri/src/db/tags.rs):
-// scope → tag type → is_deleted=0 → mailbox in (inbox, sent) → junk excluded →
+// scope → tag type → is_deleted=0 → mailbox in (inbox, sent, archive), as `db::live_mailboxes_sql!` → junk excluded →
 // only the newest tagged message of a thread counts → window (categories, tag
 // search, [since, until)) → GROUP BY account, tag → LIMIT max columns + hidden.
 // The UI side is read through the data-* hooks on TagColumn / TagEmailCard.
@@ -34,10 +34,10 @@ const enabledAccounts = sql('SELECT id, email FROM accounts WHERE enabled = 1 OR
 function oracleThreads({ accountId, tagType, window = {} }) {
   const scope = accountId ? `e.account_id = ${q(accountId)}` : `e.account_id IN (${enabledAccounts.map((a) => q(a.id)).join(',')})`;
   const junkKinds = window.hideGraymail ? "('spam','phishing','graymail')" : "('spam','phishing')";
-  const parts = [scope, `t.tag_type = ${q(tagType)}`, 'e.is_deleted = 0', "e.mailbox IN ('inbox','sent')",
+  const parts = [scope, `t.tag_type = ${q(tagType)}`, 'e.is_deleted = 0', "e.mailbox IN ('inbox','sent','archive')",
     // Same rule as `db::exclude_junk_sql`: the user's own "junk" mark hides a message whatever the scores say.
     `NOT EXISTS (SELECT 1 FROM email_junk j WHERE j.email_id = e.id AND (j.user_override = 'junk' OR (j.band = 'junk' AND j.primary_kind IN ${junkKinds} AND (j.user_override IS NULL OR j.user_override <> 'not_junk'))))`,
-    `NOT EXISTS (SELECT 1 FROM emails n JOIN email_tags nt ON nt.email_id = n.id AND nt.tag_type = ${q(tagType)} WHERE n.account_id = e.account_id AND n.thread_id = e.thread_id AND n.is_deleted = 0 AND n.mailbox IN ('inbox','sent') AND (n.timestamp > e.timestamp OR (n.timestamp = e.timestamp AND n.id > e.id)))`];
+    `NOT EXISTS (SELECT 1 FROM emails n JOIN email_tags nt ON nt.email_id = n.id AND nt.tag_type = ${q(tagType)} WHERE n.account_id = e.account_id AND n.thread_id = e.thread_id AND n.is_deleted = 0 AND n.mailbox IN ('inbox','sent','archive') AND (n.timestamp > e.timestamp OR (n.timestamp = e.timestamp AND n.id > e.id)))`];
   if (window.search) parts.push(`LOWER(t.tag_value) LIKE ${q('%' + window.search.toLowerCase() + '%')}`);
   if (window.since != null) parts.push(`e.timestamp >= ${Math.floor(window.since)}`);
   if (window.until != null) parts.push(`e.timestamp < ${Math.floor(window.until)}`);

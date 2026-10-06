@@ -25,6 +25,7 @@ pub mod lenses;
 pub mod memory;
 pub mod outbox;
 pub mod sender_controls;
+pub mod shared_docs;
 pub mod signatures;
 pub mod tags;
 pub mod trusted_senders;

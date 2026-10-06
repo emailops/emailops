@@ -844,6 +844,17 @@ pub async fn sync_account_with_provider(
                     )
                     .await;
 
+                    // Shared-document messages: merged into their document,
+                    // then archived out of the inbox before it is announced.
+                    crate::services::shared_docs::ingest_arrivals(
+                        db,
+                        account,
+                        email_provider.as_ref(),
+                        &chunk_emails,
+                        crate::services::clock::now_secs(),
+                    )
+                    .await;
+
                     // Only the incremental pass brings genuinely new mail: a
                     // first sync has none, and backfill slices are history.
                     if incremental_after_timestamp.is_some() {
@@ -2058,6 +2069,30 @@ async fn ingest_mailbox_refs(
         // Replace optimistic locally-stored sent copies now that the
         // provider's real Sent rows are in (Outlook/IMAP arrive via this pass).
         super::reconcile::reconcile_pending_sent(db, account_id, account_email, &emails_only);
+
+        // The user's own shared-document messages, sent from another install
+        // of theirs, reach this one only through Sent.
+        if mailbox_name == ExtraMailbox::Sent.as_str() && crate::services::shared_docs::is_enabled(db) {
+            match db.get_account(account_id) {
+                Ok(Some(account)) => {
+                    crate::services::shared_docs::ingest_arrivals(
+                        db,
+                        &account,
+                        email_provider,
+                        &chunk_emails,
+                        crate::services::clock::now_secs(),
+                    )
+                    .await;
+                }
+                Ok(None) => {}
+                Err(e) => emit_account_log(
+                    "warn",
+                    "sync",
+                    account_email,
+                    &format!("Shared documents in Sent could not be checked: {e}"),
+                ),
+            }
+        }
 
         // IMAP and Graph re-key a move, so a message the user has just marked
         // as spam arrives as a brand new row while the copy it was moved away

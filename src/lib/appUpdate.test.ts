@@ -1,65 +1,90 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleUpdateAvailable, sanitizeAvailableUpdate, type UpdateAvailableDeps } from './appUpdate';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buildUpdateToast,
+  parseUpdateDismissal,
+  sanitizeAvailableUpdate,
+  shouldShowUpdateToast,
+  UPDATE_REMINDER_INTERVAL_SECS,
+} from './appUpdate';
 
 // t fake: renders the key plus interpolated version so assertions can check
 // both the key routing and the interpolation without loading i18next.
 const t = (key: string, opts?: Record<string, string>) => (opts?.version ? `${key}:${opts.version}` : key);
 
-function makeDeps() {
-  return {
-    addToast: vi.fn<UpdateAvailableDeps['addToast']>(() => 1),
-    t,
-    openUrl: vi.fn<UpdateAvailableDeps['openUrl']>(),
-    onAvailable: vi.fn<NonNullable<UpdateAvailableDeps['onAvailable']>>(),
-  };
-}
+const UPDATE = { version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' };
+const NOW = 1_000_000;
 
-describe('handleUpdateAvailable', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+describe('buildUpdateToast', () => {
+  it('carries the translated message and a Download action that opens the release page', () => {
+    const openUrl = vi.fn();
+    const toast = buildUpdateToast(UPDATE, { t, openUrl, onDismiss: vi.fn() });
+
+    expect(toast.message).toBe('notifications:updates.available:0.7.0');
+    expect(toast.actionLabel).toBe('notifications:updates.download');
+    expect(openUrl).not.toHaveBeenCalled();
+    toast.onAction?.();
+    expect(openUrl).toHaveBeenCalledWith(UPDATE.url);
   });
 
-  it('shows a toast with the translated message and a Download action that opens the release page', () => {
-    const deps = makeDeps();
-    handleUpdateAvailable({ version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' }, deps);
-
-    expect(deps.addToast).toHaveBeenCalledTimes(1);
-    const toast = deps.addToast.mock.calls[0]?.[0];
-    expect(toast?.message).toBe('notifications:updates.available:0.7.0');
-    expect(toast?.actionLabel).toBe('notifications:updates.download');
-
-    expect(deps.openUrl).not.toHaveBeenCalled();
-    toast?.onAction?.();
-    expect(deps.openUrl).toHaveBeenCalledWith('https://github.com/emailops/emailops/releases/tag/v0.7.0');
+  it('is sticky so it never auto-dismisses', () => {
+    expect(buildUpdateToast(UPDATE, { t, openUrl: vi.fn(), onDismiss: vi.fn() }).sticky).toBe(true);
   });
 
-  it('marks the toast sticky so it never auto-dismisses', () => {
-    const deps = makeDeps();
-    handleUpdateAvailable({ version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' }, deps);
-    expect(deps.addToast.mock.calls[0]?.[0]?.sticky).toBe(true);
+  it('reports its dismissal so the reminder can be snoozed', () => {
+    const onDismiss = vi.fn();
+    buildUpdateToast(UPDATE, { t, openUrl: vi.fn(), onDismiss }).onDismiss?.();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('shouldShowUpdateToast', () => {
+  it('shows nothing when no update is available', () => {
+    expect(shouldShowUpdateToast(null, null, NOW)).toBe(false);
   });
 
-  it('mirrors the validated update into onAvailable for persistent UI state', () => {
-    const deps = makeDeps();
-    handleUpdateAvailable({ version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' }, deps);
-    expect(deps.onAvailable).toHaveBeenCalledWith({
-      version: '0.7.0',
-      url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0',
-    });
+  it('shows an update the user never dismissed', () => {
+    expect(shouldShowUpdateToast(UPDATE, null, NOW)).toBe(true);
   });
 
-  it('does not call onAvailable for malformed or unsafe payloads', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    for (const payload of [{ version: '0.7.0' }, { version: '0.7.0', url: 'https://evil.com/x' }]) {
-      const deps = makeDeps();
-      handleUpdateAvailable(payload, deps);
-      expect(deps.onAvailable).not.toHaveBeenCalled();
-    }
-    expect(consoleError).toHaveBeenCalled();
+  it('stays quiet within 24 hours of a dismissal', () => {
+    const dismissal = { version: '0.7.0', at: NOW - UPDATE_REMINDER_INTERVAL_SECS + 60 };
+    expect(shouldShowUpdateToast(UPDATE, dismissal, NOW)).toBe(false);
   });
 
-  it('ignores malformed payloads without toasting', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('shows again once 24 hours have passed since the dismissal', () => {
+    const dismissal = { version: '0.7.0', at: NOW - UPDATE_REMINDER_INTERVAL_SECS };
+    expect(shouldShowUpdateToast(UPDATE, dismissal, NOW)).toBe(true);
+  });
+
+  it('shows a newer release at once even if an older one was just dismissed', () => {
+    const dismissal = { version: '0.6.13', at: NOW - 60 };
+    expect(shouldShowUpdateToast(UPDATE, dismissal, NOW)).toBe(true);
+  });
+
+  it('shows again when the dismissal lies in the future (clock rolled back)', () => {
+    const dismissal = { version: '0.7.0', at: NOW + 3_600 };
+    expect(shouldShowUpdateToast(UPDATE, dismissal, NOW)).toBe(true);
+  });
+});
+
+describe('parseUpdateDismissal', () => {
+  it('reads the stored version and unix-seconds timestamp', () => {
+    expect(parseUpdateDismissal('0.7.0', '1000000')).toEqual({ version: '0.7.0', at: 1_000_000 });
+  });
+
+  it('returns null when either pref is missing or the timestamp is not a number', () => {
+    expect(parseUpdateDismissal(null, '1000000')).toBeNull();
+    expect(parseUpdateDismissal('0.7.0', null)).toBeNull();
+    expect(parseUpdateDismissal('0.7.0', 'soon')).toBeNull();
+  });
+});
+
+describe('sanitizeAvailableUpdate', () => {
+  it('returns the update for a valid github release payload', () => {
+    expect(sanitizeAvailableUpdate(UPDATE)).toEqual(UPDATE);
+  });
+
+  it('returns null for malformed shapes', () => {
     const malformed: unknown[] = [
       null,
       undefined,
@@ -71,16 +96,11 @@ describe('handleUpdateAvailable', () => {
       { version: '0.7.0', url: 42 },
     ];
     for (const payload of malformed) {
-      const deps = makeDeps();
-      handleUpdateAvailable(payload, deps);
-      expect(deps.addToast).not.toHaveBeenCalled();
-      expect(deps.openUrl).not.toHaveBeenCalled();
+      expect(sanitizeAvailableUpdate(payload)).toBeNull();
     }
-    expect(consoleError).toHaveBeenCalled();
   });
 
-  it('drops the event when the url is unsafe or not a github.com release page', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('returns null when the url is unsafe or not a github.com release page', () => {
     const badUrls = [
       'javascript:alert(1)',
       'file:///etc/passwd',
@@ -89,26 +109,7 @@ describe('handleUpdateAvailable', () => {
       'not a url',
     ];
     for (const url of badUrls) {
-      const deps = makeDeps();
-      handleUpdateAvailable({ version: '0.7.0', url }, deps);
-      expect(deps.addToast).not.toHaveBeenCalled();
-      expect(deps.openUrl).not.toHaveBeenCalled();
+      expect(sanitizeAvailableUpdate({ version: '0.7.0', url })).toBeNull();
     }
-    expect(consoleError).toHaveBeenCalled();
-  });
-});
-
-describe('sanitizeAvailableUpdate', () => {
-  it('returns the update for a valid github release payload', () => {
-    expect(
-      sanitizeAvailableUpdate({ version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' }),
-    ).toEqual({ version: '0.7.0', url: 'https://github.com/emailops/emailops/releases/tag/v0.7.0' });
-  });
-
-  it('returns null for malformed shapes and non-github urls', () => {
-    expect(sanitizeAvailableUpdate(null)).toBeNull();
-    expect(sanitizeAvailableUpdate({ version: '0.7.0' })).toBeNull();
-    expect(sanitizeAvailableUpdate({ version: '0.7.0', url: 'https://evil.com/x' })).toBeNull();
-    expect(sanitizeAvailableUpdate({ version: '0.7.0', url: 'javascript:alert(1)' })).toBeNull();
   });
 });

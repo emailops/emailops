@@ -209,6 +209,60 @@ même si l'expéditeur écrit plus tard depuis une autre adresse ; **Annuler**, 
 **Suggestions ignorées**, la fait revenir. Les e-mails de votre propre adresse
 ou de collègues de votre propre entreprise ne sont jamais suggérés.
 
+## EO Docs {#eo-docs}
+
+<!-- claim:feat-eo-docs-1 -->
+**EO Docs** vous permet d'écrire des documents et des feuilles de calcul avec d'autres utilisateurs
+d'EmailOps, sans cloud entre vous : chaque modification voyage comme un e-mail ordinaire entre vos
+comptes, et chaque copie fusionne ce qui arrive sans conflit. C'est expérimental et activé par
+défaut ; **Paramètres → EO Docs** le désactive, et tant qu'il est désactivé rien n'est reçu ni envoyé.
+
+<!-- claim:feat-eo-docs-2 -->
+Ouvrez **EO Docs** dans la barre latérale et cliquez sur **Nouveau** pour créer un document ou une
+feuille. Les documents ont des titres, du gras, de l'italique, du soulignement, des listes, des
+liens, des tableaux et des images. Les feuilles s'agrandissent en lignes et en colonnes, acceptent
+un bloc collé depuis Excel, et une colonne s'élargit en faisant glisser le bord de son en-tête.
+Annuler et rétablir ne reprennent que vos propres modifications.
+
+<!-- claim:feat-eo-docs-3 -->
+Une cellule qui commence par `=` est une formule : `SUM`, `AVERAGE`, `MIN`, `MAX` et `COUNT`
+(ou `SUMA`, `PROMEDIO` et `CONTAR`) sur des plages comme `=SUM(B2:B10)`. Insérer ou supprimer des
+lignes garde les plages sur les mêmes cellules. Le bouton de filtre d'un en-tête de colonne masque
+les lignes que vous décochez ; les filtres ne changent que votre propre vue.
+
+<!-- claim:feat-eo-docs-8 -->
+Quand deux personnes modifient la même cellule avant d'avoir vu la modification de l'autre,
+toutes les copies gardent la même des deux valeurs. La cellule est alors signalée, un avis indique
+la valeur perdue, et vous choisissez : la rétablir ou garder celle affichée. **Historique** liste
+aussi ces cellules, réglées ou non.
+
+<!-- claim:feat-eo-docs-4 -->
+**Partager** demande les adresses e-mail, en proposant d'abord les collègues de votre entreprise, et
+votre consentement : dès lors, EmailOps leur envoie vos modifications de lui-même, environ deux
+minutes après que vous avez cessé d'écrire, ou tout de suite avec **Envoyer les modifications**. Les
+autres utilisateurs d'EmailOps reçoivent une invitation à **Accepter** ; les autres reçoivent une
+copie en lecture seule dans l'invitation. Les modifications arrivent à la synchronisation suivante,
+sont fusionnées, et leurs e-mails sont marqués comme lus et archivés.
+
+<!-- claim:feat-eo-docs-5 -->
+Une modification n'est appliquée que si elle vient d'une personne avec qui le document est partagé.
+Sur les comptes Gmail et Outlook, elle est aussi refusée si l'expéditeur échoue au contrôle
+d'authentification de votre fournisseur (DMARC, ou SPF sans signature DKIM valide). Les e-mails ne
+sont pas chiffrés de bout en bout : ils sont aussi privés que le reste de votre courrier.
+
+<!-- claim:feat-eo-docs-6 -->
+Vos propres dossiers (jamais partagés) rangent les documents ; faites glisser un document sur un
+dossier, ou utilisez **Déplacer vers**. La recherche trouve les documents par titre et par contenu,
+et **Historique** montre les versions précédentes. **Exporter en PDF** enregistre le document
+en PDF dans votre dossier Téléchargements. **Supprimer** demande d'abord confirmation ;
+supprimer un document partagé n'efface que votre copie, et les autres gardent la leur.
+
+<!-- claim:feat-eo-docs-7 -->
+**Importer** transforme un document Word (`.docx`) ou une feuille de calcul (`.xlsx`, `.xls`, `.ods`)
+en EO Docs, une feuille par onglet et les formules sous forme de valeurs ; **Ouvrir dans EO Docs**
+fait de même avec une pièce jointe. Dans l'éditeur d'e-mails, **Depuis EO Docs** joint un document,
+ce qui le partage avec les destinataires de l'e-mail.
+
 ## Recherche
 
 <!-- claim:feat-search-1 -->

@@ -113,6 +113,24 @@ EmailOps follows Keep a Changelog + SemVer. In `CHANGELOG.md`:
    invent release notes — **ask the user** what the headline changes are before
    tagging.
 
+### Phase 3b — In-app release notes (four languages)
+
+The app shows a "what's new" dialog on the first launch after an update, from
+files bundled at `src/releaseNotes/X.Y.Z/{en,es,fr,de}.md`. Write all four from
+the new CHANGELOG section:
+
+1. A short, user-facing summary — the headline changes only, grouped under
+   `### ` headings (e.g. New / Privacy and security / Fixes), one bullet each.
+   Follow `src/releaseNotes/0.6.12/` as the model. No links to internal docs, no
+   personal data.
+2. Translate into es/fr/de using the labels the UI itself shows (read them from
+   `src/locales/<lang>/*.json`, e.g. the Settings tab names), and keep the
+   glossary rules: "Embeddings" and "Logs" stay in English, a Lens is "Lente"
+   in Spanish.
+3. `src/lib/releaseNotes.test.ts` ("ships notes for the current version") fails
+   until all four files exist for the `package.json` version, so Phase 4 catches
+   a missing one. Stage the folder with the release commit (Phase 6).
+
 ## Phase 4 — Quality gates
 
 Run `make check` (lint + typecheck + Rust tests + frontend tests + clippy).
@@ -261,7 +279,7 @@ Review the uncommitted diff before moving on; it ships in the Phase 6 commit.
 Once gates and build pass:
 
 ```bash
-git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md \
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md src/releaseNotes/X.Y.Z \
   docs/verification/<stamp>-<sha>.md   # the summary written in Phase 1b
 git commit -m "chore: release vX.Y.Z"
 git tag vX.Y.Z

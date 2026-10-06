@@ -54,8 +54,8 @@ pub use sync::{
     sync_account_with_contention, sync_account_with_provider, SyncContention,
 };
 pub use thread_actions::{
-    apply_thread_action, plan_thread_action, widen_stars_to_threads, ProviderAccess, ThreadAction, ThreadActionFailure,
-    ThreadActionReport, ThreadRef,
+    apply_thread_action, apply_to_account, plan_thread_action, widen_stars_to_threads, ProviderAccess, ThreadAction,
+    ThreadActionFailure, ThreadActionReport, ThreadRef,
 };
 
 /// List emails for one account, or — when `account_id` is `None` — merged

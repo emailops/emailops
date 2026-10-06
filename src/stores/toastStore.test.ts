@@ -29,6 +29,18 @@ describe('toastStore', () => {
     expect(clicked).toBe(true);
   });
 
+  it('runs onDismiss when the toast is dismissed', () => {
+    let dismissed = 0;
+    const id = useToastStore.getState().addToast({
+      message: 'Update available',
+      onDismiss: () => {
+        dismissed += 1;
+      },
+    });
+    useToastStore.getState().dismissToast(id);
+    expect(dismissed).toBe(1);
+  });
+
   it('dismisses a toast by id', () => {
     const store = useToastStore.getState();
     const a = store.addToast({ message: 'a' });

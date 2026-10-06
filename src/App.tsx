@@ -16,9 +16,11 @@ import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
 import { ContactsView } from '@/components/Contacts/ContactsView';
+import { ReleaseNotesDialog } from '@/components/common/ReleaseNotesDialog';
 import { ShortcutHelpModal } from '@/components/common/ShortcutHelpModal';
 import { ToastHost } from '@/components/common/ToastHost';
 import { Dashboard } from '@/components/Dashboard/Dashboard';
+import { DocumentsView } from '@/components/Documents/DocumentsView';
 import { DraftsView } from '@/components/DraftsView';
 import { ReadingPane } from '@/components/EmailView/ReadingPane';
 import { ErrorBanner } from '@/components/ErrorBanner/ErrorBanner';
@@ -52,7 +54,7 @@ import { useSmartFilters } from '@/hooks/useSmartFilters';
 import { i18n } from '@/i18n';
 import type { OutboxUpdated } from '@/lib/api';
 import * as api from '@/lib/api';
-import { handleUpdateAvailable, type UpdateAvailablePayload } from '@/lib/appUpdate';
+import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { chatDockMode } from '@/lib/chatPanelLayout';
@@ -88,6 +90,7 @@ import {
   useHelpDocsEnabledStore,
   useLensesEnabledStore,
   useMemoryEnabledStore,
+  useSharedDocsEnabledStore,
   useSkillsEnabledStore,
   useTasksEnabledStore,
   useTranslationEnabledStore,
@@ -101,11 +104,12 @@ import { useMemoryStore } from '@/stores/memoryStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import { useOverlay } from '@/stores/overlayStore';
 import { useReminderStore } from '@/stores/reminderStore';
+import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
-import { useUpdateStore } from '@/stores/updateStore';
+import { type UpdateToastHost, useUpdateStore } from '@/stores/updateStore';
 import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
   ActiveFilter,
@@ -141,6 +145,27 @@ function isLogLevel(value: string): value is LogLevel {
 function isLogSource(value: string): value is LogSource {
   return LOG_SOURCES.includes(value as LogSource);
 }
+
+/** How often a snoozed update toast is re-checked; the 24-hour snooze itself
+ *  lives in `shouldShowUpdateToast`. */
+const UPDATE_REMINDER_CHECK_MS = 3_600_000;
+
+function nowSecs(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+/** Where the update store shows its toast. The i18n singleton resolves the
+ *  message in the current language at show time. */
+const UPDATE_TOAST_HOST: UpdateToastHost = {
+  addToast: (toast) => useToastStore.getState().addToast(toast),
+  isToastOpen: (id) => useToastStore.getState().toasts.some((t) => t.id === id),
+  t: (key, opts) => i18n.t(key, opts),
+  openUrl: (url) => {
+    void openExternal(url).catch((err) => {
+      useLogStore.getState().addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
+    });
+  },
+};
 
 function App() {
   const [isLocked, setIsLocked] = useState(false);
@@ -214,6 +239,7 @@ function AppInner() {
     refresh: refreshLensesEnabled,
   } = useLensesEnabledStore();
   const { enabled: skillsEnabled, refresh: refreshSkillsEnabled } = useSkillsEnabledStore();
+  const { enabled: sharedDocsEnabled, refresh: refreshSharedDocsEnabled } = useSharedDocsEnabledStore();
   const { refresh: refreshTranslationEnabled } = useTranslationEnabledStore();
   const { refresh: refreshHelpDocsEnabled } = useHelpDocsEnabledStore();
   const setTasksEnabled = useCallback(
@@ -296,9 +322,17 @@ function AppInner() {
     else if (viewMode === 'memory' && (!memoriesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'lenses' && (!lensesEnabled || !aiEnabled)) setViewMode('inbox');
     else if (viewMode === 'skills' && (!skillsEnabled || !aiEnabled)) setViewMode('inbox');
+    else if (viewMode === 'documents' && !sharedDocsEnabled) setViewMode('inbox');
     else if (viewMode === 'chat' && !aiEnabled) setViewMode('inbox');
     else if (viewMode === 'tagboard' && !aiEnabled) setViewMode('inbox');
-  }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, skillsEnabled, aiEnabled]);
+  }, [viewMode, tasksEnabled, memoriesEnabled, lensesEnabled, skillsEnabled, sharedDocsEnabled, aiEnabled]);
+
+  // Another view asked to show a document in EO Docs (an attachment imported
+  // from an email): switch to it.
+  const docsOpenRequests = useSharedDocsStore((s) => s.openRequests);
+  useEffect(() => {
+    if (docsOpenRequests > 0 && sharedDocsEnabled) setViewMode('documents');
+  }, [docsOpenRequests, sharedDocsEnabled]);
   const addLog = useLogStore((s) => s.addLog);
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const tabs = useEmailStore((s) => s.tabs);
@@ -531,6 +565,7 @@ function AppInner() {
     refreshTranslationEnabled().catch((err) => console.error('Failed to load ai_translation_enabled pref', err));
     refreshHelpDocsEnabled().catch((err) => console.error('Failed to load help_docs_enabled pref', err));
     refreshSkillsEnabled().catch((err) => console.error('Failed to load skills_enabled pref', err));
+    refreshSharedDocsEnabled().catch((err) => console.error('Failed to load shared_docs_enabled pref', err));
   }, [
     refreshAi,
     refreshMemoriesEnabled,
@@ -538,6 +573,7 @@ function AppInner() {
     refreshLensesEnabled,
     refreshTranslationEnabled,
     refreshSkillsEnabled,
+    refreshSharedDocsEnabled,
   ]);
 
   // Decide whether to show the onboarding wizard. Existing users (anyone with
@@ -835,24 +871,23 @@ function AppInner() {
     );
 
     // New-release notification — the backend checks GitHub daily and emits
-    // this at most once per version. Validation + toast routing live in the
-    // pure handler (`appUpdate.ts`); the i18n singleton resolves the message
-    // in the current language at event time. The sticky toast announces; the
-    // update store feeds the persistent sidebar link, seeded at startup from
-    // the prefs the backend check persists.
-    void useUpdateStore.getState().load();
+    // this when it first sees a newer release; the update store is seeded at
+    // startup from the prefs that check persists. The store owns the sticky
+    // toast (`remind`): shown until the user updates, snoozed for 24 hours
+    // whenever they close it. It also feeds the persistent sidebar link.
+    void useUpdateStore
+      .getState()
+      .load()
+      .then(() => useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs()));
     unlisteners.push(
       listen<UpdateAvailablePayload>('app-update-available', (event) => {
-        handleUpdateAvailable(event.payload, {
-          addToast: useToastStore.getState().addToast,
-          t: (key, opts) => i18n.t(key, opts),
-          openUrl: (url) => {
-            void openExternal(url).catch((err) => {
-              addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
-            });
-          },
-          onAvailable: useUpdateStore.getState().setAvailable,
-        });
+        const update = sanitizeAvailableUpdate(event.payload);
+        if (!update) {
+          console.error('Ignoring malformed or unsafe app-update-available payload', event.payload);
+          return;
+        }
+        useUpdateStore.getState().setAvailable(update);
+        useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs());
       }),
     );
 
@@ -1052,6 +1087,16 @@ function AppInner() {
       });
     };
   }, [addLog]);
+
+  // Bring a snoozed update toast back once its 24 hours are up, also in
+  // sessions that stay open for days.
+  useEffect(() => {
+    const timer = setInterval(
+      () => useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs()),
+      UPDATE_REMINDER_CHECK_MS,
+    );
+    return () => clearInterval(timer);
+  }, []);
 
   // Sync emails when active account changes
   useEffect(() => {
@@ -1490,6 +1535,7 @@ function AppInner() {
           memoriesEnabled={memoriesEnabled}
           lensesEnabled={lensesEnabled}
           skillsEnabled={skillsEnabled}
+          sharedDocsEnabled={sharedDocsEnabled}
           calendarEnabled={calendarFeatureEnabled}
           onSelectLens={(lensId) => {
             // Selecting a lens in the sidebar: fire the store action so the
@@ -1582,6 +1628,11 @@ function AppInner() {
             </div>
           ) : viewMode === 'skills' && skillsEnabled ? (
             <SkillsView />
+          ) : viewMode === 'documents' && sharedDocsEnabled ? (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <UnifiedScopeBar accountId={effectiveAccountId} />
+              <DocumentsView accountId={effectiveAccountId} />
+            </div>
           ) : viewMode === 'lenses' && lensesEnabled ? (
             <LensesView
               onCreateWithChat={(prompt) => {
@@ -1836,6 +1887,7 @@ function AppInner() {
       <LogPanel onOpenAiSettings={() => setSettingsTab('ai')} />
       <ToastHost />
       <ShortcutHelpModal />
+      <ReleaseNotesDialog onboardingCompleted={onboardingCompleted} />
       <SenderDialogs />
 
       {isSearchOpen && (

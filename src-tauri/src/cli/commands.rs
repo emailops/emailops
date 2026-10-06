@@ -330,6 +330,30 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
 
         Command::Skills => output::render_skills(&crate::services::skills::overview(&session.db), session.style),
 
+        Command::Docs { flush } => {
+            let account_id = session.require_account()?;
+            let account = session
+                .db
+                .get_account(&account_id)?
+                .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+            if flush {
+                let provider = crate::services::emails::build_provider(&account, None).await?;
+                let mut sent = 0usize;
+                for doc in session.db.list_shared_docs(Some(&account.id))? {
+                    if crate::services::shared_docs::flush(&session.db, &account, provider.as_ref(), &doc.id).await? {
+                        sent += 1;
+                    }
+                }
+                if session.mode == OutputMode::Json {
+                    output::emit_ok(serde_json::json!({ "sent": sent }))?;
+                } else {
+                    println!("Mailed changes to {sent} document(s).");
+                }
+                return Ok(());
+            }
+            output::render_shared_docs(&session.db.list_shared_docs(Some(&account.id))?, session.style)
+        }
+
         Command::Stats => {
             // Same per-account aggregates as the app's dashboard cards.
             let dashboards = crate::services::dashboard::collect_dashboards(&session.db)?;

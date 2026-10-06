@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next';
 import { StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
-import { writeEmailDragPayload } from '@/lib/emailDrag';
+import { emailIdsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
 import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
@@ -120,6 +121,21 @@ export function EmailRow({
     <RowCheckbox checked={isChecked} alwaysVisible={compact || selectionActive || isChecked} onCheck={onCheck} />
   ) : null;
 
+  // Drag to a sidebar folder: the payload says which emails move — this row,
+  // or the whole multi-selection when this row is checked — and the preview
+  // card follows the pointer with a count badge for several emails. The
+  // selection is read at drag time, not subscribed to, so rows don't re-render
+  // on every check.
+  const handleDragStart = (e: React.DragEvent) => {
+    const emailIds = emailIdsToDrag(email.id, useSelectionStore.getState().ids);
+    writeEmailDragPayload(e.dataTransfer, {
+      emailIds,
+      accountId: email.accountId,
+      mailbox: email.mailbox,
+    });
+    setEmailDragImage(e, { sender: senderName(email), subject: email.subject, count: emailIds.length });
+  };
+
   useEffect(() => {
     if (!copyMessage) return;
     const timeoutId = window.setTimeout(() => setCopyMessage(null), 2000);
@@ -168,13 +184,7 @@ export function EmailRow({
           }
         }}
         draggable={canMove}
-        onDragStart={(e) =>
-          writeEmailDragPayload(e.dataTransfer, {
-            emailId: email.id,
-            accountId: email.accountId,
-            mailbox: email.mailbox,
-          })
-        }
+        onDragStart={handleDragStart}
       >
         {accountBar}
         {/* Reserve a stable min-height so async tag/triage loading doesn't grow
@@ -268,13 +278,7 @@ export function EmailRow({
         }
       }}
       draggable={canMove}
-      onDragStart={(e) =>
-        writeEmailDragPayload(e.dataTransfer, {
-          emailId: email.id,
-          accountId: email.accountId,
-          mailbox: email.mailbox,
-        })
-      }
+      onDragStart={handleDragStart}
     >
       {accountBar}
       <div className="flex items-start gap-3">

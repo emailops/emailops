@@ -17,7 +17,8 @@ interface ContactsViewProps {
   onViewEmailsFrom: (address: string) => void;
 }
 
-type ViewMode = 'list' | 'company';
+/** `organization`: the list, limited to the account's own domain ("Mi organización"). */
+type ViewMode = 'list' | 'company' | 'organization';
 
 const PAGE_SIZE = 100;
 
@@ -48,6 +49,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
   const [sort, setSort] = useState<ContactSort>('last');
   const [kindFilter, setKindFilter] = useState<'all' | ContactKind>('all');
   const [companyFilter, setCompanyFilter] = useState<string | null>(null);
+  const [orgDomain, setOrgDomain] = useState<string | null>(null);
 
   const [page, setPage] = useState<ContactsPage | null>(null);
   const [items, setItems] = useState<Contact[]>([]);
@@ -76,7 +78,25 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
     setPage(null);
     setCompanyGroups(null);
     setCompanyFilter(null);
+    setOrgDomain(null);
+    setViewMode((m) => (m === 'organization' ? 'list' : m));
+    if (!accountId) return;
+    let cancelled = false;
+    api
+      .getOrganizationDomain(accountId)
+      .then((d) => {
+        if (!cancelled) setOrgDomain(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errorText(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [accountId]);
+
+  // Only "My organization" narrows the list to the account's own domain.
+  const domainFilter = viewMode === 'organization' ? (orgDomain ?? undefined) : undefined;
 
   // Fetch list / company groups whenever filters change
   useEffect(() => {
@@ -113,6 +133,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
         search: debouncedSearch || undefined,
         kind: kindFilter === 'all' ? undefined : kindFilter,
         company: companyFilter ?? undefined,
+        domain: domainFilter,
         sort,
         offset: 0,
         limit: PAGE_SIZE,
@@ -130,7 +151,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
         if (fetchIdRef.current !== reqId) return;
         setIsLoading(false);
       });
-  }, [accountId, viewMode, debouncedSearch, kindFilter, companyFilter, sort]);
+  }, [accountId, viewMode, debouncedSearch, kindFilter, companyFilter, sort, domainFilter]);
 
   // Load detail when selection changes
   useEffect(() => {
@@ -164,6 +185,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
         search: debouncedSearch || undefined,
         kind: kindFilter === 'all' ? undefined : kindFilter,
         company: companyFilter ?? undefined,
+        domain: domainFilter,
         sort,
         offset: items.length,
         limit: PAGE_SIZE,
@@ -175,7 +197,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
     } finally {
       setIsLoadingMore(false);
     }
-  }, [accountId, page, isLoadingMore, debouncedSearch, kindFilter, companyFilter, sort, items.length]);
+  }, [accountId, page, isLoadingMore, debouncedSearch, kindFilter, companyFilter, sort, items.length, domainFilter]);
 
   // Distinct company values for the company filter dropdown (list-mode only,
   // derived from current page so it reflects what the user is looking at).
@@ -221,10 +243,29 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
               >
                 {t('contacts:view.modeCompany')}
               </button>
+              {orgDomain && (
+                <button
+                  type="button"
+                  data-testid="contacts-mode-organization"
+                  className={`px-3 py-1.5 border-l border-gray-200 ${
+                    viewMode === 'organization'
+                      ? 'bg-gray-100 text-gray-900 font-medium'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                  onClick={() => setViewMode('organization')}
+                >
+                  {t('contacts:view.modeOrganization')}
+                </button>
+              )}
             </div>
           </div>
 
-          {viewMode === 'list' && (
+          {viewMode === 'organization' && orgDomain && (
+            <p className="text-xs text-gray-500" data-testid="contacts-organization-hint">
+              {t('contacts:view.organizationHint', { domain: orgDomain })}
+            </p>
+          )}
+          {viewMode !== 'company' && (
             <>
               <div className="flex items-center gap-2">
                 <input

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
-import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
+import { isEmailDrag, planEmailDrop, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
 import { folderLabel } from '@/lib/folderDisplay';
@@ -17,6 +17,7 @@ import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useOverlay } from '@/stores/overlayStore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
@@ -57,6 +58,7 @@ export type ViewMode =
   | 'memory'
   | 'lenses'
   | 'skills'
+  | 'documents'
   | 'tagboard'
   | 'dashboard'
   | `folder:${string}`;
@@ -98,6 +100,8 @@ interface SidebarProps {
   lensesEnabled: boolean;
   /** Experimental skills switch (Settings → Skills); shows the Skills view entry. */
   skillsEnabled: boolean;
+  /** Experimental shared-documents switch (Settings → Shared documents). */
+  sharedDocsEnabled: boolean;
   /** True when at least one account has calendar integration enabled
    *  (Settings → Calendar) — the Calendar entry is hidden otherwise. */
   calendarEnabled: boolean;
@@ -137,6 +141,7 @@ export function Sidebar({
   memoriesEnabled,
   lensesEnabled,
   skillsEnabled,
+  sharedDocsEnabled,
   calendarEnabled,
   onSelectLens,
 }: SidebarProps) {
@@ -188,6 +193,8 @@ export function Sidebar({
   // stays until the user actually upgrades (store self-heals post-upgrade).
   const availableUpdate = useUpdateStore((s) => s.available);
   const moveEmail = useEmailStore((s) => s.moveEmail);
+  const moveEmailsToMailbox = useEmailStore((s) => s.moveEmailsToMailbox);
+  const clearSelection = useSelectionStore((s) => s.clear);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -263,10 +270,19 @@ export function Sidebar({
     e.preventDefault();
     setDragOverTarget(null);
     if (!activeAccount || !isImapAccount) return;
-    const payload = readEmailDragPayload(e.dataTransfer);
-    if (!payload || payload.accountId !== activeAccount.id || payload.mailbox === targetMailbox) return;
+    const plan = planEmailDrop(readEmailDragPayload(e.dataTransfer), activeAccount.id, targetMailbox);
+    if (plan.kind === 'ignore') return;
+    if (plan.kind === 'bulk') {
+      // Several checked emails dragged together: the bulk move takes them out
+      // of the list, reports partial failures itself (log + toast) and puts
+      // the failed rows back. The selection leaves with the rows, as it does
+      // for the bulk toolbar's Move.
+      clearSelection();
+      await moveEmailsToMailbox(activeAccount.id, plan.emailIds, targetMailbox);
+      return;
+    }
     try {
-      await moveEmail(activeAccount.id, payload.emailId, targetMailbox);
+      await moveEmail(activeAccount.id, plan.emailId, targetMailbox);
       addLog('success', 'sync', t('sidebar:folderActions.movedTo', { name: targetLabel }));
     } catch (err) {
       addLog('error', 'sync', errorText(err));
@@ -590,6 +606,28 @@ export function Sidebar({
                       />
                     </svg>
                     {t('sidebar:archive')}
+                  </button>
+                </li>
+              )}
+              {sharedDocsEnabled && (
+                <li>
+                  <button
+                    type="button"
+                    data-testid="sidebar-documents"
+                    onClick={() => onSetViewMode('documents')}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                      viewMode === 'documents' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"
+                      />
+                    </svg>
+                    {t('sidebar:documents')}
                   </button>
                 </li>
               )}

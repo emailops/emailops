@@ -41,3 +41,12 @@ pub async fn list_contacts_by_company(
 ) -> Result<Vec<CompanyContactsGroup>, AppError> {
     contacts::list_contacts_by_company(&state.db, &account_id)
 }
+
+/// The account's organization domain, or `None` for a free personal provider.
+#[tauri::command]
+pub async fn get_organization_domain(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Option<String>, AppError> {
+    contacts::account_organization_domain(&state.db, &account_id)
+}

@@ -97,6 +97,11 @@ pub enum AppError {
     #[error("Opening {filename} needs confirmation: it arrived by email and is of a type ({kind}) that can run code")]
     AttachmentConfirmationRequired { filename: String, kind: &'static str },
 
+    /// `filename` is kept in iCloud Drive or another cloud folder with only a
+    /// placeholder on disk, and it did not download in time to be read.
+    #[error("{filename} is still in the cloud and has not downloaded — download it in Finder and try again")]
+    FileNotDownloaded { filename: String },
+
     /// A skill could not be loaded, saved, created or deleted; the problem
     /// carries its own translation code (`skill_*`) and params.
     #[error("{0}")]
@@ -131,6 +136,7 @@ impl AppError {
             AppError::NoSpamFolder => "no_spam_folder",
             AppError::OutboxNotPending => "outbox_not_pending",
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
+            AppError::FileNotDownloaded { .. } => "file_not_downloaded",
             AppError::Skill(problem) => problem.code(),
         }
     }
@@ -173,6 +179,9 @@ impl AppError {
             | AppError::NoArchiveFolder
             | AppError::NoSpamFolder
             | AppError::OutboxNotPending => {}
+            AppError::FileNotDownloaded { filename } => {
+                p.insert("filename", filename.clone());
+            }
             AppError::AttachmentConfirmationRequired { filename, kind } => {
                 p.insert("filename", filename.clone());
                 p.insert("kind", (*kind).to_string());
@@ -264,6 +273,13 @@ mod tests {
         assert_eq!(AppError::NoArchiveFolder.code(), "no_archive_folder");
         assert_eq!(AppError::NoSpamFolder.code(), "no_spam_folder");
         assert_eq!(AppError::OutboxNotPending.code(), "outbox_not_pending");
+        assert_eq!(
+            AppError::FileNotDownloaded {
+                filename: "a.docx".into()
+            }
+            .code(),
+            "file_not_downloaded"
+        );
         assert_eq!(AppError::NeedsReauth { account_id: "a".into() }.code(), "needs_reauth");
         assert_eq!(
             AppError::CalendarPermissionDenied { account_id: "a".into() }.code(),

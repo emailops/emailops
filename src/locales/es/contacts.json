@@ -37,6 +37,8 @@
     "noGroupings": "Aún no hay agrupaciones por empresa: las etiquetas de empresa se derivan durante la sincronización.",
     "modeList": "Lista",
     "modeCompany": "Por empresa",
+    "modeOrganization": "Mi organización",
+    "organizationHint": "Personas de {{domain}}",
     "searchPlaceholder": "Buscar contactos...",
     "sortPrefix": "Ordenar: {{label}}",
     "allCompanies": "Todas las empresas",

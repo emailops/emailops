@@ -248,7 +248,6 @@ export default (h) => async function demoCases() {
 
   // ── views ──────────────────────────────────────────────────────────────
   await view('Calendar');
-  const cal = await screen();
   await claim('feat-calendar-1', 'vistas', {
     covers: ['Per-account month, week and day views'],
     how: 'En la vista Calendar del buzón demo, pulsa cada vista que nombra la doc (Month, Week, Day) y comprueba que la rejilla cambia; y que el calendario se muestra por cuenta.',
@@ -260,7 +259,9 @@ export default (h) => async function demoCases() {
       grids.push(await js(() => document.querySelector('main')?.innerText.length || 0));
     }
     const changed = new Set(grids).size === grids.length;
-    return ok(changed && /Calendar account/.test(cal), `${modes.join(', ')} cambian la rejilla; calendario por cuenta`, `las vistas ${modes.join(', ')} no cambian la rejilla (${grids.join(', ')})`);
+    // The account picker shows the selected address; its name is only its aria-label.
+    const picker = await js(() => !!document.querySelector('[aria-label="Calendar account"]'));
+    return ok(changed && picker, `${modes.join(', ')} cambian la rejilla; calendario por cuenta`, `las vistas ${modes.join(', ')} no cambian la rejilla (${grids.join(', ')})`);
   });
   await claim('feat-calendar-1', 'Join', {
     covers: ['a one-click Join button for Meet'], partial: 'se prueba un evento con Meet; Teams, Webex, Zoom y los recordatorios no',
@@ -1155,6 +1156,84 @@ export default (h) => async function demoCases() {
   await view('Inbox');
   await closeToasts();
 
+    // ── EO Docs ──────────────────────────────────────────────────────────────
+  // One throwaway sheet, created and deleted again: nothing is shared, so no
+  // mail is sent; the demo DB keeps the deleted sheet's tombstone, and its PDF
+  // stays in Downloads.
+  await view('EO Docs');
+  const eoScreen = await screen();
+  await claim('feat-eo-docs-1', 'en la barra, experimental y activado', {
+    covers: ['It is experimental and on by default'],
+    how: 'Sin tocar ningún ajuste, abre EO Docs desde la barra lateral del buzón demo: la vista debe abrirse (está activado de serie) y llevar la marca «Experimental».',
+  }, async ({ doc }) => {
+    doc.match(/experimental and on by default/);
+    const open = await js(() => !!document.querySelector('[data-testid="documents-view"]'));
+    return ok(open && /Experimental/i.test(eoScreen), 'la vista EO Docs se abre sin activarla y lleva «Experimental»', `vista abierta: ${open}; marca Experimental: ${/Experimental/i.test(eoScreen)}`);
+  });
+  const setInput = (sel, v) => js((q, val) => {
+    const i = document.querySelector(q);
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set.call(i, val);
+    i.dispatchEvent(new Event(i.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+  }, sel, v);
+  await claim('feat-eo-docs-2', 'crear una hoja', {
+    covers: ['click New to create a document or a sheet'],
+    how: 'Pulsa el botón que la doc nombra (New), elige hoja de cálculo, ponle un título y créala: debe abrirse la rejilla de la hoja.',
+  }, async ({ doc }) => {
+    const label = doc.bold().find((l) => l === 'New');
+    await js(() => document.querySelector('[data-testid="shared-doc-new"]')?.click());
+    await sleep(500);
+    const shown = await js(() => document.querySelector('[data-testid="shared-doc-new"]')?.innerText.trim());
+    await setInput('[data-testid="shared-doc-new-title"]', 'Docs check sheet');
+    await setInput('[data-testid="shared-doc-new-kind"]', 'sheet');
+    await js(() => document.querySelector('[data-testid="shared-doc-create"]')?.click());
+    await sleep(1500);
+    const grid = await js(() => !!document.querySelector('[data-testid="shared-sheet"] [data-cell="0:0"]'));
+    return ok(shown === label && grid, `«${label}» crea una hoja y abre su rejilla`, `botón «${shown}», rejilla abierta: ${grid}`);
+  });
+  await claim('feat-eo-docs-3', 'SUM', {
+    covers: ['A sheet cell that starts with = is a formula'], partial: 'se prueba SUM; AVERAGE, MIN, MAX y COUNT (y los alias) los cubren los tests de sheetFormula',
+    how: 'En la hoja recién creada escribe 2 y 3 en A1 y A2 y, en A3, la fórmula del ejemplo de la doc adaptada a A1:A2: la celda debe mostrar 5.',
+  }, async ({ doc }) => {
+    const fn = doc.match(/=(\w+)\(B2:B10\)/)[1];
+    const cell = (r) => `[data-testid="shared-sheet"] [data-cell="${r}:0"]`;
+    await setInput(cell(0), '2');
+    await setInput(cell(1), '3');
+    await setInput(cell(2), `=${fn}(A1:A2)`);
+    await sleep(800);
+    const shownValue = await js((q) => document.querySelector(q)?.value, cell(2));
+    return ok(shownValue === '5', `=${fn}(A1:A2) muestra ${shownValue}`, `=${fn}(A1:A2) muestra «${shownValue}», no 5`);
+  });
+  await claim('feat-eo-docs-6', 'PDF', {
+    covers: ['Export PDF saves the document as a PDF in your Downloads folder.'],
+    how: 'En la hoja abierta pulsa el botón que la doc nombra (Export PDF): debe aparecer el aviso de que se guardó «Docs check sheet.pdf» en Downloads.',
+  }, async ({ doc }) => {
+    const pdf = doc.bold().find((l) => l === 'Export PDF');
+    await js(() => document.querySelector('[data-testid="shared-doc-export-pdf"]')?.click());
+    let toast = '';
+    for (let i = 0; i < 20 && !/Docs check sheet\.pdf/.test(toast); i++) {
+      await sleep(500);
+      toast = await js(() => document.querySelector('[data-testid="toast-stack"]')?.innerText.replace(/\s+/g, ' ') || '');
+    }
+    await js(() => document.querySelectorAll('[data-testid="toast-stack"] button[aria-label="Close"]').forEach((x) => x.click()));
+    return ok(/Docs check sheet\.pdf/.test(toast) && /Downloads/.test(toast), `«${pdf}» guarda «Docs check sheet.pdf» en Downloads`, `aviso tras «${pdf}»: «${toast.slice(0, 100)}»`);
+  });
+  await claim('feat-eo-docs-6', 'eliminar', {
+    covers: ['Delete asks first'],
+    how: 'En la hoja abierta pulsa el botón que la doc nombra (Delete): debe pedir confirmación, y al confirmar la hoja desaparece de la lista.',
+  }, async ({ doc }) => {
+    const del = doc.bold().find((l) => l === 'Delete');
+    const labels = await buttons();
+    await js(() => document.querySelector('[data-testid="shared-doc-delete"]')?.click());
+    await sleep(800);
+    const asked = await js(() => document.querySelector('[role="dialog"]')?.innerText.replace(/\s+/g, ' ') || '');
+    await js(() => document.querySelector('[data-testid="delete-doc-confirm"]')?.click());
+    await sleep(1200);
+    const gone = !(await screen()).includes('Docs check sheet');
+    return ok(labels.includes(del) && /Docs check sheet/.test(asked) && gone,
+      `«${del}» pide confirmación y quita la hoja`,
+      `botón «${del}»: ${labels.includes(del)}; confirmación: «${asked.slice(0, 80)}»; eliminado: ${gone}`);
+  });
+
   // ── the same mailbox with AI switched off, then back on ──────────────────
   await tab('AI Backend & Models');
   await flip('AI Features');
@@ -1165,7 +1244,7 @@ export default (h) => async function demoCases() {
   const plainHits = await rowCount();
   await search('');
   await view('Calendar');
-  const plainCal = /Calendar account/.test(await screen());
+  const plainCal = await js(() => !!document.querySelector('[aria-label="Calendar account"]'));
   await view('Attachments');
   const plainAtt = /Attachments\s*\(\d+\)/.test(await screen());
   await claim('feat-intro-1', 'buzón sin IA', {
