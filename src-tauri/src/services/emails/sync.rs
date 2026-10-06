@@ -414,6 +414,21 @@ pub async fn sync_account_with_provider(
     let backfill_after_timestamp = plan.backfill_after_timestamp;
     let backfill_before_timestamp = plan.backfill_before_timestamp;
     let incremental_after_timestamp = plan.incremental_after_timestamp;
+    // A backfill from the floor with no ceiling sees the whole inbox; listed
+    // to its end it is what records the one-time gap repair as done.
+    let whole_inbox_listing = lists_whole_inbox(&plan, effective_sync_from(account));
+    let gap_repair_pending = db.get_preference(&inbox_gap_repair_key(account_id))?.is_none();
+    // A first sync lists everything anyway; only an account with stored mail
+    // is being repaired.
+    let repairing_gaps = whole_inbox_listing && gap_repair_pending && plan.run_incremental;
+    if repairing_gaps {
+        emit_account_log(
+            "info",
+            "sync",
+            &account.email,
+            "Checking the whole inbox once for emails earlier syncs missed...",
+        );
+    }
 
     emit_progress(
         account_id,
@@ -497,6 +512,7 @@ pub async fn sync_account_with_provider(
     // the "swept to the floor" watermark below: a run that ingested anything
     // has by definition not finished sweeping.
     let mut saw_new_backfill = false;
+    let mut total_new_backfill: u32 = 0;
     let mut total_new: u32 = 0;
     // Whether the incremental pass stopped at its cap with mail left to list.
     let mut incremental_truncated = false;
@@ -618,9 +634,14 @@ pub async fn sync_account_with_provider(
             .filter(|msg_ref| !existing_ids.contains(&msg_ref.id))
             .collect();
 
-        if new_message_refs.iter().any(|r| backfill_ref_ids.contains(&r.id)) {
+        let new_backfill = new_message_refs
+            .iter()
+            .filter(|r| backfill_ref_ids.contains(&r.id))
+            .count() as u32;
+        if new_backfill > 0 {
             saw_new_backfill = true;
         }
+        total_new_backfill += new_backfill;
 
         let new_count = new_message_refs.len() as u32;
         total_new += new_count;
@@ -952,6 +973,34 @@ pub async fn sync_account_with_provider(
                 &account.email,
                 &format!("Failed to advance backfill watermark: {}", e),
             );
+        }
+    }
+
+    // Every chunk of a whole-inbox listing went through the download loop (an
+    // abort or a listing error returns before this point), so no hole the
+    // provider still holds is left behind: the repair is never needed again.
+    if whole_inbox_listing && backfill_exhausted && gap_repair_pending {
+        match db.set_preference(
+            &inbox_gap_repair_key(account_id),
+            &crate::services::clock::now_secs().to_string(),
+        ) {
+            Ok(()) if repairing_gaps => emit_account_log(
+                "success",
+                "sync",
+                &account.email,
+                &match total_new_backfill {
+                    0 => "Inbox check complete: no emails were missing".to_string(),
+                    1 => "Inbox check complete: recovered 1 email earlier syncs missed".to_string(),
+                    n => format!("Inbox check complete: recovered {n} emails earlier syncs missed"),
+                },
+            ),
+            Ok(()) => {}
+            Err(e) => emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Failed to record the inbox check, it will run again: {e}"),
+            ),
         }
     }
 
@@ -3215,7 +3264,8 @@ pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &s
     );
     plan.incremental_after_timestamp =
         incremental_after_with_resume(plan.incremental_after_timestamp, resume, effective_sync_from);
-    Ok(plan)
+    let repair_done = db.get_preference(&inbox_gap_repair_key(account_id))?.is_some();
+    Ok(apply_inbox_gap_repair(plan, repair_done, effective_sync_from))
 }
 
 /// Preference holding the floor of an inbox incremental window that a sync
@@ -3242,6 +3292,39 @@ pub(super) fn incremental_after_with_resume(
         Some(resume) => planned.min(floor.map_or(resume, |floor| resume.max(floor))),
         None => planned,
     })
+}
+
+/// Preference recording that the account's inbox was listed in full once and
+/// every message missing locally was downloaded (see [`apply_inbox_gap_repair`]).
+fn inbox_gap_repair_key(account_id: &str) -> String {
+    format!("inbox_gap_repair_v1:{account_id}")
+}
+
+/// One-time repair of inbox holes left by versions without the resume floor.
+///
+/// Before `incremental_after_with_resume`, a catch-up with more new mail than
+/// `MAX_INCREMENTAL_EMAILS_PER_SYNC` kept the newest messages and moved the
+/// watermark past the rest, leaving a hole between the stored rows that no
+/// pass revisits: backfill only reaches below the oldest row, incremental only
+/// above the newest. Until the repair is recorded, the backfill window is
+/// widened to the whole inbox (floor → now). That pass is uncapped and sliced,
+/// already-stored ids are skipped, and its mail is treated as history, so it
+/// raises no new-mail notifications.
+pub(super) fn apply_inbox_gap_repair(plan: SyncPlan, repair_done: bool, floor: Option<i64>) -> SyncPlan {
+    match floor {
+        Some(floor) if !repair_done => SyncPlan {
+            backfill_after_timestamp: Some(floor),
+            backfill_before_timestamp: None,
+            ..plan
+        },
+        _ => plan,
+    }
+}
+
+/// Whether the plan's backfill, listed to its end, saw every inbox message the
+/// account's range covers — true for a first sync and for the gap repair.
+pub(super) fn lists_whole_inbox(plan: &SyncPlan, floor: Option<i64>) -> bool {
+    floor.is_some() && plan.backfill_after_timestamp == floor && plan.backfill_before_timestamp.is_none()
 }
 
 /// The account's history floor with the provider default applied: every
@@ -3981,6 +4064,67 @@ mod plan_sync_passes_tests {
             "first sync must skip incremental; the 500-cap would truncate the backfill"
         );
     }
+
+    /// Before the resume floor existed, a catch-up larger than the incremental
+    /// cap left a hole in the middle of the stored inbox that no later sync
+    /// revisits. The one-time repair lists the whole inbox through the uncapped
+    /// backfill pass so the hole is filled.
+    #[test]
+    fn pending_gap_repair_lists_the_whole_inbox() {
+        let plan = plan_sync_passes(Some(0), Some(5_000), Some(1_000), Some(0));
+        assert_eq!(
+            apply_inbox_gap_repair(plan, false, Some(0)),
+            SyncPlan {
+                backfill_after_timestamp: Some(0),
+                backfill_before_timestamp: None,
+                run_incremental: true,
+                incremental_after_timestamp: Some(5_000),
+            }
+        );
+    }
+
+    #[test]
+    fn completed_gap_repair_leaves_the_plan_alone() {
+        let plan = plan_sync_passes(Some(0), Some(5_000), Some(1_000), Some(0));
+        assert_eq!(apply_inbox_gap_repair(plan.clone(), true, Some(0)), plan);
+    }
+
+    #[test]
+    fn gap_repair_lists_from_the_account_floor_not_from_epoch() {
+        let plan = plan_sync_passes(Some(3_000), Some(5_000), Some(3_500), None);
+        let repaired = apply_inbox_gap_repair(plan, false, Some(3_000));
+        assert_eq!(repaired.backfill_after_timestamp, Some(3_000));
+        assert_eq!(repaired.backfill_before_timestamp, None);
+    }
+
+    #[test]
+    fn gap_repair_without_a_floor_does_nothing() {
+        let plan = plan_sync_passes(None, Some(5_000), Some(1_000), None);
+        assert_eq!(apply_inbox_gap_repair(plan.clone(), false, None), plan);
+    }
+
+    /// Only a backfill from the floor with no upper bound sees every inbox
+    /// message; that is what a first sync and the repair both run, and what
+    /// lets the repair be recorded as done.
+    #[test]
+    fn only_an_unbounded_backfill_from_the_floor_lists_the_whole_inbox() {
+        let first_sync = plan_sync_passes(Some(0), None, None, None);
+        assert!(lists_whole_inbox(&first_sync, Some(0)));
+
+        let history_gap = plan_sync_passes(Some(0), Some(5_000), Some(1_000), None);
+        assert!(
+            !lists_whole_inbox(&history_gap, Some(0)),
+            "bounded above by the oldest row"
+        );
+
+        let incremental_only = plan_sync_passes(Some(0), Some(5_000), Some(1_000), Some(0));
+        assert!(!lists_whole_inbox(&incremental_only, Some(0)));
+
+        let repaired = apply_inbox_gap_repair(incremental_only, false, Some(0));
+        assert!(lists_whole_inbox(&repaired, Some(0)));
+
+        assert!(!lists_whole_inbox(&first_sync, None), "no floor, nothing to anchor on");
+    }
 }
 
 #[cfg(test)]
@@ -4050,6 +4194,9 @@ mod sync_anchor_tests {
             .expect("seed sent");
         db.insert_email(&email_in("inbox", "received", 2_000))
             .expect("seed inbox");
+        // The steady-state planner, not the one-time whole-inbox repair.
+        db.set_preference(&inbox_gap_repair_key(&account.id), "1")
+            .expect("mark repair done");
 
         let plan = resolve_sync_plan(&db, &account, &account.id).expect("plan");
 
@@ -4187,6 +4334,162 @@ mod backfill_watermark_persistence_tests {
         assert_eq!(
             stored.sync_from_timestamp, None,
             "sync must not convert the user's 'All mail' into a hard floor"
+        );
+    }
+}
+
+#[cfg(test)]
+mod inbox_gap_repair_tests {
+    use super::*;
+    use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+    fn gmail_account() -> Account {
+        Account {
+            id: "acc-gap".to_string(),
+            provider: "gmail".to_string(),
+            email: "me@example.com".to_string(),
+            name: "Me".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+        }
+    }
+
+    fn inbox_email(id: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: "acc-gap".to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            references: None,
+            subject: format!("subject {id}"),
+            sender: "Someone".to_string(),
+            sender_email: "someone@example.com".to_string(),
+            recipients: vec!["me@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "inbox".to_string(),
+            is_sent: false,
+            is_starred: false,
+            headers: None,
+        }
+    }
+
+    /// A stored inbox with a hole in the middle: the provider holds five
+    /// messages, the local DB only the oldest and the newest — the shape a
+    /// catch-up larger than the incremental cap left behind before the resume
+    /// floor existed.
+    fn db_and_provider_with_a_hole(account: &Account) -> (Arc<Database>, FakeEmailProvider) {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        for (id, ts) in [
+            ("m1", 1_000),
+            ("m2", 2_000),
+            ("m3", 3_000),
+            ("m4", 4_000),
+            ("m5", 5_000),
+        ] {
+            provider.add_message(inbox_email(id, ts), EmailCategory::Primary, vec![]);
+        }
+        db.insert_email(&inbox_email("m1", 1_000)).expect("seed m1");
+        db.insert_email(&inbox_email("m5", 5_000)).expect("seed m5");
+        (db, provider)
+    }
+
+    async fn run_sync(db: &Arc<Database>, account: &Account, provider: FakeEmailProvider) -> Result<()> {
+        let temp = tempfile::tempdir().expect("temp dir");
+        sync_account_with_provider(
+            db,
+            account,
+            temp.path(),
+            None,
+            crate::services::task_queue::TaskQueue::new(1, "test-sync"),
+            Arc::new(Mutex::new(HashMap::new())),
+            Box::new(provider),
+        )
+        .await
+    }
+
+    fn stored(db: &Database, ids: &[&str]) -> std::collections::HashSet<String> {
+        let ids: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+        db.emails_exist_batch(&ids).expect("exists")
+    }
+
+    #[tokio::test]
+    async fn a_hole_in_the_stored_inbox_is_filled_and_the_repair_recorded() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+
+        run_sync(&db, &account, provider).await.expect("sync");
+
+        assert_eq!(stored(&db, &["m2", "m3", "m4"]).len(), 3, "the hole must be downloaded");
+        assert!(
+            db.get_preference(&inbox_gap_repair_key(&account.id))
+                .expect("pref")
+                .is_some(),
+            "a completed repair is recorded so it never lists the whole inbox again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repaired_account_is_not_listed_in_full_again() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+        db.set_preference(&inbox_gap_repair_key(&account.id), "1")
+            .expect("mark done");
+
+        run_sync(&db, &account, provider).await.expect("sync");
+
+        assert!(
+            stored(&db, &["m2", "m3", "m4"]).is_empty(),
+            "with the repair recorded, only the incremental window is listed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_first_sync_counts_as_the_repair() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+        db.connection()
+            .execute("DELETE FROM emails", [])
+            .expect("start from an empty inbox");
+
+        run_sync(&db, &account, provider).await.expect("sync");
+
+        assert!(
+            db.get_preference(&inbox_gap_repair_key(&account.id))
+                .expect("pref")
+                .is_some(),
+            "a first sync already lists the whole inbox; a new account must not list it twice"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_repair_is_not_recorded() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+        provider.fail_message_listing(Some("listing dropped"));
+
+        assert!(run_sync(&db, &account, provider).await.is_err());
+
+        assert!(
+            db.get_preference(&inbox_gap_repair_key(&account.id))
+                .expect("pref")
+                .is_none(),
+            "a repair that did not list to the end must run again next sync"
         );
     }
 }

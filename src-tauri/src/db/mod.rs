@@ -215,6 +215,7 @@ impl Database {
         timed!("run_migrations", db.run_migrations()?);
         timed!("ensure_virtual_tables", db.ensure_virtual_tables()?);
         timed!("populate_fts_if_empty", db.populate_fts_if_empty()?);
+        timed!("index_emails_missing_from_fts", db.index_emails_missing_from_fts()?);
         // Integrity check removed — WAL mode is crash-safe and the check was
         // taking 100+ seconds on large databases, dominating startup time.
         // Corruption will surface as a DB error on the affected query.
@@ -428,6 +429,56 @@ impl Database {
             return Ok(0);
         }
         self.populate_fts_from_emails()
+    }
+
+    /// One-time repair: index every stored email that has no FTS row.
+    ///
+    /// Until 5973f06 the single-row `insert_email` (failed-download retry,
+    /// re-download) skipped the index, and `populate_fts_if_empty` only runs on
+    /// an empty index, so that mail stayed invisible to keyword search and to
+    /// chat's `search_emails` after the fix. The anti-join reads the whole index
+    /// once, so the repair records a marker and later startups skip it.
+    pub fn index_emails_missing_from_fts(&self) -> Result<u32> {
+        const DONE_KEY: &str = "fts_missing_rows_repair_v1";
+        if self.get_preference(DONE_KEY)?.is_some() {
+            return Ok(0);
+        }
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let mut count: u32 = 0;
+        {
+            let mut read_stmt = tx.prepare(
+                "SELECT e.id, e.subject, e.sender, COALESCE(b.body, '')
+                 FROM emails e LEFT JOIN email_bodies b ON b.email_id = e.id
+                 WHERE e.id NOT IN (SELECT email_id FROM emails_fts)",
+            )?;
+            let mut insert_stmt =
+                tx.prepare("INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, ?3, ?4)")?;
+            let mut rows = read_stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let subject: String = row.get(1)?;
+                let sender: String = row.get(2)?;
+                let body: String = row.get(3)?;
+                let body_text = crate::util::html::strip_html_for_fts(&body);
+                insert_stmt.execute(rusqlite::params![id, subject, sender, body_text])?;
+                count += 1;
+            }
+        }
+        tx.execute(
+            "INSERT INTO user_preferences (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![DONE_KEY, count.to_string()],
+        )?;
+        tx.commit()?;
+        if count > 0 {
+            crate::services::logger::log(
+                "info",
+                "system",
+                format!("Search index repaired: {count} email(s) were missing from keyword search"),
+            );
+        }
+        Ok(count)
     }
 
     /// Path to the on-disk SQLite file. Empty for in-memory test databases.
