@@ -221,6 +221,37 @@ describe('useGlobalShortcuts — app shortcuts', () => {
   });
 });
 
+// An Escape the page leaves unhandled goes back to AppKit, and a full-screen
+// window takes it as "leave full screen".
+describe('useGlobalShortcuts — Escape never leaves full screen', () => {
+  it('is consumed even when it has nothing to do', async () => {
+    await render({ layout: 'split' });
+    expect(press('Escape').defaultPrevented).toBe(true);
+  });
+
+  it('is consumed from a text field, with a modal open and with shortcuts off', async () => {
+    await render();
+    expect(press('Escape', {}, el('field')).defaultPrevented).toBe(true);
+    const modal = document.createElement('div');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('data-test-modal', '');
+    document.body.appendChild(modal);
+    expect(press('Escape').defaultPrevented).toBe(true);
+    modal.remove();
+    useShortcutStore.setState({ enabled: false });
+    expect(press('Escape').defaultPrevented).toBe(true);
+  });
+
+  it('still lets a search box with text clear itself', async () => {
+    await render();
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.value = 'invoice';
+    container.appendChild(search);
+    expect(press('Escape', {}, search).defaultPrevented).toBe(false);
+  });
+});
+
 describe('useGlobalShortcuts — when not to fire', () => {
   it('ignores single keys typed into an input or a rich-text editor', async () => {
     await render();

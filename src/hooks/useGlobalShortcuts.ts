@@ -65,6 +65,11 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target.closest('[contenteditable]:not([contenteditable="false"])') !== null;
 }
 
+/** A search box with text, where the browser's own Escape clears it. */
+function isFilledSearchBox(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement && target.type === 'search' && target.value !== '';
+}
+
 /** Enter (or Space) on a focused control belongs to that control. */
 function isActivatingControl(event: KeyboardEvent): boolean {
   if (event.key !== 'Enter' && event.key !== ' ') return false;
@@ -196,7 +201,15 @@ export function useGlobalShortcuts(host: GlobalShortcutHost, options: GlobalShor
     const matcher = createShortcutMatcher(() => nowRef.current());
     const platform = api.currentPlatform();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      // An Escape the page leaves unhandled goes back to AppKit, and a
+      // full-screen window takes it as "leave full screen". Consume every one
+      // that reaches the window (overlays have had theirs by now), except in a
+      // search box with text, whose native Escape clears it.
+      const consumed = event.defaultPrevented;
+      if (event.key === 'Escape' && !event.isComposing && !isFilledSearchBox(event.target)) {
+        event.preventDefault();
+      }
+      if (consumed) return;
       if (!useShortcutStore.getState().enabled) return;
       const editable = isEditableTarget(event.target);
       const id = matcher.match(event, { platform, editable, modalOpen: isOverlayOpen(), scope: 'global' });
