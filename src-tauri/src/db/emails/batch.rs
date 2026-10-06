@@ -254,4 +254,60 @@ mod tests {
             .unwrap();
         assert_eq!(stale, 0, "the superseded body must leave the index");
     }
+
+    fn keyword_hits(db: &Database, term: &str) -> i64 {
+        db.reader()
+            .query_row(
+                "SELECT COUNT(*) FROM emails_fts WHERE emails_fts MATCH ?1",
+                [term],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// Mail stored by versions whose single-row insert skipped the index stays
+    /// unsearchable after the fix: the repair indexes every stored email that
+    /// has no FTS row, with the body stripped of HTML like any other insert.
+    #[test]
+    fn repair_indexes_emails_missing_from_the_search_index() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        db.insert_email(&email_fixture("e1", "acc1", "<p>reconciliation spreadsheet</p>"))
+            .unwrap();
+        db.connection()
+            .execute("DELETE FROM emails_fts WHERE email_id = 'e1'", [])
+            .unwrap();
+
+        assert_eq!(db.index_emails_missing_from_fts().unwrap(), 1);
+
+        assert_eq!(keyword_hits(&db, "reconciliation"), 1);
+        assert_eq!(keyword_hits(&db, "p"), 0, "markup must not be indexed");
+    }
+
+    #[test]
+    fn repair_leaves_already_indexed_emails_alone() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        db.insert_email(&email_fixture("e1", "acc1", "<p>reconciliation spreadsheet</p>"))
+            .unwrap();
+
+        assert_eq!(db.index_emails_missing_from_fts().unwrap(), 0);
+
+        assert_eq!(keyword_hits(&db, "reconciliation"), 1, "no duplicate index rows");
+    }
+
+    /// The scan is not free on a large mailbox, so it runs once per database.
+    #[test]
+    fn repair_runs_once() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        db.index_emails_missing_from_fts().unwrap();
+        db.insert_email(&email_fixture("e1", "acc1", "<p>reconciliation spreadsheet</p>"))
+            .unwrap();
+        db.connection()
+            .execute("DELETE FROM emails_fts WHERE email_id = 'e1'", [])
+            .unwrap();
+
+        assert_eq!(db.index_emails_missing_from_fts().unwrap(), 0);
+    }
 }
