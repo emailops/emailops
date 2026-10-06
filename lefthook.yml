@@ -48,7 +48,7 @@ pre-commit:
       glob: "{docs/site/**/*.md,docs/site/claims.toml,.claude/skills/verify-emailops/scripts/doc_claims*.mjs,scripts/docs_cli_claims.py}"
       run: uv run --no-project scripts/check-docs-claims.py
     docs-scripts-tests:
-      glob: "scripts/{docs_*,check_docs*,check-docs*}.py"
+      glob: "scripts/{docs_*,check_docs*,check-docs*,disk_clean}.py"
       run: uv run --no-project --with pytest pytest -q scripts/tests
     # typecheck, clippy and rustfmt-check run single gates from
     # scripts/gates.sh, which owns the exact CI flags and the Node version
