@@ -8,8 +8,8 @@ worktree's build output once the worktree goes quiet or is deleted.
 
 Usage:
   disk_clean.py report
-      Free space, each build dir (size, days since its last build, checkout or
-      orphan) and the other large consumers on this machine. Read-only.
+      Free space and each build dir (size, days since its last build, checkout
+      or orphan). Read-only.
   disk_clean.py clean [--apply] [--release] [--idle-days N]
       Plan, and with --apply carry out:
         orphan   build dir whose checkout no longer exists -> removed whole
@@ -34,17 +34,6 @@ RELEASE_TRIPLES = ("aarch64-apple-darwin", "x86_64-apple-darwin", "universal-app
 # Directories cargo rewrites on every build that changes something; their mtimes
 # date the last build without walking the whole tree.
 BUILD_MARKERS = ("deps", "incremental", "build", ".fingerprint")
-HOME = Path.home()
-OTHER_CONSUMERS = (
-    HOME / "Library/Application Support/com.emailops.app/models",
-    HOME / ".cache/lm-studio",
-    HOME / ".ollama",
-    HOME / ".cache/huggingface",
-    HOME / ".cache/uv",
-    HOME / "Library/Containers/com.docker.docker",
-    HOME / "Library/Developer/Xcode/DerivedData",
-    HOME / "Library/Developer/CoreSimulator",
-)
 DAY = 86400.0
 
 
@@ -125,10 +114,6 @@ def report():
         idle = "-" if d.last_write is None else f"{(now - d.last_write) / DAY:.0f}d"
         state = "checkout" if d.name in worktrees else "orphan"
         print(f"  {human(size_kb(d.path)):>7}  idle {idle:>4}  {state:<8}  {d.name}")
-    print("\nother large consumers (not touched by clean):")
-    for p in OTHER_CONSUMERS:
-        if p.exists():
-            print(f"  {human(size_kb(p)):>7}  {p}")
 
 
 def remove(action):

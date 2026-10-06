@@ -436,7 +436,7 @@ clean:
 link-target:
 	bash scripts/build_target.sh link
 
-# Build output across every checkout on /Volumes/Build, plus other large consumers (read-only)
+# Free space and build output across every checkout on /Volumes/Build (read-only)
 disk-report:
 	python3 scripts/disk_clean.py report
 
