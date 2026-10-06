@@ -296,6 +296,28 @@ mod tests {
         assert_eq!(keyword_hits(&db, "reconciliation"), 1, "no duplicate index rows");
     }
 
+    /// The recurring check after a sync is scoped to the synced account.
+    #[test]
+    fn account_scan_indexes_only_that_accounts_missing_emails() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        insert_account(&db, "acc2", "other@example.test");
+        db.insert_email(&email_fixture("e1", "acc1", "<p>reconciliation spreadsheet</p>"))
+            .unwrap();
+        db.insert_email(&email_fixture("e2", "acc2", "<p>quarterly forecast</p>"))
+            .unwrap();
+        db.connection().execute("DELETE FROM emails_fts", []).unwrap();
+
+        assert_eq!(db.index_account_emails_missing_from_fts("acc1").unwrap(), 1);
+
+        assert_eq!(keyword_hits(&db, "reconciliation"), 1);
+        assert_eq!(
+            keyword_hits(&db, "forecast"),
+            0,
+            "another account is left to its own check"
+        );
+    }
+
     /// The scan is not free on a large mailbox, so it runs once per database.
     #[test]
     fn repair_runs_once() {
