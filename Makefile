@@ -489,7 +489,8 @@ build-mac: fetch-bundled-models
 	if [ -z "$$APPLE_TEAM_ID" ]; then echo "ERROR: APPLE_TEAM_ID not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE" ]; then echo "ERROR: APPLE_CERTIFICATE not set in .env.signing"; exit 1; fi; \
 	if [ -z "$$APPLE_CERTIFICATE_PASSWORD" ]; then echo "ERROR: APPLE_CERTIFICATE_PASSWORD not set in .env.signing"; exit 1; fi; \
-	npm run tauri -- build --target universal-apple-darwin && \
+	CI=true npm run tauri -- build --target universal-apple-darwin && \
+	bash scripts/dmg_apply_layout.sh && \
 	bash scripts/notarize_mac_dmg.sh
 
 verify-mac:

@@ -62,6 +62,16 @@ else
   spctl -a -t open --context context:primary-signature -vv "$DMG" 2>&1 | indent \
     || fail "Gatekeeper rejected the DMG (run scripts/notarize_mac_dmg.sh)"
   xcrun stapler validate "$DMG" 2>&1 | indent || fail "no notarization ticket stapled to the DMG"
+  # The window layout comes from src-tauri/dmg/layout.DS_Store (see
+  # scripts/dmg_apply_layout.sh); without it Finder opens the DMG unarranged.
+  MNT="$(mktemp -d)"
+  if hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null; then
+    if [ -f "$MNT/.DS_Store" ]; then echo "  ✅ Finder layout (.DS_Store) present"; else fail "the DMG has no Finder layout (.DS_Store)"; fi
+    hdiutil detach "$MNT" >/dev/null || hdiutil detach -force "$MNT" >/dev/null
+  else
+    fail "could not mount the DMG to check its layout"
+  fi
+  rmdir "$MNT" 2>/dev/null || true
 fi
 
 exit "$FAILED"

@@ -3480,3 +3480,19 @@ updating, and for a closed update notification to come back every 24h until they
 and the dialog would trust remote markdown. Translating the CHANGELOG at runtime with the
 local model — slow on first launch and not reviewable. Moving the snooze into the backend
 check — it fetches at most once per 24h, so a snooze measured there would drift up to 48h.
+
+## 2026-10-06 — The macOS DMG layout comes from a tracked .DS_Store, not from Finder at build time
+
+**Decision:** `make build-mac` runs the Tauri build with `CI=true`, so the bundler passes
+`--skip-jenkins` and never sends AppleScript to Finder, then `scripts/dmg_apply_layout.sh`
+copies `src-tauri/dmg/layout.DS_Store` (the window size and icon positions Finder wrote for
+the 0.6.12 DMG) into the DMG before `notarize_mac_dmg.sh` signs and notarizes it.
+`make verify-mac` fails a DMG without the layout.
+**Context:** The developer wants the release skill to build the signed macOS release from a
+background agent session with no one at the keyboard. macOS only lets an app the user granted
+Automation send Apple events to Finder; a background job (parented by launchd) cannot be
+granted it, so `bundle_dmg.sh` failed with `-1743` after notarizing the app.
+**Rejected:** *Skipping the layout* (`CI=true` alone): the DMG opens with the icons unarranged
+and no visual hint to drag the app to Applications. *A DMG tool such as `dmgbuild`*: a new
+dependency to write the same 6 KB file. *Asking the developer to run the build from a
+terminal*: keeps a person in the loop the change exists to remove.
