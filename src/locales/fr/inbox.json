@@ -17,6 +17,7 @@
   "loadingEmail": "Chargement du courriel…",
   "categoriesAria": "Catégories de courriels",
   "allCategories": "Tous",
+  "searchAllCategories": "La recherche couvre toutes les catégories",
   "noEmailSelected": "Aucun courriel sélectionné",
   "selectEmailHint": "Sélectionnez un courriel dans la liste pour l'afficher ici.",
   "categoryFilter": {

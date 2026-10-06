@@ -188,12 +188,16 @@ export function Inbox({
     return CATEGORIES.filter((c) => allowed.has(c.key));
   }, [availableCategories]);
 
+  const searchQuery = useEmailStore((s) => s.searchQuery);
+
   // Active tab selection model:
+  // - "all" while a search is active: search spans every category, and the
+  //   tabs are disabled until it is cleared (the user's pick is kept for then)
   // - "all" when every visible category is selected (or none — treat as "all")
   // - a single category key when exactly that one is selected
   // - falls back to "all" for mixed states (which only happen via legacy persisted prefs)
   const activeTabKey: 'all' | EmailCategory = useMemo(() => {
-    if (visibleCategories.length === 0) return 'all';
+    if (searchQuery || visibleCategories.length === 0) return 'all';
     const allSelected = visibleCategories.every((c) => selectedCategories.has(c.key));
     if (allSelected || selectedCategories.size === 0) return 'all';
     if (selectedCategories.size === 1) {
@@ -201,7 +205,7 @@ export function Inbox({
       if (visibleCategories.some((c) => c.key === only)) return only;
     }
     return 'all';
-  }, [visibleCategories, selectedCategories]);
+  }, [searchQuery, visibleCategories, selectedCategories]);
 
   // Per-account guard: ensures the auto-expand-to-All recovery (see effect below)
   // fires at most once per account per app session, so an explicit user pick
@@ -235,7 +239,6 @@ export function Inbox({
   const allAccounts = useAccountStore((s) => s.accounts);
   const autocompleteAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
   const activeFilter = useFilterStore((s) => s.activeFilter);
-  const searchQuery = useEmailStore((s) => s.searchQuery);
   // Search results mix every account, so they also get a readable chip.
   const showAccountChip = Boolean(searchQuery);
   const getAccountBadge = useMemo(() => {
@@ -555,6 +558,7 @@ export function Inbox({
           <div
             role="tablist"
             aria-label={t('inbox:categoriesAria')}
+            title={searchQuery ? t('inbox:searchAllCategories') : undefined}
             /* Wraps rather than scrolls. `overflow-x-auto` looked fine on a wide
                pane but clipped silently on a narrow one: macOS hides scrollbars,
                so with five or six categories the ones past the fold had no
@@ -565,6 +569,7 @@ export function Inbox({
             {visibleCategories.length > 1 && (
               <CategoryTab
                 isActive={activeTabKey === 'all'}
+                disabled={Boolean(searchQuery)}
                 onClick={() => handleTabClick('all')}
                 activeColor="text-primary-600 border-primary-600"
                 label={t('inbox:allCategories')}
@@ -579,6 +584,7 @@ export function Inbox({
               <CategoryTab
                 key={key}
                 isActive={activeTabKey === key}
+                disabled={Boolean(searchQuery)}
                 onClick={() => handleTabClick(key)}
                 activeColor={activeColor}
                 label={label}
@@ -627,6 +633,8 @@ export function Inbox({
 
 interface CategoryTabProps {
   isActive: boolean;
+  /** Set while a search is active: the search spans every category. */
+  disabled: boolean;
   onClick: () => void;
   /** Tailwind classes applied to text + border-bottom when active. */
   activeColor: string;
@@ -634,14 +642,19 @@ interface CategoryTabProps {
   icon: ReactNode;
 }
 
-function CategoryTab({ isActive, onClick, activeColor, label, icon }: CategoryTabProps) {
+function CategoryTab({ isActive, disabled, onClick, activeColor, label, icon }: CategoryTabProps) {
   return (
     <button
       role="tab"
       aria-selected={isActive}
+      disabled={disabled}
       onClick={onClick}
-      className={`group relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
-        isActive ? `${activeColor} bg-white` : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
+      className={`group relative flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors whitespace-nowrap disabled:cursor-default ${
+        isActive
+          ? `${activeColor} bg-white`
+          : disabled
+            ? 'text-gray-400 border-transparent'
+            : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
       }`}
     >
       <span className={isActive ? '' : 'text-gray-400 group-hover:text-gray-600'}>{icon}</span>

@@ -17,6 +17,7 @@
   "loadingEmail": "E-Mail wird geladen…",
   "categoriesAria": "E-Mail-Kategorien",
   "allCategories": "Alle",
+  "searchAllCategories": "Die Suche umfasst alle Kategorien",
   "noEmailSelected": "Keine E-Mail ausgewählt",
   "selectEmailHint": "Wähle eine E-Mail aus der Liste, um sie hier anzuzeigen.",
   "categoryFilter": {

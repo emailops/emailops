@@ -17,6 +17,7 @@
   "loadingEmail": "Cargando correo…",
   "categoriesAria": "Categorías de correo",
   "allCategories": "Todos",
+  "searchAllCategories": "La búsqueda incluye todas las categorías",
   "noEmailSelected": "Ningún correo seleccionado",
   "selectEmailHint": "Selecciona un correo de la lista para verlo aquí.",
   "categoryFilter": {
