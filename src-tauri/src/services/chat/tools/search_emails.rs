@@ -105,8 +105,25 @@ fn no_match_message(account_email: &str, prefix: &str, parenthetical: Option<&st
 /// The zero-result line for this call, plus a pointer to the calendar when
 /// the account has one: a question about something scheduled searched the
 /// mailbox, found nothing and gave up while the event sat in the calendar.
-fn empty_result(ctx: &ToolCtx<'_>, prefix: &str, parenthetical: Option<&str>) -> String {
+fn empty_result(ctx: &ToolCtx<'_>, prefix: &str, parenthetical: Option<&str>, from: Option<&str>) -> String {
     let mut out = no_match_message(&scoped_account_email(ctx), prefix, parenthetical);
+    // `from` = the user's own address only reaches mail they SENT; a model that
+    // read "billing me" as "from me" otherwise retries the same empty filter.
+    if let Some(from) = from {
+        let own = ctx.db.user_addresses(ctx.account_id).unwrap_or_else(|e| {
+            crate::services::chat::emit_log(
+                "error",
+                &format!("search_emails: listing the user's addresses failed: {e}"),
+            );
+            Vec::new()
+        });
+        if own.iter().any(|a| a.eq_ignore_ascii_case(from.trim())) {
+            out.push_str(
+                " `from` is the user's own address, so only mail the user SENT was searched — \
+to find mail the user received, drop `from` and search again.",
+            );
+        }
+    }
     let has_calendar = ctx.db.get_account(ctx.account_id).ok().flatten().is_some_and(|a| {
         crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
             && ctx.db.calendar_enabled(&a.id).unwrap_or(false)
@@ -703,6 +720,7 @@ showing recent matches without since/until instead)\n",
                                 ctx,
                                 "",
                                 Some("also tried without the date window"),
+                                from_filter,
                             )));
                         }
                         Err(e) => {
@@ -730,7 +748,12 @@ showing recent matches without since/until instead)\n",
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
-                Ok(ToolOutput::text(empty_result(ctx, mode_note.unwrap_or_default(), None)))
+                Ok(ToolOutput::text(empty_result(
+                    ctx,
+                    mode_note.unwrap_or_default(),
+                    None,
+                    from_filter,
+                )))
             }
         }
     }
@@ -805,6 +828,7 @@ impl SearchEmailsTool {
                 ctx,
                 "",
                 Some("semantic search; try other words, or drop a filter"),
+                post.from,
             )));
         }
         let per_email = thread_clean::summary_chars_per_email(kept.len());
@@ -1309,6 +1333,35 @@ different one)"
             "empty result must name the mailbox it searched: {}",
             out.text
         );
+    }
+
+    /// "how much was the vendor billing me" set `from` to the user's own
+    /// address, found nothing and retried the same filter: the empty result
+    /// must say that `from` = the user only searches mail they SENT.
+    #[tokio::test]
+    async fn zero_results_with_the_user_as_sender_say_only_sent_mail_was_searched() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'imap', 'me@acme.com', 'Test', 0)",
+                [],
+            )
+            .unwrap();
+        let categories: Vec<String> = Vec::new();
+        let ctx = ToolCtx {
+            db: &db,
+            account_id: "acct",
+            categories: &categories,
+            page: None,
+        };
+        for (from, expect_hint) in [("Me@Acme.com", true), ("vendor@example.com", false)] {
+            let out = SearchEmailsTool
+                .execute(&ctx, json!({"from": from, "query": "invoice", "limit": 5}))
+                .await
+                .expect("tool ran");
+            assert_eq!(out.text.contains("drop `from`"), expect_hint, "{from}: {}", out.text);
+        }
     }
 
     /// "cuándo es la demo del sprint" searched the mailbox, found nothing and
