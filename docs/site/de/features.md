@@ -170,6 +170,12 @@ Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Ra
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 **Einstellungen → Kalender**.
 
+<!-- claim:feat-calendar-3 -->
+Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
+**Meeting-Titel in Benachrichtigungen anzeigen** unter **Einstellungen → Kalender**: Sie
+können auf dem Sperrbildschirm und in der Mitteilungszentrale erscheinen, außerhalb der
+App-Sperre. Die Erinnerung in EmailOps zeigt immer das vollständige Meeting.
+
 ## Anhänge-Ansicht {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->

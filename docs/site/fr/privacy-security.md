@@ -42,6 +42,12 @@ le magasin d'identifiants du système : Trousseau macOS, Gestionnaire d'identifi
 ou un trousseau Secret Service sous Linux. Ils ne sont jamais écrits dans un fichier de
 configuration et survivent à la désinstallation de l'application.
 
+<!-- claim:priv-where-data-7 -->
+Supprimer un compte Gmail révoque aussi l'accès d'EmailOps chez Google ; en cas d'échec, le
+journal indique où le retirer à la main. Microsoft ne permet pas à une app de révoquer son
+propre accès : supprimer un compte Outlook vous renvoie donc vers les pages Microsoft où
+retirer EmailOps vous-même.
+
 ## Il n'y a pas de serveur EmailOps
 
 <!-- claim:priv-there-no-1 -->
@@ -167,6 +173,11 @@ base de données. Quiconque a accès à votre session déverrouillée et au rép
 peut lire le fichier SQLite directement. Si cela fait partie de votre modèle de menace,
 utilisez le chiffrement intégral du disque — FileVault sur macOS, BitLocker sur Windows, LUKS
 sur Linux — c'est l'outil approprié.
+
+<!-- claim:priv-locking-app-3 -->
+Les essais erronés sont freinés : après cinq mots de passe incorrects, l'écran de
+verrouillage attend 30 secondes avant d'en accepter un autre, puis le double à chaque fois
+jusqu'à 15 minutes, et redémarrer l'app ne remet pas le compteur à zéro.
 
 ## Vérifier tout cela
 

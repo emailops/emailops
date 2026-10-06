@@ -1806,6 +1806,20 @@ pub struct CreateTaskRequest {
 mod tests {
     use super::*;
 
+    /// The demo mailbox seeds a saved chat whose trace is this fixture
+    /// (`scripts/generate_demo_db.py`); the docs check opens its reasoning
+    /// panel. A round trip, not just a parse: serde drops a field it no longer
+    /// knows, so a renamed one would load silently and render nothing.
+    #[test]
+    fn the_demo_chat_trace_fixture_round_trips_through_chat_trace() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../scripts/demo_fixtures/chat_reasoning_en.json")).unwrap();
+        let trace = fixture["trace"].clone();
+        let parsed: ChatTrace = serde_json::from_value(trace.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), trace);
+        assert!(!parsed.steps.is_empty(), "the reasoning panel walks `steps`");
+    }
+
     #[test]
     fn chat_phase_serializes_as_camel_case_strings() {
         // The frontend `ChatPhase` union and the i18n `chat:processing.*` keys

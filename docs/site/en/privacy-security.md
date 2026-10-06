@@ -40,6 +40,12 @@ second profile, or an encrypted volume.
 store: macOS Keychain, Windows Credential Manager, or a Secret Service keyring on Linux. They
 are never written to a config file, and they survive uninstalling the app.
 
+<!-- claim:priv-where-data-7 -->
+Removing a Gmail account also revokes EmailOps' access at Google; if that fails, the log
+says where to remove it by hand. Microsoft does not let an app revoke its own access, so
+removing an Outlook account points you to the Microsoft pages where you remove EmailOps
+yourself.
+
 ## There is no EmailOps server
 
 <!-- claim:priv-there-no-1 -->
@@ -156,6 +162,11 @@ Be clear about what this does: it locks the application, it does **not** encrypt
 database. Anyone with access to your unlocked user account and the data directory can read
 the SQLite file directly. If that is part of your threat model, use full-disk encryption —
 FileVault on macOS, BitLocker on Windows, LUKS on Linux — which is the right tool for it.
+
+<!-- claim:priv-locking-app-3 -->
+Wrong guesses are throttled: after five wrong attempts the lock screen waits 30 seconds
+before accepting another, doubling each time up to 15 minutes, and restarting the app does
+not reset the count.
 
 ## Auditing any of this
 

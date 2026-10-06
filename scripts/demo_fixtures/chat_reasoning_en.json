@@ -1,0 +1,143 @@
+{
+  "question": "What did Marisol say about the production bug?",
+  "answer": "Marisol says the orders stuck in 'processing' are [moving again](email://{EMAIL_ID}), and she thanks you for the fast turnaround.",
+  "excerpt": "Thank you — they're moving again. Appreciate the fast turnaround.",
+  "trace": {
+    "llmCalls": [
+      {
+        "cachedPromptTokens": 2430,
+        "failed": false,
+        "kind": "planner",
+        "latencyMs": 10476,
+        "output": "planner: search",
+        "prefillMs": 5868,
+        "prefixPlan": "Reseed",
+        "promptTokens": 2452,
+        "round": -2,
+        "toolCallsRequested": 0
+      },
+      {
+        "cachedPromptTokens": 0,
+        "droppedFrontTokens": 0,
+        "failed": false,
+        "input": "(the prompt is left out of the demo fixture)",
+        "kind": "tool_round",
+        "latencyMs": 22827,
+        "output": "<tool_call>{\"arguments\":{\"name\":\"get_email_body\",\"arguments\":{\"email_id\":\"{EMAIL_ID}\"}}</tool_call>",
+        "prefillMs": 21753,
+        "prefixPlan": "Extend",
+        "promptChars": 35627,
+        "promptTokens": 8574,
+        "round": 0,
+        "stableTokens": 8567,
+        "sysCachedAfter": 8086,
+        "sysCachedBefore": 0,
+        "systemPrefixTokens": 8086,
+        "toolCallsRequested": 0
+      },
+      {
+        "cachedPromptTokens": 8567,
+        "droppedFrontTokens": 0,
+        "failed": false,
+        "input": "(the prompt is left out of the demo fixture)",
+        "kind": "final_stream",
+        "latencyMs": 3794,
+        "output": "Marisol says the orders stuck in 'processing' are [moving again](email://{EMAIL_ID}), and she thanks you for the fast turnaround.",
+        "prefillMs": 485,
+        "prefixPlan": "Extend",
+        "promptTokens": 8719,
+        "round": -1,
+        "stableTokens": 8712,
+        "sysCachedAfter": 8086,
+        "sysCachedBefore": 8086,
+        "systemPrefixTokens": 8086,
+        "toolCallsRequested": 0
+      }
+    ],
+    "llmStreamingMs": 3794,
+    "model": "qwen3.5-4b-q4_k_m",
+    "route": {
+      "classifier": "planner",
+      "matchedKeywords": [],
+      "mode": "tools_first",
+      "reason": "planner turned the question into a search filter"
+    },
+    "searchPage": {
+      "args": {
+        "from": "Marisol",
+        "include_bodies": true,
+        "limit": 25,
+        "mode": "semantic",
+        "query": "production bug"
+      },
+      "nextOffset": 0,
+      "total": 0
+    },
+    "steps": [
+      {
+        "type": "route"
+      },
+      {
+        "cacheAction": {
+          "detail": "one-shot slot: instructions decoded",
+          "kind": "cold-fresh"
+        },
+        "index": 0,
+        "kvCache": {
+          "cached": 2430,
+          "pct": 99,
+          "total": 2452
+        },
+        "type": "llm"
+      },
+      {
+        "index": 0,
+        "type": "tool"
+      },
+      {
+        "cacheAction": {
+          "detail": "extended seq 0 · anchor seeded for the first time (8086 tok)",
+          "kind": "cold-fresh"
+        },
+        "index": 1,
+        "kvCache": {
+          "cached": 0,
+          "pct": 0,
+          "total": 8574
+        },
+        "type": "llm"
+      },
+      {
+        "cacheAction": {
+          "detail": "extended seq 0 · anchor unchanged (8086 tok)",
+          "kind": "extend"
+        },
+        "index": 2,
+        "kvCache": {
+          "cached": 8567,
+          "pct": 98,
+          "total": 8719
+        },
+        "type": "llm"
+      }
+    ],
+    "toolCalls": [
+      {
+        "arguments": {
+          "from": "Marisol",
+          "include_bodies": true,
+          "limit": 25,
+          "mode": "semantic",
+          "query": "production bug"
+        },
+        "elapsedMs": 27,
+        "name": "search_emails",
+        "resultChars": 716,
+        "resultPreview": "(semantic search — ranked by relevance to the query, not by date)\n(no email carries the intent/topic asked for; the 1 rows below match every other filter and are shown instead — each email stores only ONE intent, so the tag may simply be a different one)\n(messages=N: the row is the latest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n## Primary (1)\n- id={EMAIL_ID} thread_id={THREAD_ID} from=\"Marisol Vega <marisol@farologistics.com>\" subject=\"Re: Production bug: orders stuck in 'processing'\" date=2026-10-04 messages=3\n  body:\nThank you — they're moving again. Appreciate the fast turnaround.\n",
+        "round": -1
+      }
+    ],
+    "toolLoopMs": 22856,
+    "totalElapsedMs": 37133
+  }
+}

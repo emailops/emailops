@@ -153,6 +153,12 @@ colleague shared with you shows up here the same way it does in Google or Outloo
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
 
+<!-- claim:feat-calendar-3 -->
+System notifications for a reminder leave the meeting title out unless you turn on
+**Show the meeting title in notifications** in **Settings → Calendar**: they can appear on
+the lock screen and in Notification Center, outside the app's lock. The reminder inside
+EmailOps always shows the full meeting.
+
 ## Attachments view {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->

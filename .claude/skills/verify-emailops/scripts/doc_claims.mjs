@@ -536,6 +536,16 @@ async function afterWizard() {
     const options = ['Fade it in the list', 'Keep it out of the inbox'].filter((o) => !junk.includes(o));
     return ok(![...tabs, ...options].length, 'los ajustes de la página están disponibles sin IA', `sin IA falta: ${[...tabs, ...options].join(', ')}`);
   }, 'Either expose these settings without AI, or say on this page which need AI switched on.');
+  await claim('feat-calendar-3', 'título oculto en notificaciones', {
+    covers: ['System notifications for a reminder leave the meeting title out unless you turn on Show the meeting title in notifications in Settings → Calendar'],
+    partial: 'aquí se ve el valor de fábrica del interruptor; que la notificación del sistema omita el título lo prueban los tests de services::calendar::notify',
+    how: 'Lee de la doc la etiqueta del interruptor y, en una instalación nueva, comprueba en Ajustes → Calendar que existe y está apagado.',
+  }, async ({ doc }) => {
+    const label = doc.bold()[0];
+    await tab(doc.match(/Settings → (\w+)/)[1]);
+    const state = (await toggles())[label];
+    return ok(state === false, `«${label}» apagado de fábrica`, `estado de «${label}»: ${state}`);
+  });
   await tab('Appearance');
   await claim('feat-interface-1', 'idiomas y diseño', {
     covers: ['Split or full-width inbox layout, and a UI available in English, Spanish, French and German.'], proof: 'label',
