@@ -52,7 +52,9 @@
     "blank": "(Leer)",
     "filteredRows": "{{shown}} von {{total}} Zeilen angezeigt",
     "resizeColumn": "Ziehen, um die Breite von Spalte {{col}} zu ändern",
-    "insertRowAbove": "Zeile darüber einfügen"
+    "insertRowAbove": "Zeile darüber einfügen",
+    "basicsNotice": "Tabellen sind vorerst einfach gehalten: Text, Zahlen und die Formeln SUM, AVERAGE, MIN, MAX und COUNT. Formatierung, Diagramme und weitere Funktionen gibt es noch nicht.",
+    "basicsNoticeClose": "Verstanden"
   },
   "toolbar": {
     "bold": "Fett",

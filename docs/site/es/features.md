@@ -222,6 +222,10 @@ Una celda que empieza por `=` es una fórmula: `SUMA`, `PROMEDIO`, `MIN`, `MAX` 
 los rangos siguen apuntando a las mismas celdas. El botón de filtro de la cabecera de una
 columna oculta las filas que desmarcas; los filtros solo cambian tu vista.
 
+<!-- claim:feat-eo-docs-9 -->
+Por ahora las hojas son básicas: texto, números y esas fórmulas, todavía sin formato, gráficos
+ni otras funciones. Una nota encima de cada hoja lo recuerda hasta que la cierras.
+
 <!-- claim:feat-eo-docs-8 -->
 Si dos personas cambian la misma celda antes de ver el cambio de la otra, todas las copias se
 quedan con el mismo de los dos valores. La celda queda marcada, un aviso dice qué valor se

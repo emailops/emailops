@@ -52,7 +52,9 @@
     "blank": "(Blank)",
     "filteredRows": "Showing {{shown}} of {{total}} rows",
     "resizeColumn": "Drag to resize column {{col}}",
-    "insertRowAbove": "Insert row above"
+    "insertRowAbove": "Insert row above",
+    "basicsNotice": "Sheets are basic for now: text, numbers and the formulas SUM, AVERAGE, MIN, MAX and COUNT. No formatting, charts or other functions yet.",
+    "basicsNoticeClose": "Got it"
   },
   "toolbar": {
     "bold": "Bold",

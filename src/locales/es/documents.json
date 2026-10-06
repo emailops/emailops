@@ -52,7 +52,9 @@
     "blank": "(Vacías)",
     "filteredRows": "Mostrando {{shown}} de {{total}} filas",
     "resizeColumn": "Arrastra para cambiar el ancho de la columna {{col}}",
-    "insertRowAbove": "Insertar fila encima"
+    "insertRowAbove": "Insertar fila encima",
+    "basicsNotice": "Las hojas son básicas por ahora: texto, números y las fórmulas SUMA, PROMEDIO, MIN, MAX y CONTAR. Todavía no hay formato, gráficos ni otras funciones.",
+    "basicsNoticeClose": "Entendido"
   },
   "toolbar": {
     "bold": "Negrita",

@@ -23,6 +23,7 @@ import {
   setColumnWidth,
   sheetUndoManager,
 } from '@/lib/sheetModel';
+import { SheetBasicsNotice } from './SheetBasicsNotice';
 
 interface SheetEditorProps {
   doc: Y.Doc;
@@ -287,6 +288,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
 
   return (
     <div ref={rootRef} onKeyDown={onKeyDown} className="flex-1 min-h-0 overflow-auto p-4" data-testid="shared-sheet">
+      <SheetBasicsNotice />
       <div className="mb-2 flex items-center gap-3 min-h-6">
         {editable && (
           <div className="flex gap-1">

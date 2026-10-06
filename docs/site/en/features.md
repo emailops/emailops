@@ -207,6 +207,10 @@ A sheet cell that starts with `=` is a formula: `SUM`, `AVERAGE`, `MIN`, `MAX` a
 rows keeps the ranges pointing at the same cells. The filter button on a column header hides
 the rows you untick; filters only change your own view.
 
+<!-- claim:feat-eo-docs-9 -->
+Sheets are basic for now: text, numbers and those formulas, with no formatting, charts or other
+functions yet. A note above each sheet says so until you close it.
+
 <!-- claim:feat-eo-docs-8 -->
 When two people change the same cell before either has seen the other's change, every copy
 keeps the same one of the two values. The cell is then marked, a notice names the value that
