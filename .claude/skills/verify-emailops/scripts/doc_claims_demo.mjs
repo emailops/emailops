@@ -1203,6 +1203,19 @@ export default (h) => async function demoCases() {
     const shownValue = await js((q) => document.querySelector(q)?.value, cell(2));
     return ok(shownValue === '5', `=${fn}(A1:A2) muestra ${shownValue}`, `=${fn}(A1:A2) muestra «${shownValue}», no 5`);
   });
+  await claim('feat-eo-docs-9', 'nota de hojas básicas', {
+    covers: ['A note above each sheet says so until you close it.'],
+    partial: 'que no vuelva tras cerrarla se prueba en SheetBasicsNotice.test.tsx',
+    how: 'En la hoja recién creada lee la nota que hay encima de la rejilla: debe nombrar las cinco fórmulas que la doc lista; pulsa su botón de cerrar y comprueba que desaparece.',
+  }, async ({ doc }) => {
+    doc.match(/A note above each sheet says so until you close it/);
+    const note = await js(() => document.querySelector('[data-testid="sheet-basics-notice"]')?.innerText || '');
+    const missing = ['SUM', 'AVERAGE', 'MIN', 'MAX', 'COUNT'].filter((f) => !note.includes(f));
+    await js(() => document.querySelector('[data-testid="sheet-basics-notice-close"]')?.click());
+    await sleep(500);
+    const gone = await js(() => !document.querySelector('[data-testid="sheet-basics-notice"]'));
+    return ok(note && !missing.length && gone, 'la nota nombra las fórmulas y se cierra', `nota: «${note.slice(0, 80)}»; faltan: ${missing.join(', ')}; cerrada: ${gone}`);
+  });
   await claim('feat-eo-docs-6', 'PDF', {
     covers: ['Export PDF saves the document as a PDF in your Downloads folder.'],
     how: 'En la hoja abierta pulsa el botón que la doc nombra (Export PDF): debe aparecer el aviso de que se guardó «Docs check sheet.pdf» en Downloads.',

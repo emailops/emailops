@@ -18,8 +18,9 @@ No unreleased changes yet.
   travels as an ordinary email and each copy merges what arrives. Folders,
   change history, search, undo/redo, sheet formulas (`SUM`, `AVERAGE`, `MIN`,
   `MAX`, `COUNT`) and filters, import from Word and Excel, save as PDF, and
-  **From EO Docs** in the composer to attach and share a document. Turn it off
-  in **Settings → EO Docs**.
+  **From EO Docs** in the composer to attach and share a document. Sheets are
+  basic for now, and a note above each sheet says so until you close it. Turn
+  it off in **Settings → EO Docs**.
 - **Archive, star and mark as unread**, from the reading pane, the row menu
   and the list, written back to Gmail, Outlook and IMAP. **Starred** and
   **Archive** views in the sidebar.

@@ -607,6 +607,11 @@ checks = [
   { manual = 'Reference shifting and column filters are covered by src/lib/sheetFormula.test.ts, sheetModel.test.ts and SheetEditor.test.tsx (vitest).', covers = ["Inserting or deleting rows keeps the ranges pointing at the same cells.", "The filter button on a column header hides the rows you untick; filters only change your own view."] },
 ]
 
+[feat-eo-docs-9]
+checks = [
+  { app = true },
+]
+
 [feat-eo-docs-8]
 checks = [
   { tests = ['services::shared_docs::crdt::tests::a_merged_state_keeps_the_value_a_concurrent_write_replaced'], covers = ["every copy keeps the same one of the two values"] },

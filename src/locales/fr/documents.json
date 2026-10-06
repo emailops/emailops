@@ -52,7 +52,9 @@
     "blank": "(Vides)",
     "filteredRows": "{{shown}} lignes sur {{total}} affichées",
     "resizeColumn": "Faites glisser pour redimensionner la colonne {{col}}",
-    "insertRowAbove": "Insérer une ligne au-dessus"
+    "insertRowAbove": "Insérer une ligne au-dessus",
+    "basicsNotice": "Les feuilles sont basiques pour l'instant : texte, nombres et les formules SUM, AVERAGE, MIN, MAX et COUNT. Pas encore de mise en forme, de graphiques ni d'autres fonctions.",
+    "basicsNoticeClose": "Compris"
   },
   "toolbar": {
     "bold": "Gras",

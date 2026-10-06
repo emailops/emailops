@@ -230,6 +230,11 @@ Une cellule qui commence par `=` est une formule : `SUM`, `AVERAGE`, `MIN`, `MAX
 lignes garde les plages sur les mêmes cellules. Le bouton de filtre d'un en-tête de colonne masque
 les lignes que vous décochez ; les filtres ne changent que votre propre vue.
 
+<!-- claim:feat-eo-docs-9 -->
+Les feuilles sont basiques pour l'instant : texte, nombres et ces formules, sans mise en forme,
+graphiques ni autres fonctions. Une note au-dessus de chaque feuille le rappelle jusqu'à ce que
+vous la fermiez.
+
 <!-- claim:feat-eo-docs-8 -->
 Quand deux personnes modifient la même cellule avant d'avoir vu la modification de l'autre,
 toutes les copies gardent la même des deux valeurs. La cellule est alors signalée, un avis indique

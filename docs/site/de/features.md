@@ -227,6 +227,10 @@ Eine Zelle, die mit `=` beginnt, ist eine Formel: `SUM`, `AVERAGE`, `MIN`, `MAX`
 von Zeilen zeigen die Bereiche weiter auf dieselben Zellen. Die Filterschaltfläche im Spaltenkopf
 blendet die Zeilen aus, deren Haken Sie entfernen; Filter ändern nur Ihre eigene Ansicht.
 
+<!-- claim:feat-eo-docs-9 -->
+Tabellen sind vorerst einfach gehalten: Text, Zahlen und diese Formeln, noch ohne Formatierung,
+Diagramme oder weitere Funktionen. Ein Hinweis über jeder Tabelle sagt das, bis Sie ihn schließen.
+
 <!-- claim:feat-eo-docs-8 -->
 Ändern zwei Personen dieselbe Zelle, bevor sie die Änderung der anderen gesehen haben, behalten
 alle Kopien denselben der beiden Werte. Die Zelle wird dann markiert, ein Hinweis nennt den
