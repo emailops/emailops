@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
-import { isEmailDrag, readEmailDragPayload } from '@/lib/emailDrag';
+import { isEmailDrag, planEmailDrop, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
 import { folderLabel } from '@/lib/folderDisplay';
@@ -17,6 +17,7 @@ import { useLensStore } from '@/stores/lensStore';
 import { useLogStore } from '@/stores/logStore';
 import { useMemoryStore } from '@/stores/memoryStore';
 import { useOverlay } from '@/stores/overlayStore';
+import { useSelectionStore } from '@/stores/selectionStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import type { Account, ActiveFilter, SmartFilter } from '@/types';
 import { FeedbackMenu } from './FeedbackMenu';
@@ -192,6 +193,8 @@ export function Sidebar({
   // stays until the user actually upgrades (store self-heals post-upgrade).
   const availableUpdate = useUpdateStore((s) => s.available);
   const moveEmail = useEmailStore((s) => s.moveEmail);
+  const moveEmailsToMailbox = useEmailStore((s) => s.moveEmailsToMailbox);
+  const clearSelection = useSelectionStore((s) => s.clear);
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -267,10 +270,19 @@ export function Sidebar({
     e.preventDefault();
     setDragOverTarget(null);
     if (!activeAccount || !isImapAccount) return;
-    const payload = readEmailDragPayload(e.dataTransfer);
-    if (!payload || payload.accountId !== activeAccount.id || payload.mailbox === targetMailbox) return;
+    const plan = planEmailDrop(readEmailDragPayload(e.dataTransfer), activeAccount.id, targetMailbox);
+    if (plan.kind === 'ignore') return;
+    if (plan.kind === 'bulk') {
+      // Several checked emails dragged together: the bulk move takes them out
+      // of the list, reports partial failures itself (log + toast) and puts
+      // the failed rows back. The selection leaves with the rows, as it does
+      // for the bulk toolbar's Move.
+      clearSelection();
+      await moveEmailsToMailbox(activeAccount.id, plan.emailIds, targetMailbox);
+      return;
+    }
     try {
-      await moveEmail(activeAccount.id, payload.emailId, targetMailbox);
+      await moveEmail(activeAccount.id, plan.emailId, targetMailbox);
       addLog('success', 'sync', t('sidebar:folderActions.movedTo', { name: targetLabel }));
     } catch (err) {
       addLog('error', 'sync', errorText(err));
