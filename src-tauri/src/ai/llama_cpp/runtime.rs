@@ -268,7 +268,7 @@ pub fn set_backends_dir(dir: PathBuf) {
 #[cfg(feature = "dynamic-backends")]
 fn load_dynamic_backends() {
     let bundled = BACKENDS_DIR.get().map(PathBuf::as_path);
-    match crate::ai::gpu_plan::resolve_backends_dir(bundled, llama_cpp_2::llama_backend::BACKENDS_DIR, |p| p.is_dir()) {
+    match crate::ai::gpu_plan::resolve_backends_dir(bundled, llama_cpp_sys_2::BACKENDS_DIR, |p| p.is_dir()) {
         Some(dir) => {
             llama_cpp_2::llama_backend::load_backends_from_path(&dir);
             crate::services::logger::log(
