@@ -7,16 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.13] — 2026-10-05
+
 ### Added
 
+- **EO Docs (experimental, on by default).** Write documents and spreadsheets
+  together with other EmailOps users with no cloud in between: every change
+  travels as an ordinary email and each copy merges what arrives. Folders,
+  change history, search, undo/redo, sheet formulas (`SUM`, `AVERAGE`, `MIN`,
+  `MAX`, `COUNT`) and filters, import from Word and Excel, save as PDF, and
+  **From EO Docs** in the composer to attach and share a document. Turn it off
+  in **Settings → EO Docs**.
+- **Archive, star and mark as unread**, from the reading pane, the row menu
+  and the list, written back to Gmail, Outlook and IMAP. **Starred** and
+  **Archive** views in the sidebar.
+- **Multi-select and bulk actions.** Tick rows to archive, snooze, delete,
+  mark as read or unread, star or move them at once; archive and delete show
+  **Undo** for 6 seconds. The next conversation opens after archiving,
+  deleting or snoozing (configurable in **Settings → Appearance**).
+- **Snooze** a conversation until later today, tomorrow, this weekend, next
+  week or a date you pick; it comes back to the top of the inbox, unread.
+- **Undo send and scheduled send.** Sent mail waits a few seconds with
+  **Undo** (configurable, 10 s by default); **Schedule send** queues it for
+  later. Waiting messages are listed under **Scheduled**.
+- **Per-account signatures** in every composer, with images and **Import from
+  Gmail**. AI drafts leave the sign-off to the signature.
+- **One-click unsubscribe and block sender.** Blocked senders are listed in
+  **Settings → Junk → Blocked senders**.
+- **Desktop notifications for new mail**, per account, with an option to hide
+  the sender and subject.
+- **Keyboard shortcuts** following Gmail's, with a `?` overlay listing them;
+  toolbar tooltips show each action's key.
+- **OpenRouter chat** with streaming and tool calls, a context budget for
+  remote models, and an OpenRouter embedding model for semantic search.
 - **What's new after an update.** The first time you open EmailOps after
-  updating, a dialog shows the release notes in your language (English,
-  Spanish, French or German).
+  updating, a dialog shows the release notes in your language.
 
 ### Changed
 
+- **Read state and deletions sync both ways with IMAP and Outlook**, and
+  Gmail changes are followed through the History API.
+- **The chat prompt fits the context window**, so long conversations no
+  longer overflow small local models.
+- **The AI backend is changed in Settings only**, and EmailOps asks before
+  a change that would stop AI work in progress or re-index your mail.
+- **Tables and safe inline styles survive** the compose editor and outgoing
+  HTML.
+- **Large Outlook attachments** upload through upload sessions.
 - **The update notice comes back.** Closing the "new version available"
   notice hides it for 24 hours; it returns until you install the update.
+
+### Security
+
+- **Attachments that can run code ask for confirmation** before opening, and
+  saved attachments carry the system's quarantine flag.
+- **Commands that act on a record by id check it belongs to the account**,
+  including the outbox, so one account can never send another's draft.
+- **Draft HTML is sanitized** on save and before sending; remote background
+  images stay blocked while remote content is off.
+- **The data folder is readable by your user only**, account credentials are
+  wiped from memory after use, and meeting reminders show the title only if
+  you opt in.
+
+### Fixed
+
+- **Mail is never re-sent** after a provider error, and a draft with unsaved
+  edits is never dropped on sync.
+- **IMAP sync**: the `\Seen` flag maps to read state, mail is re-keyed when a
+  folder's UIDVALIDITY changes, IDLE reconnects and catches up, and truncated
+  sync windows finish.
+- **Archived mail stays in sender, domain and tag filters**, and tag counts
+  exclude junk like the list does.
+- **The chat and research honour Cancel** at every step, and the embedded AI
+  recovers if its inference thread dies.
+- **Search** handles operators, symbol-only keywords and same-second ties
+  correctly.
+- **"What was this vendor billing me?"** finds the invoice: when the chat
+  filters by your own address as the sender, it is told that only searched
+  mail you sent, and searches again without it.
 
 ## [0.6.12] — 2026-09-29
 

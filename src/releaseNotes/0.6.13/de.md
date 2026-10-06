@@ -1,0 +1,18 @@
+### Neu
+
+- **EO Docs (experimentell).** Schreiben Sie Dokumente und Tabellen gemeinsam mit anderen EmailOps-Nutzern, ohne Cloud dazwischen: Änderungen reisen als gewöhnliche E-Mails. Deaktivieren unter **Einstellungen → EO Docs**.
+- **Archivieren, mit Stern markieren, zurückstellen und Massenaktionen.** Wählen Sie mehrere Unterhaltungen aus und bearbeiten Sie alle auf einmal, mit **Rückgängig**. Archiv, Stern und Lesestatus werden an Ihren E-Mail-Anbieter zurückgeschrieben.
+- **Senden rückgängig machen und geplantes Senden.** Holen Sie eine Nachricht einige Sekunden nach dem Senden zurück oder planen Sie sie für später.
+- **Signaturen pro Konto**, mit Bildern, sowie **Abbestellen** mit einem Klick und **Absender blockieren**.
+- **Desktop-Benachrichtigungen** für neue E-Mails und **Tastenkürzel** – drücken Sie `?`, um sie zu sehen.
+- **OpenRouter-Chat** mit Tool-Aufrufen und OpenRouter-Embeddings für die semantische Suche.
+
+### Datenschutz und Sicherheit
+
+- Anhänge, die Code ausführen können, fragen vor dem Öffnen nach.
+- Der Datenordner ist nur für Ihren Benutzer lesbar, und das HTML von Entwürfen wird vor dem Senden bereinigt.
+
+### Korrekturen
+
+- E-Mails werden nach einem Anbieterfehler nie erneut gesendet, und der IMAP-Lesestatus bleibt synchron.
+- Archivierte E-Mails bleiben in Absender-, Domain- und Tag-Filtern.

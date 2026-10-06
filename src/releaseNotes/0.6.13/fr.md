@@ -1,0 +1,18 @@
+### Nouveautés
+
+- **EO Docs (expérimental).** Rédigez des documents et des feuilles de calcul avec d'autres utilisateurs d'EmailOps, sans cloud intermédiaire : les modifications voyagent comme des e-mails ordinaires. Désactivez-le dans **Paramètres → EO Docs**.
+- **Archiver, ajouter aux favoris, reporter et actions groupées.** Sélectionnez plusieurs conversations et agissez sur toutes à la fois, avec **Annuler**. L'archivage, les favoris et l'état de lecture sont répercutés chez votre fournisseur de messagerie.
+- **Annulation d'envoi et envoi programmé.** Récupérez un message pendant quelques secondes après l'envoi, ou programmez-le pour plus tard.
+- **Signatures par compte**, avec images, **désabonnement** en un clic et **Bloquer l'expéditeur**.
+- **Notifications de bureau** pour les nouveaux messages et **raccourcis clavier** : appuyez sur `?` pour les voir.
+- **Chat OpenRouter** avec appels d'outils, et Embeddings OpenRouter pour la recherche sémantique.
+
+### Confidentialité et sécurité
+
+- Les pièces jointes pouvant exécuter du code demandent confirmation avant de s'ouvrir.
+- Le dossier de données n'est lisible que par votre utilisateur, et le HTML des brouillons est nettoyé avant l'envoi.
+
+### Corrections
+
+- Un message n'est jamais renvoyé après une erreur du fournisseur, et l'état de lecture IMAP reste synchronisé.
+- Les messages archivés restent dans les filtres par expéditeur, domaine et étiquette.
