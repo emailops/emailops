@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { Email } from '@/types';
 import tauriConf from '../../src-tauri/tauri.conf.json';
 import {
   allowEmailDragOver,
   buildDragPreview,
   EMAIL_DRAG_MIME,
-  emailIdsToDrag,
+  emailsToDrag,
   ignoreEmailDrop,
   isEmailDrag,
   planEmailDrop,
@@ -104,6 +105,11 @@ describe('dropping emails on a folder', () => {
     });
   });
 
+  it('moves emails from several mailboxes even onto one of their mailboxes', () => {
+    const mixed = { emailIds: ['e1', 'e2'], accountId: 'acc-1', mailbox: '' };
+    expect(planEmailDrop(mixed, 'acc-1', 'inbox')).toEqual({ kind: 'bulk', emailIds: ['e1', 'e2'] });
+  });
+
   it('ignores foreign drags, another account, and the emails’ own mailbox', () => {
     expect(planEmailDrop(null, 'acc-1', 'folder:Work')).toEqual({ kind: 'ignore' });
     expect(planEmailDrop(payload(['e1', 'e2']), 'acc-2', 'folder:Work')).toEqual({ kind: 'ignore' });
@@ -112,16 +118,40 @@ describe('dropping emails on a folder', () => {
 });
 
 describe('emails carried by a drag', () => {
+  const row = (id: string, accountId = 'acc-1', mailbox = 'inbox') => ({ id, accountId, mailbox }) as Email;
+  const always = () => true;
+
   it('is the dragged email alone when nothing is checked', () => {
-    expect(emailIdsToDrag('e1', new Set())).toEqual(['e1']);
+    expect(emailsToDrag(row('e1'), [], always)).toEqual({ emailIds: ['e1'], mailbox: 'inbox' });
   });
 
   it('is the dragged email alone when it is not part of the selection', () => {
-    expect(emailIdsToDrag('e1', new Set(['e2', 'e3']))).toEqual(['e1']);
+    expect(emailsToDrag(row('e1'), [row('e2'), row('e3')], always)).toEqual({ emailIds: ['e1'], mailbox: 'inbox' });
   });
 
   it('is the whole selection, dragged email first, when the dragged email is checked', () => {
-    expect(emailIdsToDrag('e3', new Set(['e1', 'e2', 'e3']))).toEqual(['e3', 'e1', 'e2']);
+    expect(emailsToDrag(row('e3'), [row('e1'), row('e2'), row('e3')], always)).toEqual({
+      emailIds: ['e3', 'e1', 'e2'],
+      mailbox: 'inbox',
+    });
+  });
+
+  it('is the dragged email alone when the selection cannot move together', () => {
+    // e.g. checked rows from two accounts, or a Sent row: the toolbar's Move
+    // is not offered for that selection, so the drag does not carry it either.
+    const selection = [row('e1'), row('e2', 'acc-2')];
+    const seen: string[][] = [];
+    const result = emailsToDrag(row('e1'), selection, (rows) => {
+      seen.push(rows.map((e) => e.id));
+      return false;
+    });
+    expect(result).toEqual({ emailIds: ['e1'], mailbox: 'inbox' });
+    expect(seen).toEqual([['e1', 'e2']]);
+  });
+
+  it('has no single source mailbox when the selection spans several', () => {
+    const selection = [row('e1', 'acc-1', 'folder:A'), row('e2', 'acc-1', 'inbox')];
+    expect(emailsToDrag(selection[0], selection, always)).toEqual({ emailIds: ['e1', 'e2'], mailbox: '' });
   });
 });
 

@@ -2,6 +2,8 @@
 // Inbox / folder entries (drop targets). A custom MIME type keeps foreign
 // drags (files, text selections) from ever looking like an email move.
 
+import type { Email } from '@/types';
+
 export const EMAIL_DRAG_MIME = 'application/x-emailops-email';
 
 export interface EmailDragPayload {
@@ -9,7 +11,8 @@ export interface EmailDragPayload {
    *  the dragged row is part of the multi-selection. Never empty. */
   emailIds: string[];
   accountId: string;
-  /** The emails' current mailbox — drops onto the same mailbox are no-ops. */
+  /** The emails' current mailbox — drops onto the same mailbox are no-ops.
+   *  '' when the emails come from several mailboxes. */
   mailbox: string;
 }
 
@@ -19,13 +22,24 @@ export function writeEmailDragPayload(dataTransfer: DataTransfer, payload: Email
 }
 
 /**
- * Which emails a drag starting on `draggedId` carries. When the dragged row is
- * checked, the whole selection moves (the dragged row first); an unchecked
- * row moves alone, whatever else is checked — as Gmail and Thunderbird do.
+ * Which emails a drag starting on `dragged` carries, and the mailbox they
+ * share. When the dragged row is checked, the whole selection moves (the
+ * dragged row first) — but only if `canMoveTogether` accepts it, the same rule
+ * the bulk toolbar's Move follows (one IMAP account, inbox/folder mail).
+ * Otherwise, or when the row is unchecked, it moves alone — as Gmail and
+ * Thunderbird do. `mailbox` is '' when the selection spans several mailboxes.
  */
-export function emailIdsToDrag(draggedId: string, selectedIds: ReadonlySet<string>): string[] {
-  if (!selectedIds.has(draggedId)) return [draggedId];
-  return [draggedId, ...[...selectedIds].filter((id) => id !== draggedId)];
+export function emailsToDrag(
+  dragged: Email,
+  selected: readonly Email[],
+  canMoveTogether: (rows: readonly Email[]) => boolean,
+): Pick<EmailDragPayload, 'emailIds' | 'mailbox'> {
+  const alone = { emailIds: [dragged.id], mailbox: dragged.mailbox };
+  if (!selected.some((e) => e.id === dragged.id)) return alone;
+  const rows = [dragged, ...selected.filter((e) => e.id !== dragged.id)];
+  if (rows.length === 1 || !canMoveTogether(rows)) return alone;
+  const shared = rows.every((e) => e.mailbox === dragged.mailbox);
+  return { emailIds: rows.map((e) => e.id), mailbox: shared ? dragged.mailbox : '' };
 }
 
 /** What dropping a payload on a folder does. */

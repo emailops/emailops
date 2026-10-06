@@ -1,13 +1,16 @@
 // Dragging an email row toward a sidebar folder shows a preview card under
 // the pointer (sender + subject) instead of nothing, in both row layouts.
 // A checked row carries the whole multi-selection, with a count badge; an
-// unchecked row carries only itself.
+// unchecked row carries only itself, and so does a checked row whose
+// selection the bulk toolbar could not move together.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMAIL_DRAG_MIME } from '@/lib/emailDrag';
 import { useAccountStore } from '@/stores/accountStore';
+import { useEmailStore } from '@/stores/emailStore';
+import { useFolderStore } from '@/stores/folderStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import type { Account, Email } from '@/types';
 import { EmailRow } from './EmailRow';
@@ -39,8 +42,20 @@ let root: Root;
 beforeEach(() => {
   // Move-to-folder (and so dragging) is offered for IMAP inbox messages.
   useAccountStore.setState({
-    accounts: [{ id: 'acct-1', email: 'me@example.com', provider: 'imap' } as Account],
+    accounts: [
+      { id: 'acct-1', email: 'me@example.com', provider: 'imap' } as Account,
+      { id: 'acct-2', email: 'other@example.com', provider: 'imap' } as Account,
+    ],
   } as never);
+  useFolderStore.setState({ folders: [], accountId: 'acct-1' });
+  useEmailStore.setState({
+    emails: [
+      email,
+      { ...email, id: 'email-2' },
+      { ...email, id: 'email-3' },
+      { ...email, id: 'email-4', accountId: 'acct-2' },
+    ],
+  });
   useSelectionStore.getState().clear();
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -116,6 +131,15 @@ describe('EmailRow drag preview', () => {
     for (const id of ['email-2', 'email-3']) useSelectionStore.getState().toggle(id);
 
     const { payload, card } = dragRow(false);
+
+    expect(payload.emailIds).toEqual(['email-1']);
+    expect(card.querySelector('[data-role="count"]')).toBeNull();
+  });
+
+  it('drags only its own email when the checked rows span two accounts', () => {
+    for (const id of ['email-1', 'email-4']) useSelectionStore.getState().toggle(id);
+
+    const { payload, card } = dragRow(false, true);
 
     expect(payload.emailIds).toEqual(['email-1']);
     expect(card.querySelector('[data-role="count"]')).toBeNull();

@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
+import { bulkMoveTargets } from '@/lib/bulkActions';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
-import { emailIdsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
+import { emailsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
 import { senderName } from '@/lib/emailFormatting';
+import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
+import { useFolderStore } from '@/stores/folderStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
@@ -122,17 +125,21 @@ export function EmailRow({
   ) : null;
 
   // Drag to a sidebar folder: the payload says which emails move — this row,
-  // or the whole multi-selection when this row is checked — and the preview
-  // card follows the pointer with a count badge for several emails. The
-  // selection is read at drag time, not subscribed to, so rows don't re-render
-  // on every check.
+  // or the whole multi-selection when this row is checked and the bulk
+  // toolbar could move it — and the preview card follows the pointer with a
+  // count badge for several emails. The stores are read at drag time, not
+  // subscribed to, so rows don't re-render on every check.
   const handleDragStart = (e: React.DragEvent) => {
-    const emailIds = emailIdsToDrag(email.id, useSelectionStore.getState().ids);
-    writeEmailDragPayload(e.dataTransfer, {
-      emailIds,
-      accountId: email.accountId,
-      mailbox: email.mailbox,
-    });
+    const checked = useSelectionStore.getState().ids;
+    const selected = useEmailStore.getState().emails.filter((row) => checked.has(row.id));
+    const { accounts } = useAccountStore.getState();
+    const { folders, accountId: foldersAccountId } = useFolderStore.getState();
+    const { emailIds, mailbox } = emailsToDrag(
+      email,
+      selected,
+      (rows) => bulkMoveTargets(rows, accounts, folders, foldersAccountId) !== null,
+    );
+    writeEmailDragPayload(e.dataTransfer, { emailIds, accountId: email.accountId, mailbox });
     setEmailDragImage(e, { sender: senderName(email), subject: email.subject, count: emailIds.length });
   };
 
