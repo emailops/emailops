@@ -292,10 +292,15 @@ pub(super) fn latest_thread_email_predicate(alias: &str) -> String {
 /// then filters that row out, AND the older inbox row fails the "is latest"
 /// test, so the entire thread disappears from the inbox. Every thread the
 /// user replied to became invisible.
+///
+/// The `INDEXED BY` hint is load-bearing: the extra `mailbox` term makes
+/// `idx_emails_account_mailbox` match more equalities than the thread index,
+/// so the planner picked it and walked the account's inbox once per row — a
+/// page 15k rows deep took ~13s on a 100k-email mailbox.
 pub(super) fn latest_inbox_email_predicate(alias: &str) -> String {
     format!(
         "{alias}.id = (
-            SELECT sub.id FROM emails sub
+            SELECT sub.id FROM emails sub INDEXED BY idx_emails_thread_latest
             WHERE sub.account_id = {alias}.account_id
               AND sub.thread_id = {alias}.thread_id
               AND sub.is_deleted = 0
