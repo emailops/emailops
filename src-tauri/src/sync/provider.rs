@@ -912,6 +912,9 @@ pub struct FakeEmailProvider {
     /// When `Some`, `send_reply` / `send_new_email` fail with this message and
     /// record nothing — a provider refusing the send (5xx, offline).
     send_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, `list_messages` fails with this message — a provider whose
+    /// listing errors part-way through a sync (5xx, dropped connection).
+    listing_failure: std::sync::RwLock<Option<String>>,
     /// What `get_signature` answers for the profile address.
     signature: std::sync::RwLock<Option<String>>,
 }
@@ -1052,6 +1055,7 @@ impl FakeEmailProvider {
             label_fetch_failure: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
             send_failure: std::sync::RwLock::new(None),
+            listing_failure: std::sync::RwLock::new(None),
             signature: std::sync::RwLock::new(None),
         }
     }
@@ -1131,6 +1135,11 @@ impl FakeEmailProvider {
 
     pub fn fail_sends(&self, message: Option<&str>) {
         *self.send_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
+    }
+
+    /// Make `list_messages` fail (`Some`) or answer again (`None`).
+    pub fn fail_message_listing(&self, message: Option<&str>) {
+        *self.listing_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
     }
 
     fn send_refusal(&self) -> Result<()> {
@@ -1400,6 +1409,14 @@ impl EmailProvider for FakeEmailProvider {
         _label_filter: Option<&str>,
     ) -> Result<(Vec<MessageRef>, Option<String>)> {
         self.record_call("list_messages");
+        if let Some(message) = self
+            .listing_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(crate::models::error::AppError::SyncError(message));
+        }
         let offset: usize = page_token.and_then(|t| t.parse().ok()).unwrap_or(0);
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         let mut filtered: Vec<&FakeStoredMessage> = guard
