@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
-## [0.6.13] — 2026-10-05
+## [0.6.13] — 2026-10-06
 
 ### Added
 
@@ -19,8 +19,9 @@ No unreleased changes yet.
   change history, search, undo/redo, sheet formulas (`SUM`, `AVERAGE`, `MIN`,
   `MAX`, `COUNT`) and filters, import from Word and Excel, save as PDF, and
   **From EO Docs** in the composer to attach and share a document. Sheets are
-  basic for now, and a note above each sheet says so until you close it. Turn
-  it off in **Settings → EO Docs**.
+  basic for now (text, numbers and five formulas), and a note above each sheet
+  says so until you close it. Turn it off in **Settings → EO Docs**.
+  [Watch the EO Docs video](https://getemailops.com/videos/eodocs).
 - **Archive, star and mark as unread**, from the reading pane, the row menu
   and the list, written back to Gmail, Outlook and IMAP. **Starred** and
   **Archive** views in the sidebar.
@@ -39,6 +40,8 @@ No unreleased changes yet.
   **Settings → Junk → Blocked senders**.
 - **Desktop notifications for new mail**, per account, with an option to hide
   the sender and subject.
+- **A preview card follows the pointer** while you drag an email to a
+  folder.
 - **Keyboard shortcuts** following Gmail's, with a `?` overlay listing them;
   toolbar tooltips show each action's key.
 - **OpenRouter chat** with streaming and tool calls, a context budget for
@@ -92,6 +95,14 @@ No unreleased changes yet.
   (a Spanish Mac, for one); any symbol shortcut now works however your
   layout types it.
 - **Escape no longer takes the window out of full screen.**
+- **Inbox holes left by an interrupted catch-up sync are filled**: each
+  account lists its whole inbox once and downloads what is missing.
+- **Mail that keyword search could not find is indexed**: a one-time repair at
+  startup adds stored emails the search index had skipped.
+- **Dragging a checked row moves only what Move could move**, and a selection
+  spanning several accounts or Sent falls back to the dragged email.
+- **A search covers every inbox tab**: while it is active the tabs show All
+  and are disabled.
 
 ## [0.6.12] — 2026-09-29
 

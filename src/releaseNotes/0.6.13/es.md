@@ -1,6 +1,6 @@
 ### Novedades
 
-- **EO Docs (experimental, activado por defecto).** Escribe documentos y hojas de cálculo junto a otros usuarios de EmailOps, sin nube de por medio: los cambios viajan como correos normales. Puedes desactivarlo en **Ajustes → EO Docs**.
+- **EO Docs (experimental, activado por defecto).** Escribe documentos y hojas de cálculo junto a otros usuarios de EmailOps, sin nube de por medio: los cambios viajan como correos normales. Por ahora las hojas son básicas: texto, números y unas pocas fórmulas. [Mira el vídeo](https://getemailops.com/videos/eodocs).
 - **Archivar, destacar, posponer y acciones en bloque.** Selecciona varias conversaciones y actúa sobre todas a la vez, con **Deshacer**. Archivar, destacar y el estado de lectura se reflejan en tu proveedor de correo.
 - **Deshacer envío y envío programado.** Recupera un mensaje durante unos segundos tras enviarlo, o prográmalo para más tarde.
 - **Firmas por cuenta**, con imágenes, y **cancelar suscripción** con un clic y **Bloquear remitente**.
