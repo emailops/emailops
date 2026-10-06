@@ -87,6 +87,10 @@ No unreleased changes yet.
 - **"What was this vendor billing me?"** finds the invoice: when the chat
   filters by your own address as the sender, it is told that only searched
   mail you sent, and searches again without it.
+- **The `#` shortcut deletes on keyboards that type it with Option or AltGr**
+  (a Spanish Mac, for one); any symbol shortcut now works however your
+  layout types it.
+- **Escape no longer takes the window out of full screen.**
 
 ## [0.6.12] — 2026-09-29
 
