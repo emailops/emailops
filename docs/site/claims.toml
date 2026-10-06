@@ -276,6 +276,16 @@ checks = [
   { manual = 'Distro package-manager commands are outside this repo.' },
 ]
 
+[inst-updating-1]
+checks = [
+  { manual = 'The daily spacing is pinned by services::updates::tests::should_not_check_within_24h_of_last_check and should_check_after_24h (behind the desktop feature, which the docs check builds without); the notice, its Download button and the 24-hour snooze by src/stores/updateStore.test.ts (vitest). The demo install is never behind the latest release, so no notice shows there.' },
+]
+
+[inst-updating-2]
+checks = [
+  { manual = 'Only an upgraded install shows the dialog: src/components/common/ReleaseNotesDialog.test.tsx covers the upgrade, the UI language, closing it and a fresh install (vitest); the verify launcher marks it seen so it does not cover the demo screens.' },
+]
+
 [inst-where-data-1]
 checks = [
   { app = true },

@@ -169,10 +169,14 @@ async function tab(name) {
   }, name);
   if (!hit) throw new Error(`no settings tab «${name}»`);
   await sleep(600);
+  // innerText leaves out a <select>'s options (the display language, the chat
+  // routing mode), so they are appended after the panel text.
   return js(() => {
     const t = document.body.innerText;
     const i = t.indexOf('Password, remote content');
-    return (i >= 0 ? t.slice(i) : t).replace(/\s+/g, ' ');
+    const options = [...document.querySelectorAll('select')].filter((s) => s.offsetParent)
+      .flatMap((s) => [...s.options].map((o) => o.textContent.trim()));
+    return `${i >= 0 ? t.slice(i) : t} ${options.join(' ')}`.replace(/\s+/g, ' ');
   });
 }
 async function closeSettings() {
@@ -319,11 +323,13 @@ async function wizard() {
   });
   await claim('start-2-ai-2', 'descarga del recomendado', {
     covers: ['about 3 GB to download'],
-    how: 'Lee el tamaño de descarga que el selector muestra para el modelo recomendado y lo compara con la cifra de la doc.',
+    how: 'Lee el tamaño de descarga que el selector muestra para el modelo que la doc nombra (el recomendado en la máquina de la doc, no necesariamente en esta) y lo compara con la cifra de la doc.',
   }, async ({ doc }) => {
     const want = doc.number(/about (\d+) GB to download/);
-    const row = (await js(() => [...document.body.innerText.matchAll(/\n([^\n]+)\nRecommended\n(\d+)\+ GB RAM · ([\d.]+) GB/g)].map((m) => +m[3])))[0];
-    return ok(row && Math.round(row) === want, `el recomendado descarga ${row} GB, «about ${want} GB»`, `el recomendado descarga ${row} GB; la doc dice ${want}`);
+    const [, docModel] = doc.match(/GB machine that is ([^,]+?),/);
+    const sizes = await js(() => Object.fromEntries([...document.body.innerText.matchAll(/\n([^\n]+)\n(?:Recommended\n)?(\d+)\+ GB RAM · ([\d.]+) GB/g)].map((m) => [m[1].trim(), +m[3]])));
+    const row = sizes[docModel];
+    return ok(row && Math.round(row) === want, `«${docModel}» descarga ${row} GB, «about ${want} GB»`, `«${docModel}» descarga ${row} GB; la doc dice ${want}`);
   });
   await claim('priv-there-no-1', 'origen de los modelos', {
     covers: ['| Hugging Face | Only while downloading an AI model you picked'], proof: 'label',

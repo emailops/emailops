@@ -248,7 +248,6 @@ export default (h) => async function demoCases() {
 
   // ── views ──────────────────────────────────────────────────────────────
   await view('Calendar');
-  const cal = await screen();
   await claim('feat-calendar-1', 'vistas', {
     covers: ['Per-account month, week and day views'],
     how: 'En la vista Calendar del buzón demo, pulsa cada vista que nombra la doc (Month, Week, Day) y comprueba que la rejilla cambia; y que el calendario se muestra por cuenta.',
@@ -260,7 +259,9 @@ export default (h) => async function demoCases() {
       grids.push(await js(() => document.querySelector('main')?.innerText.length || 0));
     }
     const changed = new Set(grids).size === grids.length;
-    return ok(changed && /Calendar account/.test(cal), `${modes.join(', ')} cambian la rejilla; calendario por cuenta`, `las vistas ${modes.join(', ')} no cambian la rejilla (${grids.join(', ')})`);
+    // The account picker shows the selected address; its name is only its aria-label.
+    const picker = await js(() => !!document.querySelector('[aria-label="Calendar account"]'));
+    return ok(changed && picker, `${modes.join(', ')} cambian la rejilla; calendario por cuenta`, `las vistas ${modes.join(', ')} no cambian la rejilla (${grids.join(', ')})`);
   });
   await claim('feat-calendar-1', 'Join', {
     covers: ['a one-click Join button for Meet'], partial: 'se prueba un evento con Meet; Teams, Webex, Zoom y los recordatorios no',
@@ -1193,7 +1194,7 @@ export default (h) => async function demoCases() {
     covers: ['A sheet cell that starts with = is a formula'], partial: 'se prueba SUM; AVERAGE, MIN, MAX y COUNT (y los alias) los cubren los tests de sheetFormula',
     how: 'En la hoja recién creada escribe 2 y 3 en A1 y A2 y, en A3, la fórmula del ejemplo de la doc adaptada a A1:A2: la celda debe mostrar 5.',
   }, async ({ doc }) => {
-    const fn = doc.match(/`=(\w+)\(B2:B10\)`/)[1];
+    const fn = doc.match(/=(\w+)\(B2:B10\)/)[1];
     const cell = (r) => `[data-testid="shared-sheet"] [data-cell="${r}:0"]`;
     await setInput(cell(0), '2');
     await setInput(cell(1), '3');
@@ -1243,7 +1244,7 @@ export default (h) => async function demoCases() {
   const plainHits = await rowCount();
   await search('');
   await view('Calendar');
-  const plainCal = /Calendar account/.test(await screen());
+  const plainCal = await js(() => !!document.querySelector('[aria-label="Calendar account"]'));
   await view('Attachments');
   const plainAtt = /Attachments\s*\(\d+\)/.test(await screen());
   await claim('feat-intro-1', 'buzón sin IA', {

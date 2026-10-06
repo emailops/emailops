@@ -199,6 +199,17 @@ sudo dnf install gnome-keyring
 sudo pacman -S gnome-keyring
 ```
 
+## Aktualisieren {#updating}
+
+<!-- claim:inst-updating-1 -->
+EmailOps prüft höchstens einmal am Tag auf GitHub, ob es eine neue Version gibt. Wenn ja, meldet
+ein Hinweis **EmailOps X.Y.Z ist verfügbar** mit der Schaltfläche **Herunterladen**. Schließen
+blendet ihn für 24 Stunden aus; er kommt wieder, bis Sie das Update installieren.
+
+<!-- claim:inst-updating-2 -->
+Beim ersten Start nach einem Update zeigt ein Dialog die Neuerungen dieser Version in der
+Sprache der Oberfläche.
+
 ## Wo Ihre Daten liegen
 
 <!-- claim:inst-where-data-1 -->
