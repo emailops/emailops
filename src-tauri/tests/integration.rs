@@ -6563,3 +6563,21 @@ fn signature_saved_for_an_account_is_read_back_without_scripts() {
     assert!(read.use_for_new);
     assert!(!read.use_for_replies);
 }
+
+// ── bundle config ──────────────────────────────────────────────────────────
+
+/// `codesign` parses the entitlements with AMFI's strict XML reader, which
+/// rejects `--` inside a comment (`plutil -lint` accepts it): one in a comment
+/// failed the signed macOS build at the codesign step.
+#[test]
+fn entitlements_comments_contain_no_double_hyphen() {
+    let plist = include_str!("../entitlements.plist");
+    for (i, comment) in plist.split("<!--").skip(1).enumerate() {
+        let body = comment.split("-->").next().unwrap_or_default();
+        assert!(
+            !body.contains("--"),
+            "comment {} of entitlements.plist contains `--`",
+            i + 1
+        );
+    }
+}

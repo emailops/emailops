@@ -9,7 +9,7 @@
         compilation happens in the GPU driver's process — so
         `cs.allow-jit` and `cs.allow-unsigned-executable-memory` are not
         needed. Verified 2026-10-01 on a release build (llama-cpp-sys-2
-        0.1.158): a binary signed with `--options runtime` and no entitlements
+        0.1.158): a binary signed with the Hardened Runtime option and no entitlements
         completed an embedded-model chat turn. `make verify-mac` fails if a
         Hardened Runtime exception entitlement comes back (CASA/DASA 3.3.2).
     -->
