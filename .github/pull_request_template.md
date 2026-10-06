@@ -22,6 +22,7 @@ Examples:
 - [ ] `npx tsc --noEmit` passes
 - [ ] `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings` passes
 - [ ] Tests added/updated for behavior changes (TDD)
+- [ ] Data fix: if this fixes a bug that lost, skipped or mis-stored data, existing installs are repaired too (or the PR says why none were affected)
 
 ## Privacy / security
 
