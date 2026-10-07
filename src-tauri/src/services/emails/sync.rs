@@ -1177,11 +1177,13 @@ pub async fn sync_account_with_provider(
         return Ok(());
     }
 
+    // `total` is what was stored, retried downloads included: the frontend
+    // treats 0 as an idle sync and skips its sidebar-stats refresh.
     emit_progress(
         account_id,
         "complete",
-        new_count,
-        new_count,
+        synced_count,
+        synced_count,
         &format!("Synced {} new emails", synced_count),
     );
 

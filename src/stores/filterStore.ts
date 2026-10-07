@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
+import { createKeyedCoalescer } from '@/lib/refreshScheduling';
 import { toQueryAccountId } from '@/stores/accountStore';
 import type { ActiveFilter, SmartFilter, SmartFilterPref, TagStat } from '@/types';
 
@@ -189,6 +190,11 @@ interface FilterStore extends FilterState {
   loadSaved: (accountId: string) => Promise<void>;
   fetchPrefs: (accountId: string) => Promise<void>;
   forceRefresh: (accountId: string) => Promise<void>;
+  /** Recompute stats after `syncedAccountId` finished syncing. Only that
+   *  account's stats are recomputed (the All-accounts view merges the saved
+   *  rows of every account), and syncs that finish while a refresh runs are
+   *  folded into one more refresh. */
+  refreshAfterSync: (syncedAccountId: string) => Promise<void>;
   toggleFilter: (filter: ActiveFilter) => void;
   clearActiveFilter: () => void;
   pinFilter: (accountId: string, filter: ActiveFilter) => Promise<void>;
@@ -204,109 +210,133 @@ function dispatch(set: (fn: (s: FilterState) => FilterState) => void, action: Fi
   set((s) => filterReducer(s, action));
 }
 
-export const useFilterStore = create<FilterStore>((set, get) => ({
-  ...initialFilterState,
-
-  // The `accountId` params below keep the UI identity (which may be the
-  // All-accounts sentinel) for stale-response tracking; every api.* call
-  // translates via toQueryAccountId (sentinel → null = all enabled accounts).
-  loadSaved: async (accountId) => {
-    // Clear stale suggestions immediately so old account's filters aren't visible
-    // while loading. Also set currentAccountId now so concurrent calls for a
-    // previous account can detect they've been superseded.
-    dispatch(set, { type: 'SET_ACCOUNT_ID', accountId });
-    dispatch(set, { type: 'SET_SUGGESTIONS', suggestions: [] });
+export const useFilterStore = create<FilterStore>((set, get) => {
+  // Reload the saved suggestions + prefs + tag ranking the sidebar shows.
+  const reloadSuggestions = async (accountId: string) => {
     const queryId = toQueryAccountId(accountId);
-    const [saved, ranked] = await Promise.all([api.getSavedSuggestions(queryId), fetchRankedTags(queryId)]);
-    // Discard result if account switched again while the request was in flight.
+    const [saved, prefs, ranked] = await Promise.all([
+      api.getSavedSuggestions(queryId),
+      api.getFilterPrefs(queryId),
+      fetchRankedTags(queryId),
+    ]);
+    // Discard if account switched while stats were being computed.
     if (get().currentAccountId !== accountId) return;
     dispatch(set, {
       type: 'SET_SUGGESTIONS',
       suggestions: mergeSuggestions(suggestionsToSmartFilters(saved), ranked),
     });
-  },
-
-  fetchPrefs: async (accountId) => {
-    const prefs = await api.getFilterPrefs(toQueryAccountId(accountId));
-    // Discard if the account switched while the request was in flight.
-    if (get().currentAccountId !== accountId) return;
     dispatch(set, { type: 'SET_PREFS', prefs });
-  },
+  };
 
-  forceRefresh: async (accountId) => {
-    dispatch(set, { type: 'SET_ACCOUNT_ID', accountId });
-    dispatch(set, { type: 'SET_LOADING_STATS', loading: true });
+  // A full All-accounts refresh recomputes every account (seconds on a big
+  // mailbox) and each account's sync completion used to trigger one; a sync
+  // only changes its own account's stats.
+  const refreshSynced = createKeyedCoalescer<string>(async (syncedIds) => {
+    const accountId = get().currentAccountId;
+    if (!accountId) return;
     const queryId = toQueryAccountId(accountId);
+    const targets = queryId === null ? syncedIds : [queryId];
+    dispatch(set, { type: 'SET_LOADING_STATS', loading: true });
     try {
-      // Refresh computes stats and saves all suggestions (domains, senders, tags) to DB
-      await api.refreshFilterStats(queryId);
+      for (const id of targets) {
+        await api.refreshFilterStats(id);
+      }
+      await reloadSuggestions(accountId);
+    } finally {
+      dispatch(set, { type: 'SET_LOADING_STATS', loading: false });
+    }
+  });
 
-      // Reload from DB to get the full set including tag-based suggestions,
-      // and fetch priority ordering for companies in parallel.
-      const [saved, prefs, ranked] = await Promise.all([
-        api.getSavedSuggestions(queryId),
-        api.getFilterPrefs(queryId),
-        fetchRankedTags(queryId),
-      ]);
+  return {
+    ...initialFilterState,
 
-      // Discard if account switched while stats were being computed.
+    // The `accountId` params below keep the UI identity (which may be the
+    // All-accounts sentinel) for stale-response tracking; every api.* call
+    // translates via toQueryAccountId (sentinel → null = all enabled accounts).
+    loadSaved: async (accountId) => {
+      // Clear stale suggestions immediately so old account's filters aren't visible
+      // while loading. Also set currentAccountId now so concurrent calls for a
+      // previous account can detect they've been superseded.
+      dispatch(set, { type: 'SET_ACCOUNT_ID', accountId });
+      dispatch(set, { type: 'SET_SUGGESTIONS', suggestions: [] });
+      const queryId = toQueryAccountId(accountId);
+      const [saved, ranked] = await Promise.all([api.getSavedSuggestions(queryId), fetchRankedTags(queryId)]);
+      // Discard result if account switched again while the request was in flight.
       if (get().currentAccountId !== accountId) return;
       dispatch(set, {
         type: 'SET_SUGGESTIONS',
         suggestions: mergeSuggestions(suggestionsToSmartFilters(saved), ranked),
       });
+    },
+
+    fetchPrefs: async (accountId) => {
+      const prefs = await api.getFilterPrefs(toQueryAccountId(accountId));
+      // Discard if the account switched while the request was in flight.
+      if (get().currentAccountId !== accountId) return;
       dispatch(set, { type: 'SET_PREFS', prefs });
-    } finally {
-      // Always release the spinner — including the account-switched early
-      // return above, which used to leave it stuck on forever.
-      dispatch(set, { type: 'SET_LOADING_STATS', loading: false });
-    }
-  },
+    },
 
-  toggleFilter: (filter) => dispatch(set, { type: 'TOGGLE_FILTER', filter }),
+    forceRefresh: async (accountId) => {
+      dispatch(set, { type: 'SET_ACCOUNT_ID', accountId });
+      dispatch(set, { type: 'SET_LOADING_STATS', loading: true });
+      try {
+        // Refresh computes stats and saves all suggestions (domains, senders, tags) to DB
+        await api.refreshFilterStats(toQueryAccountId(accountId));
+        await reloadSuggestions(accountId);
+      } finally {
+        // Always release the spinner — including the account-switched early
+        // return in reloadSuggestions, which used to leave it stuck on forever.
+        dispatch(set, { type: 'SET_LOADING_STATS', loading: false });
+      }
+    },
 
-  clearActiveFilter: () => dispatch(set, { type: 'CLEAR_ACTIVE_FILTER' }),
+    refreshAfterSync: (syncedAccountId) => refreshSynced(syncedAccountId),
 
-  pinFilter: async (accountId, filter) => {
-    const queryId = toQueryAccountId(accountId);
-    await api.pinFilter(queryId, filter.type, filter.value);
-    const prefs = await api.getFilterPrefs(queryId);
-    dispatch(set, { type: 'SET_PREFS', prefs });
-  },
+    toggleFilter: (filter) => dispatch(set, { type: 'TOGGLE_FILTER', filter }),
 
-  unpinFilter: async (accountId, filter) => {
-    const queryId = toQueryAccountId(accountId);
-    await api.deleteFilterPref(queryId, filter.type, filter.value);
-    const prefs = await api.getFilterPrefs(queryId);
-    dispatch(set, { type: 'SET_PREFS', prefs });
-  },
+    clearActiveFilter: () => dispatch(set, { type: 'CLEAR_ACTIVE_FILTER' }),
 
-  removeFilter: async (accountId, filter) => {
-    const queryId = toQueryAccountId(accountId);
-    await api.removeFilter(queryId, filter.type, filter.value);
-    const prefs = await api.getFilterPrefs(queryId);
-    dispatch(set, { type: 'SET_PREFS', prefs });
-    const { activeFilter } = get();
-    if (activeFilter?.type === filter.type && activeFilter?.value === filter.value) {
-      dispatch(set, { type: 'CLEAR_ACTIVE_FILTER' });
-    }
-  },
+    pinFilter: async (accountId, filter) => {
+      const queryId = toQueryAccountId(accountId);
+      await api.pinFilter(queryId, filter.type, filter.value);
+      const prefs = await api.getFilterPrefs(queryId);
+      dispatch(set, { type: 'SET_PREFS', prefs });
+    },
 
-  addSenderAsFilter: async (accountId, senderEmail) => {
-    const queryId = toQueryAccountId(accountId);
-    await api.pinFilter(queryId, 'sender', senderEmail);
-    const prefs = await api.getFilterPrefs(queryId);
-    dispatch(set, { type: 'SET_PREFS', prefs });
-  },
+    unpinFilter: async (accountId, filter) => {
+      const queryId = toQueryAccountId(accountId);
+      await api.deleteFilterPref(queryId, filter.type, filter.value);
+      const prefs = await api.getFilterPrefs(queryId);
+      dispatch(set, { type: 'SET_PREFS', prefs });
+    },
 
-  restoreFilter: async (accountId, filter) => {
-    const queryId = toQueryAccountId(accountId);
-    await api.deleteFilterPref(queryId, filter.type, filter.value);
-    const prefs = await api.getFilterPrefs(queryId);
-    dispatch(set, { type: 'SET_PREFS', prefs });
-  },
+    removeFilter: async (accountId, filter) => {
+      const queryId = toQueryAccountId(accountId);
+      await api.removeFilter(queryId, filter.type, filter.value);
+      const prefs = await api.getFilterPrefs(queryId);
+      dispatch(set, { type: 'SET_PREFS', prefs });
+      const { activeFilter } = get();
+      if (activeFilter?.type === filter.type && activeFilter?.value === filter.value) {
+        dispatch(set, { type: 'CLEAR_ACTIVE_FILTER' });
+      }
+    },
 
-  getDisplayedFilters: () => selectDisplayedFilters(get()),
+    addSenderAsFilter: async (accountId, senderEmail) => {
+      const queryId = toQueryAccountId(accountId);
+      await api.pinFilter(queryId, 'sender', senderEmail);
+      const prefs = await api.getFilterPrefs(queryId);
+      dispatch(set, { type: 'SET_PREFS', prefs });
+    },
 
-  reset: () => dispatch(set, { type: 'RESET' }),
-}));
+    restoreFilter: async (accountId, filter) => {
+      const queryId = toQueryAccountId(accountId);
+      await api.deleteFilterPref(queryId, filter.type, filter.value);
+      const prefs = await api.getFilterPrefs(queryId);
+      dispatch(set, { type: 'SET_PREFS', prefs });
+    },
+
+    getDisplayedFilters: () => selectDisplayedFilters(get()),
+
+    reset: () => dispatch(set, { type: 'RESET' }),
+  };
+});

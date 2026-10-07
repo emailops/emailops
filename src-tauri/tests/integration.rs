@@ -6120,6 +6120,40 @@ async fn failed_downloads_are_retried_when_nothing_new_arrived() {
     assert!(db.get_failed_emails("acc-idle").unwrap().is_empty());
 }
 
+/// The `complete` event's `total` is how many emails the sync stored — the
+/// frontend skips its sidebar-stats refresh when it is 0. A sync with nothing
+/// new on the server that still stored a retried download must not read as
+/// idle.
+#[tokio::test]
+async fn a_sync_that_only_stored_retried_downloads_reports_them_on_complete() {
+    emailops_lib::services::logger::install_for_testing();
+    let sink = emailops_lib::services::events::install_for_testing();
+    let db = test_db();
+    db.insert_account(&make_account("acc-recover", "me@example.com"))
+        .unwrap();
+    let account = db.get_account("acc-recover").unwrap().unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    provider.add_message(
+        make_email_with("lost-2", "acc-recover", 1_700_000_000, "x@example.com", "unlisted"),
+        EmailCategory::Primary,
+        vec![],
+    );
+    db.add_failed_email("acc-recover", "lost-2", "earlier failure").unwrap();
+
+    run_fake_sync(&db, &account, provider).await;
+
+    // Scoped to this account: the sink is process-global.
+    let totals: Vec<u64> = sink
+        .payloads_for("sync-progress")
+        .into_iter()
+        .filter(|p| p.get("accountId").and_then(|v| v.as_str()) == Some("acc-recover"))
+        .filter(|p| p.get("status").and_then(|v| v.as_str()) == Some("complete"))
+        .filter_map(|p| p.get("total")?.as_u64())
+        .collect();
+    assert_eq!(totals, vec![1], "complete must report the stored email");
+}
+
 /// A burst bigger than the per-sync incremental cap: the listing is
 /// newest-first and capped, and the next sync's floor used to be the newest
 /// stored message — so the older part of the burst was never fetched.

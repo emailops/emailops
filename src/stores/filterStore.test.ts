@@ -286,6 +286,75 @@ describe('forceRefresh', () => {
   });
 });
 
+describe('refreshAfterSync', () => {
+  beforeEach(() => {
+    useFilterStore.setState({ ...initialFilterState });
+    vi.clearAllMocks();
+  });
+
+  it('in All accounts recomputes only the account that synced', async () => {
+    const { ALL_ACCOUNTS_ID } = await import('./accountStore');
+    useFilterStore.setState({ currentAccountId: ALL_ACCOUNTS_ID });
+
+    await useFilterStore.getState().refreshAfterSync('acc-2');
+
+    expect(vi.mocked(api.refreshFilterStats).mock.calls).toEqual([['acc-2']]);
+  });
+
+  it('in All accounts reloads the merged suggestions of every account', async () => {
+    const { ALL_ACCOUNTS_ID } = await import('./accountStore');
+    useFilterStore.setState({ currentAccountId: ALL_ACCOUNTS_ID });
+    vi.mocked(api.getSavedSuggestions).mockResolvedValueOnce([
+      { filterType: 'domain', filterValue: 'merged.example', count: 3 },
+    ]);
+
+    await useFilterStore.getState().refreshAfterSync('acc-2');
+
+    expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledWith(null);
+    expect(useFilterStore.getState().suggestions.map((s) => s.value)).toEqual(['merged.example']);
+  });
+
+  it('for a single account refreshes that account', async () => {
+    useFilterStore.setState({ currentAccountId: 'acc-A' });
+
+    await useFilterStore.getState().refreshAfterSync('acc-A');
+
+    expect(vi.mocked(api.refreshFilterStats).mock.calls).toEqual([['acc-A']]);
+    expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledWith('acc-A');
+  });
+
+  it('folds syncs that finish during a refresh into one more refresh', async () => {
+    const { ALL_ACCOUNTS_ID } = await import('./accountStore');
+    useFilterStore.setState({ currentAccountId: ALL_ACCOUNTS_ID });
+    let release!: () => void;
+    vi.mocked(api.refreshFilterStats).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ topDomains: [], topSenders: [] });
+        }),
+    );
+
+    const store = useFilterStore.getState();
+    const done = Promise.all([
+      store.refreshAfterSync('acc-1'),
+      store.refreshAfterSync('acc-2'),
+      store.refreshAfterSync('acc-3'),
+      store.refreshAfterSync('acc-2'),
+    ]);
+    release();
+    await done;
+
+    expect(vi.mocked(api.refreshFilterStats).mock.calls).toEqual([['acc-1'], ['acc-2'], ['acc-3']]);
+    expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledTimes(2);
+  });
+
+  it('does nothing when no account is shown', async () => {
+    await useFilterStore.getState().refreshAfterSync('acc-1');
+
+    expect(vi.mocked(api.refreshFilterStats)).not.toHaveBeenCalled();
+  });
+});
+
 describe('fetchPrefs', () => {
   beforeEach(() => {
     useFilterStore.setState({ ...initialFilterState });
