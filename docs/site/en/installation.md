@@ -293,4 +293,5 @@ Two build notes on the AI runtime:
   Vulkan backend needs the Vulkan SDK — a build-time dependency only; users never install it. <!-- claim:inst-building-from-3 -->
 - A `cuda` Cargo feature builds an NVIDIA-only variant. The release pipeline publishes it
   for Windows as a separate installer, `EmailOps-windows-cuda.msi`, alongside the default
-  Vulkan build, which covers every GPU vendor. <!-- claim:inst-building-from-4 -->
+  Vulkan build, which covers every GPU vendor. It needs the NVIDIA CUDA Toolkit, whose
+  installer sets `CUDA_PATH`; without it the app shows a notice and runs AI on the CPU. <!-- claim:inst-building-from-4 -->

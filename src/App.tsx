@@ -63,6 +63,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
@@ -879,6 +880,20 @@ function AppInner() {
       .getState()
       .load()
       .then(() => useUpdateStore.getState().remind(UPDATE_TOAST_HOST, nowSecs()));
+
+    // A CUDA build that cannot find the CUDA Toolkit runs AI on the CPU. That
+    // is decided in `main` before the webview exists, so ask instead of listen.
+    void showGpuRuntimeNotice({
+      getNotice: api.getGpuRuntimeNotice,
+      addToast: (toast) => useToastStore.getState().addToast(toast),
+      addLog: (level, source, message) => useLogStore.getState().addLog(level, source, message),
+      t: (key) => i18n.t(key),
+      openUrl: (url) => {
+        void openExternal(url).catch((err) => {
+          useLogStore.getState().addLog('error', 'system', `Failed to open the CUDA download page: ${errorText(err)}`);
+        });
+      },
+    });
     unlisteners.push(
       listen<UpdateAvailablePayload>('app-update-available', (event) => {
         const update = sanitizeAvailableUpdate(event.payload);

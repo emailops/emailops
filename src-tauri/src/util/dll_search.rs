@@ -35,6 +35,37 @@ pub fn cuda_runtime_dll_dirs(cuda_path: Option<&Path>, is_dir: impl Fn(&Path) ->
     [bin.join("x64"), bin].into_iter().filter(|dir| is_dir(dir)).collect()
 }
 
+/// Something about the GPU runtime the user has to fix themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GpuRuntimeNotice {
+    /// The CUDA build found no CUDA toolkit to load its runtime DLLs from, so
+    /// the CUDA backend cannot load and inference runs on the CPU.
+    CudaRuntimeNotFound,
+}
+
+/// The toolkit directories [`restrict_dll_search`] added. Unset when the search
+/// order was not restricted (other platforms, or the call failed), in which case
+/// Windows still searches `PATH` and the CUDA runtime may well be found.
+static CUDA_DLL_DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+
+/// Pure decision behind [`startup_gpu_runtime_notice`]: only a CUDA build whose
+/// DLL search was restricted without any toolkit directory has lost CUDA.
+pub fn gpu_runtime_notice(cuda_build: bool, cuda_dirs_added: Option<&[PathBuf]>) -> Option<GpuRuntimeNotice> {
+    match cuda_dirs_added {
+        Some([]) if cuda_build => Some(GpuRuntimeNotice::CudaRuntimeNotFound),
+        _ => None,
+    }
+}
+
+/// The notice for this process, decided once in `main` by [`restrict_dll_search`].
+pub fn startup_gpu_runtime_notice() -> Option<GpuRuntimeNotice> {
+    gpu_runtime_notice(
+        cfg!(all(windows, feature = "cuda")),
+        CUDA_DLL_DIRS.get().map(Vec::as_slice),
+    )
+}
+
 /// Apply the restricted DLL search order to the whole process. Call it first
 /// thing in `main`, before anything can load a library.
 #[cfg(windows)]
@@ -54,13 +85,15 @@ pub fn restrict_dll_search() -> std::io::Result<()> {
         use windows_sys::Win32::System::LibraryLoader::AddDllDirectory;
 
         let cuda_path = std::env::var_os("CUDA_PATH");
-        for dir in cuda_runtime_dll_dirs(cuda_path.as_deref().map(Path::new), |p| p.is_dir()) {
+        let dirs = cuda_runtime_dll_dirs(cuda_path.as_deref().map(Path::new), |p| p.is_dir());
+        for dir in &dirs {
             let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
             // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call.
             if unsafe { AddDllDirectory(wide.as_ptr()) }.is_null() {
                 return Err(std::io::Error::last_os_error());
             }
         }
+        let _ = CUDA_DLL_DIRS.set(dirs);
     }
 
     Ok(())
@@ -108,6 +141,27 @@ mod tests {
         for (name, cuda_path, existing, want) in cases {
             let got = cuda_runtime_dll_dirs(cuda_path.as_deref(), |p| existing.iter().any(|d| d == p));
             assert_eq!(got, want, "{name}");
+        }
+    }
+
+    #[test]
+    fn gpu_runtime_notice_cases() {
+        let dirs = vec![root().join("bin")];
+        // (name, CUDA build, toolkit dirs added — None = search left unrestricted, expected)
+        type NoticeCase<'a> = (&'a str, bool, Option<&'a [PathBuf]>, Option<GpuRuntimeNotice>);
+        let cases: Vec<NoticeCase> = vec![
+            ("not a CUDA build", false, Some(&[]), None),
+            (
+                "CUDA build, no toolkit dir",
+                true,
+                Some(&[]),
+                Some(GpuRuntimeNotice::CudaRuntimeNotFound),
+            ),
+            ("CUDA build, toolkit found", true, Some(&dirs), None),
+            ("search not restricted, PATH still searched", true, None, None),
+        ];
+        for (name, cuda_build, added, want) in cases {
+            assert_eq!(gpu_runtime_notice(cuda_build, added), want, "{name}");
         }
     }
 }

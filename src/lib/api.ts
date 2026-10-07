@@ -1485,6 +1485,14 @@ export async function getAvailableUpdate(): Promise<AvailableUpdate | null> {
   return invoke('get_available_update');
 }
 
+// GPU-runtime problem found at startup that only the user can fix (mirrors
+// `util::dll_search::GpuRuntimeNotice`); null when there is none.
+export type GpuRuntimeNotice = 'cudaRuntimeNotFound';
+
+export async function getGpuRuntimeNotice(): Promise<GpuRuntimeNotice | null> {
+  return invoke('get_gpu_runtime_notice');
+}
+
 // Security
 export async function hasMainPassword(): Promise<boolean> {
   return invoke('has_main_password');

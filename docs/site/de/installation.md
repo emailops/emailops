@@ -305,4 +305,6 @@ Zwei Build-Hinweise zur KI-Laufzeit:
   nie. <!-- claim:inst-building-from-3 -->
 - Ein Cargo-Feature `cuda` erzeugt eine reine NVIDIA-Variante. Die Release-Pipeline
   veröffentlicht sie für Windows als separaten Installer, `EmailOps-windows-cuda.msi`, neben
-  dem standardmäßigen Vulkan-Build, der alle GPU-Hersteller abdeckt. <!-- claim:inst-building-from-4 -->
+  dem standardmäßigen Vulkan-Build, der alle GPU-Hersteller abdeckt. Sie benötigt das NVIDIA
+  CUDA Toolkit, dessen Installer `CUDA_PATH` setzt; ohne es zeigt die App einen Hinweis und
+  führt die KI auf der CPU aus. <!-- claim:inst-building-from-4 -->
