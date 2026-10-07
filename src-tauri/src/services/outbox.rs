@@ -175,15 +175,12 @@ pub async fn queue_outgoing(
     let (send_at, origin) = plan_send_at(now, schedule)?;
     let mut message = prepare_message(db, message)?;
 
-    // A draft already gone is no reason not to send; one of another account
-    // is refused, since it is deleted below.
+    // A draft already gone is no reason not to send; one the message does not
+    // own is refused, since it is deleted below.
     let draft = match draft_id {
         Some(id) => match db.get_draft(id)? {
-            Some(_) => Some(crate::services::ownership::draft_in_account(
-                db,
-                &message.account_id,
-                id,
-            )?),
+            Some(draft) if draft_belongs_to(&draft, &message) => Some(draft),
+            Some(_) => return Err(AppError::NotFound(format!("Draft {id} not found"))),
             None => None,
         },
         None => None,
@@ -218,6 +215,15 @@ pub async fn queue_outgoing(
     wake_dispatcher_at(send_at, now);
     db.get_outbox_entry(&id)?
         .ok_or_else(|| AppError::NotFound(format!("Outbox message {id} vanished after queueing")))
+}
+
+/// Whether `draft` is the composer draft of `message`: a draft of the sending
+/// account, or the reply's own draft, which the reply composer keeps in the
+/// parent's account even when the reply goes out from another one. It is
+/// deleted through its own account either way.
+pub fn draft_belongs_to(draft: &crate::models::Draft, message: &OutgoingMessage) -> bool {
+    draft.account_id == message.account_id
+        || (message.reply_to_email_id.is_some() && draft.email_id == message.reply_to_email_id)
 }
 
 /// The draft a queued message came from leaves Drafts. Best-effort: the
@@ -791,6 +797,49 @@ mod tests {
             "the other account's draft stays"
         );
         assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
+    }
+
+    // Regression: the reply composer keeps its draft in the parent's account.
+    // Sent from another account with undo on, queueing refused that draft
+    // ("Draft … not found"). The reply's own draft goes with it.
+    #[tokio::test]
+    async fn a_reply_from_another_account_takes_its_draft_from_the_parents_account() {
+        let (db, _fake) = setup();
+        db.seed_test_account("acc-2");
+        let draft = db
+            .save_user_draft(&crate::models::SaveDraftRequest {
+                id: None,
+                email_id: Some("parent-1".into()),
+                account_id: "acc-1".into(),
+                to_addresses: vec!["ana@example.com".into()],
+                cc_addresses: vec![],
+                subject: "Re: Quarterly plan".into(),
+                body: "Friday?".into(),
+                body_html: None,
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .unwrap();
+        let reply = OutgoingMessage {
+            account_id: "acc-2".into(),
+            ..reply_message()
+        };
+
+        queue_outgoing(
+            &db,
+            reply,
+            OutboxSchedule::Undo { delay_secs: 5 },
+            Some(&draft.id),
+            None,
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            db.get_draft(&draft.id).unwrap().is_none(),
+            "the reply's draft left Drafts"
+        );
     }
 
     // An outbox row is a per-account record: a command acting for one account
