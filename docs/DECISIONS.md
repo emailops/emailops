@@ -3550,3 +3550,25 @@ token (cannot sign from hosted CI); signing `uninstall.exe` (NSIS generates it d
 bundling and embeds it in the installer, so it ships unsigned — acceptable for CASA AL1,
 whose evidence is the main executable and primary DLLs; the `.msi` has no uninstaller
 file).
+
+## 2026-10-07 — Linux downloads ship GPG-signed checksums from a project release key
+
+**Decision:** Each release publishes `EmailOps-linux-SHA256SUMS` (sha256 of the `.deb`,
+`.AppImage` and any `.rpm`) and its detached signature `EmailOps-linux-SHA256SUMS.asc`,
+made by the `linux-sign` job of `release.yml` with a dedicated project key
+("EmailOps Release Signing", ed25519, 2-year expiry, extendable). The public key is
+committed as `docs/release-signing-key.asc` and its fingerprint is printed in the
+installation docs; the private key exists only as `RELEASE_GPG_PRIVATE_KEY` in the
+`signing` environment, under the same never-builds rule as the Windows signing jobs.
+`scripts/sign_linux_checksums.sh` refuses to publish a signature that does not verify
+against the committed public key. The checksums cover Linux only.
+**Context:** The CASA checklist (4.2.1) asks for a Linux download with cryptographic
+authenticity and integrity verification and names GPG-signed checksums as one accepted
+route. HTTPS from GitHub protects the transfer but does not identify the publisher.
+**Rejected:** An AppImage embedded signature (only covers the AppImage and means
+changing how Tauri drives linuxdeploy); a signed APT repository or Flatpak/Snap (a new
+distribution channel to host and maintain, more than the requirement needs); one
+`SHA256SUMS` for every platform including the macOS DMG (the DMG is uploaded by hand,
+so the signature would move to a manual step on the developer's Mac for no assessment
+gain); the maintainer's personal GPG key (a release key can be rotated or handed over
+without touching a personal identity).

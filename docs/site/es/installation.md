@@ -148,6 +148,24 @@ chmod +x EmailOps-linux.AppImage
 ./EmailOps-linux.AppImage
 ```
 
+### Verificar la descarga {#linux-verify}
+
+<!-- claim:inst-linux-verify-1 -->
+Cada release incluye también **EmailOps-linux-SHA256SUMS** y su firma GPG,
+**EmailOps-linux-SHA256SUMS.asc**, hecha con la clave de publicación del proyecto (huella
+`ACF0 DC94 D172 2E93 BFA7  D718 48EC 05DA EEAD FEDF`). Para comprobar que el AppImage es el que publicó el
+proyecto, descarga ambos ficheros en la misma carpeta y ejecuta:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emailops/emailops/main/docs/release-signing-key.asc | gpg --import
+gpg --verify EmailOps-linux-SHA256SUMS.asc EmailOps-linux-SHA256SUMS
+sha256sum --ignore-missing -c EmailOps-linux-SHA256SUMS
+```
+
+<!-- claim:inst-linux-verify-2 -->
+`gpg` debe indicar *Good signature* de **EmailOps Release Signing** con esa huella, y
+`sha256sum` debe mostrar **OK** para el fichero que descargaste.
+
 ### Aceleración por GPU
 
 <!-- claim:inst-linux-gpu-acceleration-1 -->

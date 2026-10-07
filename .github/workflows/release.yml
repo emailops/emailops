@@ -47,7 +47,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Linux. Not code-signed: Linux packages conventionally are not.
+  # Linux. The packages themselves are not signed (conventionally they are
+  # not); linux-sign publishes GPG-signed checksums for them instead.
   #
   # Asset names match `scripts/dist_platform.sh`, which mirrors `dist-mac`'s
   # convention so every platform has a permanent latest-download URL:
@@ -217,6 +218,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # For linux-sign, which checksums and signs these exact files.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-installers
+          path: release/
+          if-no-files-found: error
+          retention-days: 3
+
       # Dry-run path: never touch the public releases page. Upload the built
       # installers as a plain workflow artifact instead, so a validation run
       # can still be inspected/downloaded without publishing anything.
@@ -264,6 +273,55 @@ jobs:
           # Without this, the action finalizes (publishes) an existing draft.
           draft: true
 
+
+  # GPG-signed checksums for the Linux installers: EmailOps-linux-SHA256SUMS
+  # and its .asc, verifiable against docs/release-signing-key.asc. Same rule
+  # as the Windows signing jobs: the private key exists only in the `signing`
+  # environment (owner approval) and this job builds nothing.
+  linux-sign:
+    name: Linux sign checksums
+    needs: release
+    runs-on: ubuntu-24.04
+    environment: signing
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-installers
+          path: release
+
+      - name: Sign checksums
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: bash scripts/sign_linux_checksums.sh release
+
+      - name: Upload checksums (dry run only)
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: emailops-linux-checksums-dry-run
+          path: |
+            release/EmailOps-linux-SHA256SUMS
+            release/EmailOps-linux-SHA256SUMS.asc
+          if-no-files-found: error
+
+      # Only the two new files: the installers are already on the draft,
+      # attached by the release job.
+      - name: Attach to GitHub Release
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: |
+            release/EmailOps-linux-SHA256SUMS
+            release/EmailOps-linux-SHA256SUMS.asc
+          draft: true
 
   # ── Windows: compile → sign binaries → bundle → sign installers → publish ──
   #

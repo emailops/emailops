@@ -232,6 +232,20 @@ checks = [
   { release = 'EmailOps-linux.AppImage' },
 ]
 
+[inst-linux-verify-1]
+checks = [
+  { file = '.github/workflows/release.yml', has = 'EmailOps-linux-SHA256SUMS.asc', covers = ['Every release also carries EmailOps-linux-SHA256SUMS and its GPG signature, EmailOps-linux-SHA256SUMS.asc'] },
+  { file = 'scripts/sign_linux_checksums.sh', has = 'does not verify against the published key', covers = ["made with the project's release key"] },
+  { file = 'docs/release-signing-key.asc', has = 'BEGIN PGP PUBLIC KEY BLOCK' },
+  { manual = 'The fingerprint is that of docs/release-signing-key.asc (gpg --import, then gpg --fingerprint).', covers = ['fingerprint ACF0 DC94 D172 2E93 BFA7  D718 48EC 05DA EEAD FEDF'] },
+]
+fix = 'If the release key is rotated, replace docs/release-signing-key.asc and the fingerprint in all four languages.'
+
+[inst-linux-verify-2]
+checks = [
+  { manual = "What gpg --verify and sha256sum -c print is their own output; scripts/tests/test_sign_linux_checksums.py checks that the signature verifies against the published key." },
+]
+
 [inst-linux-gpu-acceleration-1]
 checks = [
   { file = '.github/workflows/release.yml', has = 'CARGO_FEATURES: vulkan', covers = ["the AppImage carries a Vulkan backend", "No CUDA toolkit, no vendor SDK, no separate build to pick."] },
