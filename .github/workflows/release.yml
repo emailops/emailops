@@ -3,9 +3,11 @@ name: Release
 # Linux + Windows (Vulkan) + Windows (CUDA). macOS is deliberately NOT built here — it's signed and
 # notarized locally via `make build-mac` and uploaded by hand (the `release`
 # skill drives that flow end to end), and that's a permanent choice, not a
-# stopgap: keeping macOS out of this workflow means the signing/notarization
-# secrets never need to touch a job whose only job is producing unsigned
-# Linux/Windows installers. `workflow_dispatch` takes an explicit `tag_name`
+# stopgap: keeping macOS out of this workflow means the Apple signing and
+# notarization secrets never touch a CI job. Windows IS signed here, under
+# the same rule in another form: only two dedicated jobs that never build can
+# read the Certum credentials (see the Windows section below).
+# `workflow_dispatch` takes an explicit `tag_name`
 # so it can be triggered from any ref (e.g. `main` right after pushing a tag)
 # and still reliably attach its artifacts to that tag's release — including a
 # release the `release` skill already created for the macOS DMG.
@@ -45,24 +47,15 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Deliberately one job with a platform matrix, not split per-OS: unlike the
-  # macOS build there's no certificate import/notarization/keychain teardown
-  # that would need special-casing per leg, so a matrix is the right amount
-  # of shared structure.
-  #
-  # NOT code-signed. Linux packages conventionally are not; Windows installers
-  # would need an OV/EV certificate the project does not hold, so users see a
-  # SmartScreen warning on first run. Adding one means a `signtool` step in
-  # scripts/build_platform.sh plus the cert in repository secrets.
+  # Linux. The packages themselves are not signed (conventionally they are
+  # not); linux-sign publishes GPG-signed checksums for them instead.
   #
   # Asset names match `scripts/dist_platform.sh`, which mirrors `dist-mac`'s
   # convention so every platform has a permanent latest-download URL:
   #   .../releases/latest/download/EmailOps-linux.AppImage
   release:
     name: Release (${{ matrix.platform }})
-    if: ${{ inputs.targets != 'windows-cuda' }}
-    # One runner image per platform, both pinned:
-    #
+    if: ${{ inputs.targets == 'all' || inputs.targets == 'linux' }}
     # Pinned to 22.04, NOT ubuntu-latest. glibc is only backward
     # compatible: a binary built against glibc 2.35 runs on 2.39, but not
     # the reverse — so the runner image sets the *minimum* glibc a user
@@ -76,50 +69,21 @@ jobs:
     # covers 22.04/24.04/25.x, Debian 12+, and RHEL 9 derivatives.
     # When GitHub retires the 22.04 image, replace this with a
     # `container: ubuntu:22.04` on a newer runner rather than bumping it.
-    #
-    # Pinned to windows-2022, NOT windows-latest, for the same reason
-    # the Linux leg is pinned above: `windows-latest` silently moved to
-    # a new image mid-investigation (Visual Studio 18 Enterprise / MSVC
-    # 14.51, in place of VS 2022 Build Tools / MSVC 14.44), and that
-    # newer toolset hits a C1041 "cannot open program database" during
-    # CMake's own internal C-compiler-ABI-detection try_compile for
-    # llama-cpp-sys-2's vulkan-shaders-gen sub-project — a step that
-    # runs during `cmake -B` (configure), before this job's cargo
-    # invocation ever gets a chance to influence build parallelism.
-    # windows-2022 keeps the known-good VS 2022 Build Tools toolset
-    # this pipeline was built and validated against.
-    #
-    # Derived from `matrix.platform` rather than listed in a matrix `include`:
-    # the `targets` input filters the platform axis below, and an `include`
-    # entry for a filtered-out platform would be added back as a new leg.
-    runs-on: ${{ matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        # `all` builds both; a single target builds one (`windows-cuda` skips
-        # this job outright via the `if` above: an empty matrix is an error).
-        platform: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["windows"]' || inputs.targets == 'linux' && '["linux"]' || '["linux","windows"]') }}
+        # A one-leg matrix keeps `matrix.platform` in the make targets and
+        # artifact names below; Windows has its own job chain further down.
+        platform: [linux]
 
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag_name }}
-
-      # Windows Defender's real-time scanning transiently locks a freshly
-      # written file for AV inspection, which is the classic explanation for
-      # an intermittent "cannot open program database" MSVC error on a GH
-      # Windows runner — it presented identically to a genuine parallel-write
-      # race (same MSVC error text) but persisted even after forcing the
-      # build fully serial (CMAKE_BUILD_PARALLEL_LEVEL=1), which a real race
-      # could not survive. Exclude the whole checkout before any compiling
-      # starts.
-      - name: Exclude workspace from Windows Defender (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
 
       - uses: actions/setup-node@v7
         with:
@@ -128,7 +92,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'windows' && 'x86_64-pc-windows-msvc' || 'x86_64-unknown-linux-gnu' }}
+          targets: x86_64-unknown-linux-gnu
 
       # Key includes the runner image, not just the platform: pinning the Linux
       # leg to ubuntu-22.04 (see above) while the cache key stayed
@@ -139,10 +103,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: release-${{ matrix.platform == 'windows' && 'windows-2022' || 'ubuntu-22.04' }}
+          key: release-ubuntu-22.04
 
       - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           # libclang-dev (bindgen), xdg-utils and libfuse2 (linuxdeploy's
@@ -159,78 +122,19 @@ jobs:
       # loader needs to be present on the end user's machine (any GPU driver
       # ships it); the SDK itself is a build-only dependency.
       - name: Install Vulkan SDK (Linux)
-        if: runner.os == 'Linux'
         run: |
           wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/lunarg.gpg > /dev/null
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list "https://packages.lunarg.com/vulkan/lunarg-vulkan-$(lsb_release -cs).list"
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk
 
-      # humbletim/setup-vulkan-sdk installs the Windows SDK via a raw `7z x`
-      # extraction of the installer .exe rather than actually running it —
-      # LunarG's Windows installer is a Qt Installer Framework executable, and
-      # extracting its payload does not reproduce the real installed layout
-      # (Include/, Lib/, Bin/ at the SDK root), so CMake's find_package(Vulkan)
-      # fails with "missing: Vulkan_LIBRARY Vulkan_INCLUDE_DIR" downstream even
-      # though hundreds of MB got extracted somewhere. Run the installer for
-      # real, silently, with its documented unattended flags instead.
-      - name: Install Vulkan SDK (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          # The per-version download filename LunarG actually serves
-          # (vulkansdk-windows-X64-<ver>.exe) doesn't match the naming this
-          # originally guessed (VulkanSDK-<ver>-Installer.exe, 404s) — use the
-          # "latest" alias URL to fetch the installer (verified working) and
-          # only use the version-lookup endpoint to know where it installs to.
-          $ver = (Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/latest/windows.txt" -UseBasicParsing).Content.Trim()
-          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe?u="
-          Write-Host "Installing Vulkan SDK $ver from $url"
-          Invoke-WebRequest -Uri $url -OutFile VulkanSDK.exe
-          Start-Process -FilePath .\VulkanSDK.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
-
-          $installDir = "C:\VulkanSDK\$ver"
-          if (-not (Test-Path "$installDir\Include\vulkan\vulkan.h")) {
-            Write-Error "Vulkan SDK install did not produce the expected layout at $installDir"
-            exit 1
-          }
-          echo "VULKAN_SDK=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "$installDir\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-
       - run: npm ci
-
-      # llama-cpp-sys-2's vendored ggml-vulkan/CMakeLists.txt nests a second,
-      # independent CMake project (ExternalProject_Add(vulkan-shaders-gen))
-      # inside the main build. With the default "Visual Studio" generator,
-      # that inner project's own compiler-ABI-detection try_compile step
-      # (CMakeDetermineCCompiler.cmake, run once per nested configure,
-      # unrelated to and unaffected by cargo/cmake's own --parallel/--jobs
-      # settings) deterministically fails with "C1041: cannot open program
-      # database ... if multiple CL.EXE write to the same .PDB file, please
-      # use /FS" — an MSBuild-in-MSBuild wedge other projects vendoring the
-      # same ggml CMakeLists.txt have hit identically (e.g.
-      # FactusConsulting/whisper-dictate#662). Ninja invokes cl.exe one
-      # translation unit at a time with no nested-MSBuild parallel-project
-      # layer, so it doesn't have this failure mode — force it for both the
-      # outer and (inherited) inner CMake configures. Needs vcvars on PATH
-      # first since, unlike the "Visual Studio" generator, Ninja does not
-      # locate MSVC itself.
-      - name: Set up MSVC dev environment (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
 
       # Full build with dynamic ggml backends (DYNAMIC_BACKENDS=1): one
       # portable artifact that loads the Vulkan backend at runtime when a GPU
       # driver is present and falls back to CPU when it is not. Vulkan is the
       # single-artifact choice over CUDA — it covers AMD/Intel/NVIDIA and only
       # needs the user's normal graphics driver, not the NVIDIA toolkit.
-      # The Windows-only MSVC PDB-race workaround (CL=/FS + MSYS_NO_PATHCONV)
-      # lives inside scripts/build_platform.sh, scoped to just the cargo
-      # build invocation — setting MSYS_NO_PATHCONV for this entire step
-      # broke fetch_bundled_models.sh's own curl download, which relies on
-      # the same MSYS path conversion this disables.
       - name: Build
         shell: bash
         env:
@@ -256,7 +160,6 @@ jobs:
       # these runners have no GPU, so Vulkan always falls back to CPU here.
       # That still needs an occasional check on real GPU hardware.
       - name: Smoke test (Linux)
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
@@ -302,69 +205,26 @@ jobs:
             kill "$APP_PID"
           '
 
-      - name: Smoke test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $msi = (Get-ChildItem -Path release -Filter *.msi | Select-Object -First 1).FullName
-          if (-not $msi) { Write-Error "no .msi found under release/"; exit 1 }
-          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn" -Wait
-
-          # Don't assume the exact WiX install path — search for it instead,
-          # since this is the first time this install has ever been exercised.
-          $exe = Get-ChildItem -Path "$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter emailops.exe -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $exe) { Write-Error "installed emailops.exe not found under Program Files"; exit 1 }
-
-          $proc = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 8
-          $stillRunning = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
-          if (-not $stillRunning) {
-            Write-Error "emailops.exe exited within 8s of launch (missing DLL or startup crash)"
-            exit 1
-          }
-          Write-Host "emailops.exe is running (pid $($proc.Id)) after 8s — smoke test passed"
-
-          # Best-effort screen capture. GitHub's Windows runners execute in a
-          # service session, so CopyFromScreen may return a black frame or
-          # throw outright depending on whether a desktop is attached. That is
-          # a limitation of the runner, not a release defect, so this must
-          # never fail the build — the Linux screenshot is the reliable one.
-          Start-Sleep -Seconds 7
-          try {
-            Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-            $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-            $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-            $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-            $bmp.Save("$env:RUNNER_TEMP\smoke-windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
-            Write-Host "screenshot saved to $env:RUNNER_TEMP\smoke-windows.png"
-          } catch {
-            Write-Host "WARN: screenshot capture unavailable on this runner: $_"
-          }
-          Stop-Process -Id $proc.Id -Force
-
       # `always()`: the screenshot is most valuable precisely when the smoke
       # test just failed — a blank window or a visible error dialog explains a
       # startup failure that the process-liveness check can only report as a
       # bare exit code. Uploaded on real releases too, not just dry runs.
-      #
-      # Single, platform-specific path (not both candidates listed together):
-      # actions/upload-artifact@v7 computes a shared root directory across
-      # every listed path and rejects one that isn't under the workspace —
-      # `runner.temp` on Windows (D:\a\_temp) sits outside the checkout root
-      # (D:\a\emailops\emailops), so listing the Linux path
-      # (/tmp/smoke-linux.png) alongside it failed with "rootDirectory ... is
-      # not a parent directory of the file" even on a job that never produces
-      # the other platform's screenshot at all.
       - name: Upload smoke-test screenshot
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-screenshot-${{ matrix.platform }}
-          path: ${{ runner.os == 'Windows' && format('{0}\smoke-windows.png', runner.temp) || '/tmp/smoke-linux.png' }}
+          path: /tmp/smoke-linux.png
           if-no-files-found: ignore
           retention-days: 14
+
+      # For linux-sign, which checksums and signs these exact files.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-installers
+          path: release/
+          if-no-files-found: error
+          retention-days: 3
 
       # Dry-run path: never touch the public releases page. Upload the built
       # installers as a plain workflow artifact instead, so a validation run
@@ -377,7 +237,7 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-      # Each of the 3 platform jobs (linux, windows here, windows-cuda below)
+      # Each of the 3 publishing jobs (linux here, both windows-publish legs)
       # hits this same tag, so `generate_release_notes: true` would call
       # GitHub's auto-generate API 3 times against an already-existing
       # release; it *appends* to the current body rather than replacing it,
@@ -413,38 +273,17 @@ jobs:
           # Without this, the action finalizes (publishes) an existing draft.
           draft: true
 
-  # Windows-only, NVIDIA-only additional download alongside the Vulkan build
-  # above (which stays the recommended default: it covers AMD/Intel/NVIDIA
-  # off the user's normal graphics driver, no NVIDIA toolkit required at
-  # build time). This exists for users who specifically want CUDA — measured
-  # slower than Vulkan for the same model/quant on the same Tesla T4
-  # (7.8-8.2 tok/s vs 33-36 tok/s), so it is offered, not promoted.
-  #
-  # A completely separate job (not a third matrix leg on `release` above):
-  # it needs a different GPU SDK (CUDA Toolkit, not Vulkan SDK) and a
-  # differently-named output (`dist_platform.sh windows cuda`), and giving it
-  # its own `release/` directory means it can never collide with the Vulkan
-  # Windows job's own artifacts even though both jobs upload to the same
-  # release tag.
-  release-windows-cuda:
-    name: Release (windows-cuda)
-    if: ${{ inputs.targets == 'all' || inputs.targets == 'windows-cuda' }}
-    runs-on: windows-2022
-    # 90 min (matching the Vulkan legs) wasn't enough on the very first run:
-    # that measured a Build step still going at 82 min when the job was
-    # cancelled, for two reasons neither Vulkan leg hits — (1) a stone-cold
-    # Swatinem/rust-cache (first-ever run of this cache key, so every one of
-    # the ~800 dependency crates compiled from scratch, not just
-    # llama-cpp-sys-2), and (2) standard GitHub-hosted Windows runners have 2
-    # cores, not the 4 the timing this workflow is based on (see
-    # docs/DECISIONS.md, 2026-08-03 entry) was measured on — parallelism
-    # gains from the --jobs 1 fix scale with core count. A cancelled job never
-    # reaches its own `Post Run Swatinem/rust-cache` step, so it saves no
-    # cache either — this generous limit is mainly to let the first run
-    # actually finish and warm the cache; every run after should be far
-    # faster (only changed crates rebuild) and this can likely come back down
-    # once that's confirmed.
-    timeout-minutes: 180
+
+  # GPG-signed checksums for the Linux installers: EmailOps-linux-SHA256SUMS
+  # and its .asc, verifiable against docs/release-signing-key.asc. Same rule
+  # as the Windows signing jobs: the private key exists only in the `signing`
+  # environment (owner approval) and this job builds nothing.
+  linux-sign:
+    name: Linux sign checksums
+    needs: release
+    runs-on: ubuntu-24.04
+    environment: signing
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -452,6 +291,93 @@ jobs:
         with:
           ref: ${{ inputs.tag_name }}
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-installers
+          path: release
+
+      - name: Sign checksums
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: bash scripts/sign_linux_checksums.sh release
+
+      - name: Upload checksums (dry run only)
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: emailops-linux-checksums-dry-run
+          path: |
+            release/EmailOps-linux-SHA256SUMS
+            release/EmailOps-linux-SHA256SUMS.asc
+          if-no-files-found: error
+
+      # Only the two new files: the installers are already on the draft,
+      # attached by the release job.
+      - name: Attach to GitHub Release
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: |
+            release/EmailOps-linux-SHA256SUMS
+            release/EmailOps-linux-SHA256SUMS.asc
+          draft: true
+
+  # ── Windows: compile → sign binaries → bundle → sign installers → publish ──
+  #
+  # Two variants, one chain: `vulkan` is the recommended default (covers
+  # AMD/Intel/NVIDIA off the user's normal graphics driver); `cuda` is an
+  # NVIDIA-only extra download for users who specifically want it — measured
+  # slower than Vulkan for the same model/quant on the same Tesla T4
+  # (7.8-8.2 tok/s vs 33-36 tok/s), so it is offered, not promoted.
+  #
+  # Signed with the project's Certum certificate, but only by the two
+  # `windows-sign-*` jobs. They run in the `signing` environment (owner
+  # approval required, the only place CERTUM_EMAIL/CERTUM_OTP can be read)
+  # and execute nothing from the project's npm/cargo dependency tree — just
+  # ssign at a pinned commit and osslsigncode. The jobs that build never see
+  # the credentials. That is why the build is split around the signing:
+  # emailops.exe and its DLLs must be signed BEFORE they are packed into the
+  # installers, and the installers themselves after. See docs/DECISIONS.md
+  # ("Windows artifacts are signed in separate jobs that never build").
+  # Every run, dry runs included, therefore waits for two approvals.
+  #
+  # Known gap: NSIS generates uninstall.exe while bundling and embeds it in
+  # the -setup.exe, so it ships unsigned. The .msi has no such file
+  # (msiexec uninstalls).
+  windows-compile:
+    name: Windows compile (${{ matrix.variant }})
+    if: ${{ inputs.targets != 'linux' }}
+    # Pinned to windows-2022, NOT windows-latest: `windows-latest` silently
+    # moved to a new image mid-investigation (Visual Studio 18 Enterprise /
+    # MSVC 14.51, in place of VS 2022 Build Tools / MSVC 14.44), and that
+    # newer toolset hits a C1041 "cannot open program database" during
+    # CMake's own internal C-compiler-ABI-detection try_compile for
+    # llama-cpp-sys-2's vulkan-shaders-gen sub-project — a step that runs
+    # during `cmake -B` (configure), before cargo's own parallelism settings
+    # ever apply. windows-2022 keeps the known-good VS 2022 Build Tools
+    # toolset this pipeline was built and validated against.
+    runs-on: windows-2022
+    # cuda gets 180 min: a stone-cold rust cache plus 2-core hosted runners
+    # took it past 82 min on its first run. Vulkan fits in 90.
+    timeout-minutes: ${{ matrix.variant == 'cuda' && 180 || 90 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      # Windows Defender's real-time scanning transiently locks a freshly
+      # written file for AV inspection, which is the classic explanation for
+      # an intermittent "cannot open program database" MSVC error on a GH
+      # Windows runner — it presented identically to a genuine parallel-write
+      # race (same MSVC error text) but persisted even after forcing the
+      # build fully serial (CMAKE_BUILD_PARALLEL_LEVEL=1), which a real race
+      # could not survive. Exclude the whole checkout before any compiling
+      # starts.
       - name: Exclude workspace from Windows Defender
         shell: pwsh
         run: Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE"
@@ -465,10 +391,42 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      # Same keys as before the job split, so the warm caches carry over.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: release-windows-cuda
+          key: ${{ matrix.variant == 'cuda' && 'release-windows-cuda' || 'release-windows-2022' }}
+
+      # humbletim/setup-vulkan-sdk installs the Windows SDK via a raw `7z x`
+      # extraction of the installer .exe rather than actually running it —
+      # LunarG's Windows installer is a Qt Installer Framework executable, and
+      # extracting its payload does not reproduce the real installed layout
+      # (Include/, Lib/, Bin/ at the SDK root), so CMake's find_package(Vulkan)
+      # fails with "missing: Vulkan_LIBRARY Vulkan_INCLUDE_DIR" downstream even
+      # though hundreds of MB got extracted somewhere. Run the installer for
+      # real, silently, with its documented unattended flags instead.
+      - name: Install Vulkan SDK
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        run: |
+          # The per-version download filename LunarG actually serves
+          # (vulkansdk-windows-X64-<ver>.exe) doesn't match the naming this
+          # originally guessed (VulkanSDK-<ver>-Installer.exe, 404s) — use the
+          # "latest" alias URL to fetch the installer (verified working) and
+          # only use the version-lookup endpoint to know where it installs to.
+          $ver = (Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/latest/windows.txt" -UseBasicParsing).Content.Trim()
+          $url = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe?u="
+          Write-Host "Installing Vulkan SDK $ver from $url"
+          Invoke-WebRequest -Uri $url -OutFile VulkanSDK.exe
+          Start-Process -FilePath .\VulkanSDK.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
+
+          $installDir = "C:\VulkanSDK\$ver"
+          if (-not (Test-Path "$installDir\Include\vulkan\vulkan.h")) {
+            Write-Error "Vulkan SDK install did not produce the expected layout at $installDir"
+            exit 1
+          }
+          echo "VULKAN_SDK=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$installDir\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       # Version pinned to what was actually validated end-to-end on a real
       # Tesla T4 (build + install + real GPU offload confirmed via nvidia-smi
@@ -485,6 +443,7 @@ jobs:
       # NVRTC, NVTX, the CCCL headers (`thrust`) and the MSBuild/CMake
       # integration CMake's CUDA language support needs.
       - name: Install CUDA Toolkit
+        if: matrix.variant == 'cuda'
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: "13.0.0"
@@ -493,33 +452,141 @@ jobs:
 
       - run: npm ci
 
-      # See the comment on the equivalent step in the `release` job above —
-      # same MSVC-environment requirement (Ninja generator needs vcvars on
-      # PATH). Never build this with `--jobs 1`: a from-scratch CUDA release
-      # compile measured 270m40s forced to one job vs 31m54s in parallel.
+      # llama-cpp-sys-2's vendored ggml-vulkan/CMakeLists.txt nests a second,
+      # independent CMake project (ExternalProject_Add(vulkan-shaders-gen))
+      # inside the main build. With the default "Visual Studio" generator,
+      # that inner project's own compiler-ABI-detection try_compile step
+      # (CMakeDetermineCCompiler.cmake, run once per nested configure,
+      # unrelated to and unaffected by cargo/cmake's own --parallel/--jobs
+      # settings) deterministically fails with "C1041: cannot open program
+      # database ... if multiple CL.EXE write to the same .PDB file, please
+      # use /FS" — an MSBuild-in-MSBuild wedge other projects vendoring the
+      # same ggml CMakeLists.txt have hit identically (e.g.
+      # FactusConsulting/whisper-dictate#662). Ninja invokes cl.exe one
+      # translation unit at a time with no nested-MSBuild parallel-project
+      # layer, so it doesn't have this failure mode — force it for both the
+      # outer and (inherited) inner CMake configures. Needs vcvars on PATH
+      # first since, unlike the "Visual Studio" generator, Ninja does not
+      # locate MSVC itself.
       - name: Set up MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Build
+      # Set through GITHUB_ENV, not the Build step's `env:`, because GitHub
+      # defines an `env:` key even when its expression is empty, and CMake
+      # takes an empty CMAKE_* value as a real -D for the Vulkan leg too.
+      # Forwarded to CMake by llama-cpp-sys-2's build.rs (every CMAKE_*
+      # env var becomes a -D). Left unset, ggml-cuda compiles every kernel
+      # for 7 targets under CUDA 13 (75v 80v 86 89 90v 120a 121a), and
+      # nvcc for those was ~95 of this job's 111 build minutes. Native
+      # code for the desktop families (RTX 30/40/50); the Turing PTX
+      # (75-virtual) is JIT-compiled by the driver on everything else —
+      # RTX 20 and datacenter parts (A100/H100/GB10) — which costs a
+      # slower first launch and possibly throughput there. See
+      # docs/DECISIONS.md ("Windows CUDA build targets desktop GPUs").
+      - name: Pick CUDA architectures
+        if: matrix.variant == 'cuda'
+        shell: bash
+        run: echo "CMAKE_CUDA_ARCHITECTURES=75-virtual;86-real;89-real;120a-real" >> "$GITHUB_ENV"
+
+      # Compile only: emailops.exe and the ggml/llama DLLs land in
+      # release/windows-binaries/, unsigned, for the signing job. The
+      # MSVC PDB-race workaround (CL=/FS + MSYS_NO_PATHCONV) lives inside
+      # scripts/build_platform.sh, scoped to just the cargo build invocation.
+      - name: Build (compile phase)
         shell: bash
         env:
           EMAILOPS_GMAIL_CLIENT_ID: ${{ secrets.EMAILOPS_GMAIL_CLIENT_ID }}
           EMAILOPS_GMAIL_CLIENT_SECRET: ${{ secrets.EMAILOPS_GMAIL_CLIENT_SECRET }}
           EMAILOPS_OUTLOOK_CLIENT_ID: ${{ secrets.EMAILOPS_OUTLOOK_CLIENT_ID }}
+          PHASE: compile
           DYNAMIC_BACKENDS: "1"
-          CARGO_FEATURES: cuda
-          # Forwarded to CMake by llama-cpp-sys-2's build.rs (every CMAKE_*
-          # env var becomes a -D). Left unset, ggml-cuda compiles every kernel
-          # for 7 targets under CUDA 13 (75v 80v 86 89 90v 120a 121a), and
-          # nvcc for those was ~95 of this job's 111 build minutes. Native
-          # code for the desktop families (RTX 30/40/50); the Turing PTX
-          # (75-virtual) is JIT-compiled by the driver on everything else —
-          # RTX 20 and datacenter parts (A100/H100/GB10) — which costs a
-          # slower first launch and possibly throughput there. See
-          # docs/DECISIONS.md ("Windows CUDA build targets desktop GPUs").
-          CMAKE_CUDA_ARCHITECTURES: "75-virtual;86-real;89-real;120a-real"
+          CARGO_FEATURES: ${{ matrix.variant }}
+        run: make build-windows
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.variant }}-unsigned-binaries
+          path: release/windows-binaries/
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-sign-binaries:
+    name: Windows sign binaries (${{ matrix.variant }})
+    needs: windows-compile
+    runs-on: ubuntu-24.04
+    environment: signing
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - name: Install signing tools
+        run: bash scripts/install_signing_tools.sh
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-${{ matrix.variant }}-unsigned-binaries
+          path: windows-binaries
+
+      - name: Sign and verify
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+        run: bash scripts/sign_windows.sh windows-binaries
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.variant }}-signed-binaries
+          path: windows-binaries/
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-bundle:
+    name: Windows bundle (${{ matrix.variant }})
+    needs: windows-sign-binaries
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-${{ matrix.variant }}-signed-binaries
+          path: signed-binaries
+
+      # Packs the signed files without recompiling (`tauri bundle`); see the
+      # PHASE=bundle notes in scripts/build_platform.sh.
+      - name: Build (bundle phase)
+        shell: bash
+        env:
+          PHASE: bundle
+          SIGNED_BIN_DIR: signed-binaries
+          DYNAMIC_BACKENDS: "1"
+          CARGO_FEATURES: ${{ matrix.variant }}
         run: make build-windows
 
       - name: Verify
@@ -528,18 +595,89 @@ jobs:
 
       - name: Stage stable-named artifacts
         shell: bash
-        run: bash scripts/dist_platform.sh windows cuda
+        run: bash scripts/dist_platform.sh windows ${{ matrix.variant == 'cuda' && 'cuda' || '' }}
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.variant }}-unsigned-installers
+          path: release/
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-sign-installers:
+    name: Windows sign installers (${{ matrix.variant }})
+    needs: windows-bundle
+    runs-on: ubuntu-24.04
+    environment: signing
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - name: Install signing tools
+        run: bash scripts/install_signing_tools.sh
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-${{ matrix.variant }}-unsigned-installers
+          path: release
+
+      - name: Sign and verify
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+        run: bash scripts/sign_windows.sh release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.variant }}-installers
+          path: release/
+          if-no-files-found: error
+          retention-days: 3
+
+  windows-publish:
+    name: Release (windows-${{ matrix.variant }})
+    needs: windows-sign-installers
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-${{ matrix.variant }}-installers
+          path: release
+
+      # Proves the installed binary actually starts and resolves its DLLs on
+      # a clean machine — exactly the failure mode a DYNAMIC_BACKENDS
+      # packaging regression takes (missing DLL next to the exe). It does NOT
+      # prove GPU offload works: these runners have no GPU, so the app always
+      # falls back to CPU here.
       - name: Smoke test
         shell: pwsh
         run: |
-          $msi = (Get-ChildItem -Path release -Filter *cuda*.msi | Select-Object -First 1).FullName
-          if (-not $msi) { Write-Error "no cuda .msi found under release/"; exit 1 }
+          $msi = (Get-ChildItem -Path release -Filter *.msi | Select-Object -First 1).FullName
+          if (-not $msi) { Write-Error "no .msi found under release/"; exit 1 }
           Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /qn" -Wait
 
+          # Don't assume the exact WiX install path — search for it instead.
           $exe = Get-ChildItem -Path "$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter emailops.exe -ErrorAction SilentlyContinue |
             Select-Object -First 1 -ExpandProperty FullName
           if (-not $exe) { Write-Error "installed emailops.exe not found under Program Files"; exit 1 }
+          "INSTALLED_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           $proc = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 8
@@ -550,22 +688,83 @@ jobs:
           }
           Write-Host "emailops.exe is running (pid $($proc.Id)) after 8s — smoke test passed"
 
-          # No GPU on this runner, so this only proves the CUDA-enabled binary
-          # starts and resolves its DLLs (ggml-cuda.dll included) — not that
-          # offload actually engages. That still needs an occasional check on
-          # real GPU hardware, same caveat as the Vulkan legs above.
+          # Best-effort screen capture. GitHub's Windows runners execute in a
+          # service session, so CopyFromScreen may return a black frame or
+          # throw outright depending on whether a desktop is attached. That is
+          # a limitation of the runner, not a release defect, so this must
+          # never fail the build — the Linux screenshot is the reliable one.
+          Start-Sleep -Seconds 7
+          try {
+            Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+            $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bmp.Save("$env:RUNNER_TEMP\smoke-windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            Write-Host "screenshot saved to $env:RUNNER_TEMP\smoke-windows.png"
+          } catch {
+            Write-Host "WARN: screenshot capture unavailable on this runner: $_"
+          }
           Stop-Process -Id $proc.Id -Force
 
+      # Windows' own verdict on every signed file — the installers as
+      # downloaded and the exe/DLLs as installed. One table per run, kept as
+      # an artifact: it is the Authenticode evidence a security assessment
+      # asks for (signer, chain, timestamp), not just a pass/fail bit.
+      - name: Verify signatures on Windows
+        shell: pwsh
+        run: |
+          $installDir = Split-Path $env:INSTALLED_EXE
+          $files = @(Get-ChildItem release -File | Where-Object Extension -in '.exe','.msi') +
+                   @(Get-ChildItem $installDir -Recurse -File -Include *.exe,*.dll)
+          $rows = foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            [pscustomobject]@{
+              File        = $f.FullName
+              Status      = $s.Status
+              Signer      = $s.SignerCertificate.Subject
+              TimeStamper = $s.TimeStamperCertificate.Subject
+            }
+          }
+          $rows | Format-List | Out-File "$env:RUNNER_TEMP\authenticode-${{ matrix.variant }}.txt" -Encoding utf8
+          $rows | Format-Table File, Status -AutoSize | Out-String -Width 250
+          $bad = @($rows | Where-Object Status -ne 'Valid')
+          if ($bad.Count -gt 0) {
+            Write-Error "$($bad.Count) file(s) without a valid signature"
+            exit 1
+          }
+
+      - name: Upload Authenticode evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: authenticode-windows-${{ matrix.variant }}
+          path: ${{ runner.temp }}\authenticode-${{ matrix.variant }}.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # Uploaded even when the smoke test fails: a blank window or an error
+      # dialog explains a startup failure the liveness check cannot.
+      - name: Upload smoke-test screenshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-screenshot-windows-${{ matrix.variant }}
+          path: ${{ runner.temp }}\smoke-windows.png
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Dry-run path: never touch the public releases page.
       - name: Upload artifacts (dry run only)
         if: ${{ inputs.dry_run }}
         uses: actions/upload-artifact@v7
         with:
-          name: emailops-windows-cuda-dry-run
+          name: emailops-windows-${{ matrix.variant }}-dry-run
           path: release/*
           if-no-files-found: error
 
-      # See the matching comment on the linux/windows job's step of the same
-      # name — idempotent across all 3 job runs, unlike generate_release_notes.
+      # See the matching comment on the Linux job's step of the same name —
+      # idempotent across all 3 publishing jobs, unlike generate_release_notes.
       - name: Extract release notes from CHANGELOG
         if: ${{ !inputs.dry_run }}
         shell: bash

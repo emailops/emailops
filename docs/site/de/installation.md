@@ -111,18 +111,18 @@ Später aktualisieren mit `brew upgrade --cask emailops`.
 ### „Der Computer wurde durch Windows geschützt" {#smartscreen}
 
 <!-- claim:inst-windows-smartscreen-1 -->
-Beim Ausführen des Installationsprogramms zeigt Windows möglicherweise einen blauen
+Das Installationsprogramm ist signiert, daher kann Windows Ihnen anzeigen, wer es
+veröffentlicht hat. Beim Ausführen zeigt Windows möglicherweise trotzdem einen blauen
 **Microsoft Defender SmartScreen**-Bildschirm mit der Meldung *„Der Computer wurde durch
-Windows geschützt"*. Das ist zu erwarten: Das Installationsprogramm ist noch nicht signiert,
-weil eine Signatur unter Windows ein kostenpflichtiges Zertifikat erfordert, über das das
-Projekt nicht verfügt. Die Warnung sagt nichts über die Datei selbst aus; SmartScreen zeigt sie
-bei jedem unsignierten Download, den es noch nicht oft gesehen hat.
+Windows geschützt"*. SmartScreen warnt bei jedem Download, den es noch nicht oft gesehen hat,
+ob signiert oder nicht, und das Signaturzertifikat ist neu: Die Warnung verschwindet erst, je
+mehr Menschen EmailOps installieren.
 
 <!-- claim:inst-windows-smartscreen-2 -->
 So fahren Sie fort:
 
 1. Klicken Sie auf **Weitere Informationen**. <!-- claim:inst-windows-smartscreen-3 -->
-2. Prüfen Sie, dass die App **EmailOps** heißt, und klicken Sie auf **Trotzdem ausführen**. <!-- claim:inst-windows-smartscreen-4 -->
+2. Prüfen Sie, dass die App **EmailOps** heißt und der Herausgeber auf **Open Source Developer** gefolgt vom Urheberrechtsinhaber aus der [NOTICE](https://github.com/emailops/emailops/blob/main/NOTICE)-Datei des Projekts endet, und klicken Sie dann auf **Trotzdem ausführen**. Fehlt der Herausgeber oder ist es ein anderer, führen Sie es nicht aus. <!-- claim:inst-windows-smartscreen-4 -->
 
 <!-- claim:inst-windows-smartscreen-5 -->
 Wenn Sie vorher sicherstellen möchten, dass der Download echt ist, vergleichen Sie seinen
@@ -151,6 +151,25 @@ Installation. Halten Sie Ihren GPU-Treiber halbwegs aktuell, dann funktioniert e
 chmod +x EmailOps-linux.AppImage
 ./EmailOps-linux.AppImage
 ```
+
+### Download prüfen {#linux-verify}
+
+<!-- claim:inst-linux-verify-1 -->
+Jede Version enthält außerdem **EmailOps-linux-SHA256SUMS** und deren GPG-Signatur
+**EmailOps-linux-SHA256SUMS.asc**, erstellt mit dem Release-Schlüssel des Projekts
+(Fingerabdruck `ACF0 DC94 D172 2E93 BFA7  D718 48EC 05DA EEAD FEDF`). Um zu prüfen, dass das AppImage das
+vom Projekt veröffentlichte ist, laden Sie beide Dateien in denselben Ordner herunter und führen
+Sie aus:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emailops/emailops/main/docs/release-signing-key.asc | gpg --import
+gpg --verify EmailOps-linux-SHA256SUMS.asc EmailOps-linux-SHA256SUMS
+sha256sum --ignore-missing -c EmailOps-linux-SHA256SUMS
+```
+
+<!-- claim:inst-linux-verify-2 -->
+`gpg` muss eine *Good signature* von **EmailOps Release Signing** mit diesem Fingerabdruck
+melden, und `sha256sum` muss **OK** für die heruntergeladene Datei ausgeben.
 
 ### GPU-Beschleunigung
 
