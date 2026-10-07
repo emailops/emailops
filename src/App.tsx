@@ -79,6 +79,7 @@ import {
   planChatAccountChange,
   planSignInAgain,
   selectAccountById,
+  syncStoredMail,
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
@@ -1240,13 +1241,15 @@ function AppInner() {
       // or scroll-position reset — the sync should be transparent to the user.
       syncBatchRefetch.flush();
       refreshOpenThread();
-      const syncedAccountId = syncProgress.accountId;
-      useFilterStore
-        .getState()
-        .refreshAfterSync(syncedAccountId)
-        .catch((error) => {
-          addLog('error', 'system', `Failed to refresh smart filters after sync: ${errorText(error)}`);
-        });
+      // An idle sync leaves the stats as they were; skip the recompute.
+      if (syncStoredMail(syncProgress)) {
+        useFilterStore
+          .getState()
+          .refreshAfterSync(syncProgress.accountId)
+          .catch((error) => {
+            addLog('error', 'system', `Failed to refresh smart filters after sync: ${errorText(error)}`);
+          });
+      }
     }
   }, [activeAccountId, isUnified, syncProgress, syncBatchRefetch, addLog]);
 

@@ -14,6 +14,7 @@ import {
   selectAccountById,
   selectEffectiveAccountId,
   selectIsSyncing,
+  syncStoredMail,
   toQueryAccountId,
   useAccountStore,
 } from './accountStore';
@@ -190,6 +191,24 @@ describe('reduceSyncProgress', () => {
 });
 
 // ── selectIsSyncing ───────────────────────────────────────────────────────────
+
+describe('syncStoredMail', () => {
+  const complete = (total: number): SyncProgress => ({
+    accountId: 'acc-1',
+    status: 'complete',
+    current: total,
+    total,
+    message: '',
+  });
+
+  it('is false for an idle sync that stored nothing', () => {
+    expect(syncStoredMail(complete(0))).toBe(false);
+  });
+
+  it('is true when the sync stored mail', () => {
+    expect(syncStoredMail(complete(3))).toBe(true);
+  });
+});
 
 describe('selectIsSyncing', () => {
   it('is true for an account that is syncing', () => {
