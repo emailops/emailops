@@ -1,3 +1,4 @@
+pub mod dll_search;
 pub mod email_addr;
 pub mod fs_link;
 pub mod html;

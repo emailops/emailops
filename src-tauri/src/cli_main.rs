@@ -7,5 +7,10 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Before anything can load a DLL (DASA 1.5.2); see `src/main.rs`.
+    #[cfg(windows)]
+    if let Err(e) = emailops_lib::util::dll_search::restrict_dll_search() {
+        eprintln!("[startup] Warning: could not restrict the DLL search order: {e}");
+    }
     emailops_lib::cli::run()
 }
