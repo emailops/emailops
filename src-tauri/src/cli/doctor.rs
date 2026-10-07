@@ -59,6 +59,7 @@ pub fn build_report(db: &Database, data_dir: &Path, model: &str) -> Result<Docto
     if !ai_enabled {
         warnings.push("AI is disabled in Settings — chat/classify/embed will fail".to_string());
     }
+    warnings.extend(integrity_warnings(db, &accounts, crate::services::clock::now_secs())?);
 
     Ok(DoctorReport {
         ok: accounts_enabled >= 1,
@@ -72,6 +73,44 @@ pub fn build_report(db: &Database, data_dir: &Path, model: &str) -> Result<Docto
         embedding_model,
         warnings,
     })
+}
+
+/// An inbox not verified against its provider for this long means the sync's
+/// weekly verification has not been completing.
+const STALE_VERIFICATION_SECS: i64 = 14 * 86_400;
+
+/// Data-integrity findings: stored mail keyword search cannot see, and enabled
+/// accounts whose inbox has not been verified against the provider recently.
+/// Both are repaired by the app on its own; the warning says one is pending
+/// or not completing.
+fn integrity_warnings(db: &Database, accounts: &[crate::models::Account], now: i64) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+    let unindexed: i64 = db.reader().query_row(
+        "SELECT COUNT(*) FROM emails WHERE id NOT IN (SELECT email_id FROM emails_fts)",
+        [],
+        |r| r.get(0),
+    )?;
+    if unindexed > 0 {
+        warnings.push(format!(
+            "{unindexed} email{} missing from the search index — the next sync of their account adds them",
+            if unindexed == 1 { " is" } else { "s are" }
+        ));
+    }
+    for account in accounts.iter().filter(|a| a.enabled) {
+        match crate::services::emails::inbox_last_verified(db, &account.id)? {
+            None => warnings.push(format!(
+                "{}: inbox never verified against the provider — the next sync verifies it",
+                account.email
+            )),
+            Some(at) if now.saturating_sub(at) >= STALE_VERIFICATION_SECS => warnings.push(format!(
+                "{}: inbox not verified against the provider for {} days",
+                account.email,
+                now.saturating_sub(at) / 86_400
+            )),
+            Some(_) => {}
+        }
+    }
+    Ok(warnings)
 }
 
 /// Render the report: a success envelope in JSON mode, an aligned section in
@@ -125,6 +164,66 @@ mod tests {
         assert!(report.ok);
         assert_eq!(report.accounts_enabled, 1);
         assert!(report.warnings.iter().all(|w| !w.contains("no enabled accounts")));
+    }
+
+    fn integrity_warnings_of(report: &DoctorReport) -> Vec<&String> {
+        report
+            .warnings
+            .iter()
+            .filter(|w| w.contains("search index") || w.contains("verified"))
+            .collect()
+    }
+
+    #[test]
+    fn report_warns_about_emails_missing_from_the_search_index() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "solo@example.com", true);
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, recipients_json, \
+                 snippet, timestamp, created_at) VALUES ('e1', 'a1', 't1', 's', 'x', 'x@example.com', '[]', '', 1, 1)",
+                [],
+            )
+            .expect("seed unindexed email");
+
+        let report = build_report(&db, Path::new("/tmp/x"), "m").expect("report");
+
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("1 email") && w.contains("search index")));
+    }
+
+    #[test]
+    fn report_warns_about_an_inbox_not_verified_recently() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "never@example.com", true);
+        seed_account(&db, "a2", "stale@example.com", true);
+        db.set_preference("inbox_gap_repair_v1:a2", "1")
+            .expect("verified at the epoch");
+
+        let report = build_report(&db, Path::new("/tmp/x"), "m").expect("report");
+
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("never@example.com") && w.contains("never verified")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("stale@example.com") && w.contains("not verified")));
+    }
+
+    #[test]
+    fn report_has_no_integrity_warnings_for_a_verified_indexed_install() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_account(&db, "a1", "solo@example.com", true);
+        db.set_preference("inbox_gap_repair_v1:a1", &(i64::MAX / 2).to_string())
+            .expect("verified");
+
+        let report = build_report(&db, Path::new("/tmp/x"), "m").expect("report");
+
+        assert!(integrity_warnings_of(&report).is_empty(), "{:?}", report.warnings);
     }
 
     #[test]

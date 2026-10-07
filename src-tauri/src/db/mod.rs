@@ -445,26 +445,7 @@ impl Database {
         }
         let mut conn = self.connection();
         let tx = conn.transaction()?;
-        let mut count: u32 = 0;
-        {
-            let mut read_stmt = tx.prepare(
-                "SELECT e.id, e.subject, e.sender, COALESCE(b.body, '')
-                 FROM emails e LEFT JOIN email_bodies b ON b.email_id = e.id
-                 WHERE e.id NOT IN (SELECT email_id FROM emails_fts)",
-            )?;
-            let mut insert_stmt =
-                tx.prepare("INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, ?3, ?4)")?;
-            let mut rows = read_stmt.query([])?;
-            while let Some(row) = rows.next()? {
-                let id: String = row.get(0)?;
-                let subject: String = row.get(1)?;
-                let sender: String = row.get(2)?;
-                let body: String = row.get(3)?;
-                let body_text = crate::util::html::strip_html_for_fts(&body);
-                insert_stmt.execute(rusqlite::params![id, subject, sender, body_text])?;
-                count += 1;
-            }
-        }
+        let count = index_missing_fts_rows(&tx, None)?;
         tx.execute(
             "INSERT INTO user_preferences (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -478,6 +459,16 @@ impl Database {
                 format!("Search index repaired: {count} email(s) were missing from keyword search"),
             );
         }
+        Ok(count)
+    }
+
+    /// Index the account's stored emails that have no FTS row. The recurring
+    /// counterpart of [`Self::index_emails_missing_from_fts`], run after syncs.
+    pub fn index_account_emails_missing_from_fts(&self, account_id: &str) -> Result<u32> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let count = index_missing_fts_rows(&tx, Some(account_id))?;
+        tx.commit()?;
         Ok(count)
     }
 
@@ -795,6 +786,31 @@ impl Database {
             read_conns,
         })
     }
+}
+
+/// Index every stored email (of `account_id`, or all) with no FTS row, the body
+/// stripped of HTML like any insert. Returns how many were indexed.
+fn index_missing_fts_rows(tx: &rusqlite::Transaction<'_>, account_id: Option<&str>) -> Result<u32> {
+    let mut read_stmt = tx.prepare(
+        "SELECT e.id, e.subject, e.sender, COALESCE(b.body, '')
+         FROM emails e LEFT JOIN email_bodies b ON b.email_id = e.id
+         WHERE (?1 IS NULL OR e.account_id = ?1)
+           AND e.id NOT IN (SELECT email_id FROM emails_fts)",
+    )?;
+    let mut insert_stmt =
+        tx.prepare("INSERT INTO emails_fts(email_id, subject, sender, body) VALUES (?1, ?2, ?3, ?4)")?;
+    let mut rows = read_stmt.query([account_id])?;
+    let mut count: u32 = 0;
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let subject: String = row.get(1)?;
+        let sender: String = row.get(2)?;
+        let body: String = row.get(3)?;
+        let body_text = crate::util::html::strip_html_for_fts(&body);
+        insert_stmt.execute(rusqlite::params![id, subject, sender, body_text])?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 #[cfg(test)]

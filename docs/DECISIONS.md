@@ -3496,3 +3496,27 @@ granted it, so `bundle_dmg.sh` failed with `-1743` after notarizing the app.
 and no visual hint to drag the app to Applications. *A DMG tool such as `dmgbuild`*: a new
 dependency to write the same 6 KB file. *Asking the developer to run the build from a
 terminal*: keeps a person in the loop the change exists to remove.
+
+## 2026-10-06 — Data fixes repair existing installs; sync is verified against the provider
+
+**Decision:** A fix for a bug that lost, skipped or mis-stored data ships with a repair for
+installs already affected (or a stated reason none were). Sync correctness is checked
+continuously rather than trusted: each inbox is re-listed in full against the provider
+every week and anything missing is downloaded, each account's stored mail is checked
+against the search index daily, and `emailops-cli doctor` warns when either is pending.
+A seeded simulation test (offline bursts past the per-sync cap, interrupted runs, failed
+downloads) asserts that local converges to the provider, and gains a case for every new
+production failure mode.
+**Context:** Two fixed bugs kept damaging real mailboxes after their fixes: inbox holes
+from catch-ups past the 500-message cap (fixed by the resume floor, 25f2257) and mail
+stored without a search-index row (fixed in 5973f06). Neither fix repaired stored data,
+sync reported `idle` with no error, and both were found months later by a user searching
+for one specific email. The simulation, run against the code without the resume floor,
+reproduces the production symptom (4,340 of 7,340 messages never synced).
+**Rejected:** Comparing local and provider message counts — Gmail's per-label totals
+cannot be scoped to the categories an account syncs (an account syncing Primary and
+Updates always looks short against the INBOX total), so the check would either cry wolf
+or need tolerances that hide real gaps; listing ids is exact and reuses the backfill pass.
+A sync ledger of covered date ranges or provider change cursors (Gmail `historyId`, Graph
+delta, IMAP CONDSTORE) for the incremental pass — the right long-term model, but a larger
+rewrite; the weekly verification bounds any gap to a week in the meantime.

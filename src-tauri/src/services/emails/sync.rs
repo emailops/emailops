@@ -417,7 +417,10 @@ pub async fn sync_account_with_provider(
     // A backfill from the floor with no ceiling sees the whole inbox; listed
     // to its end it is what records the one-time gap repair as done.
     let whole_inbox_listing = lists_whole_inbox(&plan, effective_sync_from(account));
-    let gap_repair_pending = db.get_preference(&inbox_gap_repair_key(account_id))?.is_none();
+    let gap_repair_pending = inbox_verification_due(
+        db.get_preference(&inbox_gap_repair_key(account_id))?.as_deref(),
+        crate::services::clock::now_secs(),
+    );
     // A first sync lists everything anyway; only an account with stored mail
     // is being repaired.
     let repairing_gaps = whole_inbox_listing && gap_repair_pending && plan.run_incremental;
@@ -426,7 +429,7 @@ pub async fn sync_account_with_provider(
             "info",
             "sync",
             &account.email,
-            "Checking the whole inbox once for emails earlier syncs missed...",
+            "Verifying the whole inbox against the provider...",
         );
     }
 
@@ -859,7 +862,11 @@ pub async fn sync_account_with_provider(
                             crate::services::mail_notifications::MailCandidate::from_email(
                                 e,
                                 &account.email,
-                                backfill_ref_ids.contains(&e.id),
+                                counts_as_history(
+                                    backfill_ref_ids.contains(&e.id),
+                                    e.timestamp,
+                                    incremental_after_timestamp,
+                                ),
                             )
                         }));
                     }
@@ -984,16 +991,20 @@ pub async fn sync_account_with_provider(
             &inbox_gap_repair_key(account_id),
             &crate::services::clock::now_secs().to_string(),
         ) {
-            Ok(()) if repairing_gaps => emit_account_log(
-                "success",
-                "sync",
-                &account.email,
-                &match total_new_backfill {
-                    0 => "Inbox check complete: no emails were missing".to_string(),
-                    1 => "Inbox check complete: recovered 1 email earlier syncs missed".to_string(),
-                    n => format!("Inbox check complete: recovered {n} emails earlier syncs missed"),
-                },
-            ),
+            // Mail found by a verification is a gap some sync left behind, so it
+            // is a warning: on a healthy install this stays at zero.
+            Ok(()) if repairing_gaps => match total_new_backfill {
+                0 => emit_account_log("debug", "sync", &account.email, "Inbox verified: nothing missing"),
+                n => emit_account_log(
+                    "warn",
+                    "sync",
+                    &account.email,
+                    &format!(
+                        "Inbox verified: recovered {n} email{} earlier syncs missed",
+                        if n == 1 { "" } else { "s" }
+                    ),
+                ),
+            },
             Ok(()) => {}
             Err(e) => emit_account_log(
                 "warn",
@@ -1003,6 +1014,8 @@ pub async fn sync_account_with_provider(
             ),
         }
     }
+
+    check_search_index(db, account_id, &account.email);
 
     let new_count = total_new;
 
@@ -3264,8 +3277,11 @@ pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &s
     );
     plan.incremental_after_timestamp =
         incremental_after_with_resume(plan.incremental_after_timestamp, resume, effective_sync_from);
-    let repair_done = db.get_preference(&inbox_gap_repair_key(account_id))?.is_some();
-    Ok(apply_inbox_gap_repair(plan, repair_done, effective_sync_from))
+    let verification_due = inbox_verification_due(
+        db.get_preference(&inbox_gap_repair_key(account_id))?.as_deref(),
+        crate::services::clock::now_secs(),
+    );
+    Ok(apply_inbox_gap_repair(plan, !verification_due, effective_sync_from))
 }
 
 /// Preference holding the floor of an inbox incremental window that a sync
@@ -3292,6 +3308,96 @@ pub(super) fn incremental_after_with_resume(
         Some(resume) => planned.min(floor.map_or(resume, |floor| resume.max(floor))),
         None => planned,
     })
+}
+
+/// How often the whole inbox is listed again and compared with what is stored.
+/// Listing ids is cheap next to downloading, and it is the one check that finds
+/// a gap whatever bug left it.
+const INBOX_VERIFY_INTERVAL_SECS: i64 = 7 * 86_400;
+
+/// How often an account's stored mail is checked against the search index.
+const SEARCH_INDEX_CHECK_INTERVAL_SECS: i64 = 86_400;
+
+/// Whether a periodic integrity check last recorded at `last` (unix seconds as
+/// stored in preferences) is due again. Never run, or an unreadable value, is due.
+fn integrity_check_due(last: Option<&str>, now: i64, interval_secs: i64) -> bool {
+    last.and_then(|raw| raw.parse::<i64>().ok())
+        .is_none_or(|last| now.saturating_sub(last) >= interval_secs)
+}
+
+pub(super) fn inbox_verification_due(last: Option<&str>, now: i64) -> bool {
+    integrity_check_due(last, now, INBOX_VERIFY_INTERVAL_SECS)
+}
+
+/// Whether a message the sync stored is history rather than new mail, which
+/// decides if it may notify. A whole-inbox verification lists new mail too, so
+/// only backfilled mail older than the incremental floor is history.
+pub(super) fn counts_as_history(in_backfill: bool, timestamp: i64, incremental_after: Option<i64>) -> bool {
+    in_backfill && incremental_after.is_none_or(|after| timestamp < after)
+}
+
+/// Preference recording when the account's stored mail was last checked
+/// against the search index.
+fn search_index_checked_key(account_id: &str) -> String {
+    format!("search_index_checked:{account_id}")
+}
+
+/// Daily: index any of the account's stored mail that keyword search cannot
+/// see. Every ingest path writes the index today; this catches whatever a past
+/// or future path got wrong. Non-fatal: a failure is logged and retried by the
+/// next sync, since nothing is recorded.
+fn check_search_index(db: &Database, account_id: &str, account_email: &str) {
+    let key = search_index_checked_key(account_id);
+    let now = crate::services::clock::now_secs();
+    match db.get_preference(&key) {
+        Ok(last) if !integrity_check_due(last.as_deref(), now, SEARCH_INDEX_CHECK_INTERVAL_SECS) => return,
+        Ok(_) => {}
+        Err(e) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                account_email,
+                &format!("Search index check skipped: {e}"),
+            );
+            return;
+        }
+    }
+    match db.index_account_emails_missing_from_fts(account_id) {
+        Ok(added) => {
+            if added > 0 {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    account_email,
+                    &format!(
+                        "Search index: added {added} email{} that keyword search could not find",
+                        if added == 1 { "" } else { "s" }
+                    ),
+                );
+            }
+            if let Err(e) = db.set_preference(&key, &now.to_string()) {
+                emit_account_log(
+                    "warn",
+                    "sync",
+                    account_email,
+                    &format!("Failed to record the search index check: {e}"),
+                );
+            }
+        }
+        Err(e) => emit_account_log(
+            "warn",
+            "sync",
+            account_email,
+            &format!("Search index check failed: {e}"),
+        ),
+    }
+}
+
+/// When the account's inbox was last verified against the provider in full.
+pub fn inbox_last_verified(db: &Database, account_id: &str) -> Result<Option<i64>> {
+    Ok(db
+        .get_preference(&inbox_gap_repair_key(account_id))?
+        .and_then(|raw| raw.parse::<i64>().ok()))
 }
 
 /// Preference recording that the account's inbox was listed in full once and
@@ -4125,6 +4231,46 @@ mod plan_sync_passes_tests {
 
         assert!(!lists_whole_inbox(&first_sync, None), "no floor, nothing to anchor on");
     }
+
+    /// The whole-inbox listing is not only a one-time repair: it re-runs on a
+    /// schedule, so a gap left by a bug nobody knows about yet is found and
+    /// filled within a week instead of never.
+    #[test]
+    fn inbox_verification_comes_due_on_a_schedule() {
+        let now = 10_000_000;
+        let week = INBOX_VERIFY_INTERVAL_SECS;
+        let cases = [
+            (None, true),
+            (Some((now - 60).to_string()), false),
+            (Some((now - week + 1).to_string()), false),
+            (Some((now - week).to_string()), true),
+            (Some("not a timestamp".to_string()), true),
+        ];
+        for (last, expected) in cases {
+            assert_eq!(inbox_verification_due(last.as_deref(), now), expected, "last={last:?}");
+        }
+    }
+
+    /// A verification lists new mail too (newest first), so "found by the
+    /// backfill" no longer means "history": only mail older than the
+    /// incremental floor is history and stays silent.
+    #[test]
+    fn only_backfilled_mail_below_the_incremental_floor_counts_as_history() {
+        let cases = [
+            // (listed by backfill, timestamp, incremental floor) → history
+            (false, 9_000, Some(5_000), false),
+            (true, 9_000, Some(5_000), false),
+            (true, 4_000, Some(5_000), true),
+            (true, 4_000, None, true),
+        ];
+        for (in_backfill, ts, floor, expected) in cases {
+            assert_eq!(
+                counts_as_history(in_backfill, ts, floor),
+                expected,
+                "in_backfill={in_backfill} ts={ts} floor={floor:?}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4194,9 +4340,10 @@ mod sync_anchor_tests {
             .expect("seed sent");
         db.insert_email(&email_in("inbox", "received", 2_000))
             .expect("seed inbox");
-        // The steady-state planner, not the one-time whole-inbox repair.
-        db.set_preference(&inbox_gap_repair_key(&account.id), "1")
-            .expect("mark repair done");
+        // The steady-state planner, not the whole-inbox verification (recorded
+        // far from "now" so it holds whatever clock another test installed).
+        db.set_preference(&inbox_gap_repair_key(&account.id), &(i64::MAX / 2).to_string())
+            .expect("mark inbox verified");
 
         let plan = resolve_sync_plan(&db, &account, &account.id).expect("plan");
 
@@ -4444,19 +4591,62 @@ mod inbox_gap_repair_tests {
         );
     }
 
+    // Verification times are set far from "now" so the tests hold whatever
+    // clock another test has installed.
     #[tokio::test]
-    async fn a_repaired_account_is_not_listed_in_full_again() {
+    async fn a_recently_verified_account_is_not_listed_in_full_again() {
         let account = gmail_account();
         let (db, provider) = db_and_provider_with_a_hole(&account);
-        db.set_preference(&inbox_gap_repair_key(&account.id), "1")
-            .expect("mark done");
+        db.set_preference(&inbox_gap_repair_key(&account.id), &(i64::MAX / 2).to_string())
+            .expect("mark verified");
 
         run_sync(&db, &account, provider).await.expect("sync");
 
         assert!(
             stored(&db, &["m2", "m3", "m4"]).is_empty(),
-            "with the repair recorded, only the incremental window is listed"
+            "a verification inside the interval leaves only the incremental window"
         );
+    }
+
+    #[tokio::test]
+    async fn an_account_verified_long_ago_is_verified_again() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+        db.set_preference(&inbox_gap_repair_key(&account.id), "1")
+            .expect("mark verified at the epoch");
+
+        run_sync(&db, &account, provider).await.expect("sync");
+
+        assert_eq!(
+            stored(&db, &["m2", "m3", "m4"]).len(),
+            3,
+            "a hole that appeared after the last verification is filled by the next one"
+        );
+    }
+
+    /// Whatever path stored a message without indexing it, the account's next
+    /// sync puts it back in keyword search and records when it checked.
+    #[tokio::test]
+    async fn a_sync_indexes_stored_mail_missing_from_search() {
+        let account = gmail_account();
+        let (db, provider) = db_and_provider_with_a_hole(&account);
+        db.connection()
+            .execute("DELETE FROM emails_fts WHERE email_id = 'm1'", [])
+            .expect("drop m1 from the index");
+
+        run_sync(&db, &account, provider).await.expect("sync");
+
+        let indexed: i64 = db
+            .reader()
+            .query_row("SELECT COUNT(*) FROM emails_fts WHERE email_id = 'm1'", [], |r| {
+                r.get(0)
+            })
+            .expect("count");
+        assert_eq!(indexed, 1, "the unindexed message must be searchable again");
+        assert!(db
+            .get_preference(&search_index_checked_key(&account.id))
+            .expect("pref")
+            .is_some());
     }
 
     #[tokio::test]
@@ -4475,6 +4665,146 @@ mod inbox_gap_repair_tests {
                 .is_some(),
             "a first sync already lists the whole inbox; a new account must not list it twice"
         );
+    }
+
+    /// The invariant the sync exists for, under the conditions that broke it in
+    /// production: after any sequence of offline stretches (bursts well past
+    /// `MAX_INCREMENTAL_EMAILS_PER_SYNC`), syncs cut off part-way and failed
+    /// downloads, clean syncs leave the local inbox holding exactly the
+    /// provider's messages, every one of them searchable.
+    ///
+    /// The weekly whole-inbox verification is held off after the first sync so
+    /// this exercises the incremental pass and its resume floor on their own:
+    /// the verification is the safety net, not the mechanism.
+    #[tokio::test(start_paused = true)]
+    async fn the_inbox_converges_to_the_provider_across_gaps_and_interruptions() {
+        let account = gmail_account();
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+
+        // Deterministic LCG: the scenario is random-shaped but reproducible.
+        let mut state: u64 = 0x5EED_1234_ABCD_0042;
+        let mut roll = move |n: u64| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % n
+        };
+
+        let mut server: Vec<Email> = Vec::new();
+        let mut next_ts: i64 = 1_600_000_000;
+        let mut arrive = |server: &mut Vec<Email>, count: u64| {
+            for _ in 0..count {
+                next_ts += 600;
+                server.push(inbox_email(&format!("s{}", server.len()), next_ts));
+            }
+        };
+        let provider_for = |server: &[Email], failing: &[String]| {
+            let provider = FakeEmailProvider::new("me@example.com", "Me");
+            for email in server {
+                provider.add_message(email.clone(), EmailCategory::Primary, vec![]);
+            }
+            for id in failing {
+                provider.fail_message(id.clone());
+            }
+            provider
+        };
+        let sync = |db: Arc<Database>, provider: FakeEmailProvider, abort: bool| {
+            let account = account.clone();
+            async move {
+                let temp = tempfile::tempdir().expect("temp dir");
+                let flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+                if abort {
+                    request_sync_abort(&flags, &account.id);
+                }
+                sync_account_with_provider(
+                    &db,
+                    &account,
+                    temp.path(),
+                    None,
+                    crate::services::task_queue::TaskQueue::new(1, "test-sync"),
+                    flags,
+                    Box::new(provider),
+                )
+                .await
+            }
+        };
+
+        arrive(&mut server, 300);
+        sync(db.clone(), provider_for(&server, &[]), false)
+            .await
+            .expect("first sync");
+        db.set_preference(&inbox_gap_repair_key(&account.id), &(i64::MAX / 2).to_string())
+            .expect("hold off the weekly verification");
+
+        const BURSTS: [u64; 5] = [0, 40, 120, 600, 1_300];
+        for _ in 0..16 {
+            arrive(&mut server, BURSTS[roll(BURSTS.len() as u64) as usize]);
+            let abort = roll(4) == 0;
+            let failing: Vec<String> = if roll(5) == 0 && !server.is_empty() {
+                (0..3)
+                    .map(|_| server[roll(server.len() as u64) as usize].id.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            // A failed run is part of the scenario; only convergence is asserted.
+            let _ = sync(db.clone(), provider_for(&server, &failing), abort).await;
+        }
+        // A backlog drains at `MAX_INCREMENTAL_EMAILS_PER_SYNC` per sync, so
+        // clean syncs run until one stores nothing new. Without a resume floor
+        // progress stops with mail still missing, which the assert below catches.
+        let stored_inbox = |db: &Database| -> i64 {
+            db.reader()
+                .query_row("SELECT COUNT(*) FROM emails WHERE mailbox = 'inbox'", [], |r| r.get(0))
+                .expect("count")
+        };
+        let mut clean_syncs = 0;
+        loop {
+            let before = stored_inbox(&db);
+            sync(db.clone(), provider_for(&server, &[]), false)
+                .await
+                .expect("clean sync");
+            clean_syncs += 1;
+            if stored_inbox(&db) == before || clean_syncs == 30 {
+                break;
+            }
+        }
+
+        let server_ids: std::collections::BTreeSet<String> = server.iter().map(|e| e.id.clone()).collect();
+        let local_ids: std::collections::BTreeSet<String> = {
+            let conn = db.reader();
+            let mut stmt = conn
+                .prepare("SELECT id FROM emails WHERE account_id = ?1 AND mailbox = 'inbox'")
+                .expect("prepare");
+            stmt.query_map([&account.id], |r| r.get::<_, String>(0))
+                .expect("query")
+                .collect::<rusqlite::Result<_>>()
+                .expect("rows")
+        };
+        let missing: Vec<_> = server_ids.difference(&local_ids).take(5).collect();
+        assert!(
+            missing.is_empty(),
+            "{} of {} provider messages never synced, e.g. {missing:?}",
+            server_ids.difference(&local_ids).count(),
+            server_ids.len()
+        );
+        assert_eq!(local_ids.len(), server_ids.len(), "no extra local rows");
+        let unindexed: i64 = db
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM emails WHERE id NOT IN (SELECT email_id FROM emails_fts)",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(unindexed, 0, "every stored message must be searchable");
     }
 
     #[tokio::test]
