@@ -27,10 +27,10 @@ pub async fn queue_outgoing_email(
         // The provider is only needed to remove the draft's provider copy;
         // without one (offline) the local draft still goes.
         let draft_account = match draft_id.as_deref() {
-            // A draft of another account is refused by the service; its
+            // A draft the message does not own is refused by the service; its
             // provider is never built (that would refresh its login).
             Some(id) => match db.get_draft(id)? {
-                Some(draft) if draft.account_id == message.account_id => db.get_account(&draft.account_id)?,
+                Some(draft) if outbox::draft_belongs_to(&draft, &message) => db.get_account(&draft.account_id)?,
                 _ => None,
             },
             None => None,

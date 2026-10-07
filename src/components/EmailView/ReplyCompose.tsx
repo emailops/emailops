@@ -92,8 +92,8 @@ function extractEmail(raw: string): string {
  * user's own mailbox.
  *
  * Falls back to the most recent other party in the thread when my message has
- * no usable recipients, and returns an empty list rather than ever addressing
- * the user to themselves.
+ * no usable recipients. Only a note the user only ever sent to themselves is
+ * addressed back to them.
  */
 export function computeReplyRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
   const self = new Set(selfEmails.map((e) => e.trim().toLowerCase()));
@@ -111,7 +111,33 @@ export function computeReplyRecipients(email: Email, threadEmails: Email[], self
     .map((m) => extractEmail(m.senderEmail))
     .find((addr) => addr.includes('@') && !self.has(addr));
 
-  return lastOther ? [lastOther] : [];
+  if (lastOther) return [lastOther];
+
+  // A note only ever sent to myself goes back to me, as Gmail does: the To is
+  // visible before sending, and I may be answering it from another account.
+  return dedupe([...email.recipients, ...email.cc].map(extractEmail).filter((r) => r.includes('@')));
+}
+
+/**
+ * Recipients for Reply All: the senders and recipients of every message in
+ * the thread, minus the user's own addresses. Only the latest email misses
+ * participants from earlier in the thread. A note only ever sent to myself
+ * leaves nobody, and goes back to its recipients as Reply does.
+ */
+export function computeReplyAllRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+  const all = new Set<string>();
+  // The latest email too, in case threadEmails is empty.
+  for (const msg of [...threadEmails, email]) {
+    all.add(extractEmail(msg.senderEmail));
+    for (const r of [...msg.recipients, ...msg.cc]) {
+      const clean = extractEmail(r);
+      if (clean.includes('@')) all.add(clean);
+    }
+  }
+  for (const self of selfEmails) {
+    all.delete(self);
+  }
+  return all.size > 0 ? [...all] : computeReplyRecipients(email, threadEmails, selfEmails);
 }
 
 function dedupe(values: string[]): string[] {
@@ -215,27 +241,7 @@ export function ReplyCompose({
     if (mode === 'reply') {
       return computeReplyRecipients(email, threadEmails, selfEmails);
     }
-    // Reply All: collect senders + recipients from ALL thread messages, minus self.
-    // Using only the latest email misses participants from earlier in the thread.
-    const all = new Set<string>();
-    for (const msg of threadEmails) {
-      all.add(extractEmail(msg.senderEmail));
-      for (const r of [...msg.recipients, ...msg.cc]) {
-        const clean = extractEmail(r);
-        if (clean.includes('@')) all.add(clean);
-      }
-    }
-    // Also include latest email in case threadEmails is empty
-    all.add(extractEmail(email.senderEmail));
-    for (const r of [...email.recipients, ...email.cc]) {
-      const clean = extractEmail(r);
-      if (clean.includes('@')) all.add(clean);
-    }
-    // Remove self
-    for (const self of selfEmails) {
-      all.delete(self);
-    }
-    return [...all];
+    return computeReplyAllRecipients(email, threadEmails, selfEmails);
   })();
 
   const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);

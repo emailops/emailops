@@ -124,7 +124,8 @@ pub fn plan_send_at(now: i64, schedule: OutboxSchedule) -> Result<(i64, OutboxOr
 /// Check and complete a message before it is stored: the body is sanitized
 /// and its inline images normalized exactly as an immediate send would; a new
 /// message needs recipients and a single-line subject; a reply needs its
-/// parent in the same account, whose subject it takes when it has none of its own.
+/// parent, whose subject it takes when it has none of its own. The parent may
+/// be another account's message: the user can answer from any account.
 fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<OutgoingMessage> {
     let body = crate::services::emails::outgoing_body(
         std::mem::take(&mut message.body),
@@ -144,7 +145,9 @@ fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<Outgoi
         return Err(AppError::NotFound(format!("Account {} not found", message.account_id)));
     }
     if let Some(parent_id) = message.reply_to_email_id.as_deref() {
-        let parent = crate::services::ownership::email_in_account(db, &message.account_id, parent_id)?;
+        let parent = db
+            .get_email(parent_id)?
+            .ok_or_else(|| AppError::NotFound(format!("Email {parent_id} not found")))?;
         if message.subject.trim().is_empty() {
             message.subject = crate::sync::mime_builder::reply_subject(&parent.subject);
         }
@@ -172,15 +175,12 @@ pub async fn queue_outgoing(
     let (send_at, origin) = plan_send_at(now, schedule)?;
     let mut message = prepare_message(db, message)?;
 
-    // A draft already gone is no reason not to send; one of another account
-    // is refused, since it is deleted below.
+    // A draft already gone is no reason not to send; one the message does not
+    // own is refused, since it is deleted below.
     let draft = match draft_id {
         Some(id) => match db.get_draft(id)? {
-            Some(_) => Some(crate::services::ownership::draft_in_account(
-                db,
-                &message.account_id,
-                id,
-            )?),
+            Some(draft) if draft_belongs_to(&draft, &message) => Some(draft),
+            Some(_) => return Err(AppError::NotFound(format!("Draft {id} not found"))),
             None => None,
         },
         None => None,
@@ -215,6 +215,15 @@ pub async fn queue_outgoing(
     wake_dispatcher_at(send_at, now);
     db.get_outbox_entry(&id)?
         .ok_or_else(|| AppError::NotFound(format!("Outbox message {id} vanished after queueing")))
+}
+
+/// Whether `draft` is the composer draft of `message`: a draft of the sending
+/// account, or the reply's own draft, which the reply composer keeps in the
+/// parent's account even when the reply goes out from another one. It is
+/// deleted through its own account either way.
+pub fn draft_belongs_to(draft: &crate::models::Draft, message: &OutgoingMessage) -> bool {
+    draft.account_id == message.account_id
+        || (message.reply_to_email_id.is_some() && draft.email_id == message.reply_to_email_id)
 }
 
 /// The draft a queued message came from leaves Drafts. Best-effort: the
@@ -790,6 +799,49 @@ mod tests {
         assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
     }
 
+    // Regression: the reply composer keeps its draft in the parent's account.
+    // Sent from another account with undo on, queueing refused that draft
+    // ("Draft … not found"). The reply's own draft goes with it.
+    #[tokio::test]
+    async fn a_reply_from_another_account_takes_its_draft_from_the_parents_account() {
+        let (db, _fake) = setup();
+        db.seed_test_account("acc-2");
+        let draft = db
+            .save_user_draft(&crate::models::SaveDraftRequest {
+                id: None,
+                email_id: Some("parent-1".into()),
+                account_id: "acc-1".into(),
+                to_addresses: vec!["ana@example.com".into()],
+                cc_addresses: vec![],
+                subject: "Re: Quarterly plan".into(),
+                body: "Friday?".into(),
+                body_html: None,
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .unwrap();
+        let reply = OutgoingMessage {
+            account_id: "acc-2".into(),
+            ..reply_message()
+        };
+
+        queue_outgoing(
+            &db,
+            reply,
+            OutboxSchedule::Undo { delay_secs: 5 },
+            Some(&draft.id),
+            None,
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            db.get_draft(&draft.id).unwrap().is_none(),
+            "the reply's draft left Drafts"
+        );
+    }
+
     // An outbox row is a per-account record: a command acting for one account
     // must not cancel or send another account's queued message by its id.
     #[tokio::test]
@@ -823,19 +875,28 @@ mod tests {
         assert_eq!(db.get_outbox_entry(&entry.id).unwrap().unwrap().send_at, NOW);
     }
 
-    // A reply is sent through its parent's thread: the parent must be a
-    // message of the account the reply goes out from.
+    // Regression: replying from another account than the one that received
+    // the parent failed with "Email … not found". The composer offers that
+    // choice; the reply threads by the parent's RFC headers, never by the
+    // receiving mailbox's provider ids.
     #[tokio::test]
-    async fn a_reply_to_another_accounts_message_is_refused() {
-        let (db, _fake) = setup();
+    async fn a_reply_from_another_account_is_queued_and_sent() {
+        let (db, fake) = setup();
         db.seed_test_account("acc-2");
         let reply = OutgoingMessage {
             account_id: "acc-2".into(),
             ..reply_message()
         };
-        let result = queue_outgoing(&db, reply, OutboxSchedule::At { send_at: NOW + 60 }, None, None, NOW).await;
-        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
-        assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
+        let entry = queue(&db, reply, OutboxSchedule::Undo { delay_secs: 5 }).await;
+        assert_eq!(entry.subject, "Re: Quarterly plan");
+
+        dispatch_due_outbox(&db, NOW + 5, &FakeProviders(Arc::clone(&fake)))
+            .await
+            .unwrap();
+        let sent = fake.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].thread_id.as_deref(), Some(""), "no foreign thread id");
+        assert_eq!(sent[0].original_message_id.as_deref(), Some("<parent@example.com>"));
     }
 
     // ── Dispatch ──

@@ -1242,6 +1242,52 @@ async fn a_reply_addresses_the_parent_by_its_provider_id() {
     );
 }
 
+/// Regression: replying from an account other than the one that received the
+/// parent failed with "not found".
+///
+/// The parent's provider id and thread id belong to the receiving mailbox;
+/// handed to the sending account's provider they addressed nothing (Gmail
+/// `threadId` and Graph `/messages/{id}/reply` both 404). Only the RFC
+/// headers, which are global, may cross accounts.
+#[tokio::test]
+async fn a_reply_from_another_account_hands_over_only_the_rfc_headers() {
+    use emailops_lib::sync::provider::EmailBody;
+    let db = test_db();
+    db.insert_account(&make_account("acc-recv", "received@example.com"))
+        .unwrap();
+    db.insert_account(&make_account("acc-send", "sender@example.com"))
+        .unwrap();
+
+    let mut parent = make_email_with("recv-item-id", "acc-recv", 1_700_000_000, "them@example.com", "inbox");
+    parent.thread_id = "recv-thread".to_string();
+    parent.message_id = Some("<parent@example.com>".to_string());
+    parent.references = Some("<root@example.com>".to_string());
+    db.insert_email(&parent).unwrap();
+
+    let provider = FakeEmailProvider::new("sender@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "recv-item-id",
+        &EmailBody::plain("ok"),
+        Some("acc-send"),
+        None,
+        None,
+        None,
+        Vec::new(),
+        &provider,
+    )
+    .await
+    .unwrap();
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].from_email, "sender@example.com");
+    assert_eq!(sent[0].provider_message_id.as_deref(), Some(""));
+    assert_eq!(sent[0].thread_id.as_deref(), Some(""));
+    assert_eq!(sent[0].original_message_id.as_deref(), Some("<parent@example.com>"));
+    assert_eq!(sent[0].original_references.as_deref(), Some("<root@example.com>"));
+}
+
 /// Regression: every provider's replies get the `Re:` prefix.
 ///
 /// Gmail normalized the subject inside its own send path and IMAP did not, so

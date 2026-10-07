@@ -1655,6 +1655,14 @@ impl EmailProvider for OutlookClient {
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<crate::sync::provider::SentMessageMeta> {
+        // No item id: the parent lives in another mailbox (a reply sent from a
+        // different account), which `/reply` cannot address. `/sendMail` cannot
+        // set In-Reply-To either, so the reply goes out unthreaded.
+        if target.provider_message_id.is_empty() {
+            return self
+                .send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
+                .await;
+        }
         self.send_reply(
             from_email,
             to_emails,
@@ -2411,6 +2419,46 @@ mod tests {
         )
         .await
         .expect("a missing internetMessageId must not block a reply");
+    }
+
+    /// Regression: a reply sent from another account has no parent item in
+    /// this mailbox. `/me/messages/{foreign id}/reply` 404s, so it goes out
+    /// as a plain `/sendMail` instead.
+    #[tokio::test]
+    async fn reply_without_a_parent_in_this_mailbox_goes_out_through_send_mail() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        EmailProvider::send_reply(
+            &client,
+            "me@example.com",
+            None,
+            &["them@example.com".to_string()],
+            &[],
+            &crate::sync::provider::ReplyTarget {
+                provider_message_id: "",
+                thread_id: "",
+                message_id: Some("<parent@example.com>"),
+                references: None,
+            },
+            "Re: hi",
+            &EmailBody::plain("reply"),
+            &[],
+        )
+        .await
+        .expect("the mock only matches /me/sendMail");
+
+        let requests = server.received_requests().await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body["message"]["subject"], "Re: hi");
     }
 
     #[tokio::test]
