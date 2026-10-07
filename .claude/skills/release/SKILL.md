@@ -525,3 +525,17 @@ tag created and pushed, the Linux/Windows CI result
 (updated + pushed, or held pending developer confirmation), the release state
 (draft with its asset list, or published with its URL), and the Homebrew cask
 state (updated + pushed to the tap, or pending the release publish).
+
+## Phase 10 — Free build output (post-publish)
+
+Once the cask is pushed, the per-arch release builds (~18 GB) and any idle or
+orphaned worktree build dirs are dead weight on a disk that runs near full.
+Dry-run first, show the developer the list, then apply — it only ever deletes
+regenerable output under `/Volumes/Build`:
+
+```bash
+make disk-clean ARGS="--release"           # dry run: what would go
+make disk-clean ARGS="--release --apply"
+```
+
+Report the freed size and the free-space line it prints.

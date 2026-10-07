@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -435,6 +435,14 @@ clean:
 # Point src-tauri/target at the Time Machine-excluded /Volumes/Build (no-op without it)
 link-target:
 	bash scripts/build_target.sh link
+
+# Free space and build output across every checkout on /Volumes/Build (read-only)
+disk-report:
+	python3 scripts/disk_clean.py report
+
+# Free orphaned and idle build output; dry run unless ARGS="--apply" (add --release after a release ships)
+disk-clean:
+	python3 scripts/disk_clean.py clean $(ARGS)
 
 # Install git hooks
 hooks:

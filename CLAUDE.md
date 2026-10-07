@@ -33,6 +33,7 @@ Common development operations live in the root `Makefile`. **Before reaching for
 - **Quality gates:** `make gates SET=commit|push|rust|frontend|all` (one summary line per gate, full output in files — `scripts/gates.sh`, which the lefthook pre-commit clippy/rustfmt/typecheck and pre-push hooks also call), `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
 - **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Linux / Windows Release Builds" below
 - **Hooks / deps:** `make install`, `make hooks`, `make audit`, `make clean`
+- **Disk:** `make disk-report` (read-only) / `make disk-clean` (dry run; `ARGS="--apply"` frees orphaned and 3-day-idle worktree build dirs, `--release` also the per-arch release builds) — `/Volumes/Build` shares free space with the data volume
 
 When you do need to run something the Makefile does not cover, prefer extending it (add a new target) over scattering one-off shell snippets across the codebase or your chat output — that way the next agent or developer can find it the same way.
 
