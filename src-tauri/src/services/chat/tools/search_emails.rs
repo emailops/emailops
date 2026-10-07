@@ -51,7 +51,7 @@ since/until, from, or a keyword"
 ///
 /// An email stores exactly ONE intent (`PRIMARY KEY (email_id, tag_type)`),
 /// while a real email is often several things at once — a request that is also
-/// a question — and older mail carries no tag at all. So an intent/topic filter
+/// a question — and older mail carries no tag at all. So an intent/topic/priority filter
 /// is a preference here, not a gate: the tagged rows come first, the rest of the
 /// matches follow, and this note keeps the two apart so a count stays honest.
 /// `None` when the page filled with tagged rows and nothing was added.
@@ -61,15 +61,15 @@ fn tag_coverage_note(tagged: usize, added: usize) -> Option<String> {
     }
     if tagged == 0 {
         return Some(format!(
-            "(no email carries the intent/topic asked for; the {added} rows below match every other \
-filter and are shown instead — each email stores only ONE intent, so the tag may simply be a \
-different one)"
+            "(no email carries the tags asked for; the {added} rows below match every other \
+filter and are shown instead — each email stores ONE intent, ONE topic and ONE priority, so a \
+tag may simply be a different one)"
         ));
     }
     Some(format!(
-        "({tagged} emails carry the intent/topic asked for; the {added} rows after them match every \
-other filter but are tagged differently or not classified — each email stores only ONE intent, \
-so count only the first {tagged} when asked how many)"
+        "({tagged} emails carry the tags asked for; the {added} rows after them match every \
+other filter but are tagged differently or not classified — count only the first {tagged} \
+when asked how many)"
     ))
 }
 
@@ -256,7 +256,7 @@ pub(crate) fn semantic_post_filter(
 /// two lists) so the chat's "does this call filter anything?" checks cannot
 /// drift from what the tool actually accepts.
 pub(crate) const FILTER_PARAMS: &[&str] = &[
-    "query", "from", "to", "with", "subject", "since", "until", "intent", "topic", "unread",
+    "query", "from", "to", "with", "subject", "since", "until", "intent", "topic", "priority", "unread",
 ];
 
 /// Parameters that shape the result (how many, which page, in what order, in
@@ -304,6 +304,7 @@ fn parameters_schema_with(glossary: &TagGlossary) -> Value {
             "order": { "type": "string", "enum": ["newest", "oldest"], "description": "Sort direction. Default 'newest' (most recent first). Use 'oldest' with limit=1 for 'first / earliest' queries ('first email I sent to X', 'primer correo', 'el más antiguo')." },
             "intent": { "type": "string", "enum": glossary.intent_names(), "description": intent_desc },
             "topic": { "type": "string", "enum": glossary.topic_names(), "description": topic_desc },
+            "priority": { "type": "string", "enum": crate::services::classification::PRIORITY_LEVELS, "description": "Filter by the classifier's priority tag — HOW PRESSING the mail is. Independent of intent and topic: every email carries one of each, so 'urgent promotions' is priority='urgent' AND intent='promotion' in the same call." },
             "with_bodies": { "type": "boolean", "description": "Return each email's cleaned body (budgeted per row) in this same call. Set it when you will summarise or extract from the results, instead of calling get_email_body once per email." },
             "unread": { "type": "boolean", "description": "true = only mail the user has not read yet. Combine with order/limit ('oldest unread' = order 'oldest', limit 1) and any other filter. Rows the user has not read are marked `unread` in every result." }
         },
@@ -320,7 +321,7 @@ impl Tool for SearchEmailsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic must be non-empty. `intent` / `topic` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic` filter RANKS rather than excludes: each email stores only one intent, so the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
+        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic / priority must be non-empty. `intent` / `topic` / `priority` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic`/`priority` filter RANKS rather than excludes: each email stores one intent, one topic and one priority — three independent tags, so one email can be both urgent and a promotion — and the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
 
     fn prompt_summary(&self) -> &'static str {
@@ -373,9 +374,10 @@ impl Tool for SearchEmailsTool {
         // shortcuts' internal one — same effect.
         let include_bodies = args.get("include_bodies").and_then(|v| v.as_bool()).unwrap_or(false)
             || args.get("with_bodies").and_then(|v| v.as_bool()).unwrap_or(false);
-        // Classification filters: intent / topic, carried WITH their type so a
-        // company or topic that shares the name cannot answer for them.
-        let tag_filters: Vec<TagQuery> = ["intent", "topic"]
+        // Classification filters: intent / topic / priority, carried WITH
+        // their type so a company or topic that shares the name cannot answer
+        // for them. The three are independent tags on the same email.
+        let tag_filters: Vec<TagQuery> = ["intent", "topic", "priority"]
             .iter()
             .filter_map(|k| {
                 args.get(*k)
@@ -1014,9 +1016,9 @@ mod tests {
         assert_eq!(
             tag_coverage_note(3, 12).as_deref(),
             Some(
-                "(3 emails carry the intent/topic asked for; the 12 rows after them match every \
-other filter but are tagged differently or not classified — each email stores only ONE intent, \
-so count only the first 3 when asked how many)"
+                "(3 emails carry the tags asked for; the 12 rows after them match every \
+other filter but are tagged differently or not classified — count only the first 3 \
+when asked how many)"
             )
         );
     }
@@ -1026,9 +1028,9 @@ so count only the first 3 when asked how many)"
         assert_eq!(
             tag_coverage_note(0, 5).as_deref(),
             Some(
-                "(no email carries the intent/topic asked for; the 5 rows below match every other \
-filter and are shown instead — each email stores only ONE intent, so the tag may simply be a \
-different one)"
+                "(no email carries the tags asked for; the 5 rows below match every other \
+filter and are shown instead — each email stores ONE intent, ONE topic and ONE priority, so a \
+tag may simply be a different one)"
             )
         );
     }

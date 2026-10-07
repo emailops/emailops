@@ -59,6 +59,10 @@
   expect:
     from: "metrics@emailopslabs.dev"
   absent: [intent, topic, since, until]
+  # `to: <the user>` is a no-op filter on the user's own mailbox; the 4B models
+  # set it or not depending on prompt length (it fails on 4b-q8 even without
+  # the priority/tags_asked lines).
+  ignore: [to]
 
 - id: german_sender_question_plans_the_same
   question: "welche E-Mails habe ich von metrics@emailopslabs.dev"
@@ -373,7 +377,9 @@
   today: "2026-09-18"
   expect:
     from: "metrics@emailopslabs.dev"
-  ignore: [to, query, mode, intent, topic, since, order, until]
+  # `limit: 25` is the default page size, so it hides nothing; 4b-q4 adds it
+  # once the prompt carries the priority/tags_asked lines.
+  ignore: [to, query, mode, intent, topic, since, order, until, limit]
 
 
 - id: a_window_up_to_now_has_no_end_en
@@ -392,3 +398,35 @@
     from: "metrics@emailopslabs.dev"
     since: "2026-03-01"
   ignore: [to, query, mode, intent, topic, until]
+
+- id: urgent_promotions_combine_priority_and_intent
+  question: "find emails tagged as both urgent and promotion or marketing"
+  note: "priority was not a plan field and every tag was dropped as a guess; the turn fell to RAG and answered 'none' over hundreds of urgent promotions"
+  today: "2026-10-07"
+  expect:
+    priority: "urgent"
+    intent: "promotion"
+    tags_asked: "true"
+  absent: [from, since, until, limit]
+  ignore: [to, query, mode]
+
+- id: urgent_promotions_es
+  question: "¿qué promociones tengo marcadas como urgentes?"
+  note: "same ask in Spanish: no tag name appears verbatim, so only the planner can say the tags are the question"
+  today: "2026-10-07"
+  expect:
+    priority: "urgent"
+    intent: "promotion"
+    tags_asked: "true"
+  absent: [from, since, until, limit]
+  ignore: [to, query, mode]
+
+- id: a_sender_lookup_does_not_claim_its_tags
+  question: "¿qué correos de BorgBase tengo sin leer?"
+  note: "the planner guesses intent=notification here; that guess must not be marked as asked, or it survives and hides BorgBase invoices tagged billing"
+  today: "2026-10-07"
+  expect:
+    from: "borgbase"
+    unread: true
+  absent: [tags_asked, priority, since, until]
+  ignore: [intent, topic, to, query, mode]

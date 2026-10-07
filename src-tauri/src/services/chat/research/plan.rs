@@ -165,7 +165,7 @@ pub(crate) fn plan_gather(plan: Option<&SearchPlan>, question: &str) -> Vec<Gath
         plan.mode = None;
     }
     let mut steps = vec![GatherStep::Filter(plan.clone())];
-    let tagged = plan.intent.is_some() || plan.topic.is_some();
+    let tagged = plan.intent.is_some() || plan.topic.is_some() || plan.priority.is_some();
     let untagged = plan.clone().without_classifier_tags();
     let untagged_is_selective = untagged.has_structural_filter() || untagged.query.is_some();
     if tagged && untagged_is_selective {

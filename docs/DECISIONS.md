@@ -3541,3 +3541,26 @@ GPG-signed checksums.
 **Rejected:** An embedded AppImage signature, a signed package repository or a store
 listing (more to build and maintain than the requirement needs); the maintainer's personal
 key (a project key can be rotated without touching a personal identity).
+
+## 2026-10-07 — Chat search filters by priority; the planner says which tags were asked
+
+**Decision:** `search_emails` and the query planner accept `priority` (`urgent` / `normal` /
+`low`, the classifier's closed set in `PRIORITY_LEVELS`) as a tag independent of intent and
+topic. On a turn the planner also routes, its classifier tags survive only when the planner
+itself marks them `tags_asked: true`; unmarked tags are treated as guesses and dropped, as
+before.
+**Context:** A user asking for "emails tagged both urgent and promotion" got "none" over
+hundreds of matches: priority was not a chat filter, and every planner tag was dropped
+unconditionally to stop guessed intents (e.g. `intent=notification` on a sender lookup)
+from emptying the result. Whether a tag is the question or a guess is a judgement about
+the question in any language and against the user's own glossary, so the model makes it.
+The prompt wording was chosen on a 3-model × 5-case matrix (qwen3.5 4b-q4, 4b-q8, 9b): the
+longer `tags_asked` description (+138 cached prompt-head tokens) was the only one that set
+the flag on the Spanish question in all three; three shorter variants (+60–87 tokens)
+picked the right tags but left the flag unset.
+**Rejected:** Keeping a tag when its name appears in the question — hard-codes the
+vocabulary, misses other languages ("promociones") and paraphrases, and breaks when the
+user edits the glossary. Never dropping planner tags — reopens the guessed-intent regression
+and moves tag-only plans ("who is X?") off retrieval. A structural rule (keep tags only
+when nothing else selects mail) — untested, and a spurious `unread: true`, which the 4B
+models add to Spanish questions, would defeat it.

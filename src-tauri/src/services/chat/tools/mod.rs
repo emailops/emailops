@@ -2013,7 +2013,7 @@ mod tests {
         // The company still shows up — the tag is a preference, not a gate —
         // but behind the classified one, and the note says only one carries it.
         assert!(
-            out.starts_with("(1 emails carry the intent/topic asked for"),
+            out.starts_with("(1 emails carry the tags asked for"),
             "the company must not count as billing intent; out:\n{out}"
         );
         let tagged = out.find("id=tagged").expect("classified email listed");
@@ -2073,7 +2073,7 @@ mod tests {
         );
         // Tagged first, the rest behind: an email carries ONE intent, so
         // "introduction" is a preference over the others, not a wall.
-        assert!(out.starts_with("(1 emails carry the intent/topic asked for"), "{out}");
+        assert!(out.starts_with("(1 emails carry the tags asked for"), "{out}");
         let lead = out.find("id=lead").expect("the tagged lead is listed");
         for other in ["id=promo", "id=q"] {
             let pos = out.find(other).expect("the rest follow the tagged block");
@@ -2093,8 +2093,28 @@ mod tests {
         let lead = out.find("id=lead").expect("the others follow");
         assert!(q < lead, "both filters hold on q, so it comes first: {out}");
 
+        // Priority is its own tag, independent of intent: an email can be an
+        // urgent promotion, and asking for both puts it first.
+        tag_email(&db, "promo", "priority", "urgent");
+        tag_email(&db, "q", "priority", "urgent");
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "priority": "urgent", "intent": "promotion" })),
+        );
+        assert!(out.starts_with("(1 emails carry the tags asked for"), "{out}");
+        let promo = out.find("id=promo").expect("the urgent promotion is listed");
+        let q = out.find("id=q").expect("the rest follow");
+        assert!(promo < q, "both tags hold on promo, so it leads: {out}");
+
         let schema = super::search_emails::SearchEmailsTool.parameters_schema();
-        for key in ["intent", "topic", "with_bodies"] {
+        assert_eq!(
+            schema["properties"]["priority"]["enum"],
+            serde_json::json!(["urgent", "normal", "low"])
+        );
+        for key in ["intent", "topic", "priority", "with_bodies"] {
             assert!(schema["properties"].get(key).is_some(), "schema must offer {key}");
         }
     }
@@ -2405,7 +2425,7 @@ mod tests {
         );
 
         assert!(
-            out.starts_with("(2 emails carry the intent/topic asked for; the 4 rows after them"),
+            out.starts_with("(2 emails carry the tags asked for; the 4 rows after them"),
             "the note must separate the tagged rows from the widened ones; out:\n{out}"
         );
         let tagged_first = out.find("id=p1").expect("tagged rows listed");
@@ -2444,7 +2464,7 @@ mod tests {
         );
 
         assert!(
-            out.starts_with("(no email carries the intent/topic asked for; the 3 rows below"),
+            out.starts_with("(no email carries the tags asked for; the 3 rows below"),
             "the wrong tag must not swallow the answer; out:\n{out}"
         );
         assert!(out.contains("id=inv0") && out.contains("id=inv2"), "out:\n{out}");

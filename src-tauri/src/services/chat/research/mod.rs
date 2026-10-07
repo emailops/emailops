@@ -382,10 +382,14 @@ fn filter_arguments(plan: &SearchPlan) -> Value {
 fn gather_filter(input: &PrepareInput<'_>, plan: &SearchPlan, user_addresses: &[String]) -> Vec<String> {
     let since = plan.since.as_deref().and_then(|s| super::parse_iso_date_secs(s).ok());
     let until = plan.until.as_deref().and_then(|s| super::parse_until_date_secs(s).ok());
-    let tags: Vec<TagQuery> = [("intent", &plan.intent), ("topic", &plan.topic)]
-        .into_iter()
-        .filter_map(|(kind, v)| v.as_ref().map(|v| TagQuery::typed(kind, v.trim().to_lowercase())))
-        .collect();
+    let tags: Vec<TagQuery> = [
+        ("intent", &plan.intent),
+        ("topic", &plan.topic),
+        ("priority", &plan.priority),
+    ]
+    .into_iter()
+    .filter_map(|(kind, v)| v.as_ref().map(|v| TagQuery::typed(kind, v.trim().to_lowercase())))
+    .collect();
     // Same rule as `search_emails`: a named sender / recipient / subject is
     // not narrowed by the chat's category scope; the user's own address is
     // a direction ("mail I received"), not a name.
