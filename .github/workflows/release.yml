@@ -339,7 +339,7 @@ jobs:
   # the credentials. That is why the build is split around the signing:
   # emailops.exe and its DLLs must be signed BEFORE they are packed into the
   # installers, and the installers themselves after. See docs/DECISIONS.md
-  # ("Windows artifacts are signed in separate jobs that never build").
+  # ("Windows artifacts are signed in CI by jobs that never build").
   # Every run, dry runs included, therefore waits for two approvals.
   #
   # Known gap: NSIS generates uninstall.exe while bundling and embeds it in

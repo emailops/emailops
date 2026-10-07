@@ -9,7 +9,7 @@
 # owner approval required). Build and bundle jobs never see them: a job that
 # runs the project's npm and cargo dependencies must not hold a secret that
 # can sign code in the project's name. See docs/DECISIONS.md ("Windows
-# artifacts are signed in separate jobs that never build").
+# artifacts are signed in CI by jobs that never build").
 #
 #   *.exe, *.dll  ssign, one cloud login for the whole batch
 #   *.msi         osslsigncode through ssign's PKCS#11 module, which reuses the
