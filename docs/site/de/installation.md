@@ -111,18 +111,18 @@ Später aktualisieren mit `brew upgrade --cask emailops`.
 ### „Der Computer wurde durch Windows geschützt" {#smartscreen}
 
 <!-- claim:inst-windows-smartscreen-1 -->
-Beim Ausführen des Installationsprogramms zeigt Windows möglicherweise einen blauen
+Das Installationsprogramm ist signiert, daher kann Windows Ihnen anzeigen, wer es
+veröffentlicht hat. Beim Ausführen zeigt Windows möglicherweise trotzdem einen blauen
 **Microsoft Defender SmartScreen**-Bildschirm mit der Meldung *„Der Computer wurde durch
-Windows geschützt"*. Das ist zu erwarten: Das Installationsprogramm ist noch nicht signiert,
-weil eine Signatur unter Windows ein kostenpflichtiges Zertifikat erfordert, über das das
-Projekt nicht verfügt. Die Warnung sagt nichts über die Datei selbst aus; SmartScreen zeigt sie
-bei jedem unsignierten Download, den es noch nicht oft gesehen hat.
+Windows geschützt"*. SmartScreen warnt bei jedem Download, den es noch nicht oft gesehen hat,
+ob signiert oder nicht, und das Signaturzertifikat ist neu: Die Warnung verschwindet erst, je
+mehr Menschen EmailOps installieren.
 
 <!-- claim:inst-windows-smartscreen-2 -->
 So fahren Sie fort:
 
 1. Klicken Sie auf **Weitere Informationen**. <!-- claim:inst-windows-smartscreen-3 -->
-2. Prüfen Sie, dass die App **EmailOps** heißt, und klicken Sie auf **Trotzdem ausführen**. <!-- claim:inst-windows-smartscreen-4 -->
+2. Prüfen Sie, dass die App **EmailOps** heißt und der Herausgeber auf **Open Source Developer** gefolgt vom Urheberrechtsinhaber aus der [NOTICE](https://github.com/emailops/emailops/blob/main/NOTICE)-Datei des Projekts endet, und klicken Sie dann auf **Trotzdem ausführen**. Fehlt der Herausgeber oder ist es ein anderer, führen Sie es nicht aus. <!-- claim:inst-windows-smartscreen-4 -->
 
 <!-- claim:inst-windows-smartscreen-5 -->
 Wenn Sie vorher sicherstellen möchten, dass der Download echt ist, vergleichen Sie seinen

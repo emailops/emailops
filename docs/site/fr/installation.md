@@ -111,17 +111,17 @@ Mettez à jour ensuite avec `brew upgrade --cask emailops`.
 ### « Windows a protégé votre ordinateur » {#smartscreen}
 
 <!-- claim:inst-windows-smartscreen-1 -->
-Au lancement de l'installeur, Windows peut afficher un écran bleu **Microsoft Defender
-SmartScreen** avec le message *« Windows a protégé votre ordinateur »*. C'est normal :
-l'installeur n'est pas encore signé, car la signature sous Windows exige un certificat payant
-dont le projet ne dispose pas. L'avertissement ne dit rien du fichier lui-même ; SmartScreen
-l'affiche pour tout téléchargement non signé qu'il n'a pas encore vu souvent.
+L'installeur est signé, donc Windows peut vous dire qui l'a publié. Au lancement, Windows peut
+quand même afficher un écran bleu **Microsoft Defender SmartScreen** avec le message
+*« Windows a protégé votre ordinateur »*. SmartScreen avertit pour tout téléchargement qu'il
+n'a pas encore vu souvent, signé ou non, et le certificat de signature est récent :
+l'avertissement disparaîtra à mesure que davantage de personnes installeront EmailOps.
 
 <!-- claim:inst-windows-smartscreen-2 -->
 Pour continuer :
 
 1. Cliquez sur **Informations complémentaires**. <!-- claim:inst-windows-smartscreen-3 -->
-2. Vérifiez que l'application s'appelle **EmailOps**, puis cliquez sur **Exécuter quand même**. <!-- claim:inst-windows-smartscreen-4 -->
+2. Vérifiez que l'application s'appelle **EmailOps** et que l'éditeur se termine par **Open Source Developer** suivi du titulaire du copyright indiqué dans le fichier [NOTICE](https://github.com/emailops/emailops/blob/main/NOTICE) du projet, puis cliquez sur **Exécuter quand même**. Si l'éditeur est absent ou différent, ne l'exécutez pas. <!-- claim:inst-windows-smartscreen-4 -->
 
 <!-- claim:inst-windows-smartscreen-5 -->
 Si vous voulez d'abord vérifier que le téléchargement est authentique, comparez son empreinte

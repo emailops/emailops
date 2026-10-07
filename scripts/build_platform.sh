@@ -10,13 +10,24 @@
 # signed/notarized mac release path is byte-for-byte unaffected by this
 # script's existence.
 #
-# No code signing. Linux packages are conventionally unsigned, and Windows
-# signing needs an EV/OV certificate the project does not currently hold —
-# unsigned Windows installers show a SmartScreen warning on first run.
+# Linux packages are not code-signed. Windows artifacts are signed, but never
+# here: this script runs the project's npm and cargo dependencies, and the
+# signing credentials stay out of any job that does. The release workflow
+# splits the Windows build in two phases around a signing job instead:
+#
+#   PHASE=compile  build without bundling; copy emailops.exe and the ggml/llama
+#                  DLLs to $WINDOWS_BIN_DIR (default release/windows-binaries)
+#   (scripts/sign_windows.sh signs that directory in a separate job)
+#   PHASE=bundle   put the signed files from $SIGNED_BIN_DIR back in place and
+#                  run `tauri bundle` on them without recompiling
+#
+# PHASE=all (the default) is the unsigned one-shot build for local use.
 
 set -euo pipefail
 
 PLATFORM="${1:-}"
+PHASE="${PHASE:-all}"
+WINDOWS_BIN_DIR="${WINDOWS_BIN_DIR:-release/windows-binaries}"
 CARGO_FEATURES="${CARGO_FEATURES:-}"
 # Set to 1 to build without embedded llama.cpp — skips the CMake/C++ toolchain.
 # CI uses this to validate the bundle configuration quickly, leaving the slow
@@ -40,6 +51,27 @@ if [ ! -f "$CONFIG" ]; then
   echo "ERROR: missing $CONFIG" >&2
   exit 1
 fi
+
+case "$PHASE" in
+  all) ;;
+  compile|bundle)
+    if [ "$PLATFORM" != "windows" ]; then
+      echo "ERROR: PHASE=$PHASE is only used for the signed Windows build" >&2
+      exit 2
+    fi
+    # The DLL layout both phases exchange only exists in a DYNAMIC_BACKENDS
+    # build, which is the only kind the release workflow produces.
+    if [ "${DYNAMIC_BACKENDS:-}" != "1" ]; then
+      echo "ERROR: PHASE=$PHASE needs DYNAMIC_BACKENDS=1" >&2
+      exit 2
+    fi
+    if [ "$PHASE" = "bundle" ] && [ ! -f "${SIGNED_BIN_DIR:-}/emailops.exe" ]; then
+      echo "ERROR: PHASE=bundle needs SIGNED_BIN_DIR with the signed emailops.exe" >&2
+      exit 2
+    fi
+    ;;
+  *) echo "unknown PHASE '$PHASE' (expected: all, compile, bundle)" >&2; exit 2 ;;
+esac
 
 # Windows only: llama-cpp-sys-2's nested CMake ExternalProject
 # (vulkan-shaders-gen) builds several directories deep under a hash-named
@@ -77,9 +109,12 @@ if [ "$NO_DEFAULT_FEATURES" = "1" ]; then
   # main binary ... No such file or directory".
   CARGO_ARGS+=(--no-default-features --features desktop)
 fi
+# `tauri bundle` takes the features list but no cargo args, so keep it too.
+BUNDLE_FEATURES=()
 if [ -n "$CARGO_FEATURES" ]; then
   echo "[build-$PLATFORM] extra cargo features: $CARGO_FEATURES"
   CARGO_ARGS+=(--features "$CARGO_FEATURES")
+  BUNDLE_FEATURES+=("$CARGO_FEATURES")
 fi
 
 BACKENDS_RES_DIR="src-tauri/resources/backends"
@@ -90,6 +125,7 @@ BASE_LIBS_ROOT_RES_DIR="src-tauri/resources/backends-root"
 
 if [ "$DYNAMIC_BACKENDS" = "1" ]; then
   CARGO_ARGS+=(--features dynamic-backends)
+  BUNDLE_FEATURES+=(dynamic-backends)
 
   if [ "$PLATFORM" = "linux" ]; then
     # With dynamic-backends, libggml-base becomes a real shared-library
@@ -179,89 +215,100 @@ if [ "$DYNAMIC_BACKENDS" = "1" ]; then
     export CMAKE_GENERATOR=Ninja
   fi
 
-  # Two-pass build. `tauri build` validates bundle.resources while compiling,
-  # so the backend modules must already be staged — but they only exist AFTER
-  # llama-cpp-sys-2's build script has run. So compile first, stage, then
-  # bundle (the second cargo invocation is a cache hit).
-  echo "[build-$PLATFORM] pass 1/2: compiling to produce ggml backend modules"
-  cargo build --release --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
+  if [ "$PHASE" = "bundle" ]; then
+    # The signed copies replace what pass 1 staged in the compile job. Same
+    # layout as the WINDOWS_BIN_DIR the compile phase wrote (see below).
+    rm -rf "$BACKENDS_RES_DIR" "$BASE_LIBS_ROOT_RES_DIR"
+    mkdir -p "$TARGET_DIR/$TARGET/release"
+    cp "$SIGNED_BIN_DIR/emailops.exe" "$TARGET_DIR/$TARGET/release/emailops.exe"
+    cp -R "$SIGNED_BIN_DIR/backends" "$BACKENDS_RES_DIR"
+    cp -R "$SIGNED_BIN_DIR/backends-root" "$BASE_LIBS_ROOT_RES_DIR"
+    echo "[build-$PLATFORM] placed signed binaries from $SIGNED_BIN_DIR"
+  else
+    # Two-pass build. `tauri build` validates bundle.resources while compiling,
+    # so the backend modules must already be staged — but they only exist AFTER
+    # llama-cpp-sys-2's build script has run. So compile first, stage, then
+    # bundle (the second cargo invocation is a cache hit).
+    echo "[build-$PLATFORM] pass 1/2: compiling to produce ggml backend modules"
+    cargo build --release --manifest-path src-tauri/Cargo.toml --target "$TARGET" "${CARGO_ARGS[@]}"
 
-  # llama-cpp-sys-2 installs the modules under its OUT_DIR and advertises the
-  # location via `cargo:backends_dir`. Locate the most recent one rather than
-  # parsing build output, so this survives cargo rebuilding the sys crate.
-  SRC_DIR="$(find "$TARGET_DIR/$TARGET/release/build" -type d -name backends -path '*llama-cpp-sys-2*' \
-             -exec ls -dt {} + 2>/dev/null | head -1 || true)"
+    # llama-cpp-sys-2 installs the modules under its OUT_DIR and advertises the
+    # location via `cargo:backends_dir`. Locate the most recent one rather than
+    # parsing build output, so this survives cargo rebuilding the sys crate.
+    SRC_DIR="$(find "$TARGET_DIR/$TARGET/release/build" -type d -name backends -path '*llama-cpp-sys-2*' \
+               -exec ls -dt {} + 2>/dev/null | head -1 || true)"
 
-  if [ -z "$SRC_DIR" ] || [ -z "$(ls -A "$SRC_DIR" 2>/dev/null)" ]; then
-    echo "ERROR: dynamic-backends requested but no backend modules were produced." >&2
-    echo "       Looked under $TARGET_DIR/$TARGET/release/build/*llama-cpp-sys-2*/out/backends" >&2
-    echo "       Check that the dynamic-backends feature reached llama-cpp-sys-2." >&2
-    exit 1
-  fi
-
-  rm -rf "$BACKENDS_RES_DIR"
-  mkdir -p "$BACKENDS_RES_DIR"
-  # Only the loadable modules — the directory also holds CMake bookkeeping.
-  find "$SRC_DIR" -maxdepth 1 -type f \( -name '*.so' -o -name '*.dll' -o -name '*.dylib' \) \
-    -exec cp {} "$BACKENDS_RES_DIR/" \;
-
-  # libggml-base/libggml/libllama/libllama-common (ggml-base.dll etc. on
-  # Windows) are direct shared-library dependencies of the main binary (each
-  # is its own `cargo:rustc-link-lib=dylib=...` from llama-cpp-sys-2, not just
-  # the always-linked ggml core) — they are not among the hot-swappable
-  # backend modules above, and live in OUT_DIR's sibling lib/ dir, not
-  # backends/. Stage them too: without them, the installed .deb fails to
-  # start (missing shared dependency) and linuxdeploy aborts the whole
-  # AppImage bundle rather than just omitting it.
-  # -a (not plain cp) preserves the SONAME symlink chain: e.g.
-  # libggml-base.so.0 — the exact name ldd/linuxdeploy resolve DT_NEEDED
-  # against — is a symlink to libggml-base.so.0.13.1, not a regular file, so a
-  # type-f-only copy silently drops it and leaves the dependency unresolvable
-  # under the correct name.
-  #
-  BASE_LIB_SRC_DIR="$(dirname "$SRC_DIR")/lib"
-  if [ "$PLATFORM" = "windows" ] && [ -z "$(find "$BASE_LIB_SRC_DIR" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
-    # CMake's default GNUInstallDirs convention puts *runtime* DLLs in bin/ on
-    # Windows, reserving lib/ for the .lib import-library stubs the linker
-    # needs at build time — unlike Linux, where .so files conventionally
-    # install to lib/ (what the lib/ assumption above is based on, and is
-    # correct there). First real Windows build to reach this staging step at
-    # all (every earlier attempt died earlier, at the C1041 CMake bug), so
-    # this fallback was never exercised until now.
-    BIN_CANDIDATE="$(dirname "$SRC_DIR")/bin"
-    if [ -n "$(find "$BIN_CANDIDATE" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
-      BASE_LIB_SRC_DIR="$BIN_CANDIDATE"
-    else
-      echo "[build-$PLATFORM] WARNING: no *.dll under $(dirname "$SRC_DIR")/lib or /bin — listing $(dirname "$SRC_DIR") for diagnosis:" >&2
-      find "$(dirname "$SRC_DIR")" -maxdepth 2 >&2 || true
+    if [ -z "$SRC_DIR" ] || [ -z "$(ls -A "$SRC_DIR" 2>/dev/null)" ]; then
+      echo "ERROR: dynamic-backends requested but no backend modules were produced." >&2
+      echo "       Looked under $TARGET_DIR/$TARGET/release/build/*llama-cpp-sys-2*/out/backends" >&2
+      echo "       Check that the dynamic-backends feature reached llama-cpp-sys-2." >&2
+      exit 1
     fi
-  fi
-  find "$BASE_LIB_SRC_DIR" -maxdepth 1 \( -type f -o -type l \) \
-    \( -name 'libggml*.so*' -o -name 'libllama*.so*' -o -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
-    -exec cp -a {} "$BACKENDS_RES_DIR/" \; 2>/dev/null || true
 
-  if [ "$PLATFORM" = "windows" ]; then
-    # Windows' default DLL search order for an *implicit* link-time dependency
-    # (ggml-base.dll/ggml.dll/llama.dll/llama-common.dll are each a direct
-    # `cargo:rustc-link-lib=dylib=...` of the main binary, resolved by the OS
-    # loader before any Rust code runs — unlike the hot-swappable backend
-    # modules above, which the app itself dlopen's from an explicit path via
-    # `load_backends_from_path`) only checks the executable's own directory,
-    # system directories, and PATH. It does NOT check a backends\
-    # subdirectory, so staging these only into backends/ (as above) leaves
-    # the installed app failing to start with "The code execution cannot
-    # proceed because ggml-base.dll was not found." Stage a second copy into
-    # a resource dir that tauri.backends.windows.conf.json maps to the bundle
-    # root (".") instead.
-    rm -rf "$BASE_LIBS_ROOT_RES_DIR"
-    mkdir -p "$BASE_LIBS_ROOT_RES_DIR"
-    find "$BASE_LIB_SRC_DIR" -maxdepth 1 -type f -iname '*.dll' \
-      \( -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
-      -exec cp {} "$BASE_LIBS_ROOT_RES_DIR/" \;
-  fi
+    rm -rf "$BACKENDS_RES_DIR"
+    mkdir -p "$BACKENDS_RES_DIR"
+    # Only the loadable modules — the directory also holds CMake bookkeeping.
+    find "$SRC_DIR" -maxdepth 1 -type f \( -name '*.so' -o -name '*.dll' -o -name '*.dylib' \) \
+      -exec cp {} "$BACKENDS_RES_DIR/" \;
 
-  echo "[build-$PLATFORM] staged $(ls -1 "$BACKENDS_RES_DIR" | wc -l | tr -d ' ') backend module(s) from $SRC_DIR"
-  ls -1 "$BACKENDS_RES_DIR" | sed 's/^/    /'
+    # libggml-base/libggml/libllama/libllama-common (ggml-base.dll etc. on
+    # Windows) are direct shared-library dependencies of the main binary (each
+    # is its own `cargo:rustc-link-lib=dylib=...` from llama-cpp-sys-2, not just
+    # the always-linked ggml core) — they are not among the hot-swappable
+    # backend modules above, and live in OUT_DIR's sibling lib/ dir, not
+    # backends/. Stage them too: without them, the installed .deb fails to
+    # start (missing shared dependency) and linuxdeploy aborts the whole
+    # AppImage bundle rather than just omitting it.
+    # -a (not plain cp) preserves the SONAME symlink chain: e.g.
+    # libggml-base.so.0 — the exact name ldd/linuxdeploy resolve DT_NEEDED
+    # against — is a symlink to libggml-base.so.0.13.1, not a regular file, so a
+    # type-f-only copy silently drops it and leaves the dependency unresolvable
+    # under the correct name.
+    #
+    BASE_LIB_SRC_DIR="$(dirname "$SRC_DIR")/lib"
+    if [ "$PLATFORM" = "windows" ] && [ -z "$(find "$BASE_LIB_SRC_DIR" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
+      # CMake's default GNUInstallDirs convention puts *runtime* DLLs in bin/ on
+      # Windows, reserving lib/ for the .lib import-library stubs the linker
+      # needs at build time — unlike Linux, where .so files conventionally
+      # install to lib/ (what the lib/ assumption above is based on, and is
+      # correct there). First real Windows build to reach this staging step at
+      # all (every earlier attempt died earlier, at the C1041 CMake bug), so
+      # this fallback was never exercised until now.
+      BIN_CANDIDATE="$(dirname "$SRC_DIR")/bin"
+      if [ -n "$(find "$BIN_CANDIDATE" -maxdepth 1 -iname '*.dll' 2>/dev/null)" ]; then
+        BASE_LIB_SRC_DIR="$BIN_CANDIDATE"
+      else
+        echo "[build-$PLATFORM] WARNING: no *.dll under $(dirname "$SRC_DIR")/lib or /bin — listing $(dirname "$SRC_DIR") for diagnosis:" >&2
+        find "$(dirname "$SRC_DIR")" -maxdepth 2 >&2 || true
+      fi
+    fi
+    find "$BASE_LIB_SRC_DIR" -maxdepth 1 \( -type f -o -type l \) \
+      \( -name 'libggml*.so*' -o -name 'libllama*.so*' -o -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
+      -exec cp -a {} "$BACKENDS_RES_DIR/" \; 2>/dev/null || true
+
+    if [ "$PLATFORM" = "windows" ]; then
+      # Windows' default DLL search order for an *implicit* link-time dependency
+      # (ggml-base.dll/ggml.dll/llama.dll/llama-common.dll are each a direct
+      # `cargo:rustc-link-lib=dylib=...` of the main binary, resolved by the OS
+      # loader before any Rust code runs — unlike the hot-swappable backend
+      # modules above, which the app itself dlopen's from an explicit path via
+      # `load_backends_from_path`) only checks the executable's own directory,
+      # system directories, and PATH. It does NOT check a backends\
+      # subdirectory, so staging these only into backends/ (as above) leaves
+      # the installed app failing to start with "The code execution cannot
+      # proceed because ggml-base.dll was not found." Stage a second copy into
+      # a resource dir that tauri.backends.windows.conf.json maps to the bundle
+      # root (".") instead.
+      rm -rf "$BASE_LIBS_ROOT_RES_DIR"
+      mkdir -p "$BASE_LIBS_ROOT_RES_DIR"
+      find "$BASE_LIB_SRC_DIR" -maxdepth 1 -type f -iname '*.dll' \
+        \( -iname 'ggml*.dll' -o -iname 'llama*.dll' \) \
+        -exec cp {} "$BASE_LIBS_ROOT_RES_DIR/" \;
+    fi
+
+    echo "[build-$PLATFORM] staged $(ls -1 "$BACKENDS_RES_DIR" | wc -l | tr -d ' ') backend module(s) from $SRC_DIR"
+    ls -1 "$BACKENDS_RES_DIR" | sed 's/^/    /'
+  fi
 
   CONFIG="$CONFIG src-tauri/tauri.backends.conf.json"
 
@@ -287,10 +334,37 @@ echo "[build-$PLATFORM] target=$TARGET config=$CONFIG"
 CONFIG_ARGS=()
 for c in $CONFIG; do CONFIG_ARGS+=(--config "$c"); done
 
+if [ "$PHASE" = "bundle" ]; then
+  # --no-binary-patching: by default the bundler rewrites emailops.exe in place
+  # to record the bundle type, which would void the signature it now carries.
+  # The record only feeds Tauri's updater plugin, which the app does not use.
+  FEATURE_ARGS=()
+  [ ${#BUNDLE_FEATURES[@]} -gt 0 ] && FEATURE_ARGS=(--features "${BUNDLE_FEATURES[@]}")
+  npm run tauri -- bundle --target "$TARGET" "${CONFIG_ARGS[@]}" "${FEATURE_ARGS[@]}" --no-binary-patching
+  echo "[build-$PLATFORM] done — installers under $TARGET_DIR/$TARGET/release/bundle/"
+  exit 0
+fi
+
+BUILD_ARGS=()
+[ "$PHASE" = "compile" ] && BUILD_ARGS=(--no-bundle)
 if [ ${#CARGO_ARGS[@]} -gt 0 ]; then
-  npm run tauri -- build --target "$TARGET" "${CONFIG_ARGS[@]}" -- "${CARGO_ARGS[@]}"
+  npm run tauri -- build --target "$TARGET" "${BUILD_ARGS[@]}" "${CONFIG_ARGS[@]}" -- "${CARGO_ARGS[@]}"
 else
-  npm run tauri -- build --target "$TARGET" "${CONFIG_ARGS[@]}"
+  npm run tauri -- build --target "$TARGET" "${BUILD_ARGS[@]}" "${CONFIG_ARGS[@]}"
+fi
+
+if [ "$PHASE" = "compile" ]; then
+  # Everything first-party that ends up in the installers as a PE file: the
+  # app and the ggml/llama DLLs (backends/ plus the base libs mirrored next to
+  # the exe). scripts/sign_windows.sh signs this directory as a whole.
+  rm -rf "$WINDOWS_BIN_DIR"
+  mkdir -p "$WINDOWS_BIN_DIR"
+  cp "$TARGET_DIR/$TARGET/release/emailops.exe" "$WINDOWS_BIN_DIR/"
+  cp -R "$BACKENDS_RES_DIR" "$WINDOWS_BIN_DIR/backends"
+  cp -R "$BASE_LIBS_ROOT_RES_DIR" "$WINDOWS_BIN_DIR/backends-root"
+  echo "[build-$PLATFORM] done — unsigned binaries in $WINDOWS_BIN_DIR/:"
+  find "$WINDOWS_BIN_DIR" -type f | sed 's/^/    /'
+  exit 0
 fi
 
 echo "[build-$PLATFORM] done — artifacts under $TARGET_DIR/$TARGET/release/bundle/"

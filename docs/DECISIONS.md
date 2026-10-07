@@ -3515,3 +3515,38 @@ normal need. *Looking up the parent's copy in the sending mailbox by `Message-ID
 exists only when both accounts received it, and the headers already thread the reply.
 *Raw MIME through Graph `/sendMail` to keep `In-Reply-To` on Outlook* — a second send path
 for a single case.
+
+## 2026-10-07 — Windows artifacts are signed in separate jobs that never build
+
+**Decision:** Windows releases are Authenticode-signed with a Certum Open Source Code
+Signing certificate whose key lives in Certum's SimplySign cloud HSM, driven from CI by
+`ssign` built at a pinned, reviewed commit. Only two jobs of `release.yml` can sign
+(`windows-sign-binaries`, `windows-sign-installers`): they run in the `signing` GitHub
+environment, which requires the owner's approval and is the only place `CERTUM_EMAIL`
+and `CERTUM_OTP` (the TOTP seed) exist, and they execute nothing but `ssign`,
+`osslsigncode` and `scripts/sign_windows.sh`. The build is split around them:
+compile (`PHASE=compile`) → sign `emailops.exe` and the ggml/llama DLLs → bundle the
+signed files (`PHASE=bundle`, `tauri bundle --no-binary-patching`) → sign the `.msi`
+(osslsigncode through `ssign-pkcs11`) and the `-setup.exe` → install, check every file
+with `Get-AuthenticodeSignature`, publish. Linux stays unsigned for now.
+**Context:** SmartScreen showed "Unknown publisher" on every Windows install, and the
+CASA checklist (2.2.1) asks for valid Authenticode signatures, chain and timestamp on
+first-party executables and DLLs. The TOTP seed plus the account e-mail can sign
+anything in the maintainer's name until the QR code is re-issued, so it must not sit in
+a job that runs the ~826 crates and ~748 npm packages of the build: a compromised
+dependency there would steal the key, not just taint one release. This mirrors the macOS
+rule (Apple secrets never touch CI). A signed build still shows the SmartScreen warning
+until the new certificate earns reputation (seen on a Windows 11 VM on 07/10/2026), but
+now names the publisher. Every run, dry runs included, waits for two approvals.
+`--no-binary-patching` is required: by default the bundler rewrites the exe to record
+the bundle type, voiding its signature; the record only feeds Tauri's updater plugin,
+which EmailOps does not use.
+**Rejected:** Tauri's `bundle.windows.signCommand` in the build job (simpler, one
+approval, signs the NSIS uninstaller too, but exposes the seed to the whole dependency
+tree — and Tauri issue #16208 leaves NSIS plugin DLLs unsigned anyway); Azure Artifact
+Signing (validation requirements the project cannot meet); SignPath Foundation
+(publisher shown as "SignPath Foundation", bars commercial dual licensing); a hardware
+token (cannot sign from hosted CI); signing `uninstall.exe` (NSIS generates it during
+bundling and embeds it in the installer, so it ships unsigned — acceptable for CASA AL1,
+whose evidence is the main executable and primary DLLs; the `.msi` has no uninstaller
+file).
