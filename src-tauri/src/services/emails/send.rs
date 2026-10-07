@@ -233,12 +233,7 @@ async fn deliver_reply(
             crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
-            &crate::sync::provider::ReplyTarget {
-                provider_message_id: &email.id,
-                thread_id: &email.thread_id,
-                message_id: email.message_id.as_deref(),
-                references: email.references.as_deref(),
-            },
+            &crate::sync::provider::ReplyTarget::for_parent(&email, &account.id),
             &subject,
             &body,
             &attachments,

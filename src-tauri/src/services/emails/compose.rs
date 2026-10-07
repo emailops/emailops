@@ -255,12 +255,9 @@ async fn push_draft(
         Some(email_id) => db.get_email(email_id)?,
         None => None,
     };
-    let reply = parent.as_ref().map(|email| crate::sync::provider::ReplyTarget {
-        provider_message_id: &email.id,
-        thread_id: &email.thread_id,
-        message_id: email.message_id.as_deref(),
-        references: email.references.as_deref(),
-    });
+    let reply = parent
+        .as_ref()
+        .map(|email| crate::sync::provider::ReplyTarget::for_parent(email, &account.id));
 
     let linked = draft
         .provider_draft_id
@@ -309,8 +306,12 @@ pub async fn compose_draft(
             crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
         }
     }
+    // A reply's parent may belong to any account: the user can answer from
+    // another one, and only the parent's RFC headers cross over.
     if let Some(email_id) = input.email_id.as_deref() {
-        crate::services::ownership::email_in_account(db, &account.id, email_id)?;
+        if db.get_email(email_id)?.is_none() {
+            return Err(AppError::NotFound(format!("Email {email_id} not found")));
+        }
     }
     let plan = plan_compose(&input);
     let saved = db.save_user_draft(&plan.save_req)?;
@@ -838,21 +839,35 @@ mod tests {
         assert_eq!((kept.account_id.as_str(), kept.body.as_str()), ("a2", "kept"));
     }
 
+    /// Regression: a reply composed from another account than the one that
+    /// received the parent could not even be auto-saved ("Email … not
+    /// found"). It is saved under the sending account and pushed as a reply.
     #[tokio::test]
-    async fn compose_draft_refuses_a_reply_to_another_accounts_email() {
+    async fn a_reply_draft_from_another_account_is_saved_and_pushed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_account(&db, "a1", "gmail");
+        let sender = seed_account(&db, "a2", "gmail");
+        seed_parent_email(&db);
+        let provider = FakeEmailProvider::new("a2@example.com", "A Two");
+
+        let mut reply = input("a2", "Re: s", "body");
+        reply.email_id = Some("parent".to_string());
+        let draft = compose_draft(&db, &sender, reply, Some(&provider))
+            .await
+            .expect("compose");
+
+        assert_eq!(draft.account_id, "a2");
+        let pushed = provider.provider_drafts();
+        assert_eq!(pushed[0].in_reply_to.as_deref(), Some("<parent@example.com>"));
+    }
+
+    #[tokio::test]
+    async fn a_reply_draft_to_a_missing_email_is_refused() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
         let owner = seed_account(&db, "a1", "imap");
-        seed_account(&db, "a2", "imap");
-        db.connection()
-            .execute(
-                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, recipients_json, snippet, timestamp, created_at) \
-                 VALUES ('their-email', 'a2', 't', 's', 'S', 's@example.com', '[]', '', 0, 0)",
-                [],
-            )
-            .expect("seed email");
 
         let mut reply = input("a1", "Re: s", "body");
-        reply.email_id = Some("their-email".to_string());
+        reply.email_id = Some("gone".to_string());
         let result = compose_draft(&db, &owner, reply, None).await;
 
         assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");

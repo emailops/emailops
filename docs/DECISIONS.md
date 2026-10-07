@@ -3496,3 +3496,22 @@ granted it, so `bundle_dmg.sh` failed with `-1743` after notarizing the app.
 and no visual hint to drag the app to Applications. *A DMG tool such as `dmgbuild`*: a new
 dependency to write the same 6 KB file. *Asking the developer to run the build from a
 terminal*: keeps a person in the loop the change exists to remove.
+
+## 2026-10-07 — A reply may answer another account's email; only RFC headers cross accounts
+
+**Decision:** A reply's parent may belong to any account, not only the one it is sent from:
+the outbox and the reply-draft save check only that the parent exists. What reaches the
+sending account's provider is the parent's `Message-ID` and `References`; its provider ids
+(Gmail `threadId`, Graph item id) go along only when the parent is in the sending mailbox
+(`ReplyTarget::for_parent`). Without them Gmail threads by headers, and Outlook sends the
+reply through `/sendMail`, unthreaded on the recipient's side.
+**Context:** The composer offers a From selector on replies, but replying from another
+account failed with "not found": the outbox and draft save refused the parent under the
+2026-09 ownership rule, and the direct send handed the receiving mailbox's ids to the other
+provider, which answered 404. The ownership rule still holds for commands that act on a
+record (read, delete, tag, draft upsert); a reply only reads the parent's headers and subject.
+**Rejected:** *Hiding the From selector on replies* — answering from another identity is a
+normal need. *Looking up the parent's copy in the sending mailbox by `Message-ID`* — a copy
+exists only when both accounts received it, and the headers already thread the reply.
+*Raw MIME through Graph `/sendMail` to keep `In-Reply-To` on Outlook* — a second send path
+for a single case.

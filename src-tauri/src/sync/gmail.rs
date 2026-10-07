@@ -683,10 +683,14 @@ impl GmailClient {
         })?;
         let message_id_header = crate::sync::mime_builder::extract_message_id(&message);
         let raw = base64_url_encode(&message.formatted());
-        let payload = serde_json::json!({
-            "threadId": target.thread_id,
-            "raw": raw,
-        });
+        // An empty thread id means the parent lives in another mailbox (a reply
+        // sent from a different account): Gmail 404s on a foreign `threadId`,
+        // and threads the message from its RFC headers when it is absent.
+        let payload = if target.thread_id.is_empty() {
+            serde_json::json!({ "raw": raw })
+        } else {
+            serde_json::json!({ "threadId": target.thread_id, "raw": raw })
+        };
         let url = format!("{}/users/me/messages/send", self.base_url);
 
         let response = self.send_post_json_no_resend(&url, &payload, "send reply").await?;
@@ -764,8 +768,11 @@ impl GmailClient {
         })?;
         let raw = base64_url_encode(mime.as_bytes());
         Ok(match reply {
-            Some(target) => serde_json::json!({ "message": { "raw": raw, "threadId": target.thread_id } }),
-            None => serde_json::json!({ "message": { "raw": raw } }),
+            // An empty thread id: the parent lives in another mailbox.
+            Some(target) if !target.thread_id.is_empty() => {
+                serde_json::json!({ "message": { "raw": raw, "threadId": target.thread_id } })
+            }
+            _ => serde_json::json!({ "message": { "raw": raw } }),
         })
     }
 
@@ -3230,6 +3237,73 @@ mod tests {
         assert!(meta.provider_message_id.is_none());
         assert!(meta.provider_thread_id.is_none());
         assert_eq!(meta.message_id_header.as_deref(), Some("<mid@local>"));
+    }
+
+    /// Regression: a reply sent from another account has no thread in this
+    /// mailbox. Sending the parent mailbox's `threadId` made Gmail answer 404
+    /// "Requested entity was not found", so the reply never went out.
+    #[tokio::test]
+    async fn a_reply_without_a_thread_in_this_mailbox_sends_no_thread_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(r#"{"id":"s-1","threadId":"t-new"}"#, "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client
+            .send_reply(
+                "me@example.com",
+                None,
+                &["them@example.com".to_string()],
+                &[],
+                &crate::sync::provider::ReplyTarget {
+                    provider_message_id: "",
+                    thread_id: "",
+                    message_id: Some("<parent@example.com>"),
+                    references: None,
+                },
+                "hi",
+                &EmailBody::plain("reply"),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert!(body.get("threadId").is_none(), "got {body}");
+    }
+
+    /// A reply draft saved from another account has no thread in this mailbox
+    /// either; a foreign `threadId` would fail the draft push.
+    #[test]
+    fn a_reply_draft_without_a_thread_in_this_mailbox_sends_no_thread_id() {
+        let client = GmailClient::new("tok".into(), None, None, None);
+        let target = crate::sync::provider::ReplyTarget {
+            provider_message_id: "",
+            thread_id: "",
+            message_id: Some("<parent@example.com>"),
+            references: None,
+        };
+        let payload = client
+            .draft_payload(
+                "me@example.com",
+                &["them@example.com".to_string()],
+                &[],
+                "Re: hi",
+                &EmailBody::plain("draft"),
+                &[],
+                Some(&target),
+            )
+            .unwrap();
+        assert!(payload["message"].get("threadId").is_none(), "got {payload}");
     }
 
     #[tokio::test]

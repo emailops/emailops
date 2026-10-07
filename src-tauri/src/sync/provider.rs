@@ -400,8 +400,13 @@ pub struct ReplyTarget<'a> {
     /// id (`AQMkAD…`) while `message_id` is `internetMessageId` (`<abc@host>`).
     /// `/me/messages/{id}/reply` only accepts the former, and
     /// `internetMessageId` is frequently absent besides.
+    ///
+    /// Empty when the reply is sent from another account: provider ids are
+    /// scoped to the mailbox that received the parent.
     pub provider_message_id: &'a str,
     /// Provider thread id. Gmail sends it back as `threadId`; IMAP has none.
+    /// Empty when the reply is sent from another account, like
+    /// `provider_message_id`.
     pub thread_id: &'a str,
     /// The parent's RFC 5322 `Message-ID`, for `In-Reply-To`.
     pub message_id: Option<&'a str>,
@@ -410,6 +415,23 @@ pub struct ReplyTarget<'a> {
     /// of rooting a new one. `None` when the parent carried no chain, or
     /// predates us storing it.
     pub references: Option<&'a str>,
+}
+
+impl<'a> ReplyTarget<'a> {
+    /// The target for a reply to `parent` sent from `sending_account_id`.
+    ///
+    /// Provider ids only address the parent in the mailbox that received it.
+    /// From another account they point at nothing (Gmail and Graph answer
+    /// 404), so only the global RFC headers go along.
+    pub fn for_parent(parent: &'a Email, sending_account_id: &str) -> Self {
+        let same_mailbox = parent.account_id == sending_account_id;
+        ReplyTarget {
+            provider_message_id: if same_mailbox { &parent.id } else { "" },
+            thread_id: if same_mailbox { &parent.thread_id } else { "" },
+            message_id: parent.message_id.as_deref(),
+            references: parent.references.as_deref(),
+        }
+    }
 }
 
 /// Abstraction over email providers (Gmail, IMAP, Outlook, etc.).
@@ -2089,6 +2111,21 @@ impl EmailProvider for FakeEmailProvider {
 mod tests {
     use super::*;
     use crate::models::Email;
+
+    #[test]
+    fn a_reply_target_keeps_provider_ids_only_in_the_parents_mailbox() {
+        let mut parent = sample_email("item-1", 0);
+        parent.message_id = Some("<parent@example.com>".to_string());
+        parent.references = Some("<root@example.com>".to_string());
+
+        let same = ReplyTarget::for_parent(&parent, "acc");
+        assert_eq!((same.provider_message_id, same.thread_id), ("item-1", "t-item-1"));
+
+        let other = ReplyTarget::for_parent(&parent, "acc-other");
+        assert_eq!((other.provider_message_id, other.thread_id), ("", ""));
+        assert_eq!(other.message_id, Some("<parent@example.com>"));
+        assert_eq!(other.references, Some("<root@example.com>"));
+    }
 
     fn sample_email(id: &str, ts: i64) -> Email {
         Email {

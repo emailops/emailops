@@ -124,7 +124,8 @@ pub fn plan_send_at(now: i64, schedule: OutboxSchedule) -> Result<(i64, OutboxOr
 /// Check and complete a message before it is stored: the body is sanitized
 /// and its inline images normalized exactly as an immediate send would; a new
 /// message needs recipients and a single-line subject; a reply needs its
-/// parent in the same account, whose subject it takes when it has none of its own.
+/// parent, whose subject it takes when it has none of its own. The parent may
+/// be another account's message: the user can answer from any account.
 fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<OutgoingMessage> {
     let body = crate::services::emails::outgoing_body(
         std::mem::take(&mut message.body),
@@ -144,7 +145,9 @@ fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<Outgoi
         return Err(AppError::NotFound(format!("Account {} not found", message.account_id)));
     }
     if let Some(parent_id) = message.reply_to_email_id.as_deref() {
-        let parent = crate::services::ownership::email_in_account(db, &message.account_id, parent_id)?;
+        let parent = db
+            .get_email(parent_id)?
+            .ok_or_else(|| AppError::NotFound(format!("Email {parent_id} not found")))?;
         if message.subject.trim().is_empty() {
             message.subject = crate::sync::mime_builder::reply_subject(&parent.subject);
         }
@@ -823,19 +826,28 @@ mod tests {
         assert_eq!(db.get_outbox_entry(&entry.id).unwrap().unwrap().send_at, NOW);
     }
 
-    // A reply is sent through its parent's thread: the parent must be a
-    // message of the account the reply goes out from.
+    // Regression: replying from another account than the one that received
+    // the parent failed with "Email … not found". The composer offers that
+    // choice; the reply threads by the parent's RFC headers, never by the
+    // receiving mailbox's provider ids.
     #[tokio::test]
-    async fn a_reply_to_another_accounts_message_is_refused() {
-        let (db, _fake) = setup();
+    async fn a_reply_from_another_account_is_queued_and_sent() {
+        let (db, fake) = setup();
         db.seed_test_account("acc-2");
         let reply = OutgoingMessage {
             account_id: "acc-2".into(),
             ..reply_message()
         };
-        let result = queue_outgoing(&db, reply, OutboxSchedule::At { send_at: NOW + 60 }, None, None, NOW).await;
-        assert!(matches!(result, Err(AppError::NotFound(_))), "got {result:?}");
-        assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
+        let entry = queue(&db, reply, OutboxSchedule::Undo { delay_secs: 5 }).await;
+        assert_eq!(entry.subject, "Re: Quarterly plan");
+
+        dispatch_due_outbox(&db, NOW + 5, &FakeProviders(Arc::clone(&fake)))
+            .await
+            .unwrap();
+        let sent = fake.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].thread_id.as_deref(), Some(""), "no foreign thread id");
+        assert_eq!(sent[0].original_message_id.as_deref(), Some("<parent@example.com>"));
     }
 
     // ── Dispatch ──
