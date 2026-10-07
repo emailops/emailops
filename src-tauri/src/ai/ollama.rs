@@ -20,11 +20,16 @@ const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
 ///
 /// Defaults to the local daemon, which is what a desktop install has. Overridable via
 /// `OLLAMA_HOST` (the same variable Ollama's own CLI uses) so the runtime can be pointed
-/// at a container, another machine on the LAN, or a sidecar in a compose stack — none of
-/// which are reachable on `localhost` from inside a server process.
-fn ollama_base_url() -> String {
-    std::env::var("OLLAMA_HOST")
-        .ok()
+/// at another Ollama. Requests carry email content, so the URL must pass
+/// `validate_ai_base_url`: plain `http://` only to a loopback host, `https://` otherwise
+/// (DASA 1.1.1).
+fn ollama_base_url() -> Result<String> {
+    ollama_base_url_from(std::env::var("OLLAMA_HOST").ok().as_deref())
+}
+
+/// [`ollama_base_url`] for a given `OLLAMA_HOST` value.
+fn ollama_base_url_from(ollama_host: Option<&str>) -> Result<String> {
+    let url = ollama_host
         .map(|raw| raw.trim().trim_end_matches('/').to_string())
         .filter(|raw| !raw.is_empty())
         .map(|raw| {
@@ -35,7 +40,9 @@ fn ollama_base_url() -> String {
                 format!("http://{raw}")
             }
         })
-        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string())
+        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string());
+    crate::services::ai::validate_ai_base_url(&url)?;
+    Ok(url)
 }
 const DEFAULT_MODEL: &str = "gemma4:e2b";
 const EMBEDDING_MODEL: &str = "nomic-embed-text";
@@ -357,7 +364,9 @@ pub struct ParsedSearchQuery {
 
 pub struct OllamaClient {
     client: Client,
-    base_url: String,
+    /// The resolved server URL, or why it was refused. A refused URL fails every
+    /// request instead of the constructor, which most callers treat as infallible.
+    base_url: std::result::Result<String, String>,
     model: String,
     embedding_model: String,
     /// Applied to every generate/chat request. Defaults to DEFAULT_KEEP_ALIVE
@@ -379,7 +388,10 @@ impl OllamaClient {
 
         Self {
             client,
-            base_url: ollama_base_url(),
+            base_url: ollama_base_url().map_err(|e| {
+                crate::services::logger::log("error", "ai", format!("Ollama endpoint refused: {e}"));
+                e.to_string()
+            }),
             model: model.unwrap_or(DEFAULT_MODEL).to_string(),
             embedding_model: embedding_model.unwrap_or(EMBEDDING_MODEL).to_string(),
             keep_alive: DEFAULT_KEEP_ALIVE.to_string(),
@@ -392,6 +404,14 @@ impl OllamaClient {
     pub fn with_keep_alive(mut self, keep_alive: impl Into<String>) -> Self {
         self.keep_alive = keep_alive.into();
         self
+    }
+
+    /// `{base_url}{path}`, or the reason the base URL was refused.
+    fn endpoint(&self, path: &str) -> Result<String> {
+        match &self.base_url {
+            Ok(base) => Ok(format!("{base}{path}")),
+            Err(reason) => Err(AppError::AiError(reason.clone())),
+        }
     }
 
     pub fn embedding_model_name(&self) -> &str {
@@ -408,7 +428,7 @@ impl OllamaClient {
     }
 
     pub async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>> {
-        let url = format!("{}/api/embeddings", self.base_url);
+        let url = self.endpoint("/api/embeddings")?;
 
         let request = EmbeddingRequest {
             model: self.embedding_model.clone(),
@@ -452,7 +472,7 @@ impl OllamaClient {
             return Ok(Vec::new());
         }
 
-        let url = format!("{}/api/embed", self.base_url);
+        let url = self.endpoint("/api/embed")?;
         let request = BatchEmbeddingRequest {
             model: self.embedding_model.clone(),
             input: texts,
@@ -540,7 +560,7 @@ impl OllamaClient {
         sampling: Option<OllamaSamplingOptions>,
         format: Option<serde_json::Value>,
     ) -> Result<(String, bool)> {
-        let url = format!("{}/api/generate", self.base_url);
+        let url = self.endpoint("/api/generate")?;
 
         let request = OllamaRequest {
             model: self.model.clone(),
@@ -604,7 +624,7 @@ impl OllamaClient {
         sampling: OllamaSamplingOptions,
         format: Option<serde_json::Value>,
     ) -> Result<(String, bool)> {
-        let url = format!("{}/api/chat", self.base_url);
+        let url = self.endpoint("/api/chat")?;
 
         let request = OllamaChatRequest {
             model: self.model.clone(),
@@ -666,7 +686,7 @@ impl OllamaClient {
         messages: &[OllamaChatMessage],
         tools: &[serde_json::Value],
     ) -> Result<OllamaChatMessage> {
-        let url = format!("{}/api/chat", self.base_url);
+        let url = self.endpoint("/api/chat")?;
 
         let request = OllamaChatRequest {
             model: self.model.clone(),
@@ -717,7 +737,7 @@ impl OllamaClient {
         messages: Vec<(String, String)>,
         mut on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
-        let url = format!("{}/api/chat", self.base_url);
+        let url = self.endpoint("/api/chat")?;
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: messages
@@ -813,7 +833,7 @@ impl OllamaClient {
         tools: &[serde_json::Value],
         mut on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>)> {
-        let url = format!("{}/api/chat", self.base_url);
+        let url = self.endpoint("/api/chat")?;
         let request = OllamaChatRequest {
             model: self.model.clone(),
             messages: messages.to_vec(),
@@ -1034,12 +1054,14 @@ impl AIProvider for OllamaClient {
     }
 
     async fn is_available(&self) -> bool {
-        let url = format!("{}/api/tags", self.base_url);
+        let Ok(url) = self.endpoint("/api/tags") else {
+            return false;
+        };
         self.client.get(&url).timeout(CONNECT_TIMEOUT).send().await.is_ok()
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        let url = format!("{}/api/tags", self.base_url);
+        let url = self.endpoint("/api/tags")?;
         let response = self
             .client
             .get(&url)
@@ -1224,7 +1246,7 @@ impl AIProvider for OllamaClient {
     /// into RAM. Combined with the `keep_alive` field this keeps subsequent
     /// turns warm for the lifetime of the keep_alive window.
     async fn warmup(&self) -> Result<()> {
-        let url = format!("{}/api/generate", self.base_url);
+        let url = self.endpoint("/api/generate")?;
         let request = OllamaRequest {
             model: self.model.clone(),
             prompt: "hi".to_string(),
@@ -1769,60 +1791,70 @@ mod date_parser_tests {
 
 #[cfg(test)]
 mod base_url_tests {
-    use super::ollama_base_url;
-
-    /// These mutate a process-global env var, so they must not run concurrently.
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        M.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn with_host<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-        let _guard = env_lock();
-        let previous = std::env::var("OLLAMA_HOST").ok();
-        match value {
-            Some(v) => std::env::set_var("OLLAMA_HOST", v),
-            None => std::env::remove_var("OLLAMA_HOST"),
-        }
-        let out = f();
-        match previous {
-            Some(v) => std::env::set_var("OLLAMA_HOST", v),
-            None => std::env::remove_var("OLLAMA_HOST"),
-        }
-        out
-    }
+    use super::{ollama_base_url_from, OllamaClient};
+    use crate::models::error::AppError;
 
     #[test]
     fn defaults_to_the_local_daemon() {
-        with_host(None, || assert_eq!(ollama_base_url(), "http://localhost:11434"));
+        assert_eq!(ollama_base_url_from(None).expect("default"), "http://localhost:11434");
     }
 
     #[test]
     fn accepts_a_bare_host_and_port() {
         // The form Ollama's own CLI uses.
-        with_host(Some("ollama:11434"), || {
-            assert_eq!(ollama_base_url(), "http://ollama:11434")
-        });
+        assert_eq!(
+            ollama_base_url_from(Some("127.0.0.1:11434")).expect("loopback"),
+            "http://127.0.0.1:11434"
+        );
     }
 
     #[test]
     fn accepts_a_full_url_unchanged() {
-        with_host(Some("http://10.0.0.5:11434"), || {
-            assert_eq!(ollama_base_url(), "http://10.0.0.5:11434")
-        });
+        assert_eq!(
+            ollama_base_url_from(Some("https://10.0.0.5:11434")).expect("https"),
+            "https://10.0.0.5:11434"
+        );
     }
 
     #[test]
     fn strips_a_trailing_slash() {
         // Endpoints are built as `{base}/api/...`; a trailing slash would double it.
-        with_host(Some("http://ollama:11434/"), || {
-            assert_eq!(ollama_base_url(), "http://ollama:11434")
-        });
+        assert_eq!(
+            ollama_base_url_from(Some("http://localhost:11434/")).expect("slash"),
+            "http://localhost:11434"
+        );
     }
 
     #[test]
     fn an_empty_value_falls_back_to_the_default() {
-        with_host(Some("   "), || assert_eq!(ollama_base_url(), "http://localhost:11434"));
+        assert_eq!(
+            ollama_base_url_from(Some("   ")).expect("blank"),
+            "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn refuses_plain_http_to_a_non_loopback_host() {
+        // A bare host:port becomes http://, so it is refused off-loopback too.
+        for raw in ["ollama:11434", "http://10.0.0.5:11434"] {
+            assert!(
+                matches!(ollama_base_url_from(Some(raw)), Err(AppError::AiError(_))),
+                "{raw} must be refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_with_a_refused_url_fails_its_requests_without_connecting() {
+        let client = OllamaClient {
+            base_url: ollama_base_url_from(Some("http://10.0.0.5:11434")).map_err(|e| e.to_string()),
+            ..OllamaClient::new(Some("m"))
+        };
+        let err = client.generate_embedding("x").await.expect_err("refused URL");
+        assert!(
+            matches!(err, AppError::AiError(ref m) if m.contains("https")),
+            "{err:?}"
+        );
     }
 }
 
@@ -2054,7 +2086,7 @@ mod stream_line_tests {
             .mount(&server)
             .await;
         let client = OllamaClient {
-            base_url: server.uri(),
+            base_url: Ok(server.uri()),
             ..OllamaClient::new(Some("m"))
         };
         client
