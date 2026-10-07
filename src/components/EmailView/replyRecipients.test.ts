@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Email } from '@/types';
-import { computeReplyRecipients } from './ReplyCompose';
+import { computeReplyAllRecipients, computeReplyRecipients } from './ReplyCompose';
 
 const ME = 'me@mine.test';
 
@@ -80,5 +80,18 @@ describe('computeReplyRecipients', () => {
     // from another of my accounts to my own note is a real use.
     const mine = email({ senderEmail: ME, recipients: ['Me <Me@Mine.test>'], isSent: true });
     expect(computeReplyRecipients(mine, [mine], [ME])).toEqual(['me@mine.test']);
+  });
+});
+
+describe('computeReplyAllRecipients', () => {
+  it('addresses everyone in the thread except myself', () => {
+    const inbound = email({ id: 'a', senderEmail: 'alice@example.test', recipients: [ME, 'bob@example.test'] });
+    expect(computeReplyAllRecipients(inbound, [inbound], [ME])).toEqual(['alice@example.test', 'bob@example.test']);
+  });
+
+  it('addresses a note only ever sent to myself back to its recipients', () => {
+    // Regression: Reply All on such a note left To empty, like Reply did.
+    const mine = email({ senderEmail: ME, recipients: [ME], isSent: true });
+    expect(computeReplyAllRecipients(mine, [mine], [ME])).toEqual([ME]);
   });
 });
