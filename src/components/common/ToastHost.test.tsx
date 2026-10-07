@@ -107,4 +107,15 @@ describe('ToastHost', () => {
     });
     expect(container.textContent).toContain('Second');
   });
+
+  it('wraps a long message instead of cutting it off, so a fix it explains stays readable', () => {
+    const message = 'EmailOps cannot find the CUDA Toolkit. Install it or set CUDA_PATH, then restart EmailOps.';
+    act(() => {
+      useToastStore.getState().addToast({ message, sticky: true });
+    });
+    const text = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === message);
+    expect(text).toBeDefined();
+    expect(text?.className).not.toContain('truncate');
+    expect(text?.className).toContain('break-words');
+  });
 });

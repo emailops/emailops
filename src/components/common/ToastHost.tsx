@@ -35,8 +35,9 @@ function ToastCard({ toast }: { toast: Toast }) {
   }, [toast.id, toast.sticky, toast.durationMs, dismissToast]);
 
   return (
-    <div className="flex items-center gap-3 pl-4 pr-2 py-2.5 bg-gray-900 text-white rounded-lg shadow-lg max-w-md">
-      <span className="text-sm truncate">{toast.message}</span>
+    <div className="flex items-start gap-3 pl-4 pr-2 py-2.5 bg-gray-900 text-white rounded-lg shadow-lg max-w-md">
+      {/* Wraps rather than truncates: a toast can carry the fix the user needs. */}
+      <span className="text-sm break-words min-w-0">{toast.message}</span>
       {toast.actionLabel && (
         <button
           type="button"
