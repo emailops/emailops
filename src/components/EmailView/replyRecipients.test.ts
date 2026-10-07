@@ -75,9 +75,10 @@ describe('computeReplyRecipients', () => {
     expect(computeReplyRecipients(mine, [mine], [ME])).toEqual(['alice@example.test']);
   });
 
-  it('returns an empty list for a note only ever addressed to myself', () => {
-    // Nothing sensible to prefill; an empty To beats silently mailing myself.
-    const mine = email({ senderEmail: ME, recipients: [ME], isSent: true });
-    expect(computeReplyRecipients(mine, [mine], [ME])).toEqual([]);
+  it('addresses a note only ever sent to myself back to its recipients', () => {
+    // As Gmail does. The prefilled To is visible before sending, and a reply
+    // from another of my accounts to my own note is a real use.
+    const mine = email({ senderEmail: ME, recipients: ['Me <Me@Mine.test>'], isSent: true });
+    expect(computeReplyRecipients(mine, [mine], [ME])).toEqual(['me@mine.test']);
   });
 });

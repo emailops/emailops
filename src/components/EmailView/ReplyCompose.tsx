@@ -92,8 +92,8 @@ function extractEmail(raw: string): string {
  * user's own mailbox.
  *
  * Falls back to the most recent other party in the thread when my message has
- * no usable recipients, and returns an empty list rather than ever addressing
- * the user to themselves.
+ * no usable recipients. Only a note the user only ever sent to themselves is
+ * addressed back to them.
  */
 export function computeReplyRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
   const self = new Set(selfEmails.map((e) => e.trim().toLowerCase()));
@@ -111,7 +111,11 @@ export function computeReplyRecipients(email: Email, threadEmails: Email[], self
     .map((m) => extractEmail(m.senderEmail))
     .find((addr) => addr.includes('@') && !self.has(addr));
 
-  return lastOther ? [lastOther] : [];
+  if (lastOther) return [lastOther];
+
+  // A note only ever sent to myself goes back to me, as Gmail does: the To is
+  // visible before sending, and I may be answering it from another account.
+  return dedupe([...email.recipients, ...email.cc].map(extractEmail).filter((r) => r.includes('@')));
 }
 
 function dedupe(values: string[]): string[] {
