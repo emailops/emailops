@@ -4578,11 +4578,12 @@ async fn run_chat_turn_inner(
                 // only a plan with a real filter earns the tools route. A
                 // keyword-only plan is what retrieval ranks better, so that turn
                 // stays on RAG and the plan is dropped rather than pre-seeded.
-                // On a turn the planner is also routing, its classifier-tag
-                // guess is dropped first: what is left decides both the route
-                // and what runs.
+                // On a turn the planner is also routing, its classifier tags
+                // are kept only when it said the question asks for them
+                // (`tags_asked`); a guessed tag is dropped first. What is
+                // left decides both the route and what runs.
                 let plan = if asked_planner {
-                    Box::new(plan.without_classifier_tags())
+                    Box::new(plan.keeping_asked_tags())
                 } else {
                     plan
                 };

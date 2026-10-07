@@ -66,6 +66,7 @@ import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
 import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
+import { createThrottle } from '@/lib/refreshScheduling';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import {
   baseViewToken,
@@ -79,6 +80,7 @@ import {
   planChatAccountChange,
   planSignInAgain,
   selectAccountById,
+  syncStoredMail,
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
@@ -96,6 +98,7 @@ import {
   useTasksEnabledStore,
   useTranslationEnabledStore,
 } from '@/stores/featureToggleStore';
+import { useFilterStore } from '@/stores/filterStore';
 import { useFormFillStore } from '@/stores/formFillStore';
 import { useJunkStore } from '@/stores/junkStore';
 import { useLensStore } from '@/stores/lensStore';
@@ -125,6 +128,10 @@ import type {
   EmailCategory,
   InboxLayout,
 } from '@/types';
+
+/** At most one list refetch per window while sync batches stream in; the
+ *  completion event flushes the last one. */
+const SYNC_BATCH_REFETCH_INTERVAL_MS = 1500;
 
 const LOG_LEVELS: LogLevel[] = ['info', 'warn', 'error', 'debug', 'success'];
 const LOG_SOURCES: LogSource[] = [
@@ -494,6 +501,12 @@ function AppInner() {
   refetchEmailsRef.current = refetchEmails;
   const silentRefetchEmailsRef = useRef(silentRefetchEmails);
   silentRefetchEmailsRef.current = silentRefetchEmails;
+  // Sync batches arrive back to back — from every account at once in the
+  // All-accounts view — and each refetch re-runs the list and count queries.
+  const [syncBatchRefetch] = useState(() =>
+    createThrottle(() => silentRefetchEmailsRef.current(), SYNC_BATCH_REFETCH_INTERVAL_MS),
+  );
+  useEffect(() => () => syncBatchRefetch.cancel(), [syncBatchRefetch]);
 
   const {
     displayedFilters: smartFilters,
@@ -1234,18 +1247,26 @@ function AppInner() {
     if (status === 'batch') {
       // New emails were just written to DB — refresh the list in-place so they
       // appear while the rest of the sync is still running.
-      silentRefetchEmailsRef.current();
+      syncBatchRefetch.call();
       refreshOpenThread();
     }
 
     if (status === 'complete' && previousStatus !== 'complete') {
       // Use silent refresh so the list updates in-place without a loading spinner
       // or scroll-position reset — the sync should be transparent to the user.
-      silentRefetchEmailsRef.current();
+      syncBatchRefetch.flush();
       refreshOpenThread();
-      forceRefreshFilters();
+      // An idle sync leaves the stats as they were; skip the recompute.
+      if (syncStoredMail(syncProgress)) {
+        useFilterStore
+          .getState()
+          .refreshAfterSync(syncProgress.accountId)
+          .catch((error) => {
+            addLog('error', 'system', `Failed to refresh smart filters after sync: ${errorText(error)}`);
+          });
+      }
     }
-  }, [activeAccountId, isUnified, forceRefreshFilters, syncProgress]);
+  }, [activeAccountId, isUnified, syncProgress, syncBatchRefetch, addLog]);
 
   // After every successful send the backend has already stored the optimistic
   // Sent row — refetch the list so the message appears instantly (most visibly

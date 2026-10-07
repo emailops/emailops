@@ -870,7 +870,7 @@ pub async fn get_email_by_id(
 /// inbox. It must match the `mailbox` passed to `get_emails`, since the UI
 /// compares the two to decide whether more pages remain.
 #[tauri::command]
-pub fn get_email_count(
+pub async fn get_email_count(
     state: State<'_, AppState>,
     account_id: Option<String>,
     mailbox: Option<String>,
@@ -883,6 +883,6 @@ pub fn get_email_count(
 }
 
 #[tauri::command]
-pub fn get_sync_status(state: State<'_, AppState>, account_id: String) -> Result<SyncStatus, AppError> {
+pub async fn get_sync_status(state: State<'_, AppState>, account_id: String) -> Result<SyncStatus, AppError> {
     state.db.get_sync_status(&account_id)
 }

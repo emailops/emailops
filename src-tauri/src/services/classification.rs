@@ -723,17 +723,25 @@ fn normalise_one(value: String, allowed: &[String], fallback: &str) -> (String, 
     }
 }
 
+/// The priority levels the classifier stores (`email_tags.tag_type =
+/// 'priority'`), most pressing first. Unlike intents and topics they are not
+/// configurable, so search filters can offer them as a closed set.
+pub const PRIORITY_LEVELS: &[&str] = &["urgent", "normal", "low"];
+
 /// Validate the parsed response against the configured lists, repairing or
 /// falling back where it drifted.
 fn normalise_labels(parsed: ClassificationResponse, config: &ClassificationConfig) -> (Classified, LabelRepairs) {
     let (intent, intent_repair) = normalise_one(parsed.intent, &config.intents, "notification");
     let (topic, topic_repair) = normalise_one(parsed.topic, &config.topics, "operations");
-    let (urgency, urgency_repair) = match parsed.urgency.as_str() {
-        "urgent" | "normal" | "low" => (parsed.urgency, Repair::Exact),
-        other => match other.trim().to_lowercase().as_str() {
-            level @ ("urgent" | "normal" | "low") => (level.to_string(), Repair::Matched),
-            _ => ("normal".to_string(), Repair::Fallback),
-        },
+    let (urgency, urgency_repair) = if PRIORITY_LEVELS.contains(&parsed.urgency.as_str()) {
+        (parsed.urgency, Repair::Exact)
+    } else {
+        let level = parsed.urgency.trim().to_lowercase();
+        if PRIORITY_LEVELS.contains(&level.as_str()) {
+            (level, Repair::Matched)
+        } else {
+            ("normal".to_string(), Repair::Fallback)
+        }
     };
 
     (

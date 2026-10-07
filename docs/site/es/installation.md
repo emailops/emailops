@@ -108,17 +108,17 @@ Actualiza después con `brew upgrade --cask emailops`.
 ### "Windows protegió su PC" {#smartscreen}
 
 <!-- claim:inst-windows-smartscreen-1 -->
-Al ejecutar el instalador, Windows puede mostrar una pantalla azul de **Microsoft Defender
-SmartScreen** con el mensaje *"Windows protegió su PC"*. Es lo esperado: el instalador todavía
-no está firmado, porque firmar en Windows requiere un certificado de pago que el proyecto no
-tiene. El aviso no dice nada del archivo en sí; SmartScreen lo muestra con cualquier descarga
-sin firmar que no haya visto muchas veces.
+El instalador está firmado, así que Windows puede decirte quién lo publica. Aun así, al
+ejecutarlo Windows puede mostrar una pantalla azul de **Microsoft Defender SmartScreen** con el
+mensaje *"Windows protegió su PC"*. SmartScreen avisa de cualquier descarga que no haya visto
+muchas veces, esté firmada o no, y el certificado de firma es nuevo, así que el aviso irá
+desapareciendo a medida que más gente instale EmailOps.
 
 <!-- claim:inst-windows-smartscreen-2 -->
 Para continuar:
 
 1. Haz clic en **Más información**. <!-- claim:inst-windows-smartscreen-3 -->
-2. Comprueba que la aplicación se llama **EmailOps** y haz clic en **Ejecutar de todas formas**. <!-- claim:inst-windows-smartscreen-4 -->
+2. Comprueba que la aplicación se llama **EmailOps** y que el editor termina en **Open Source Developer** seguido del titular del copyright que figura en el [NOTICE](https://github.com/emailops/emailops/blob/main/NOTICE) del proyecto, y haz clic en **Ejecutar de todas formas**. Si no aparece editor o es otro, no lo ejecutes. <!-- claim:inst-windows-smartscreen-4 -->
 
 <!-- claim:inst-windows-smartscreen-5 -->
 Si antes quieres confirmar que la descarga es la auténtica, compara su hash SHA-256
@@ -147,6 +147,24 @@ instalar. Mantén el controlador de la GPU razonablemente al día y funcionará.
 chmod +x EmailOps-linux.AppImage
 ./EmailOps-linux.AppImage
 ```
+
+### Verificar la descarga {#linux-verify}
+
+<!-- claim:inst-linux-verify-1 -->
+Cada release incluye también **EmailOps-linux-SHA256SUMS** y su firma GPG,
+**EmailOps-linux-SHA256SUMS.asc**, hecha con la clave de publicación del proyecto (huella
+`ACF0 DC94 D172 2E93 BFA7  D718 48EC 05DA EEAD FEDF`). Para comprobar que el AppImage es el que publicó el
+proyecto, descarga ambos ficheros en la misma carpeta y ejecuta:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emailops/emailops/main/docs/release-signing-key.asc | gpg --import
+gpg --verify EmailOps-linux-SHA256SUMS.asc EmailOps-linux-SHA256SUMS
+sha256sum --ignore-missing -c EmailOps-linux-SHA256SUMS
+```
+
+<!-- claim:inst-linux-verify-2 -->
+`gpg` debe indicar *Good signature* de **EmailOps Release Signing** con esa huella, y
+`sha256sum` debe mostrar **OK** para el fichero que descargaste.
 
 ### Aceleración por GPU
 

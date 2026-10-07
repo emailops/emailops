@@ -45,8 +45,22 @@ impl FieldCheck {
 }
 
 /// Every field a plan can carry, in the order the report lists them.
-const PLAN_FIELDS: [&str; 13] = [
-    "query", "from", "to", "with", "subject", "intent", "topic", "mode", "since", "until", "order", "limit", "unread",
+const PLAN_FIELDS: [&str; 15] = [
+    "query",
+    "from",
+    "to",
+    "with",
+    "subject",
+    "intent",
+    "topic",
+    "priority",
+    "tags_asked",
+    "mode",
+    "since",
+    "until",
+    "order",
+    "limit",
+    "unread",
 ];
 
 /// Every verdict for one case.
@@ -71,6 +85,9 @@ pub fn field_value(plan: &SearchPlan, field: &str) -> Result<Option<String>, Str
         "subject" => plan.subject.clone(),
         "intent" => plan.intent.clone(),
         "topic" => plan.topic.clone(),
+        "priority" => plan.priority.clone(),
+        // Absent unless set, like `unread`: `false` and omitted are the same verdict.
+        "tags_asked" => plan.tags_asked.then(|| "true".to_string()),
         "mode" => plan.mode.clone(),
         "since" => plan.since.clone(),
         "until" => plan.until.clone(),
@@ -87,7 +104,7 @@ fn matches(field: &str, expected: &str, actual: &str) -> bool {
         // Numbers and flags are exact; text is a case-insensitive substring so
         // `from: marisol` accepts whatever spelling of the sender the planner
         // chose.
-        "limit" | "unread" | "order" | "mode" => actual.eq_ignore_ascii_case(expected),
+        "limit" | "unread" | "tags_asked" | "order" | "priority" | "mode" => actual.eq_ignore_ascii_case(expected),
         _ => actual.to_lowercase().contains(&expected.to_lowercase()),
     }
 }

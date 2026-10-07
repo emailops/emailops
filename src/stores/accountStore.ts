@@ -128,6 +128,13 @@ export interface SyncProgress {
   message: string;
 }
 
+/** Whether a `complete` event's sync stored any mail. The backend reports the
+ *  stored count (retried downloads included) as `total`, and 0 for an idle
+ *  sync — whose sidebar stats are not worth recomputing. */
+export function syncStoredMail(progress: SyncProgress): boolean {
+  return progress.total > 0;
+}
+
 /**
  * Pure reducer for sync-progress events.
  *

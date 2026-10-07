@@ -109,6 +109,14 @@ pub struct SearchPlan {
     /// the mailbox never spells out.
     pub intent: Option<String>,
     pub topic: Option<String>,
+    /// The classifier's priority level (`urgent` / `normal` / `low`) — a tag
+    /// independent of intent and topic: an email can be an urgent promotion.
+    pub priority: Option<String>,
+    /// The planner's own verdict that the question ASKS for a kind of mail,
+    /// so the tags above are the question rather than its guess. Decided by
+    /// the model, in whatever language the question is in and against the
+    /// user's own tag glossary — see [`SearchPlan::keeping_asked_tags`].
+    pub tags_asked: bool,
     /// `"semantic"` to rank `query` by meaning instead of exact keywords —
     /// the planner's way to search for a description no tag captures.
     pub mode: Option<String>,
@@ -142,6 +150,7 @@ impl SearchPlan {
             && self.until.is_none()
             && self.intent.is_none()
             && self.topic.is_none()
+            && self.priority.is_none()
             && self.unread.is_none()
     }
 
@@ -157,7 +166,23 @@ impl SearchPlan {
     pub fn without_classifier_tags(mut self) -> Self {
         self.intent = None;
         self.topic = None;
+        self.priority = None;
         self
+    }
+
+    /// The plan with its classifier tags only when the planner said the
+    /// question asks for them (`tags_asked`); otherwise the tags were its
+    /// guess and are dropped, as [`SearchPlan::without_classifier_tags`].
+    ///
+    /// Dropping every tag unconditionally lost the ones the user named:
+    /// "emails tagged both urgent and promotion" kept no filter, fell to
+    /// retrieval, and was answered "none" over hundreds of matches.
+    pub fn keeping_asked_tags(self) -> Self {
+        if self.tags_asked {
+            self
+        } else {
+            self.without_classifier_tags()
+        }
     }
 
     /// Whether the plan names a FILTER (sender, recipient, subject, date
@@ -177,6 +202,7 @@ impl SearchPlan {
             || self.until.is_some()
             || self.intent.is_some()
             || self.topic.is_some()
+            || self.priority.is_some()
             || self.unread == Some(true)
     }
 
@@ -205,6 +231,7 @@ impl SearchPlan {
         put("subject", self.subject);
         put("intent", self.intent);
         put("topic", self.topic);
+        put("priority", self.priority);
         put("mode", self.mode);
         put("since", self.since);
         put("until", self.until);
@@ -330,6 +357,13 @@ pub fn parse_plan_detailed(text: &str) -> (Plan, PlanOutcome) {
         subject: str_field("subject"),
         intent: str_field("intent").map(|v| v.to_lowercase()),
         topic: str_field("topic").map(|v| v.to_lowercase()),
+        // Only the classifier's levels: any other value would match nothing.
+        priority: str_field("priority")
+            .map(|v| v.to_lowercase())
+            .filter(|v| crate::services::classification::PRIORITY_LEVELS.contains(&v.as_str())),
+        // Only a literal `true` — a model that hedges ("yes", "maybe") has
+        // not said the question asks for the tags.
+        tags_asked: obj.get("tags_asked").and_then(|v| v.as_bool()) == Some(true),
         // Only the semantic switch is meaningful; "keyword" is the default
         // and anything else is noise.
         mode: str_field("mode").map(|m| m.to_lowercase()).filter(|m| m == "semantic"),
@@ -785,6 +819,76 @@ mod tests {
         let plan = plan.without_classifier_tags();
         assert!(!plan.has_structural_filter());
         assert_eq!(plan.query.as_deref(), Some("Janos"));
+    }
+
+    #[test]
+    fn priority_is_planned_and_reaches_the_search_call() {
+        // "urgent promotions" is two independent tags: priority and intent.
+        let Plan::Search(plan) = parse_plan(r#"{"priority": "Urgent", "intent": "promotion"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.priority.as_deref(), Some("urgent"));
+        assert!(plan.has_structural_filter());
+        let args = plan.into_tool_call().function.arguments;
+        assert_eq!(args["priority"], "urgent");
+        assert_eq!(args["intent"], "promotion");
+    }
+
+    #[test]
+    fn an_unknown_priority_level_is_dropped() {
+        // Only the classifier's levels exist; "high" would match nothing.
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "priority": "high"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.priority, None);
+    }
+
+    #[test]
+    fn tags_the_planner_marks_as_asked_survive() {
+        // "find emails tagged both urgent and promotion": the question asks
+        // for a kind of mail, so the planner marks its tags as asked. Dropping
+        // them left no filter and the turn fell to RAG, which answered "none"
+        // over hundreds of matches.
+        let Plan::Search(plan) = parse_plan(r#"{"priority": "urgent", "intent": "promotion", "tags_asked": true}"#)
+        else {
+            panic!("expected a plan");
+        };
+        let plan = plan.keeping_asked_tags();
+        assert_eq!(plan.priority.as_deref(), Some("urgent"));
+        assert_eq!(plan.intent.as_deref(), Some("promotion"));
+        assert!(plan.has_structural_filter());
+    }
+
+    #[test]
+    fn tags_the_planner_did_not_mark_as_asked_are_dropped() {
+        // The BorgBase case: the tag was the planner's guess, not the question.
+        for reply in [
+            r#"{"from": "BorgBase", "unread": true, "intent": "notification"}"#,
+            r#"{"from": "BorgBase", "unread": true, "intent": "notification", "tags_asked": false}"#,
+            r#"{"from": "BorgBase", "unread": true, "priority": "urgent", "tags_asked": "yes"}"#,
+        ] {
+            let Plan::Search(plan) = parse_plan(reply) else {
+                panic!("expected a plan: {reply}");
+            };
+            let plan = plan.keeping_asked_tags();
+            assert_eq!(plan.intent, None, "{reply}");
+            assert_eq!(plan.priority, None, "{reply}");
+            assert_eq!(plan.from.as_deref(), Some("BorgBase"), "{reply}");
+        }
+    }
+
+    #[test]
+    fn tags_asked_alone_is_not_a_filter() {
+        let (plan, outcome) = parse_plan_detailed(r#"{"tags_asked": true}"#);
+        assert!(matches!(plan, Plan::Defer), "{outcome:?}");
+    }
+
+    #[test]
+    fn dropping_every_tag_drops_priority_too() {
+        let Plan::Search(plan) = parse_plan(r#"{"from": "x", "priority": "urgent"}"#) else {
+            panic!("expected a plan");
+        };
+        assert_eq!(plan.without_classifier_tags().priority, None);
     }
 
     #[test]

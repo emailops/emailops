@@ -166,7 +166,7 @@ mod tests {
             assistant_with(vec![tool_call(
                 "search_emails",
                 json!({"from": "news@example.com", "intent": "request"}),
-                "(3 emails carry the intent/topic asked for; …)\n(showing 1-25 of 54 matching threads — …)\n- id=a",
+                "(3 emails carry the tags asked for; …)\n(showing 1-25 of 54 matching threads — …)\n- id=a",
             )]),
             json!({"from": "news@example.com", "intent": "request"}),
             25,

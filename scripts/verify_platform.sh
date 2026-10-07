@@ -109,8 +109,10 @@ case "$PLATFORM" in
     fi
 
     echo "── signing ──"
-    echo "  i unsigned by design — no code-signing certificate is configured."
-    echo "    Users will see a SmartScreen warning on first run."
+    echo "  i not checked here. In the release workflow the windows-sign-* jobs"
+    echo "    sign and verify every file (scripts/sign_windows.sh), and"
+    echo "    windows-publish re-checks them with Windows' own Get-AuthenticodeSignature."
+    echo "    A local 'make build-windows' produces unsigned installers."
 
     echo "── dynamic-backends DLL staging ──"
     # ggml-base.dll/ggml.dll/llama.dll/llama-common.dll are implicit link-time

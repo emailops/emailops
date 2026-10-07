@@ -3516,6 +3516,55 @@ exists only when both accounts received it, and the headers already thread the r
 *Raw MIME through Graph `/sendMail` to keep `In-Reply-To` on Outlook* — a second send path
 for a single case.
 
+## 2026-10-07 — Windows artifacts are signed in CI by jobs that never build
+
+**Decision:** Windows release artifacts (installers and the binaries they install) are
+code-signed in CI with a cloud-held certificate. Only dedicated signing jobs can use the
+signing credential; they run behind owner approval and never build or run the project's
+dependencies. Signing happens around a split build (compile, sign binaries, bundle, sign
+installers) and the result is checked on Windows before publishing.
+**Context:** Unsigned installers showed "Unknown publisher" in SmartScreen, and the CASA
+assessment asks for signed Windows executables. The signing credential must not be
+reachable from a job that runs the build's third-party dependency tree.
+**Rejected:** Signing inside the build job (simpler, but exposes the credential to every
+build dependency); certificate options whose validation requirements the project cannot
+meet or that would show a third party as publisher; a hardware token (cannot be used from
+hosted CI).
+
+## 2026-10-07 — Linux downloads ship GPG-signed checksums
+
+**Decision:** Each release publishes SHA256 checksums for the Linux packages, signed with
+a dedicated project release key whose public half is committed in `docs/`. The private key
+is available only to a signing job that never builds, under the same rule as Windows.
+**Context:** The CASA assessment asks for an integrity-verified Linux download and accepts
+GPG-signed checksums.
+**Rejected:** An embedded AppImage signature, a signed package repository or a store
+listing (more to build and maintain than the requirement needs); the maintainer's personal
+key (a project key can be rotated without touching a personal identity).
+
+## 2026-10-07 — Chat search filters by priority; the planner says which tags were asked
+
+**Decision:** `search_emails` and the query planner accept `priority` (`urgent` / `normal` /
+`low`, the classifier's closed set in `PRIORITY_LEVELS`) as a tag independent of intent and
+topic. On a turn the planner also routes, its classifier tags survive only when the planner
+itself marks them `tags_asked: true`; unmarked tags are treated as guesses and dropped, as
+before.
+**Context:** A user asking for "emails tagged both urgent and promotion" got "none" over
+hundreds of matches: priority was not a chat filter, and every planner tag was dropped
+unconditionally to stop guessed intents (e.g. `intent=notification` on a sender lookup)
+from emptying the result. Whether a tag is the question or a guess is a judgement about
+the question in any language and against the user's own glossary, so the model makes it.
+The prompt wording was chosen on a 3-model × 5-case matrix (qwen3.5 4b-q4, 4b-q8, 9b): the
+longer `tags_asked` description (+138 cached prompt-head tokens) was the only one that set
+the flag on the Spanish question in all three; three shorter variants (+60–87 tokens)
+picked the right tags but left the flag unset.
+**Rejected:** Keeping a tag when its name appears in the question — hard-codes the
+vocabulary, misses other languages ("promociones") and paraphrases, and breaks when the
+user edits the glossary. Never dropping planner tags — reopens the guessed-intent regression
+and moves tag-only plans ("who is X?") off retrieval. A structural rule (keep tags only
+when nothing else selects mail) — untested, and a spurious `unread: true`, which the 4B
+models add to Spanish questions, would defeat it.
+
 ## 2026-10-07 — Binary hardening flags live in Cargo config and a CMake project include
 
 **Decision:** Hardening that the toolchains do not apply by default is added in two

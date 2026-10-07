@@ -311,6 +311,13 @@ Fields (use null when the question does not imply them):
   topic   : what the mail is about — ONLY when the question names one of these subjects
             ("facturas" -> billing, "viajes" -> travel); never inferred from the intent — one of:
 {{topic_definitions}}
+  priority: how pressing the mail is — "urgent", "normal" or "low" — ONLY when the question asks
+            about urgency or importance ("urgent", "urgentes", "dringend"). Independent of intent:
+            "urgent promotions" -> priority "urgent" AND intent "promotion"
+  tags_asked: true ONLY when the question itself asks for a KIND of mail that intent / topic /
+            priority express ("promotions", "facturas", "lo urgente", "leads"); false or omitted
+            when you added a tag only as a guess about mail the question identifies another way
+            (a sender, a date, a name)
 
 Rules:
 - "emails I sent" / "sent by me" -> the user is the AUTHOR -> from = {{user_email}}.

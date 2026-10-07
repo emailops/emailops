@@ -18,9 +18,14 @@ status line, and **stop on the first failure** — never paper over a failing ga
   machine (Phases 5-5b), uploaded by the skill to the **draft** GitHub release
   (Phase 7). This is a permanent choice, not a stopgap — signing secrets never
   need to touch CI for this platform.
-- **Linux + Windows**: built in CI (`.github/workflows/release.yml`), unsigned
-  by convention, smoke-tested on the same runner, and attached to the same
-  **draft** release (Phase 7b). The skill triggers this and waits for it.
+- **Linux + Windows**: built in CI (`.github/workflows/release.yml`),
+  smoke-tested on the runners, and attached to the same **draft** release
+  (Phase 7b). The skill triggers this and waits for it. Windows is
+  Authenticode-signed (Certum) and Linux gets GPG-signed checksums
+  (`EmailOps-linux-SHA256SUMS` + `.asc`), both by jobs in the `signing`
+  environment — so the run **pauses for the developer's approval** three
+  times (Linux checksums, Windows binaries, Windows installers). Tell the
+  developer when a run is waiting: *Review deployments* on the run page.
 - **The release is always created as a draft** and stays one until every
   platform's binaries are attached. Publishing it is the one step the skill
   never takes without asking (Phase 8).
@@ -377,7 +382,11 @@ gh run watch <run-id>
   release is complete when one platform is missing — a release with only
   macOS assets (or only some platforms) is a legitimate outcome only if the
   developer explicitly accepts it after seeing the failure.
-- **On success**: both `.deb`/`.AppImage` and `.msi`/setup `.exe` are already
+- **While waiting**: `gh run view <run-id> --json jobs` shows a job with
+  status `waiting` when it needs the `signing` approval; tell the developer
+  instead of assuming the run is stuck.
+- **On success**: both `.deb`/`.AppImage` (plus `EmailOps-linux-SHA256SUMS`
+  and its `.asc`) and `.msi`/setup `.exe` are already
   attached to the `vX.Y.Z` draft (`softprops/action-gh-release` finds the draft
   by tag and only adds files). The workflow sets `draft: true` on that step —
   without it the action *publishes* an existing draft once its uploads finish,

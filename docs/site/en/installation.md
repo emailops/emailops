@@ -109,17 +109,17 @@ Upgrade later with `brew upgrade --cask emailops`.
 ### "Windows protected your PC" {#smartscreen}
 
 <!-- claim:inst-windows-smartscreen-1 -->
-When you run the installer, Windows may show a blue **Microsoft Defender SmartScreen** screen
-saying *"Windows protected your PC"*. This is expected: the installer is not code-signed yet,
-because signing on Windows needs a paid certificate the project does not have. The warning
-says nothing about the file itself. SmartScreen shows it for every unsigned download it has
-not seen often.
+The installer is code-signed, so Windows can tell you who published it. When you run it,
+Windows may still show a blue **Microsoft Defender SmartScreen** screen saying *"Windows
+protected your PC"*. SmartScreen warns about any download it has not seen often, signed or
+not, and the signing certificate is new, so the warning fades only as more people install
+EmailOps.
 
 <!-- claim:inst-windows-smartscreen-2 -->
 To continue:
 
 1. Click **More info**. <!-- claim:inst-windows-smartscreen-3 -->
-2. Check that the app name is **EmailOps**, then click **Run anyway**. <!-- claim:inst-windows-smartscreen-4 -->
+2. Check that the app name is **EmailOps** and that the publisher ends in **Open Source Developer** followed by the copyright holder named in the project's [NOTICE](https://github.com/emailops/emailops/blob/main/NOTICE), then click **Run anyway**. If the publisher is missing or different, do not run it. <!-- claim:inst-windows-smartscreen-4 -->
 
 <!-- claim:inst-windows-smartscreen-5 -->
 If you want to confirm the download is the real one first, compare its SHA-256 hash
@@ -148,6 +148,24 @@ GPU driver reasonably current and it works.
 chmod +x EmailOps-linux.AppImage
 ./EmailOps-linux.AppImage
 ```
+
+### Verify the download {#linux-verify}
+
+<!-- claim:inst-linux-verify-1 -->
+Every release also carries **EmailOps-linux-SHA256SUMS** and its GPG signature,
+**EmailOps-linux-SHA256SUMS.asc**, made with the project's release key (fingerprint
+`ACF0 DC94 D172 2E93 BFA7  D718 48EC 05DA EEAD FEDF`). To check that the AppImage is the one the project
+published, download both next to it and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/emailops/emailops/main/docs/release-signing-key.asc | gpg --import
+gpg --verify EmailOps-linux-SHA256SUMS.asc EmailOps-linux-SHA256SUMS
+sha256sum --ignore-missing -c EmailOps-linux-SHA256SUMS
+```
+
+<!-- claim:inst-linux-verify-2 -->
+`gpg` must report a *Good signature* from **EmailOps Release Signing** with that fingerprint,
+and `sha256sum` must print **OK** for the file you downloaded.
 
 ### GPU acceleration
 
