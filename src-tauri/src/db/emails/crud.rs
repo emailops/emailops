@@ -1077,6 +1077,25 @@ mod tests {
             .unwrap();
     }
 
+    /// Each inbox row checks it is its thread's latest inbox message. That
+    /// check runs once per row walked, so it must seek the thread: probing
+    /// `idx_emails_account_mailbox` instead walked the account's inbox per row,
+    /// and a page 15k rows deep took ~13s on a 100k-email mailbox.
+    #[test]
+    fn the_inbox_latest_in_thread_check_seeks_the_thread() {
+        let db = Database::new_for_testing().unwrap();
+        for scope in [AccountScope::Account("acc1"), AccountScope::AllEnabled] {
+            let plan = db.explain_get_emails(scope, 50, 0, None);
+            let sub: Vec<&String> = plan.iter().filter(|step| step.starts_with("SEARCH sub ")).collect();
+            assert!(!sub.is_empty(), "{plan:?}");
+            assert!(
+                sub.iter()
+                    .all(|step| step.contains("idx_emails_thread_latest (account_id=? AND thread_id=?)")),
+                "{plan:?}"
+            );
+        }
+    }
+
     #[test]
     fn user_replies_to_correspondent_are_the_users_past_messages_in_their_threads() {
         let db = Database::new_for_testing().unwrap();

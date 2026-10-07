@@ -53,6 +53,12 @@ phase() {  # phase <name> <data dir or ""> <run dir>
 phase fresh  "$FRESH" "$OUT/fresh-run"
 phase locked "$FRESH" "$OUT/locked-run"
 rm -rf "$FRESH"
+# The demo phase closes the EO Docs sheet note (feat-eo-docs-9), and closing it is
+# remembered: without this reset every second run finds no note to read.
+if wants demo; then
+  sqlite3 "$PWD/.emailops-demo-data/emailops.db" \
+    "DELETE FROM user_preferences WHERE key = 'sheet_basics_notice_dismissed'"
+fi
 phase demo   ""       "$OUT/demo-run"
 
 wants cli || exit 0

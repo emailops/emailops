@@ -58,6 +58,11 @@ proceed rather than fixing silently):
 
 State the resolved version (e.g. `0.5.0 → 0.6.0`) before continuing.
 
+After syncing `main`, run `npm ci` (Node 22): a fast-forward that brought new
+frontend dependencies leaves `node_modules` stale, and Phase 1b then reports
+`tsc`, vitest and the whole e2e sweep as failing for a reason that is not the
+code.
+
 ## Phase 1b — Full verification
 
 Run this right after the pre-flight checks and before touching any file, so it
@@ -137,6 +142,18 @@ Run `make check` (lint + typecheck + Rust tests + frontend tests + clippy).
 If anything fails, stop and report the failure. Do not auto-fix beyond obvious
 formatting unless the user asks.
 
+Then type-check the Linux/Windows build path, which nothing else compiles before
+the release CI:
+
+```bash
+CARGO_TARGET_DIR=<scratch>/target-dynbk cargo check --manifest-path src-tauri/Cargo.toml --features dynamic-backends
+```
+
+Code under `#[cfg(feature = "dynamic-backends")]` is skipped by every macOS
+build and by the gates. A llama-cpp-2 bump that moved `BACKENDS_DIR` broke the
+Linux and Windows builds of v0.6.13 only at Phase 7b, after the tag was pushed;
+this check (about a minute and a half on macOS) reproduces that error.
+
 ## Phase 5 — Signed + notarized universal build
 
 Warn the user this step is slow (full release build + Apple notarization), then:
@@ -146,7 +163,11 @@ make build-mac && make verify-mac
 ```
 
 This produces the universal (Apple-Silicon + Intel) signed/notarized bundle with
-the embedded AI provider. Surface the `verify-mac` output (codesign,
+the embedded AI provider. It needs no one at the keyboard: the DMG window layout
+comes from a tracked `.DS_Store`, not from driving Finder (see
+`docs/DECISIONS.md`, 06/10/2026). A notarization `HTTP 403 … agreement is
+missing or has expired` means the developer must accept the new agreement at
+developer.apple.com; wait about 15 minutes after they do before retrying. Surface the `verify-mac` output (codesign,
 architectures, spctl, stapler) so the user can confirm it passed. If verify
 reports any problem, stop and ask the user.
 
@@ -223,15 +244,17 @@ install the freshly built app locally and confirm it runs:
 6. Take a screenshot **scoped to just the app's window, not the full
    screen** — a full-screen capture leaks whatever else is on the developer's
    desktop, and the app itself will be showing real account data (personal
-   data). Get the window bounds and capture just that region:
+   data). Capture the window through `cua-driver`, which holds its own Screen
+   Recording grant — `screencapture` and `osascript`/System Events both fail
+   from a background session, which macOS cannot grant either permission:
 
    ```bash
-   osascript -e 'tell application "System Events" to tell process "emailops" to set frontmost to true'
-   osascript -e 'tell application "System Events" to tell process "emailops" to {position of window 1, size of window 1}'
-   # then, using the returned x, y, w, h:
-   screencapture -x -R<x>,<y>,<w>,<h> <path>.png
+   PID=$(pgrep -x emailops)
+   WIN=$(cua-driver call list_windows '{}' | python3 -c "import json,sys; print(next(w['window_id'] for w in json.load(sys.stdin)['windows'] if w['pid']==$PID and w['is_on_screen'] and w['title']=='EmailOps'))")
+   cua-driver call get_window_state "{\"pid\": $PID, \"window_id\": $WIN, \"max_elements\": 5, \"screenshot_out_file\": \"<scratch>/smoke-X.Y.Z.png\"}" >/dev/null
    ```
 
+   Keep the image in the scratch dir (it shows real accounts), never in the repo.
    Read the image back before sending it, to confirm it actually shows the
    running app (not a blank/loading state) and nothing unexpected is in
    frame.
@@ -265,8 +288,8 @@ Two things that skill deliberately leaves to you:
 - It **asks** before adding to `docs/DECISIONS.md` rather than assuming — that
   file is append-only and durable-decisions-only.
 - It **never commits or pushes the website repo**
-  (`/Users/gerodp/CTO/AI/Email/landingpage_cursor/emailops_web`, deployed via
-  Amplify on push to `main`). It reports what that copy needs; you decide. Even
+  (the checkout at `$EMAILOPS_WEB_REPO`, deployed via Amplify on push to
+  `main`; if the variable is unset, ask the developer where it is). It reports what that copy needs; you decide. Even
   when the developer asks for website changes here, hold them until Phase 7b
   confirms the CI build for those platforms actually succeeded — there is no
   point publishing download links for a build that just failed — then push,
@@ -363,6 +386,11 @@ gh run watch <run-id>
   libraries/DLLs on a clean machine, **not** that GPU offload works (CI
   runners have no GPU; that still needs an occasional real-hardware check).
 
+The workflow also **replaces the draft's body** with the CHANGELOG section
+(`body_path` in `release.yml`). Anything added to the GitHub notes by hand —
+a new contributors section, a video link — must be applied after this phase,
+in Phase 8, or it is lost.
+
 Once Phase 7b's CI build succeeds, this is also the point to follow through on
 any website updates queued back in Phase 5d — now that the platforms in
 question are confirmed actually working, not just built.
@@ -383,6 +411,14 @@ The draft must be `isDraft: true` and carry every expected asset:
 `EmailOps-windows-cuda.msi`, `EmailOps-windows-cuda-setup.exe` (plus the
 optional `EmailOps-linux.rpm`). The macOS digests must match the local
 `shasum` output. Anything missing or mismatched: stop and report.
+
+Apply the final GitHub notes now (`gh release edit vX.Y.Z --draft=true
+--notes-file <notes>`): the CHANGELOG section plus anything that is GitHub-only.
+When the release includes a first-time contributor's merged PR, ask the
+developer whether to thank them; with a yes, add a `### New contributors`
+section naming their GitHub handle and linking the PR — in the GitHub notes
+only, never in the CHANGELOG or the in-app notes. A draft's URL reads
+`releases/tag/untagged-…` until it is published; check `tagName` instead.
 
 Then show the developer the tag (+ commit), the asset list with sizes, the
 draft URL, and the release notes, and **ask whether to publish**. Only on an
@@ -456,6 +492,24 @@ invariants: `homebrew/README.md`.
    emailops.rb` is tracked here as the source of what was shipped):
    `git add homebrew/Casks/emailops.rb && git commit -m "chore: update Homebrew cask to vX.Y.Z"`,
    and push `main`.
+
+7. **Rebuild the website docs**, when the developer asks for it. Amplify
+   syncs `docs/site` from the newest `v*` tag on every build, so publishing
+   the tag is not enough: the site needs a new build. With no AWS credentials
+   on this machine, trigger it with an empty commit on the website repo's
+   `main` (`$EMAILOPS_WEB_REPO`; ask the developer if it is unset), which
+   may hold the developer's own uncommitted work. Check nothing is
+   staged first, then:
+
+   ```bash
+   git -C "$EMAILOPS_WEB_REPO" commit --allow-empty -m "chore: rebuild the docs for EmailOps vX.Y.Z"
+   git -C "$EMAILOPS_WEB_REPO" push origin main
+   ```
+
+   Before pushing, `bash scripts/sync-docs.sh` and `hugo --gc --minify -d <scratch>`
+   in that repo confirm the docs of the new tag build (`content/*/docs` is
+   gitignored). After the deploy, check a page that changed under
+   `https://getemailops.com/en/docs/…` (`/docs/…` redirects there).
 
 **Invariant:** never replace a DMG asset on an already-published tag — the
 cask pins its sha256, so swapping the file breaks every install of that

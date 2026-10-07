@@ -165,6 +165,12 @@ Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sob
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
 **Ajustes → Calendario**.
 
+<!-- claim:feat-calendar-3 -->
+Las notificaciones del sistema de un recordatorio omiten el título de la reunión salvo que
+actives **Mostrar el título de la reunión en las notificaciones** en **Ajustes → Calendario**:
+pueden verse en la pantalla de bloqueo y en el centro de notificaciones, fuera del bloqueo de
+la app. El aviso dentro de EmailOps siempre muestra la reunión completa.
+
 ## Vista de adjuntos {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->

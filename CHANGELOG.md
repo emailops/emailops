@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
-## [0.6.13] — 2026-10-06
+## [0.6.14] — 2026-10-06
 
 ### Added
 
@@ -77,6 +77,11 @@ No unreleased changes yet.
 
 ### Fixed
 
+- **The inbox is fast again on large mailboxes.** Listing conversations no
+  longer re-reads the whole account to mark starred threads, and pages far
+  down the inbox load as quickly as the first.
+- **The inbox keeps its scroll position** when the next page of mail loads,
+  instead of jumping back to the conversation you last opened.
 - **Mail is never re-sent** after a provider error, and a draft with unsaved
   edits is never dropped on sync.
 - **IMAP sync**: the `\Seen` flag maps to read state, mail is re-keyed when a
@@ -103,6 +108,11 @@ No unreleased changes yet.
   spanning several accounts or Sent falls back to the dragged email.
 - **A search covers every inbox tab**: while it is active the tabs show All
   and are disabled.
+
+## [0.6.13] — 2026-10-06
+
+Withdrawn the same day (slow inbox on large mailboxes, scroll jumping back to
+the top). Everything it contained ships in 0.6.14.
 
 ## [0.6.12] — 2026-09-29
 

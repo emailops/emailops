@@ -215,10 +215,16 @@ export function VirtualEmailList({
 
   // Keep the keyboard cursor row in view as j/k move it. `auto` scrolls only
   // when the row is off screen, so walking a visible page does not jump.
+  // Only a cursor move scrolls: the cursor stays on the last clicked row, so
+  // re-running on every list change (a page appended by infinite scroll, a
+  // refresh after a sync) pulled a user who had scrolled away back to it.
+  // A cursor whose row has not loaded yet scrolls once it arrives.
+  const scrolledCursorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!cursorEmailId) return;
+    if (!cursorEmailId || cursorEmailId === scrolledCursorRef.current) return;
     const index = emails.findIndex((e) => e.id === cursorEmailId);
     if (index === -1) return;
+    scrolledCursorRef.current = cursorEmailId;
     virtualizer.scrollToIndex(index, { align: 'auto' });
   }, [cursorEmailId, emails, virtualizer]);
 

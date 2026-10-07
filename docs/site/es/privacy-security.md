@@ -42,6 +42,12 @@ credenciales del sistema: el Llavero en macOS, el Administrador de credenciales 
 llavero Secret Service en Linux. Nunca se escriben en un archivo de configuración y sobreviven
 a la desinstalación de la app.
 
+<!-- claim:priv-where-data-7 -->
+Al eliminar una cuenta de Gmail también se revoca el acceso de EmailOps en Google; si falla,
+el registro indica dónde quitarlo a mano. Microsoft no permite que una app revoque su propio
+acceso, así que al eliminar una cuenta de Outlook se te indican las páginas de Microsoft donde
+quitar EmailOps tú mismo.
+
 ## No hay ningún servidor de EmailOps
 
 <!-- claim:priv-there-no-1 -->
@@ -162,6 +168,11 @@ Cualquiera con acceso a tu sesión de usuario desbloqueada y al directorio de da
 el archivo SQLite directamente. Si eso entra en tu modelo de amenazas, usa cifrado de disco
 completo — FileVault en macOS, BitLocker en Windows, LUKS en Linux — que es la herramienta
 adecuada para ello.
+
+<!-- claim:priv-locking-app-3 -->
+Los intentos fallidos se frenan: tras cinco contraseñas incorrectas, la pantalla de bloqueo
+espera 30 segundos antes de aceptar otra, el doble cada vez hasta 15 minutos, y reiniciar la
+app no pone la cuenta a cero.
 
 ## Cómo auditar todo esto
 

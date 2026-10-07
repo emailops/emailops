@@ -3061,6 +3061,61 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
     return added
 
 
+# A real chat turn, captured with `emailops-cli chat --json --trace` on the demo
+# mailbox; the prompts are left out, the answer is written by hand, and the
+# cited email's ids are `{EMAIL_ID}` / `{THREAD_ID}` placeholders. The Rust test
+# `the_demo_chat_trace_fixture_round_trips_through_chat_trace` keeps it loadable.
+DEMO_CHAT_FIXTURE = REPO_ROOT / "scripts" / "demo_fixtures" / "chat_reasoning_en.json"
+DEMO_CHAT_SENDER = "marisol@farologistics.com"
+DEMO_CHAT_SUBJECT = "Re: Production bug: orders stuck in 'processing'"
+
+
+def insert_demo_chat(conn: sqlite3.Connection, locale: Locale) -> int:
+    """Seed one answered chat question on the work account, so the reasoning
+    panel has a trace to show (the docs check opens it). It cites Marisol's last
+    message in the production-bug thread; a mailbox without that thread gets no
+    chat. Returns how many conversations were added (0 when already there)."""
+    account = locale.work
+    cited = conn.execute(
+        "SELECT id, thread_id, subject, sender, sender_email, timestamp FROM emails "
+        "WHERE account_id = ? AND sender_email = ? AND subject = ? ORDER BY timestamp DESC LIMIT 1",
+        (account.id, DEMO_CHAT_SENDER, DEMO_CHAT_SUBJECT),
+    ).fetchone()
+    if cited is None:
+        return 0
+    email_id, thread_id, subject, sender, sender_email, email_ts = cited
+    conversation_id = demo_id("conv_", account.id, "chat-reasoning")
+    if conn.execute("SELECT 1 FROM chat_conversations WHERE id = ?", (conversation_id,)).fetchone():
+        return 0
+
+    text = DEMO_CHAT_FIXTURE.read_text(encoding="utf-8")
+    fixture = json.loads(text.replace("{EMAIL_ID}", email_id).replace("{THREAD_ID}", thread_id))
+    trace = fixture["trace"]
+    now = now_s()
+    conn.execute(
+        "INSERT INTO chat_conversations (id, account_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        (conversation_id, account.id, fixture["question"], now - 60, now - 30),
+    )
+    user_id = demo_id("msg_", conversation_id, "user")
+    answer_id = demo_id("msg_", conversation_id, "assistant")
+    conn.execute(
+        "INSERT INTO chat_messages (id, conversation_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
+        (user_id, conversation_id, fixture["question"], now - 60),
+    )
+    conn.execute(
+        "INSERT INTO chat_messages (id, conversation_id, role, content, model, latency_ms, trace, created_at, "
+        "referenced_email_ids) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?)",
+        (answer_id, conversation_id, fixture["answer"], trace["model"], trace["totalElapsedMs"],
+         json.dumps(trace, ensure_ascii=False), now - 30, json.dumps([email_id])),
+    )
+    conn.execute(
+        "INSERT INTO chat_message_sources (message_id, citation_number, email_id, subject, sender, sender_email, "
+        "email_timestamp, body_excerpt) VALUES (?, 1, ?, ?, ?, ?, ?, ?)",
+        (answer_id, email_id, subject, sender, sender_email, email_ts, fixture["excerpt"]),
+    )
+    return 1
+
+
 def append_missing(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> dict[str, int]:
     """Insert the generator's threads and memory facts that an existing demo DB
     does not have yet. Emails match on (sender_email, subject) of the first
@@ -3080,6 +3135,7 @@ def append_missing(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> 
     added["facts"] = append_memory_facts(conn, locale)
     if locale.work_threads is not None:
         added["threads"] += insert_verification_fixtures(conn, locale, demo_dir)
+        added["chats"] = insert_demo_chat(conn, locale)
     added["thread_states"] = insert_thread_states(conn, locale)
     return added
 
@@ -3171,7 +3227,7 @@ def main() -> int:
                 added = append_missing(conn, locale, demo_dir)
         finally:
             conn.close()
-        print(f"[demo-db] appended {added['threads']} threads, {added['facts']} memory facts; {added['thread_states']} thread states refreshed in {demo_db}")
+        print(f"[demo-db] appended {added['threads']} threads, {added['facts']} memory facts, {added.get('chats', 0)} chats; {added['thread_states']} thread states refreshed in {demo_db}")
         return 0
 
     if args.refresh_calendar:
@@ -3226,6 +3282,7 @@ def main() -> int:
             insert_attachments_meta(conn, locale)
             if locale.work_threads is not None:
                 insert_verification_fixtures(conn, locale, demo_dir)
+                insert_demo_chat(conn, locale)
             insert_pending_tasks(conn, locale)
             insert_memory_facts(conn, locale)
             insert_thread_states(conn, locale)

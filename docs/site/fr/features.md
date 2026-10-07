@@ -171,6 +171,12 @@ prend la couleur que lui donne son fournisseur, et la légende au-dessus de la g
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
 **Paramètres → Calendrier**.
 
+<!-- claim:feat-calendar-3 -->
+Les notifications système d'un rappel omettent le titre de la réunion, sauf si vous activez
+**Afficher le titre de la réunion dans les notifications** dans **Paramètres → Calendrier** :
+elles peuvent apparaître sur l'écran verrouillé et dans le centre de notifications, hors du
+verrouillage de l'app. Le rappel dans EmailOps affiche toujours la réunion complète.
+
 ## Vue des pièces jointes {#attachments-view}
 
 <!-- claim:feat-attachments-view-1 -->

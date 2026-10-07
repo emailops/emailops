@@ -330,6 +330,48 @@ describe('VirtualEmailList scroll position across a display:none hide', () => {
     expectNoBlankBand(el);
   });
 
+  // The keyboard cursor sits on the row the user last clicked (or the
+  // auto-selected first row). Keeping it in view must react to the cursor
+  // moving, not to the list changing: a page appended by infinite scroll, or a
+  // background refresh after a sync, pulled the user back to that row — usually
+  // the top of the inbox — every time they scrolled down with the mouse.
+  it('keeps the scroll position when rows are appended while the cursor is off screen', () => {
+    const renderWithCursor = (emails: Email[]) =>
+      act(() => {
+        root.render(
+          <VirtualEmailList
+            emails={emails}
+            selectedEmailId={null}
+            focusEmailId={null}
+            cursorEmailId="e0"
+            scrollContainerRef={scrollContainerRef}
+            isLoadingMore={false}
+            hasMore={true}
+            isSyncing={false}
+            onSelectEmail={() => {}}
+            onLoadMore={() => {}}
+          />,
+        );
+      });
+    renderWithCursor(manyEmails);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const scrollTo = vi.fn((opts: ScrollToOptions) => {
+      if (opts.top !== undefined) el.scrollTop = opts.top;
+    });
+    el.scrollTo = scrollTo as unknown as typeof el.scrollTo;
+    showAndSettle(el);
+
+    el.scrollTop = 1200;
+    act(() => el.dispatchEvent(new Event('scroll')));
+    scrollTo.mockClear();
+
+    renderWithCursor([...manyEmails, ...Array.from({ length: 20 }, (_, i) => email(`more${i}`))]);
+
+    expect(scrollTo, 'the list must not be scrolled back to the cursor row').not.toHaveBeenCalled();
+    expect(el.scrollTop).toBe(1200);
+  });
+
   // Supporting invariant: the scroll container is a single stable DOM node, so
   // the effect attached on mount keeps observing the right element even as the
   // list flips between its empty and populated branches.

@@ -259,13 +259,7 @@ impl Database {
         let conn = self.reader();
         // Two binds per thread; stay well under SQLite's variable limit.
         for chunk in threads.chunks(400) {
-            let pairs = vec!["(?, ?)"; chunk.len()].join(", ");
-            let sql = format!(
-                "WITH wanted(account_id, thread_id) AS (VALUES {pairs})
-                 SELECT DISTINCT e.account_id, e.thread_id
-                 FROM emails e JOIN wanted w ON e.account_id = w.account_id AND e.thread_id = w.thread_id
-                 WHERE e.is_starred = 1 AND e.is_deleted = 0"
-            );
+            let sql = Self::starred_threads_sql(chunk.len());
             let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 2);
             for (account_id, thread_id) in chunk {
                 bound.push(account_id);
@@ -280,6 +274,41 @@ impl Database {
             }
         }
         Ok(starred)
+    }
+
+    /// SQL behind [`Database::starred_threads`] for `pairs` wanted threads.
+    ///
+    /// The `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without
+    /// it the planner probes each wanted thread through
+    /// `idx_emails_sender_stats (account_id, is_deleted)`, walking the account's
+    /// whole mailbox per thread — ~2s for one 50-row inbox page on a 100k-email
+    /// DB, against a few ms for one (account_id, thread_id) seek each.
+    fn starred_threads_sql(pairs: usize) -> String {
+        let values = vec!["(?, ?)"; pairs].join(", ");
+        format!(
+            "WITH wanted(account_id, thread_id) AS (VALUES {values})
+             SELECT DISTINCT e.account_id, e.thread_id
+             FROM wanted w CROSS JOIN emails e INDEXED BY idx_emails_thread_latest
+             WHERE e.account_id = w.account_id AND e.thread_id = w.thread_id
+               AND e.is_starred = 1 AND e.is_deleted = 0"
+        )
+    }
+
+    /// `EXPLAIN QUERY PLAN` rows for [`Database::starred_threads`], so a test
+    /// can pin how the planner drives it.
+    #[cfg(test)]
+    pub(crate) fn explain_starred_threads(&self, pairs: usize) -> Vec<String> {
+        let conn = self.reader();
+        let mut stmt = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {}", Self::starred_threads_sql(pairs)))
+            .unwrap();
+        let binds = vec!["x"; pairs * 2];
+        let mut rows = stmt.query(rusqlite::params_from_iter(binds)).unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            plan.push(row.get::<_, String>(3).unwrap());
+        }
+        plan
     }
 
     /// The provider has the row's read state (or no longer has the message).
@@ -488,6 +517,16 @@ mod tests {
             std::collections::HashSet::from([("acc-1".to_string(), "t-a".to_string())])
         );
         assert!(db.starred_threads(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn starred_threads_seeks_each_thread_instead_of_walking_the_account() {
+        let db = Database::new_for_testing().unwrap();
+
+        let plan = db.explain_starred_threads(50).join("\n");
+
+        assert!(plan.contains("idx_emails_thread_latest"), "{plan}");
+        assert!(!plan.contains("idx_emails_sender_stats"), "{plan}");
     }
 
     #[test]
