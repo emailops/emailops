@@ -623,7 +623,9 @@ impl Database {
             false,
             false,
             None,
+            SearchShape::Lookup,
         )
+        .map(drop_sort_keys)
     }
 
     /// Same as [`search_emails`](Self::search_emails) but with an explicit sort
@@ -677,6 +679,48 @@ impl Database {
             unread_only,
             received_only,
             participants,
+            SearchShape::Lookup,
+        )
+        .map(drop_sort_keys)
+    }
+
+    /// The app's search box: the same match as [`Self::search_emails`], listed
+    /// the way a smart filter lists it — one row per thread (its newest
+    /// matching email), threads sorted by their newest email of any kind (the
+    /// returned timestamp), reaching every live mailbox and custom folder but
+    /// never Spam or Trash, never junk, and only `mailbox` when one is given
+    /// (the view the search runs in).
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_box_emails(
+        &self,
+        account_id: &str,
+        query: &str,
+        from_filter: Option<&str>,
+        to_filter: Option<&str>,
+        subject_filter: Option<&str>,
+        after_timestamp: Option<i64>,
+        before_timestamp: Option<i64>,
+        tag_filters: Option<&[TagQuery]>,
+        mailbox: Option<&str>,
+        limit: i32,
+    ) -> Result<Vec<(Email, i64)>> {
+        self.search_emails_inner(
+            account_id,
+            query,
+            None,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+            false,
+            true,
+            false,
+            false,
+            None,
+            SearchShape::SearchBox { mailbox },
         )
     }
 
@@ -722,7 +766,8 @@ impl Database {
         unread_only: bool,
         received_only: bool,
         participants: Option<&[String]>,
-    ) -> Result<Vec<Email>> {
+        shape: SearchShape<'_>,
+    ) -> Result<Vec<(Email, i64)>> {
         let participants: Vec<String> = participants
             .unwrap_or_default()
             .iter()
@@ -741,22 +786,28 @@ impl Database {
             || !participants.is_empty()
             || tag_filters.map(|t| !t.is_empty()).unwrap_or(false);
 
-        if !has_text_filter {
-            return self.search_emails_by_date(
-                account_id,
-                categories,
-                after_timestamp,
-                before_timestamp,
-                limit,
-                ascending,
-                exclude_spam,
-                unread_only,
-                received_only,
-            );
+        // The search box lists threads even for a date-only query.
+        if !has_text_filter && matches!(shape, SearchShape::Lookup) {
+            return self
+                .search_emails_by_date(
+                    account_id,
+                    categories,
+                    after_timestamp,
+                    before_timestamp,
+                    limit,
+                    ascending,
+                    exclude_spam,
+                    unread_only,
+                    received_only,
+                )
+                .map(with_own_timestamps);
         }
 
         let conn = self.reader();
-        let order_clause = thread_order_clause("e", ascending);
+        let order_clause = match shape {
+            SearchShape::Lookup => thread_order_clause("e", ascending),
+            SearchShape::SearchBox { .. } => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
+        };
         // Each thread is represented by one matching email: the latest one
         // newest-first, the earliest one oldest-first — otherwise a thread the
         // user started long ago and replied to yesterday sorts by yesterday.
@@ -778,7 +829,10 @@ impl Database {
         cte_conditions.push("match_e.is_deleted = 0".to_string());
         // Spam/trash never surface in search — a spam email classified
         // `primary` must not sail through the category filter.
-        cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string());
+        match shape {
+            SearchShape::Lookup => cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string()),
+            SearchShape::SearchBox { .. } => cte_conditions.push(Self::filterable_mailbox("match_e")),
+        }
         if exclude_spam {
             cte_conditions.push(Self::junk_condition("match_e"));
         }
@@ -791,6 +845,16 @@ impl Database {
             cte_conditions.push("match_e.is_sent = 0".to_string());
         }
         param_idx += 1;
+
+        // The view a search-box query runs in: only that mailbox's mail.
+        if let SearchShape::SearchBox { mailbox: Some(mailbox) } = shape {
+            let mailbox = mailbox.trim();
+            if !mailbox.is_empty() {
+                cte_conditions.push(format!("match_e.mailbox = ?{param_idx}"));
+                params_vec.push(Box::new(mailbox.to_string()));
+                param_idx += 1;
+            }
+        }
 
         // Category filter
         if let Some(cats) = categories.filter(|c| !c.is_empty()) {
@@ -1105,7 +1169,7 @@ impl Database {
              {dedup}
              ORDER BY {order}
              LIMIT ?{limit_idx}",
-            dedup = thread_representative_sql(thread_pick),
+            dedup = thread_representative_sql(thread_pick, &sort_key_sql(shape)),
             order = order_clause,
             limit_idx = param_idx,
         );
@@ -1115,11 +1179,14 @@ impl Database {
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
-        let emails = stmt.query_map(params_refs.as_slice(), row_to_email)?;
+        let sort_key_idx = EMAIL_COLUMNS.split(',').count();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok((row_to_email(row)?, row.get::<_, i64>(sort_key_idx)?))
+        })?;
 
         let mut result = Vec::new();
-        for email in emails {
-            result.push(email?);
+        for row in rows {
+            result.push(row?);
         }
 
         Ok(result)
@@ -1132,7 +1199,7 @@ impl Database {
 /// on the timestamp and then on the id. The id tie-break keeps two matching
 /// emails stamped in the same second from both coming back (matching the
 /// inbox's `timestamp DESC, id DESC` order); the final lookup is by primary key.
-fn thread_representative_sql(thread_pick: &str) -> String {
+fn thread_representative_sql(thread_pick: &str, sort_key: &str) -> String {
     format!(
         "thread_latest AS (
              SELECT thread_id AS tid, {thread_pick}(timestamp) AS max_ts
@@ -1145,12 +1212,55 @@ fn thread_representative_sql(thread_pick: &str) -> String {
              JOIN thread_latest tl ON fm.thread_id = tl.tid AND fm.timestamp = tl.max_ts
              GROUP BY fm.thread_id
          )
-         SELECT {cols}
+         SELECT {cols}, {sort_key} AS thread_ts
          FROM thread_rep r
          CROSS JOIN emails e
          WHERE e.id = r.rep_id",
         cols = EMAIL_COLUMNS
     )
+}
+
+/// How `search_emails_inner` lists its matches.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SearchShape<'a> {
+    /// Programmatic lookups (chat tools, research, agent search): rows sorted
+    /// by the matching email; the caller's own spam/category choices apply.
+    Lookup,
+    /// The app's search box: listed like a smart filter (see
+    /// [`Database::search_box_emails`]).
+    SearchBox { mailbox: Option<&'a str> },
+}
+
+/// The column a shape sorts threads by: the matching email itself, or — in
+/// the search box — the thread's newest email of any kind, one indexed seek
+/// per thread (see `representative_tail` for why the hint is load-bearing).
+fn sort_key_sql(shape: SearchShape<'_>) -> String {
+    match shape {
+        SearchShape::Lookup => "e.timestamp".to_string(),
+        SearchShape::SearchBox { .. } => format!(
+            "(SELECT e3.timestamp
+              FROM emails e3 INDEXED BY idx_emails_thread_latest
+              WHERE e3.account_id = e.account_id AND e3.thread_id = e.thread_id
+                AND e3.is_deleted = 0 AND {filterable}
+              ORDER BY e3.timestamp DESC, e3.id DESC
+              LIMIT 1)",
+            filterable = Database::filterable_mailbox("e3"),
+        ),
+    }
+}
+
+fn drop_sort_keys(rows: Vec<(Email, i64)>) -> Vec<Email> {
+    rows.into_iter().map(|(email, _)| email).collect()
+}
+
+fn with_own_timestamps(emails: Vec<Email>) -> Vec<(Email, i64)> {
+    emails
+        .into_iter()
+        .map(|email| {
+            let ts = email.timestamp;
+            (email, ts)
+        })
+        .collect()
 }
 
 #[cfg(test)]
