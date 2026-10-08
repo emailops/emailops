@@ -145,6 +145,25 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class PriorityIsTaggedLikeTheClassifierDoes(unittest.TestCase):
+    """The chat's priority eval cases (src-tauri/evals/chat/cases/
+    priority_filter.yaml) need one known urgent incident and every other email
+    at another level."""
+
+    def test_the_production_incident_is_urgent(self):
+        for subject in ("Production bug: orders stuck in 'processing'",
+                        "Re: Production bug: orders stuck in 'processing'",
+                        "[Faro] New error: NullReferenceException in OrderService"):
+            self.assertEqual(gen.infer_priority(subject, "request", "operations"), "urgent", subject)
+
+    def test_notifications_and_marketing_are_low(self):
+        self.assertEqual(gen.infer_priority("Deploy succeeded", "notification", "operations"), "low")
+        self.assertEqual(gen.infer_priority("This Week in Rust", "feedback", "marketing"), "low")
+
+    def test_everything_else_is_normal(self):
+        self.assertEqual(gen.infer_priority("API latency on the /search endpoint", "question", "project"), "normal")
+
+
 class InvoiceReadStateDoesNotDependOnDrawOrder(unittest.TestCase):
     # Chat evals ask for the oldest unread email and for unread BorgBase mail.
     # Read state used to be a random draw, so three demo threads added elsewhere

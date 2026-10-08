@@ -670,6 +670,22 @@ def infer_topic(sender_email: str) -> str:
     return "operations"
 
 
+# Priority, the classifier's third tag (`PRIORITY_LEVELS`: urgent / normal /
+# low). Only the client-facing incident is urgent, so "urgent mail this week"
+# has a short, known answer and older windows have none; notifications and
+# marketing are low, everything else normal.
+URGENT_SUBJECT_SUBSTR: tuple[str, ...] = ("production bug", "new error:")
+
+
+def infer_priority(subject: str, intent: str, topic: str) -> str:
+    s = subject.lower()
+    if any(substr in s for substr in URGENT_SUBJECT_SUBSTR):
+        return "urgent"
+    if intent == "notification" or topic == "marketing":
+        return "low"
+    return "normal"
+
+
 def epoch_for(year: int, month: int, day: int) -> int:
     """Unix epoch seconds for a fixed calendar date (UTC midday). Used for the
     date-anchored demo content (2025 prospect leads, Q1 invoices, weekly stats)
@@ -2207,7 +2223,8 @@ def insert_tags(
     intent = intent or infer_intent(subject, body)
     topic = infer_topic(sender_email)
     company = company_label_for(sender_email)
-    rows: list[tuple[str, str]] = [("intent", intent), ("topic", topic)]
+    priority = infer_priority(subject, intent, topic)
+    rows: list[tuple[str, str]] = [("intent", intent), ("topic", topic), ("priority", priority)]
     if company:
         rows.append(("company", company))
     for tag_type, tag_value in rows:

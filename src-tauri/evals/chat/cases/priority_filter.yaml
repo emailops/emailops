@@ -1,0 +1,45 @@
+# The chat's `priority` filter is a gate, not a preference.
+#
+# Every classified email holds exactly one priority level (urgent / normal /
+# low), so an email tagged `normal` is a definite "not urgent". `search_emails`
+# returns only mail at the asked level — unlike intent/topic, it never widens a
+# short page with differently tagged mail, which a small model then presents as
+# urgent. In the demo mailbox only the Faro production incident is urgent
+# (`infer_priority` in scripts/generate_demo_db.py).
+
+- id: priority_urgent_this_week_es
+  question: "¿qué correos urgentes he recibido esta semana?"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  as_of: latest
+  expected_tools_called: ["search_emails"]
+  expected_tool_args_contains: ['"priority":"urgent"']
+  expected_answer_contains: ["processing"]
+  # This week's normal mail must not be listed as urgent.
+  expected_answer_not_contains:
+    - "Mobile nav"
+    - "Ollama"
+    - "archived folders"
+  expected_output: "Esta semana has recibido un correo urgente: el bug de producción de Faro Logistics, con pedidos atascados en 'processing'."
+  metrics:
+    - answer_relevancy
+
+# The reported shape: a window holding plenty of normal and low mail but no
+# urgent email. The answer must say there is none instead of listing that
+# week's other mail as urgent.
+- id: priority_none_last_week_es
+  question: "¿qué correos urgentes recibí la semana pasada?"
+  account: "ulises@emailopslabs.dev"
+  category: search
+  tier: smoke
+  as_of: latest
+  expected_tools_called: ["search_emails"]
+  expected_tool_args_contains: ['"priority":"urgent"']
+  expected_answer_not_contains:
+    - "Sprint 5"
+    - "API latency"
+    - "Lobsters"
+  expected_output: "La semana pasada no recibiste ningún correo urgente."
+  metrics:
+    - answer_relevancy
