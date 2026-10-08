@@ -3599,6 +3599,22 @@ not CMake's DLL link); exporting flags from `build_platform.sh` (release-only, a
 redefining `_FORTIFY_SOURCE` as 2 would downgrade compilers that default to 3); `-Zbuild-std` to
 put CFG in the Rust standard library (nightly only).
 
+## 2026-10-08 — The chat's priority filter excludes; intent and topic still rank
+
+**Decision:** In `search_emails`, `priority` is a hard filter: only mail at the asked level
+is returned, on the keyword and the semantic path, and a page that `intent`/`topic` widen
+with untagged matches keeps the priority on the added rows. `intent` and `topic` keep
+ranking instead of excluding.
+**Context:** "High-priority mail this week" found no urgent email in the window, so the
+tool showed the week's normal and low mail "instead", and a 4B model presented them as
+high priority despite the coverage note. Ranking exists for intent because an email stores
+one intent while often being several things at once; priority is one scale on which every
+classified email holds exactly one level, so `normal` is a definite "not urgent", not a
+near miss.
+**Rejected:** Dropping the widening for every tag — reverts the guard that keeps a wrong
+planner intent from swallowing a sender lookup. Rewording the coverage note only — leaves
+the answer to whether a small model obeys it.
+
 ## 2026-10-08 — Smart filters write their query into the search box
 
 **Decision:** Clicking a smart filter (company, priority, intent, topic, sender, domain,

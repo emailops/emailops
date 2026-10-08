@@ -2471,6 +2471,86 @@ mod tests {
     }
 
     #[test]
+    fn a_priority_nobody_carries_lists_no_other_mail() {
+        // The reported failure: "high-priority mail this week" found no urgent
+        // email in the window, got the week's normal and low mail instead, and
+        // the model presented those as high priority. Every classified email
+        // has exactly one priority, so `normal` is an answer, not a near miss.
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-10-06").unwrap();
+        for (i, level) in ["normal", "low", "low"].iter().enumerate() {
+            seed_email(
+                &db,
+                &format!("w{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Vendor",
+                "news@vendor.example",
+                &format!("Weekly note {i}"),
+                "body",
+                t + i as i64,
+            );
+            tag_email(&db, &format!("w{i}"), "priority", level);
+        }
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "priority": "urgent", "since": "2026-10-05", "until": "2026-10-11" })),
+        );
+
+        for id in ["w0", "w1", "w2"] {
+            assert!(!out.contains(&format!("id={id}")), "{id} is not urgent; out:\n{out}");
+        }
+        assert!(!out.contains("shown instead"), "out:\n{out}");
+    }
+
+    #[test]
+    fn priority_is_a_gate_while_intent_still_ranks() {
+        let db = tools_test_db();
+        let t = parse_iso_date_secs("2026-10-06").unwrap();
+        for (i, id) in ["promo", "q", "calm"].iter().enumerate() {
+            seed_email(
+                &db,
+                id,
+                "acc",
+                &format!("t{i}"),
+                "Shop",
+                "shop@vendor.example",
+                &format!("Offer {i}"),
+                "body",
+                t + i as i64,
+            );
+        }
+        tag_email(&db, "promo", "intent", "promotion");
+        tag_email(&db, "promo", "priority", "urgent");
+        tag_email(&db, "q", "intent", "question");
+        tag_email(&db, "q", "priority", "urgent");
+        tag_email(&db, "calm", "intent", "promotion");
+        tag_email(&db, "calm", "priority", "low");
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "search_emails",
+            &arg(serde_json::json!({ "from": "shop@vendor.example", "priority": "urgent", "intent": "promotion" })),
+        );
+
+        let promo = out.find("id=promo").expect("the urgent promotion is listed");
+        let q = out
+            .find("id=q")
+            .expect("an urgent email of another intent still follows");
+        assert!(promo < q, "out:\n{out}");
+        assert!(
+            !out.contains("id=calm"),
+            "a low-priority promotion is not urgent; out:\n{out}"
+        );
+    }
+
+    #[test]
     fn search_emails_says_nothing_about_coverage_when_everything_is_classified() {
         let db = tools_test_db();
         let t = parse_iso_date_secs("2026-04-17").unwrap();

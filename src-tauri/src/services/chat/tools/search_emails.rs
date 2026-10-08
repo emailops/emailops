@@ -51,7 +51,7 @@ since/until, from, or a keyword"
 ///
 /// An email stores exactly ONE intent (`PRIMARY KEY (email_id, tag_type)`),
 /// while a real email is often several things at once — a request that is also
-/// a question — and older mail carries no tag at all. So an intent/topic/priority filter
+/// a question — and older mail carries no tag at all. So an intent/topic filter
 /// is a preference here, not a gate: the tagged rows come first, the rest of the
 /// matches follow, and this note keeps the two apart so a count stays honest.
 /// `None` when the page filled with tagged rows and nothing was added.
@@ -62,8 +62,8 @@ fn tag_coverage_note(tagged: usize, added: usize) -> Option<String> {
     if tagged == 0 {
         return Some(format!(
             "(no email carries the tags asked for; the {added} rows below match every other \
-filter and are shown instead — each email stores ONE intent, ONE topic and ONE priority, so a \
-tag may simply be a different one)"
+filter and are shown instead — each email stores ONE intent and ONE topic, so a tag may \
+simply be a different one)"
         ));
     }
     Some(format!(
@@ -155,11 +155,18 @@ pub(crate) struct PostFilters<'a> {
     pub participants: &'a [String],
     pub since: Option<i64>,
     pub until: Option<i64>,
-    /// Intent / topic filters that must ALL hold on the email.
+    /// Intent / topic / priority filters that must ALL hold on the email.
     pub tags: &'a [TagQuery],
     pub received_only: bool,
     /// Keep only mail the user has not read.
     pub unread_only: bool,
+}
+
+/// `priority` is one scale on which every classified email holds exactly one
+/// level, so an email tagged `normal` is a definite "not urgent", not a near
+/// miss: unlike intent and topic it gates the search instead of ranking it.
+pub(crate) fn is_gating_tag(tag: &TagQuery) -> bool {
+    tag.tag_type.as_deref() == Some("priority")
 }
 
 /// Split ranked candidates into the ones carrying every requested tag and the
@@ -321,7 +328,7 @@ impl Tool for SearchEmailsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic / priority must be non-empty. `intent` / `topic` / `priority` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic`/`priority` filter RANKS rather than excludes: each email stores one intent, one topic and one priority — three independent tags, so one email can be both urgent and a promotion — and the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
+        "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic / priority must be non-empty. `intent` / `topic` / `priority` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic` filter RANKS rather than excludes: each email stores one intent and one topic, so the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. `priority` EXCLUDES: only mail at that level is returned, and it combines with intent/topic (one email can be both urgent and a promotion). REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
 
     fn prompt_summary(&self) -> &'static str {
@@ -392,6 +399,9 @@ impl Tool for SearchEmailsTool {
         } else {
             Some(&tag_filters)
         };
+        // What still holds on the rows that widen a short tagged page.
+        let gating_tags: Vec<TagQuery> = tag_filters.iter().filter(|t| is_gating_tag(t)).cloned().collect();
+        let ranks_by_tag = tag_filters.iter().any(|t| !is_gating_tag(t));
         // Internal too: the "emails I received today/this week" shortcuts set
         // it so the user's own sent replies do not show up as received mail.
         let received_only = args.get("received_only").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -579,11 +589,12 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
         };
 
         // The classifier stores ONE intent per email and older mail carries
-        // none, so a tag is a preference, not a gate: when the tagged rows do
-        // not fill the page, the same search without the tag tops it up. The
-        // note below keeps the two blocks apart so a count stays honest.
-        let (primary, widened_by) = match (primary, tag_filter_arg) {
-            (Ok(tagged), Some(_)) if (tagged.len() as i32) < offset + limit => {
+        // none, so an intent/topic is a preference, not a gate: when the tagged
+        // rows do not fill the page, the same search without it tops it up
+        // (a priority still holds there). The note below keeps the two blocks
+        // apart so a count stays honest.
+        let (primary, widened_by) = match primary {
+            Ok(tagged) if ranks_by_tag && (tagged.len() as i32) < offset + limit => {
                 let wanted = (offset + limit) as usize;
                 let seen: std::collections::HashSet<String> = tagged.iter().map(|e| e.id.clone()).collect();
                 let extra = emails::search_emails_filtered(
@@ -596,7 +607,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     subject_filter,
                     since_ts,
                     until_ts,
-                    None,
+                    (!gating_tags.is_empty()).then_some(gating_tags.as_slice()),
                     (offset + limit) * 2,
                     ascending,
                     unread_only,
@@ -617,7 +628,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                 let added = rows.len() - tagged_len;
                 (Ok(rows), added)
             }
-            (primary, _) => (primary, 0),
+            primary => (primary, 0),
         };
 
         match primary {
@@ -816,9 +827,13 @@ impl SearchEmailsTool {
                 .map(|t| (t.tag_type.clone(), t.tag_value.clone()))
                 .collect()
         };
-        // Every filter except the tags is a hard one; the tags only decide the
-        // order, the same way the keyword path widens a short tagged page.
-        let hard = PostFilters { tags: &[], ..*post };
+        // Every filter except intent/topic is a hard one; those only decide
+        // the order, the same way the keyword path widens a short tagged page.
+        let gating_tags: Vec<TagQuery> = post.tags.iter().filter(|t| is_gating_tag(t)).cloned().collect();
+        let hard = PostFilters {
+            tags: &gating_tags,
+            ..*post
+        };
         let kept_all = semantic_post_filter(candidates, &hard, &tags_of);
         let (tagged, rest) = partition_by_tags(kept_all, post.tags, &tags_of);
         let tagged_len = tagged.len().min(limit as usize);
@@ -1029,8 +1044,8 @@ when asked how many)"
             tag_coverage_note(0, 5).as_deref(),
             Some(
                 "(no email carries the tags asked for; the 5 rows below match every other \
-filter and are shown instead — each email stores ONE intent, ONE topic and ONE priority, so a \
-tag may simply be a different one)"
+filter and are shown instead — each email stores ONE intent and ONE topic, so a tag may \
+simply be a different one)"
             )
         );
     }
