@@ -160,7 +160,8 @@ Ein Klick auf einen Filter schreibt ihn als sichtbare, bearbeitbare Abfrage ins 
 Rechtsklick und **Zur Suche hinzufügen** kombinieren Sie ihn mit der aktuellen Suche. Ein Filter
 wirkt in der Ansicht, in der Sie sich befinden: in Gesendet oder einem Ordner listet er nur deren
 E-Mails, und die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
-dass eine Suche aktiv ist, und bietet an, sie zu löschen.
+dass eine Suche aktiv ist, und bietet an, sie zu löschen. Jede Tag-Gruppe zeigt zuerst ihre zehn meistgenutzten Werte,
+mit einer Schaltfläche darunter für den Rest.
 
 ## Kalender {#calendar}
 

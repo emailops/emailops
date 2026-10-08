@@ -191,7 +191,8 @@ Antes de que escriba puedes decirle a la IA qué responder, y **Regenerar** lo v
 <!-- claim:ai-classification-1 -->
 Cada correo entrante se etiqueta en tres ejes — **prioridad**, **intención** y **tema** — de
 modo que la bandeja se ordena prácticamente sola y los filtros inteligentes tienen algo por lo
-que filtrar.
+que filtrar. El chat también las usa: si pides el correo urgente, lista solo el correo etiquetado
+como urgente, y te dice si no hay ninguno.
 
 <!-- claim:ai-classification-2 -->
 La clasificación funciona en dos capas:

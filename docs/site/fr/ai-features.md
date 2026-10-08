@@ -200,7 +200,8 @@ le réécrit.
 <!-- claim:ai-classification-1 -->
 Chaque e-mail entrant est étiqueté sur trois axes — **priorité**, **intention** et **sujet** —
 si bien que la boîte se trie pratiquement d'elle-même et que les filtres intelligents ont de
-quoi filtrer.
+quoi filtrer. Le chat les utilise aussi : si vous demandez les e-mails urgents, il ne liste que
+ceux étiquetés urgents, et vous le dit s'il n'y en a aucun.
 
 <!-- claim:ai-classification-2 -->
 La classification fonctionne en deux couches :

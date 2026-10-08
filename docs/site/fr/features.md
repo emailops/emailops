@@ -161,7 +161,8 @@ modifiable — `tag:priority=urgent`, `from:`, `domain:`, `ext:` — et un secon
 Clic droit sur un filtre puis **Ajouter à la recherche** le combine avec la recherche en cours.
 Un filtre s'applique dans la vue où vous êtes : dans les éléments envoyés ou un dossier, il ne
 liste que leur courrier, et la recherche reste active quand vous changez de compte ; si elle ne
-trouve rien, la liste indique qu'une recherche est active et propose de l'effacer.
+trouve rien, la liste indique qu'une recherche est active et propose de l'effacer. Chaque groupe d'étiquettes affiche d'abord ses dix valeurs les plus
+utilisées, avec un bouton en dessous pour voir le reste.
 
 ## Calendrier {#calendar}
 

@@ -549,7 +549,7 @@ checks = [
 [feat-smart-filters-2]
 checks = [
   { tests = ['services::search::tests::a_tag_token_lists_what_its_smart_filter_lists', 'services::search::tests::a_search_inside_a_view_keeps_only_that_views_mail'], covers = ["A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail"] },
-  { manual = 'The click, the second click, Add to search, the search carried over an account switch and the empty-search notice are covered by src/lib/filterQuery.test.ts, src/stores/filterStore.test.ts, src/components/Sidebar/SmartFilters.test.tsx and src/components/Inbox/ActiveSearchNotice.test.tsx (vitest) and the Búsqueda sweep steps; no docClaim case drives them yet.' },
+  { manual = 'The click, the second click, Add to search, the search carried over an account switch and the empty-search notice are covered by src/lib/filterQuery.test.ts, src/stores/filterStore.test.ts, src/components/Sidebar/SmartFilters.test.tsx (also the ten-value cap and its show-more button) and src/components/Inbox/ActiveSearchNotice.test.tsx (vitest) and the Búsqueda sweep steps; no docClaim case drives them yet.' },
 ]
 
 [feat-calendar-1]

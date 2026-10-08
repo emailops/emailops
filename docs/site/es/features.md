@@ -155,7 +155,8 @@ ver y editar —`tag:priority=urgent`, `from:`, `domain:`, `ext:`— y un segund
 Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro funciona
 dentro de la vista en la que estás, así que en Enviados o en una carpeta lista solo su correo,
 y la búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
-una búsqueda activa y ofrece quitarla.
+una búsqueda activa y ofrece quitarla. Cada grupo de etiquetas muestra primero sus diez valores
+más usados, con un botón debajo para ver el resto.
 
 ## Calendario {#calendar}
 

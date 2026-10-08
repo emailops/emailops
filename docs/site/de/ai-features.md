@@ -192,7 +192,8 @@ schreibt ihn erneut.
 <!-- claim:ai-classification-1 -->
 Jede eingehende E-Mail wird entlang dreier Achsen gekennzeichnet — **Priorität**, **Absicht**
 und **Thema** — sodass sich der Posteingang praktisch selbst sortiert und die intelligenten
-Filter etwas zum Filtern haben.
+Filter etwas zum Filtern haben. Auch der Chat nutzt sie: Fragen Sie nach dringenden E-Mails,
+listet er nur als dringend gekennzeichnete auf und sagt es, wenn es keine gibt.
 
 <!-- claim:ai-classification-2 -->
 Die Klassifizierung arbeitet in zwei Schichten:

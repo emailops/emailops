@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.15] — 2026-10-08
+
+### Added
+
+- **Chat search filters by priority** alongside intent and topic, so a
+  question such as "urgent promotions" finds the matching mail.
+- **Signed downloads.** Windows installers are code-signed, and each release
+  publishes GPG-signed SHA256 checksums for the Linux packages; the install
+  docs explain how to check them.
+- **The CUDA build says when it cannot find CUDA**, with a link to the
+  toolkit download, instead of silently running AI on the CPU.
+- **Smart filters write their query into the search box.** Clicking a filter
+  replaces the search with its query (`tag:priority=urgent`, `from:`, …),
+  right-click adds it to the current one, and a filter applies inside the
+  view you are in. New `domain:` and `ext:` search operators.
+- **"Show more" in smart-filter groups** with more than ten values.
+
+### Fixed
+
+- **Reply from another account.** A reply can be sent from a different
+  account than the one that received the email, and is queued with its draft.
+- **Replying to a note to self** prefills **To** and **Reply All**.
+- **The All-accounts view is faster**: sidebar stats refresh only for the
+  account that synced, and idle syncs skip the refresh.
+- **Adding a Gmail category downloads its existing mail**, not only mail that
+  arrives afterwards.
+- **Drafts with no recipients yet are saved to the provider.**
+- **Long notifications wrap** instead of being cut off.
+- **The chat's priority filter only returns mail at that priority.** Asking
+  for urgent mail in a week with none says so, instead of listing other mail.
+- **Chat summaries read the whole thread**, first message included.
+- **Chat links open the email they point at** and show as chips, also on
+  IMAP accounts.
+- **A new chat puts the cursor in the input.**
+- **Smart filters and the search box list the same threads**, sorted by their
+  latest activity, and junk stays out of sender and domain filters.
+
+### Security
+
+- **Ollama endpoints off this computer must use HTTPS**; plain HTTP is
+  allowed only for localhost.
+- **Windows hardening**: a restricted DLL search order, Control Flow Guard,
+  an `asInvoker` manifest, and download names that always stay inside the
+  Downloads folder. Linux builds link with full RELRO.
+- **Dependency updates**, including fixes for two advisories in frontend
+  dependencies (`source-map-js`, `sprintf-js`).
+
 ## [0.6.14] — 2026-10-06
 
 ### Added

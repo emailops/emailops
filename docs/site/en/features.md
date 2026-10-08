@@ -145,7 +145,8 @@ Clicking a filter writes it into the search box as a query you can see and edit 
 Right-click a filter and choose **Add to search** to combine it with what is already there.
 A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail,
 and the search stays set when you switch accounts; when it finds nothing, the list says a
-search is active and offers to clear it.
+search is active and offers to clear it. Each tag group lists its ten most-used values first,
+with a button under the group for the rest.
 
 ## Calendar {#calendar}
 

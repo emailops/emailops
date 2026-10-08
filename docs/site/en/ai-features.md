@@ -184,7 +184,8 @@ after it. You can tell the AI what to say before it writes, and **Regenerate** w
 
 <!-- claim:ai-classification-1 -->
 Every incoming email is tagged along three axes — **priority**, **intent** and **topic** —
-so the inbox effectively sorts itself and smart filters have something to filter on.
+so the inbox effectively sorts itself and smart filters have something to filter on. The chat
+reads them too: asking for urgent mail lists only mail tagged urgent, and says so when there is none.
 
 <!-- claim:ai-classification-2 -->
 Classification works in two layers:
