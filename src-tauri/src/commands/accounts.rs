@@ -257,10 +257,7 @@ pub async fn set_account_settings(
     account_id: String,
     settings: AccountSettings,
 ) -> Result<(), AppError> {
-    let key = format!("account_settings:{}", account_id);
-    let json = serde_json::to_string(&settings).map_err(|e| AppError::InvalidInput(e.to_string()))?;
-    state.db.set_preference(&key, &json)?;
-    Ok(())
+    services::accounts::save_account_settings(&state.db, &account_id, &settings)
 }
 
 /// The account's email signature (defaults when it never saved one).
