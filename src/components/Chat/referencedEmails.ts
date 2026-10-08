@@ -32,6 +32,19 @@ export function collectReferencedEmailIds(
   return [...ids];
 }
 
+/** Whether the answer points at any email inline: a `[n]` marker with a
+ *  source behind it or an `email://` link the turn's tools returned. A small
+ *  model can summarise a thread without one; the bubble then lists the
+ *  sources as chips instead of leaving them behind the collapsed list. */
+export function answerCitesAnEmail(message: Pick<ChatMessage, 'content' | 'sources' | 'referencedEmailIds'>): boolean {
+  const numbers = new Set(message.sources.map((source) => source.citationNumber));
+  const allowlist = new Set(message.referencedEmailIds ?? []);
+  for (const [, citation, linkedId] of message.content.matchAll(EMAIL_REFERENCE)) {
+    if (citation ? numbers.has(Number(citation)) : allowlist.has(linkedId)) return true;
+  }
+  return false;
+}
+
 /** Search-box query selecting exactly these emails (the backend `id:` operator). */
 export function buildIdSearchQuery(emailIds: string[]): string {
   return emailIds.map((id) => `id:${id}`).join(' ');

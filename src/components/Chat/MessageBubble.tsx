@@ -11,7 +11,7 @@ import type { ChatMessage, ChatPhase } from '@/types';
 import { EmailRefPill } from './EmailRefPill';
 import { MarkdownContent } from './MarkdownContent';
 import { ReasoningSection, StatsFooter } from './ReasoningTrace';
-import { buildIdSearchQuery, collectReferencedEmailIds } from './referencedEmails';
+import { answerCitesAnEmail, buildIdSearchQuery, collectReferencedEmailIds } from './referencedEmails';
 import { SourcesList } from './SourcesList';
 
 interface MessageBubbleProps {
@@ -400,6 +400,21 @@ export function MessageBubble({
                 emailRefAllowlist={message.referencedEmailIds}
                 draftRefAllowlist={message.referencedDraftIds}
               />
+            )}
+            {!isStreaming && hasAnswer && message.sources.length > 0 && !answerCitesAnEmail(message) && (
+              <div data-testid="chat-uncited-sources" className="mt-1.5 flex flex-wrap gap-y-1">
+                {[...message.sources]
+                  .sort((a, b) => a.citationNumber - b.citationNumber)
+                  .map((source) => (
+                    <EmailRefPill
+                      key={source.emailId}
+                      emailId={source.emailId}
+                      accountId={accountId}
+                      label={source.subject}
+                      onOpenEmail={onOpenEmail}
+                    />
+                  ))}
+              </div>
             )}
             {isStreaming && hasAnswer && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-gray-500 align-middle animate-pulse" />
