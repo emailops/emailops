@@ -35,8 +35,9 @@ describe('fetchEmails after navigateToEmail', () => {
     store.setSearchQuery('id:cited');
     await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined);
 
-    // Search spans every category: the selected tab is not sent.
-    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual(['acc', 'id:cited', true]);
+    // Search spans every category: the selected tab is not sent. In the inbox
+    // it is not narrowed to a mailbox either.
+    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual(['acc', 'id:cited', true, undefined]);
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['cited']);
   });
 

@@ -28,6 +28,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { useEmailStore } from '@/stores/emailStore';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,37 +107,40 @@ describe('SET_LOADING_STATS', () => {
   });
 });
 
-// ── TOGGLE_FILTER ─────────────────────────────────────────────────────────────
+// ── SYNC_FROM_QUERY ───────────────────────────────────────────────────────────
 
-describe('TOGGLE_FILTER', () => {
-  it('sets activeFilter when none is active', () => {
-    const filter = makeFilter('domain', 'acme.com');
-    const s = reduce(initialFilterState, { type: 'TOGGLE_FILTER', filter });
-    expect(s.activeFilter).toEqual(filter);
+describe('SYNC_FROM_QUERY', () => {
+  it('highlights the filter whose token is the whole search query', () => {
+    const s = reduce(initialFilterState, { type: 'SYNC_FROM_QUERY', query: 'tag:priority=urgent' });
+    expect(s.activeFilter).toEqual(makeFilter('priority', 'urgent'));
   });
 
-  it('clears activeFilter when same filter is toggled again', () => {
-    const filter = makeFilter('sender', 'bob@acme.com');
-    const s0: FilterState = { ...initialFilterState, activeFilter: filter };
-    const s = reduce(s0, { type: 'TOGGLE_FILTER', filter });
-    expect(s.activeFilter).toBeNull();
+  it('highlights nothing for a query that is not exactly one filter token', () => {
+    const s0: FilterState = { ...initialFilterState, activeFilter: makeFilter('priority', 'urgent') };
+    for (const query of ['tag:priority=urgent invoice', 'invoice', '', null]) {
+      expect(reduce(s0, { type: 'SYNC_FROM_QUERY', query }).activeFilter).toBeNull();
+    }
+  });
+});
+
+describe('the search query drives the highlighted filter', () => {
+  beforeEach(() => {
+    useEmailStore.getState().clearSearchQuery();
+    useFilterStore.getState().reset();
   });
 
-  it('replaces activeFilter when a different filter is toggled', () => {
-    const old = makeFilter('domain', 'acme.com');
-    const next = makeFilter('sender', 'alice@acme.com');
-    const s0: FilterState = { ...initialFilterState, activeFilter: old };
-    const s = reduce(s0, { type: 'TOGGLE_FILTER', filter: next });
-    expect(s.activeFilter).toEqual(next);
-  });
+  it('follows the search text as it is set, edited and cleared', () => {
+    useEmailStore.getState().setSearchQuery('tag:topic=billing');
+    expect(useFilterStore.getState().activeFilter).toEqual(makeFilter('topic', 'billing'));
 
-  it('uses type+value equality (same type, different value → replace)', () => {
-    const s0: FilterState = {
-      ...initialFilterState,
-      activeFilter: makeFilter('domain', 'acme.com'),
-    };
-    const s = reduce(s0, { type: 'TOGGLE_FILTER', filter: makeFilter('domain', 'other.com') });
-    expect(s.activeFilter?.value).toBe('other.com');
+    useEmailStore.getState().setSearchQuery('tag:topic=billing invoice');
+    expect(useFilterStore.getState().activeFilter).toBeNull();
+
+    useEmailStore.getState().setSearchQuery('domain:vendor.example');
+    expect(useFilterStore.getState().activeFilter).toEqual(makeFilter('domain', 'vendor.example'));
+
+    useEmailStore.getState().clearSearchQuery();
+    expect(useFilterStore.getState().activeFilter).toBeNull();
   });
 });
 

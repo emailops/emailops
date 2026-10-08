@@ -63,6 +63,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
+import { appendFilterToken, filterToken, planListSource } from '@/lib/filterQuery';
 import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
@@ -512,7 +513,6 @@ function AppInner() {
     displayedFilters: smartFilters,
     activeFilter,
     isLoadingStats: isLoadingFilters,
-    toggleFilter,
     clearActiveFilter,
     pinFilter: handlePinFilter,
     unpinFilter: handleUnpinFilter,
@@ -1305,48 +1305,70 @@ function AppInner() {
   const handleApplySearch = useCallback(
     (query: string) => {
       setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
-      clearActiveFilter();
+      // The highlighted smart filter follows the query (filterStore).
       useEmailStore.getState().setSearchQuery(query);
       addLog('info', 'search', `Filtering inbox: "${query}"`);
     },
-    [addLog, clearActiveFilter],
+    [addLog],
   );
 
   const handleApplySearchWithResults = useCallback(
     (query: string, emails: Email[]) => {
+      // The overlay searched every live mailbox; its results are the list's
+      // only for a plain search outside Sent/Archive/a folder. A one-filter
+      // query pages, and a view narrows — both refetch.
+      const view = isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox';
+      const source = planListSource(query, view);
+      if (source.kind !== 'search' || source.mailbox !== undefined) {
+        handleApplySearch(query);
+        return;
+      }
       setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
-      clearActiveFilter();
       useEmailStore.getState().applySearchResults(query, emails);
       addLog('info', 'search', `Filtering inbox: "${query}" (reused ${emails.length} results)`);
     },
-    [addLog, clearActiveFilter],
+    [addLog, handleApplySearch, viewMode],
   );
 
-  const handleToggleSmartFilter = useCallback(
-    (filter: ActiveFilter) => {
-      setViewMode('inbox');
-
-      const isSelectingNewFilter =
-        !activeFilter || activeFilter.type !== filter.type || activeFilter.value !== filter.value;
-
-      if (isSelectingNewFilter) {
-        clearSearchQuery();
-        // A smart filter (sender/contact, domain, company, tag…) can match
-        // emails in any category, so default to All categories. Otherwise the
-        // category tab stays on e.g. "Primary" and hides the contact's emails
-        // that live in Updates/Social/etc.
-        setSelectedCategories(new Set(VALID_CATEGORIES));
-      }
-
+  // A smart filter writes its query into the search box (DECISIONS
+  // 2026-10-08): a click replaces the search — or clears it when that filter
+  // is the whole search already — and a right-click adds it to the search.
+  // Either runs inside the current mail view; from any other view it opens
+  // the inbox.
+  const applySmartFilterQuery = useCallback(
+    (query: string | null) => {
+      setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
+      // A filter can match mail in any category; the tabs are disabled while
+      // the query is set, and All is what they show then.
+      setSelectedCategories(new Set(VALID_CATEGORIES));
       // Close any open email / tab so the filtered list becomes visible.
       // Without this the EmailView keeps rendering on top of the list when
       // the user clicks a sidebar filter (Bug: filter changes but open email stays).
       setActiveTab(null);
       void selectEmail(null);
-
-      toggleFilter(filter);
+      if (query) {
+        useEmailStore.getState().setSearchQuery(query);
+        addLog('info', 'search', `Filtering inbox: "${query}"`);
+      } else {
+        clearSearchQuery();
+      }
     },
-    [activeFilter, clearSearchQuery, selectEmail, setActiveTab, setSelectedCategories, toggleFilter],
+    [addLog, clearSearchQuery, selectEmail, setActiveTab, setSelectedCategories],
+  );
+
+  const handleToggleSmartFilter = useCallback(
+    (filter: ActiveFilter) => {
+      const isActive = activeFilter?.type === filter.type && activeFilter?.value === filter.value;
+      applySmartFilterQuery(isActive ? null : filterToken(filter));
+    },
+    [activeFilter, applySmartFilterQuery],
+  );
+
+  const handleAppendSmartFilter = useCallback(
+    (filter: ActiveFilter) => {
+      applySmartFilterQuery(appendFilterToken(useEmailStore.getState().searchQuery, filter));
+    },
+    [applySmartFilterQuery],
   );
 
   // Chat "show in list": an `id:` search over the emails an answer cites. The
@@ -1538,8 +1560,8 @@ function AppInner() {
             // The tag board is scope-aware, so a scope change keeps you on it;
             // every other view is single-account and returns to the inbox.
             setViewMode((prev) => planAccountSwitchView(prev));
-            clearSearchQuery();
-            clearActiveFilter();
+            // The search (and the filter it names) carries over: the list says
+            // when it is active and empty, with a button to clear it.
             setSelectedCategories(new Set<EmailCategory>(['primary']));
             setActiveAccount(id);
           }}
@@ -1561,7 +1583,8 @@ function AppInner() {
           activeFilter={activeFilter}
           isLoadingFilters={isLoadingFilters}
           onToggleFilter={handleToggleSmartFilter}
-          onClearFilter={clearActiveFilter}
+          onAppendFilter={handleAppendSmartFilter}
+          onClearFilter={clearSearchQuery}
           onPinFilter={handlePinFilter}
           onUnpinFilter={handleUnpinFilter}
           onRemoveFilter={handleRemoveFilter}

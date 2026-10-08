@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useOverlay } from '@/stores/overlayStore';
 import type { ActiveFilter, SmartFilter } from '@/types';
 
 function CollapseChevron({ open }: { open: boolean }) {
@@ -22,7 +23,10 @@ interface SmartFiltersProps {
   filters: SmartFilter[];
   activeFilter: ActiveFilter | null;
   isLoading: boolean;
+  /** Click: replace the search with this filter. */
   onToggleFilter: (filter: ActiveFilter) => void;
+  /** Right-click → "Add to search": combine it with the current search. */
+  onAppendFilter: (filter: ActiveFilter) => void;
   onClearFilter: () => void;
   onPinFilter: (filter: ActiveFilter) => void;
   onUnpinFilter: (filter: ActiveFilter) => void;
@@ -36,6 +40,7 @@ export function SmartFilters({
   activeFilter,
   isLoading,
   onToggleFilter,
+  onAppendFilter,
   onClearFilter,
   onPinFilter,
   onUnpinFilter,
@@ -46,6 +51,7 @@ export function SmartFilters({
   const { t } = useTranslation(['common', 'sidebar']);
   const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(true);
+  const [menu, setMenu] = useState<{ filter: ActiveFilter; x: number; y: number } | null>(null);
 
   const header = (
     <div className="flex items-center justify-between mb-2">
@@ -141,6 +147,10 @@ export function SmartFilters({
       >
         <button
           onClick={() => onToggleFilter(filter)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ filter: { type: filter.type, value: filter.value }, x: e.clientX, y: e.clientY });
+          }}
           className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
             isActive ? 'bg-primary-600 text-white' : 'text-gray-300 hover:bg-gray-800'
           }`}
@@ -181,6 +191,18 @@ export function SmartFilters({
     <section>
       {header}
 
+      {menu && (
+        <FilterContextMenu
+          x={menu.x}
+          y={menu.y}
+          onAppend={() => {
+            onAppendFilter(menu.filter);
+            setMenu(null);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
       {isOpen && (
         <>
           {contactFilters.length > 0 && <ul className="space-y-0.5">{contactFilters.map(renderFilter)}</ul>}
@@ -196,6 +218,60 @@ export function SmartFilters({
         </>
       )}
     </section>
+  );
+}
+
+/** Right-click menu of a smart filter. Registers as an overlay so global
+ *  shortcuts stay off while it is open; Escape or a click outside closes it. */
+function FilterContextMenu({
+  x,
+  y,
+  onAppend,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onAppend: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation(['common', 'sidebar']);
+  useOverlay();
+  useEffect(() => {
+    const close = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', close);
+    return () => document.removeEventListener('keydown', close);
+  }, [onClose]);
+
+  return (
+    <>
+      {/* Any click outside the menu closes it. */}
+      <button
+        type="button"
+        aria-label={t('common:actions.close')}
+        className="fixed inset-0 z-40 cursor-default"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
+      <div
+        role="menu"
+        className="fixed z-50 min-w-40 py-1 rounded-lg border border-gray-700 bg-gray-800 shadow-lg"
+        style={{ left: x, top: y }}
+      >
+        <button
+          type="button"
+          role="menuitem"
+          className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700"
+          onClick={onAppend}
+        >
+          {t('sidebar:filterActions.addToSearch')}
+        </button>
+      </div>
+    </>
   );
 }
 

@@ -3,6 +3,7 @@ import { i18n } from '@/i18n';
 import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef, ThreadSnooze } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { planListSource } from '@/lib/filterQuery';
 import { normalizeMimeType } from '@/lib/mimeType';
 import { createPendingActionQueue } from '@/lib/pendingActions';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
@@ -585,6 +586,25 @@ interface EmailStore {
   resetForAccount: (accountKey: string) => void;
 }
 
+/** `getFilteredEmails`' domain / sender / tag arguments for a smart filter. */
+function filterArgs(
+  filter: ActiveFilter,
+): [string | undefined, string | undefined, string | undefined, string | undefined] {
+  const isTag = ['priority', 'intent', 'topic', 'company'].includes(filter.type);
+  return [
+    filter.type === 'domain' ? filter.value : undefined,
+    filter.type === 'sender' ? filter.value : undefined,
+    isTag ? filter.type : undefined,
+    isTag ? filter.value : undefined,
+  ];
+}
+
+/** Stamp each smart-filter row with when its thread last had activity. */
+function withThreadActivity(emails: Email[], threadLatestAt: Record<string, number> | undefined): Email[] {
+  if (!threadLatestAt) return emails;
+  return emails.map((e) => (threadLatestAt[e.id] === undefined ? e : { ...e, threadLatestAt: threadLatestAt[e.id] }));
+}
+
 export const useEmailStore = create<EmailStore>((set, get) => ({
   emails: [],
   selectedEmail: null,
@@ -732,7 +752,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   setActiveTab: (tabId) => set({ activeTabId: tabId ?? null }),
 
-  fetchEmails: async (accountId, filter, _selectedCategories, silent = false, mailbox) => {
+  fetchEmails: async (accountId, _filter, _selectedCategories, silent = false, mailbox) => {
     // Skip while navigateToEmail is loading — it manages its own fetching.
     // Not on navigationMode: that flag outlives the navigation (it keeps the
     // category filter off the navigated list), and gating on it swallowed
@@ -753,6 +773,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     // Increment fetch ID to track this operation and cancel stale ones
     const fetchId = get().currentFetchId + 1;
     const { searchQuery } = get();
+    const source = planListSource(searchQuery, mailbox ?? 'inbox');
 
     // Silent mode: background refresh after sync — never show loading or clear the list.
     // Non-silent: show loading indicator. Clear the email list only when a filter or
@@ -760,7 +781,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     // to an empty inbox with no filter/search, keep whatever is in the list so there
     // is no flash-to-empty between the clear and the fetch completing.
     if (!silent) {
-      const shouldClear = Boolean(filter || searchQuery);
+      const shouldClear = source.kind !== 'mailbox';
       set({
         isLoading: true,
         ...(shouldClear ? { emails: [] } : {}),
@@ -773,7 +794,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({ error: null, currentFetchId: fetchId, navigationMode: false, focusEmailId: null });
     }
 
-    set({ listScope: searchQuery ? 'search' : filter ? 'inbox' : (mailbox ?? 'inbox') });
+    set({ listScope: source.kind === 'search' ? 'search' : source.kind === 'filter' ? 'inbox' : (mailbox ?? 'inbox') });
 
     // A background refresh is meant to be transparent, so it has to come back
     // with everything the user had already paged in — see refetchLimit.
@@ -783,30 +804,24 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       let emails: Email[];
       let totalCount: number;
 
-      if (searchQuery) {
-        // Search mode — use search API, preserve backend result order (relevance for RAG)
-        const result = await api.searchEmails(accountId, searchQuery, true);
-        emails = result.emails;
-        totalCount = result.emails.length;
-      } else if (filter) {
-        const domain = filter.type === 'domain' ? filter.value : undefined;
-        const senderEmail = filter.type === 'sender' ? filter.value : undefined;
-        const isTagFilter = ['priority', 'intent', 'topic', 'company'].includes(filter.type);
-        const tagType = isTagFilter ? filter.type : undefined;
-        const tagValue = isTagFilter ? filter.value : undefined;
-        const attachmentExt = filter.type === 'attachment_ext' ? filter.value : undefined;
+      if (source.kind === 'filter') {
+        // A one-filter query: the smart filter's paged path lists the same
+        // mail as searching its token (DECISIONS 2026-10-08).
         const result = await api.getFilteredEmails(
           accountId,
-          domain,
-          senderEmail,
-          tagType,
-          tagValue,
+          ...filterArgs(source.filter),
           limit,
           0,
-          attachmentExt,
+          source.filter.type === 'attachment_ext' ? source.filter.value : undefined,
+          { mailbox: source.mailbox },
         );
-        emails = result.emails;
+        emails = withThreadActivity(result.emails, result.threadLatestAt);
         totalCount = result.totalCount;
+      } else if (source.kind === 'search') {
+        // Search mode — use search API, preserve backend result order
+        const result = await api.searchEmails(accountId, source.query, true, source.mailbox);
+        emails = result.emails;
+        totalCount = result.emails.length;
       } else {
         [emails, totalCount] = await Promise.all([
           api.getEmails(accountId, limit, 0, mailbox),
@@ -839,12 +854,13 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  loadMoreEmails: async (accountId, filter, _selectedCategories, mailbox) => {
+  loadMoreEmails: async (accountId, _filter, _selectedCategories, mailbox) => {
     const { isLoadingMore, hasMore, emails, totalCount, loadMoreLock, loadMoreFailed, currentFetchId, searchQuery } =
       get();
 
-    // Don't load more when in search mode — search returns all results at once
-    if (searchQuery) return;
+    // A search returns all its results at once; a one-filter query pages.
+    const source = planListSource(searchQuery, mailbox ?? 'inbox');
+    if (source.kind === 'search') return;
 
     // Use both isLoadingMore flag and lock to prevent concurrent operations
     if (isLoadingMore || !hasMore || loadMoreLock || loadMoreFailed) {
@@ -859,19 +875,16 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const offset = emails.length;
 
       let moreEmails: Email[];
-      if (filter) {
-        const isTagFilter = ['priority', 'intent', 'topic', 'company'].includes(filter.type);
+      if (source.kind === 'filter') {
         const result = await api.getFilteredEmails(
           accountId,
-          filter.type === 'domain' ? filter.value : undefined,
-          filter.type === 'sender' ? filter.value : undefined,
-          isTagFilter ? filter.type : undefined,
-          isTagFilter ? filter.value : undefined,
+          ...filterArgs(source.filter),
           PAGE_SIZE,
           offset,
-          filter.type === 'attachment_ext' ? filter.value : undefined,
+          source.filter.type === 'attachment_ext' ? source.filter.value : undefined,
+          { mailbox: source.mailbox },
         );
-        moreEmails = result.emails;
+        moreEmails = withThreadActivity(result.emails, result.threadLatestAt);
       } else {
         moreEmails = await api.getEmails(accountId, PAGE_SIZE, offset, mailbox);
       }

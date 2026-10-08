@@ -9,6 +9,7 @@ import { useSelectionStore } from '@/stores/selectionStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory } from '@/types';
+import { ActiveSearchNotice } from './ActiveSearchNotice';
 import { BulkToolbar } from './BulkToolbar';
 import type { RulePrefill } from './EmailRow';
 import { InboxSearchBox } from './InboxSearchBox';
@@ -604,6 +605,9 @@ export function Inbox({
           />
           <span>{t('inbox:junk.hideFlagged')}</span>
         </label>
+      )}
+      {searchQuery && !isLoading && visibleEmails.length === 0 && (
+        <ActiveSearchNotice query={searchQuery} onClear={clearSearchQuery} />
       )}
       <VirtualEmailList
         emails={visibleEmails}
