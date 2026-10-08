@@ -114,4 +114,18 @@ describe('getThreadViewItems', () => {
       expect(collapsed.count).toBe(2); // e2, e3
     }
   });
+
+  it('keeps every message visible when the email to show sits in the collapsed middle', () => {
+    // A chat link to the 2nd of 6 messages opened the thread with that
+    // message hidden under "Show 4 more".
+    const emails = makeThread(6);
+    const items = getThreadViewItems(emails, false, 'e2');
+    expect(items.filter((i) => i.type === 'email')).toHaveLength(6);
+  });
+
+  it('still collapses the middle when the email to show is the first or last one', () => {
+    const emails = makeThread(6);
+    expect(getThreadViewItems(emails, false, 'e1').some((i) => i.type === 'collapsed')).toBe(true);
+    expect(getThreadViewItems(emails, false, 'e6').some((i) => i.type === 'collapsed')).toBe(true);
+  });
 });

@@ -9,10 +9,12 @@ export type ThreadViewItem =
  *
  * When `isExpanded` is false and the thread has 4+ messages, the middle
  * messages are collapsed into a single placeholder item showing the count.
- * The first and last messages are always visible.
+ * The first and last messages are always visible, and so is `focusId`: an
+ * email opened from a link is never left hidden among the collapsed ones.
  */
-export function getThreadViewItems(emails: Email[], isExpanded: boolean): ThreadViewItem[] {
-  if (isExpanded || emails.length < 4) {
+export function getThreadViewItems(emails: Email[], isExpanded: boolean, focusId?: string | null): ThreadViewItem[] {
+  const focusInMiddle = !!focusId && emails.slice(1, -1).some((e) => e.id === focusId);
+  if (isExpanded || focusInMiddle || emails.length < 4) {
     return emails.map((email, index) => ({ type: 'email', email, index }));
   }
 

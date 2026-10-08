@@ -639,7 +639,16 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
     const existing = get().tabs.find((t) => t.id === email.threadId);
     if (existing) {
-      set({ activeTabId: email.threadId });
+      // Opening another email of an open thread shows that email.
+      set((state) => ({
+        activeTabId: email.threadId,
+        tabs:
+          focusId === undefined
+            ? state.tabs
+            : state.tabs.map((t) =>
+                t.type === 'thread' && t.id === email.threadId ? { ...t, focusEmailId: focusId } : t,
+              ),
+      }));
       return;
     }
 

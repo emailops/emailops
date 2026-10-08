@@ -33,7 +33,7 @@ export function EmailRefPill({ emailId, accountId, label, onOpenEmail }: EmailRe
     setIsOpening(true);
     try {
       const email = await api.getEmailById(accountId, emailId);
-      await openTab(email);
+      await openTab(email, email.id);
       onOpenEmail?.();
     } catch (e) {
       // Validator only checks the id was tool-produced. Fetch can still

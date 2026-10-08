@@ -102,6 +102,7 @@ export function ReadingPane({
           fullWidth={fullWidth}
           onOpenInTab={onOpenInTab}
           onChatAboutThread={onChatAboutThread}
+          focusEmailId={activeTab?.type === 'thread' ? activeTab.focusEmailId : undefined}
         />
       )}
     </div>

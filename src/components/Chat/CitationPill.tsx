@@ -25,7 +25,7 @@ export function CitationPill({ source, accountId, onOpenEmail }: CitationPillPro
     setIsOpening(true);
     try {
       const email = await api.getEmailById(accountId, source.emailId);
-      await openTab(email);
+      await openTab(email, email.id);
       onOpenEmail?.();
     } catch (e) {
       addLog('error', 'system', `Failed to open cited email: ${errorText(e)}`);

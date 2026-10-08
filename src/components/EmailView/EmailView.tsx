@@ -57,6 +57,9 @@ interface EmailViewProps {
   onOpenInTab?: () => void;
   /** Open a chat seeded with this thread. */
   onChatAboutThread?: (email: Email) => void;
+  /** The email to expand and keep visible; a thread tab passes its own,
+   *  otherwise the store's (set by navigating to an email) applies. */
+  focusEmailId?: string | null;
 }
 
 /**
@@ -111,6 +114,7 @@ export function EmailView({
   fullWidth,
   onOpenInTab,
   onChatAboutThread,
+  focusEmailId: focusEmailIdProp,
 }: EmailViewProps) {
   const { t } = useTranslation(['inbox', 'compose']);
   const fmt = useFormatters();
@@ -118,7 +122,8 @@ export function EmailView({
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
   const [threadExpanded, setThreadExpanded] = useState(false);
   const [lightboxMeta, setLightboxMeta] = useState<EmailAttachmentMeta | null>(null);
-  const focusEmailId = useEmailStore((s) => s.focusEmailId);
+  const storeFocusEmailId = useEmailStore((s) => s.focusEmailId);
+  const focusEmailId = focusEmailIdProp === undefined ? storeFocusEmailId : focusEmailIdProp;
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const deleteThreads = useEmailStore((s) => s.deleteThreads);
   const setThreadsRead = useEmailStore((s) => s.setThreadsRead);
@@ -962,7 +967,7 @@ export function EmailView({
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
-          {getThreadViewItems(threadEmails, threadExpanded || threadSearchActive).map((item) => {
+          {getThreadViewItems(threadEmails, threadExpanded || threadSearchActive, focusEmailId).map((item) => {
             if (item.type === 'collapsed') {
               return (
                 <button

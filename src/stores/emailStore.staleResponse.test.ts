@@ -149,6 +149,28 @@ describe('openTab with an out-of-order thread response', () => {
   });
 });
 
+describe('openTab focus on the email that was opened', () => {
+  beforeEach(() => {
+    useEmailStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it('remembers the opened email, also when its thread tab is already open', async () => {
+    const a2 = { ...email('a2', 'thread-a'), timestamp: 2 };
+    vi.mocked(api.getThread).mockResolvedValue([a, a2]);
+
+    await useEmailStore.getState().openTab(a2, a2.id);
+    const first = useEmailStore.getState().tabs[0];
+    expect(first.type === 'thread' && first.focusEmailId).toBe('a2');
+
+    // A chat link to another email of the same thread re-focuses that tab.
+    await useEmailStore.getState().openTab(a, a.id);
+    const again = useEmailStore.getState().tabs;
+    expect(again).toHaveLength(1);
+    expect(again[0].type === 'thread' && again[0].focusEmailId).toBe('a');
+  });
+});
+
 describe('loadMoreEmails after a failure', () => {
   beforeEach(() => {
     useEmailStore.getState().reset();
