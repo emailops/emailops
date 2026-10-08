@@ -1579,6 +1579,40 @@ mod tests {
         assert_eq!(searched_latest, filter.thread_latest_at);
     }
 
+    /// Junk is hidden from the inbox but still found by searching for it (the
+    /// documented way back to it, with its chip); only a query that is nothing
+    /// but filter tokens — what a smart filter writes — leaves it out.
+    #[tokio::test]
+    async fn typed_words_find_junk_while_a_filter_token_alone_does_not() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@example.com", true);
+        seed_searchable_email(&db, "genuine", "acc1", "t1", "Hosting renewal notice", 100);
+        seed_searchable_email(&db, "marked", "acc1", "t2", "Hosting payment failed", 200);
+        for id in ["genuine", "marked"] {
+            tag(&db, id, "intent", "billing");
+        }
+        db.connection()
+            .execute(
+                "INSERT INTO email_junk (email_id, account_id, spam_score, phish_score, gray_score, band,
+                 primary_kind, reasons_json, method, model_version, scored_at, user_override)
+                 VALUES ('marked', 'acc1', 0.2, 0.55, 0.0, 'uncertain', 'phishing', '[]', 'deterministic', 0, 0, 'junk')",
+                [],
+            )
+            .unwrap();
+
+        let typed = search_emails(&db, Some("acc1"), "Hosting", false, None, None, None)
+            .await
+            .unwrap();
+        let mut typed_ids = search_ids(&typed);
+        typed_ids.sort_unstable();
+        assert_eq!(typed_ids, ["genuine", "marked"]);
+
+        let token = search_emails(&db, Some("acc1"), "tag:intent=billing", false, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(search_ids(&token), ["genuine"]);
+    }
+
     #[tokio::test]
     async fn the_search_box_reaches_custom_folders_and_every_category_but_not_spam() {
         let db = Arc::new(Database::new_for_testing().unwrap());

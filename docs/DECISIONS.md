@@ -3637,3 +3637,15 @@ classified tag (`latest_tag_only`).
 not carry the tag the user asked for. Sorting by the matching email — an old thread with
 fresh activity sinks to the bottom. Dating the matching row by the thread's last email
 while sorting by the match (option b) — the date and the position disagree.
+
+## 2026-10-08 — Typed search words still find junk; a smart filter's tokens do not
+
+**Decision:** Refines the smart-filter entry above. A search-box query made only of filter
+tokens (`tag:`, `from:`, `domain:`, `ext:` — what a smart filter writes) excludes junk, as
+the sidebar filter does. A query with typed words reaches junk too, which shows with its
+chip.
+**Context:** Hiding junk from the inbox is documented as "still reachable via search", and
+the e2e sweep checks that searching for a marked phishing email finds it with its chip.
+Excluding junk from every search-box query removed that way back to it.
+**Rejected:** Never showing junk in search (it would only be reachable from the Spam/Junk
+views, and the docs would have to drop the promise).

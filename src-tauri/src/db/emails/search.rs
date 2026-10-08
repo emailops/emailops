@@ -688,8 +688,11 @@ impl Database {
     /// the way a smart filter lists it — one row per thread (its newest
     /// matching email), threads sorted by their newest email of any kind (the
     /// returned timestamp), reaching every live mailbox and custom folder but
-    /// never Spam or Trash, never junk, narrowed by `scope` (the view the
-    /// search runs in and the search box's own operators).
+    /// never Spam or Trash, narrowed by `scope` (the view the search runs in
+    /// and the search box's own operators). Junk is left out only when there
+    /// are no typed words (`query` empty): a query of filter tokens alone is
+    /// what a smart filter writes and lists like it, while typing words is the
+    /// documented way back to mail hidden as junk.
     #[allow(clippy::too_many_arguments)]
     pub fn search_box_emails(
         &self,
@@ -716,7 +719,7 @@ impl Database {
             tag_filters,
             limit,
             false,
-            true,
+            query.trim().is_empty(),
             false,
             false,
             None,
