@@ -1498,6 +1498,12 @@ fn repair_mangled_email_id(args: &mut serde_json::Value, available_refs: &[Strin
     if wrong.is_empty() || available_refs.contains(&wrong) {
         return None;
     }
+    if let Some(right) = completed_imap_ref(&wrong, available_refs) {
+        let right = right.to_string();
+        args.as_object_mut()?
+            .insert("email_id".to_string(), serde_json::Value::String(right));
+        return Some(wrong);
+    }
     let mut close = available_refs
         .iter()
         .filter(|r| crate::services::junk::lookalike::edit_distance(r, &wrong) <= MAX_EMAIL_ID_EDITS);
@@ -1507,6 +1513,44 @@ fn repair_mangled_email_id(args: &mut serde_json::Value, available_refs: &[Strin
     }
     args.as_object_mut()?
         .insert("email_id".to_string(), serde_json::Value::String(right));
+    Some(wrong)
+}
+
+/// The one known id that `cut` is the start of, up to an IMAP id's `::`
+/// separator (`<account>::<uid>`): small models copy such an id only up to the
+/// `::`, which leaves the account id. `None` when no known id or more than one
+/// continues `cut` that way — the uids alone tell them apart.
+fn completed_imap_ref<'a>(cut: &str, known_refs: &'a [String]) -> Option<&'a str> {
+    let mut fits = known_refs
+        .iter()
+        .filter(|r| r.strip_prefix(cut).is_some_and(|rest| rest.starts_with("::")));
+    let one = fits.next()?;
+    fits.next().is_none().then_some(one.as_str())
+}
+
+/// Deterministically repair a `get_thread` call whose `thread_id` names an
+/// email instead (observed on a follow-up: the previous answer's email id, cut
+/// at its `::`, sent as the thread id, so "the first one in that thread" found
+/// nothing). When the id is no thread but is a known email id — or the cut of
+/// exactly one — swap in that email's thread. Returns the wrong id when it did.
+fn repair_thread_id(
+    args: &mut serde_json::Value,
+    known_refs: &[String],
+    is_thread: &dyn Fn(&str) -> bool,
+    thread_of: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let wrong = args.get("thread_id")?.as_str()?.trim().to_string();
+    if wrong.is_empty() || is_thread(&wrong) {
+        return None;
+    }
+    let email_id = if known_refs.contains(&wrong) {
+        wrong.as_str()
+    } else {
+        completed_imap_ref(&wrong, known_refs)?
+    };
+    let right = thread_of(email_id)?;
+    args.as_object_mut()?
+        .insert("thread_id".to_string(), serde_json::Value::String(right));
     Some(wrong)
 }
 
@@ -2511,6 +2555,24 @@ async fn run_tool_loop(
     // UI can render chips in the order tools produced them.
     let mut aggregated_email_refs: Vec<String> = Vec::new();
     let mut seen_email_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // The emails the previous answer referred to: a follow-up ("the first one
+    // in that thread") copies its ids from that answer, not from this turn's
+    // results, so the id repairs below must know them too.
+    let previous_answer_refs: Vec<String> = match db.get_chat_messages(conversation_id) {
+        Ok(history) => history
+            .into_iter()
+            .rev()
+            .find(|m| m.role == "assistant" && m.id != message_id && !m.referenced_email_ids.is_empty())
+            .map(|m| m.referenced_email_ids)
+            .unwrap_or_default(),
+        Err(e) => {
+            emit_log(
+                "error",
+                &format!("tool_loop: reading the conversation for id repairs failed: {e}"),
+            );
+            Vec::new()
+        }
+    };
     // Same shape for drafts (`draft://DRAFT_ID` chips).
     let mut aggregated_draft_refs: Vec<String> = Vec::new();
     let mut seen_draft_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -2868,6 +2930,11 @@ async fn run_tool_loop(
         // filter. Runs before the no-progress guard so dedup keys see the
         // repaired args.
         let mut tool_calls = tool_calls;
+        let known_email_refs: Vec<String> = aggregated_email_refs
+            .iter()
+            .chain(previous_answer_refs.iter().filter(|r| !seen_email_refs.contains(*r)))
+            .cloned()
+            .collect();
         for tc in &mut tool_calls {
             if tc.function.name == "search_emails"
                 && repair_filterless_search_args(&mut tc.function.arguments, user_question)
@@ -2880,7 +2947,7 @@ async fn run_tool_loop(
                     ),
                 );
             }
-            if let Some(wrong) = repair_mangled_email_id(&mut tc.function.arguments, &aggregated_email_refs) {
+            if let Some(wrong) = repair_mangled_email_id(&mut tc.function.arguments, &known_email_refs) {
                 emit_log(
                     "info",
                     &format!(
@@ -2888,6 +2955,32 @@ async fn run_tool_loop(
                         tc.function.name
                     ),
                 );
+            }
+            if tc.function.name == "get_thread" {
+                let is_thread = |id: &str| match db.get_thread(account_id, id) {
+                    Ok(emails) => !emails.is_empty(),
+                    Err(e) => {
+                        emit_log("error", &format!("tool_loop: looking up thread {id} failed: {e}"));
+                        // Unknown: leave the call as the model wrote it.
+                        true
+                    }
+                };
+                let thread_of = |email_id: &str| match db.get_email_by_id(email_id) {
+                    Ok(Some(email)) if email.account_id == account_id => Some(email.thread_id),
+                    Ok(_) => None,
+                    Err(e) => {
+                        emit_log("error", &format!("tool_loop: looking up email {email_id} failed: {e}"));
+                        None
+                    }
+                };
+                if let Some(wrong) =
+                    repair_thread_id(&mut tc.function.arguments, &known_email_refs, &is_thread, &thread_of)
+                {
+                    emit_log(
+                        "info",
+                        &format!("tool_loop: get_thread thread_id {wrong} names an email — read its thread instead"),
+                    );
+                }
             }
             if tc.function.name == "generate_email_draft"
                 && repair_missing_draft_instructions(&mut tc.function.arguments, user_question)
@@ -6285,6 +6378,56 @@ mod tests {
         let mut other = serde_json::json!({ "email_id": "demo_ffffffffffffffff" });
         assert_eq!(repair_mangled_email_id(&mut other, &refs), None);
         assert_eq!(other["email_id"], "demo_ffffffffffffffff");
+    }
+
+    /// An IMAP id is `<account>::<uid>`; qwen3.5-9b copied it only up to the
+    /// `::`, so the body read found nothing and the follow-up's thread lookup
+    /// asked for the account id.
+    #[test]
+    fn an_imap_id_cut_at_the_separator_is_completed_when_one_result_fits() {
+        let refs = vec!["acc-1::227".to_string()];
+        let mut args = serde_json::json!({ "email_id": "acc-1" });
+        assert_eq!(repair_mangled_email_id(&mut args, &refs).as_deref(), Some("acc-1"));
+        assert_eq!(args["email_id"], "acc-1::227");
+    }
+
+    #[test]
+    fn an_imap_id_cut_at_the_separator_is_left_alone_when_several_results_fit() {
+        let refs = vec!["acc-1::227".to_string(), "acc-1::SENT::12".to_string()];
+        let mut args = serde_json::json!({ "email_id": "acc-1" });
+        assert_eq!(repair_mangled_email_id(&mut args, &refs), None);
+        assert_eq!(args["email_id"], "acc-1");
+    }
+
+    #[test]
+    fn a_thread_id_that_names_an_email_becomes_that_emails_thread() {
+        let refs = vec!["acc-1::227".to_string()];
+        let thread_of = |id: &str| (id == "acc-1::227").then(|| "t-62d6".to_string());
+        let is_thread = |id: &str| id == "t-62d6";
+
+        let mut cut = serde_json::json!({ "thread_id": "acc-1" });
+        assert_eq!(
+            repair_thread_id(&mut cut, &refs, &is_thread, &thread_of).as_deref(),
+            Some("acc-1")
+        );
+        assert_eq!(cut["thread_id"], "t-62d6");
+
+        let mut whole = serde_json::json!({ "thread_id": "acc-1::227" });
+        assert!(repair_thread_id(&mut whole, &refs, &is_thread, &thread_of).is_some());
+        assert_eq!(whole["thread_id"], "t-62d6");
+    }
+
+    #[test]
+    fn a_real_or_unknown_thread_id_is_left_alone() {
+        let refs = vec!["acc-1::227".to_string()];
+        let thread_of = |_: &str| Some("t-other".to_string());
+        let is_thread = |id: &str| id == "t-62d6";
+
+        let mut real = serde_json::json!({ "thread_id": "t-62d6" });
+        assert_eq!(repair_thread_id(&mut real, &refs, &is_thread, &thread_of), None);
+        let mut unknown = serde_json::json!({ "thread_id": "zzz" });
+        assert_eq!(repair_thread_id(&mut unknown, &refs, &is_thread, &thread_of), None);
+        assert_eq!(unknown["thread_id"], "zzz");
     }
 
     #[test]
