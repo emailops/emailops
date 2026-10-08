@@ -890,6 +890,15 @@ describe('leaving a conversation with a running turn for a new or deleted one', 
     expect(s.backgroundTurns['conv-1']).toMatchObject({ messageId: 'msg-1', content: 'partial', done: false });
   });
 
+  it.each([
+    ['createConversation', () => useChatStore.getState().createConversation('acc-1')],
+    ['createConversationFromThread', () => useChatStore.getState().createConversationFromThread('acc-1', 'thread-1')],
+  ])('%s asks the input for the caret', async (_name, action) => {
+    useChatStore.setState({ focusInputPending: false });
+    await action();
+    expect(useChatStore.getState().focusInputPending).toBe(true);
+  });
+
   it('deleting the open conversation frees the input', async () => {
     await useChatStore.getState().deleteConversation('conv-1');
 

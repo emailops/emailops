@@ -178,6 +178,25 @@ describe('ChatInput research confirmation', () => {
   });
 });
 
+describe('ChatInput focus on a new conversation', () => {
+  it('takes the caret when a new conversation asks for it, once', () => {
+    useChatStore.setState({ focusInputPending: false });
+    const textarea = renderInput();
+    expect(document.activeElement).not.toBe(textarea);
+
+    act(() => useChatStore.setState({ focusInputPending: true }));
+
+    expect(document.activeElement).toBe(textarea);
+    expect(useChatStore.getState().focusInputPending).toBe(false);
+  });
+
+  it('a request made before the input mounts is honoured on mount', () => {
+    useChatStore.setState({ focusInputPending: true });
+    const textarea = renderInput();
+    expect(document.activeElement).toBe(textarea);
+  });
+});
+
 describe('ChatInput /clear command', () => {
   function renderWith(onSend: (c: string) => void, onClear: () => void) {
     act(() => {

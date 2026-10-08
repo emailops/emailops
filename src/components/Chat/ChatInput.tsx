@@ -219,7 +219,16 @@ export function ChatInput({
   // until the user starts or cancels it.
   const researchPending = useChatStore((s) => s.pendingResearch !== null);
   const inputPrefill = useChatStore((s) => s.inputPrefill);
+  const focusInputPending = useChatStore((s) => s.focusInputPending);
+  const consumeInputFocus = useChatStore((s) => s.consumeInputFocus);
   const isDisabled = disabled || researchPending;
+
+  // A new conversation puts the caret here so the user can start typing.
+  useEffect(() => {
+    if (!focusInputPending) return;
+    textareaRef.current?.focus();
+    consumeInputFocus();
+  }, [focusInputPending, consumeInputFocus]);
 
   // A cancelled research question comes back to the input for editing.
   useEffect(() => {

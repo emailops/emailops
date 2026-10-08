@@ -94,6 +94,9 @@ interface ChatStore {
   /** Text to put back in the input (a cancelled research question); the
    *  nonce lets the same text be restored twice. */
   inputPrefill: { text: string; nonce: number } | null;
+  /** A new conversation wants the caret in the input; the input takes it
+   *  (now, or when it mounts) and clears the flag. */
+  focusInputPending: boolean;
   isSending: boolean;
   isLoadingConversations: boolean;
   isLoadingMessages: boolean;
@@ -121,6 +124,7 @@ interface ChatStore {
   selectAccount: (accountId: string) => Promise<void>;
   createConversation: (accountId: string, title?: string) => Promise<string>;
   prefillInput: (text: string) => void;
+  consumeInputFocus: () => void;
   /** Create a chat seeded with the cleaned content of an email thread. */
   createConversationFromThread: (accountId: string, threadId: string) => Promise<string>;
   selectConversation: (id: string | null) => Promise<void>;
@@ -293,6 +297,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     researchExitRequested: false,
     pendingResearch: null,
     inputPrefill: null,
+    focusInputPending: false,
     isSending: false,
     isLoadingConversations: false,
     isLoadingMessages: false,
@@ -365,6 +370,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     prefillInput: (text) => set((s) => ({ inputPrefill: { text, nonce: (s.inputPrefill?.nonce ?? 0) + 1 } })),
 
+    consumeInputFocus: () => set({ focusInputPending: false }),
+
     createConversation: async (accountId, title) => {
       const conv = await api.createChatConversation(accountId, title);
       dropPendingResearch();
@@ -373,6 +380,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         conversations: [conv, ...s.conversations],
         activeConversationId: conv.id,
         messages: [],
+        focusInputPending: true,
       }));
       return conv.id;
     },
@@ -388,6 +396,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         conversations: [conv, ...s.conversations],
         activeConversationId: conv.id,
         messages,
+        focusInputPending: true,
       }));
       return conv.id;
     },
