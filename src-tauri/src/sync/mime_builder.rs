@@ -71,8 +71,32 @@ pub fn build_send_mime(params: &SendMimeParams<'_>) -> Result<String> {
 /// `Message` straight through an SMTP transport (IMAP path) instead of
 /// serializing to bytes first (Gmail path).
 pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage> {
-    let builder = base_builder(params)?;
+    assemble(base_builder(params)?, params)
+}
 
+/// Build the MIME for a provider draft. Unlike a message to send, a draft may
+/// have no recipients yet. lettre derives the SMTP envelope from To/Cc and
+/// refuses an empty one, so a draft gets an explicit envelope addressed to
+/// its own sender. The envelope is never serialized: the headers keep exactly
+/// the recipients the draft has, none included.
+pub fn build_draft_mime(params: &SendMimeParams<'_>) -> Result<String> {
+    let builder = base_builder(params)?;
+    let builder = if params.to_emails.is_empty() && params.cc_emails.is_empty() {
+        let sender: lettre::Address = params
+            .from_email
+            .parse()
+            .map_err(|e| AppError::SyncError(format!("Invalid from address: {e}")))?;
+        let envelope = lettre::address::Envelope::new(Some(sender.clone()), vec![sender])
+            .map_err(|e| AppError::SyncError(format!("Failed to build draft envelope: {e}")))?;
+        builder.envelope(envelope)
+    } else {
+        builder
+    };
+    let msg = assemble(builder, params)?;
+    Ok(String::from_utf8_lossy(&msg.formatted()).into_owned())
+}
+
+fn assemble(builder: lettre::message::MessageBuilder, params: &SendMimeParams<'_>) -> Result<LettreMessage> {
     let body_text = format!("{}{}", params.body.text, params.body.footer_plain());
 
     let msg = match (params.body.html.as_deref(), params.attachments.is_empty()) {
@@ -612,6 +636,34 @@ mod tests {
         // The bug itself, rejected at both ends: a bare login name is no address.
         assert!(parse_account_address("alex").is_none());
         assert!(build("alex").is_err());
+    }
+
+    fn no_recipients<'a>(subject: &'a str, body: &'a EmailBody) -> SendMimeParams<'a> {
+        SendMimeParams {
+            from_email: "me@example.com",
+            from_name: None,
+            to_emails: &[],
+            cc_emails: &[],
+            subject,
+            in_reply_to: None,
+            references: None,
+            body,
+            attachments: &[],
+        }
+    }
+
+    #[test]
+    fn a_draft_without_recipients_still_builds() {
+        let mime = build_draft_mime(&no_recipients("unfinished", &EmailBody::plain("half written")))
+            .expect("draft without recipients");
+        assert!(mime.contains("Subject: unfinished"), "{mime}");
+        assert!(!mime.contains("\r\nTo:"), "no To header may be invented: {mime}");
+        assert!(!mime.contains("\r\nCc:"), "no Cc header may be invented: {mime}");
+    }
+
+    #[test]
+    fn a_message_to_send_without_recipients_is_rejected() {
+        assert!(build_send_mime(&no_recipients("x", &EmailBody::plain("x"))).is_err());
     }
 
     #[test]
