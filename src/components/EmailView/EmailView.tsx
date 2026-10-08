@@ -23,7 +23,7 @@ import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Draft, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
-import { forwardQuote, forwardSubject, loadForwardBody } from './forward';
+import { forwardQuote, forwardSubject, loadForwardTexts } from './forward';
 import { ReplyCompose } from './ReplyCompose';
 import { ThreadEmailItem } from './ThreadEmailItem';
 
@@ -460,15 +460,15 @@ export function EmailView({
     setIsReplyOpen((value) => (toggle ? !value : true));
   };
   const openForward = async () => {
-    const body = await loadForwardBody(
-      latestEmail,
-      () => api.getEmailBody(latestEmail.accountId, latestEmail.id),
-      (err) => addLog('error', 'sync', `Could not load the original message to forward: ${err}`),
+    const messages = await loadForwardTexts(
+      threadEmails,
+      () => api.getThreadNewContent(latestEmail.accountId, latestEmail.threadId),
+      (err) => addLog('error', 'sync', `Could not load the original messages to forward: ${err}`),
     );
     setReplyMode('forward');
     setReplyBody(
       forwardQuote(
-        { ...latestEmail, body },
+        messages,
         {
           header: t('compose:forwarded.header'),
           from: t('compose:forwarded.from'),
@@ -535,7 +535,8 @@ export function EmailView({
     }
   };
 
-  /** Pull the message's own attachments in so the forward carries them.
+  /** Pull the thread's attachments in so the forward carries them — every
+   *  message's, since the forward carries every message.
    *
    *  Runs after the compose panel is already open: the user can start typing
    *  while a large PDF is still being encoded, and a failure here degrades to
@@ -543,25 +544,22 @@ export function EmailView({
    *  send. */
   const loadForwardAttachments = async () => {
     try {
-      const metas = await api.getEmailAttachmentMetas(latestEmail.accountId, latestEmail.id);
-      if (metas.length === 0) return;
       const carried: EmailAttachment[] = [];
       const skipped: string[] = [];
       let bytes = 0;
-      for (const meta of metas) {
-        if (bytes + meta.fileSize > MAX_FORWARD_BYTES) {
-          skipped.push(meta.filename);
-          continue;
+      for (const email of threadEmails) {
+        const metas = await api.getEmailAttachmentMetas(email.accountId, email.id);
+        for (const meta of metas) {
+          if (bytes + meta.fileSize > MAX_FORWARD_BYTES) {
+            skipped.push(meta.filename);
+            continue;
+          }
+          const data = await api.fetchEmailAttachmentBytes(email.accountId, email.id, meta.providerAttachmentId);
+          carried.push({ filename: meta.filename, mimeType: meta.mimeType, data });
+          bytes += meta.fileSize;
         }
-        const data = await api.fetchEmailAttachmentBytes(
-          latestEmail.accountId,
-          latestEmail.id,
-          meta.providerAttachmentId,
-        );
-        carried.push({ filename: meta.filename, mimeType: meta.mimeType, data });
-        bytes += meta.fileSize;
       }
-      setForwardAttachments(carried);
+      if (carried.length > 0) setForwardAttachments(carried);
       if (skipped.length > 0) {
         addLog('error', 'sync', `Too large to forward, attach manually: ${skipped.join(', ')}`);
       }

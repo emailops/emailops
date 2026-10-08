@@ -45,8 +45,9 @@ direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-dro
 
 <!-- claim:reading-pane-forward -->
 **Weiterleiten** steht im Lesebereich neben **Antworten** und **Allen antworten**. Der Entwurf
-öffnet sich ohne Empfänger und enthält die ursprüngliche Nachricht unter der Kopfzeile
-*Weitergeleitete Nachricht* mit Absender, Datum und Empfängern, dazu die ursprünglichen
+öffnet sich ohne Empfänger und enthält die ganze Unterhaltung, älteste Nachricht zuerst: jede
+Nachricht unter ihrer eigenen Kopfzeile *Weitergeleitete Nachricht* mit Absender, Datum und
+Empfängern, ohne den Verlauf, den eine frühere Nachricht schon zeigt, dazu die ursprünglichen
 Anhänge (bis zu 20 MB insgesamt). Sie wird als neue Nachricht gesendet und landet daher nicht
 in bestehenden Unterhaltungen des Empfängers.
 

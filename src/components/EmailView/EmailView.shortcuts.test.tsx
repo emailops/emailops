@@ -11,12 +11,17 @@ vi.mock('@/lib/api', () => ({
   // No reply draft saved for the thread.
   listDrafts: vi.fn(async () => []),
   currentPlatform: () => 'macos',
-  getEmailBody: vi.fn(async () => 'Original text'),
+  getThreadNewContent: vi.fn(async () => [
+    { emailId: 'e0', text: 'Opening question' },
+    { emailId: 'e1', text: 'Latest answer' },
+  ]),
   getEmailAttachmentMetas: vi.fn(async () => []),
 }));
 vi.mock('./ThreadEmailItem', () => ({ ThreadEmailItem: () => null }));
 vi.mock('./ReplyCompose', () => ({
-  ReplyCompose: ({ mode }: { mode: string }) => <div data-testid="reply-compose" data-mode={mode} />,
+  ReplyCompose: ({ mode, initialBody }: { mode: string; initialBody: string }) => (
+    <div data-testid="reply-compose" data-mode={mode} data-body={initialBody} />
+  ),
 }));
 
 import { initI18n } from '@/i18n';
@@ -72,10 +77,10 @@ afterEach(() => {
   container.remove();
 });
 
-async function render() {
+async function render(threadEmails: Email[] = [email]) {
   await act(async () => {
     root.render(
-      <EmailView threadEmails={[email]} isLoading={false} onClose={onClose} accounts={[]} activeAccountId="a1" />,
+      <EmailView threadEmails={threadEmails} isLoading={false} onClose={onClose} accounts={[]} activeAccountId="a1" />,
     );
   });
 }
@@ -97,6 +102,16 @@ describe('EmailView pane commands', () => {
     expect(reply()?.getAttribute('data-mode')).toBe('reply-all');
     await command('forward');
     expect(reply()?.getAttribute('data-mode')).toBe('forward');
+  });
+
+  // The latest reply carries only what its client quoted; a reply that quoted
+  // nothing used to cut the opening message out of the forward.
+  it('f forwards every message of the conversation, not only the latest', async () => {
+    await render([{ ...email, id: 'e0', timestamp: 0 } as Email, email]);
+    await command('forward');
+    const body = reply()?.getAttribute('data-body') ?? '';
+    expect(body).toContain('Opening question');
+    expect(body.indexOf('Latest answer')).toBeGreaterThan(body.indexOf('Opening question'));
   });
 
   it('pressing r twice keeps the composer open (no toggle)', async () => {

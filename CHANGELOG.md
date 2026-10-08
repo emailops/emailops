@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Fixed
+
+- Forwarding a conversation now carries every message of it, oldest first,
+  each under its own forwarded-message header, plus every message's
+  attachments. It used to carry only the latest message, so anything that
+  reply had not quoted, such as the opening message, was lost.
 
 ## [0.6.14] — 2026-10-06
 

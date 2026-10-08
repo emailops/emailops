@@ -85,6 +85,7 @@ import type {
   TagStat,
   TaskConfig,
   TaskCountsSummary,
+  ThreadMessageText,
   ThreadParticipants,
   ThreadState,
   UnsubscribeKind,
@@ -346,6 +347,11 @@ export async function moveEmails(
 
 export async function getThread(accountId: string, threadId: string): Promise<Email[]> {
   return invoke('get_thread', { accountId, threadId });
+}
+
+/** Each message of a thread with what it adds to it, oldest first. */
+export async function getThreadNewContent(accountId: string, threadId: string): Promise<ThreadMessageText[]> {
+  return invoke('get_thread_new_content', { accountId, threadId });
 }
 
 export async function getEmailBody(accountId: string, emailId: string): Promise<string> {

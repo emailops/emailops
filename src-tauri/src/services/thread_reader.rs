@@ -257,6 +257,33 @@ pub fn load_thread(
         .collect())
 }
 
+/// What one message adds to its thread, keyed by the message.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageText {
+    pub email_id: String,
+    pub text: String,
+}
+
+/// Every message of a thread, oldest first, with its new content: a forward
+/// of the whole conversation reads each message once, whether or not the
+/// replies quoted what came before.
+pub fn thread_new_content(
+    db: &Database,
+    account_id: &str,
+    thread_id: &str,
+) -> crate::models::error::Result<Vec<MessageText>> {
+    let messages = load_thread(db, account_id, thread_id)?;
+    Ok(messages
+        .iter()
+        .zip(new_content(&messages))
+        .map(|(m, text)| MessageText {
+            email_id: m.id.clone(),
+            text,
+        })
+        .collect())
+}
+
 /// One message's new content, read in the context of its thread: what an
 /// extractor should read instead of a reply's full body with its quoted
 /// history. Falls back to the message's own cleaned body when the thread
@@ -333,6 +360,26 @@ mod tests {
         let email = db.get_email_by_id("e2").unwrap().expect("e2");
         let raw = db.get_email_body("e2").unwrap();
         assert_eq!(message_new_content(&db, &email, &raw), fixtures::REPLY_NEW);
+    }
+
+    #[test]
+    fn a_threads_new_content_has_every_message_once_oldest_first() {
+        let db = Database::new_for_testing().unwrap();
+        fixtures::seed_quoting_thread(&db);
+        let texts = thread_new_content(&db, "acct", "t1").unwrap();
+        assert_eq!(
+            texts,
+            vec![
+                MessageText {
+                    email_id: "e1".into(),
+                    text: fixtures::REQUEST.into()
+                },
+                MessageText {
+                    email_id: "e2".into(),
+                    text: fixtures::REPLY_NEW.into()
+                },
+            ]
+        );
     }
 
     fn msg(id: &str, ts: i64, body: &str) -> ThreadMessage {

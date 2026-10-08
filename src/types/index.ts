@@ -79,6 +79,13 @@ export interface Email {
   threadLatestAt?: number;
 }
 
+/** What one message adds to its thread: its body minus the history an
+ *  earlier message of the thread already holds, as plain text. */
+export interface ThreadMessageText {
+  emailId: string;
+  text: string;
+}
+
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
 
 /** One attendee of a calendar event with their RSVP state. `response` is an
