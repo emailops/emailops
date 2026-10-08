@@ -360,6 +360,12 @@ pub struct ParsedSearchQuery {
     /// case-sensitive and IMAP ids contain `::`).
     #[serde(default)]
     pub id_filters: Vec<String>,
+    /// `domain:` — the sender's domain, exactly (the sender-domain smart filter).
+    #[serde(default)]
+    pub domain_filter: Option<String>,
+    /// `ext:` — an attachment file extension (the attachment smart filter).
+    #[serde(default)]
+    pub attachment_ext: Option<String>,
 }
 
 pub struct OllamaClient {
@@ -1376,6 +1382,16 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         has_filter = true;
     }
 
+    if let Some(value) = operator_value(&tokens, &["domain:", "dominio:"]) {
+        parsed.domain_filter = Some(value.trim_start_matches('@').to_lowercase());
+        has_filter = true;
+    }
+
+    if let Some(value) = operator_value(&tokens, &["ext:"]) {
+        parsed.attachment_ext = Some(value.trim_start_matches('.').to_lowercase());
+        has_filter = true;
+    }
+
     if parsed.from_filter.is_none() {
         if let Some(value) = phrase_filter(
             &tokens,
@@ -1882,6 +1898,15 @@ mod pattern_parser_tests {
         let parsed = parse_search_query_patterns("id:3b1c-77de::15").unwrap();
         assert_eq!(parsed.id_filters, vec!["3b1c-77de::15"]);
         assert_eq!(parsed.from_filter, None);
+    }
+
+    #[test]
+    fn reads_the_domain_and_attachment_type_operators() {
+        // The tokens the sender-domain and attachment smart filters write.
+        let parsed = parse_search_query_patterns("domain:Vendor.example ext:PDF tag:topic=billing").unwrap();
+        assert_eq!(parsed.domain_filter.as_deref(), Some("vendor.example"));
+        assert_eq!(parsed.attachment_ext.as_deref(), Some("pdf"));
+        assert!(parsed.keywords.is_empty(), "keywords: {:?}", parsed.keywords);
     }
 
     #[test]

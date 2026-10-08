@@ -110,7 +110,7 @@ fn db_search_merged(
     after_timestamp: Option<i64>,
     before_timestamp: Option<i64>,
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
-    mailbox: Option<&str>,
+    scope: crate::db::emails::search::SearchBoxScope<'_>,
     limit: i32,
 ) -> Result<Vec<(Email, i64)>> {
     let search = |account: &str| {
@@ -123,7 +123,7 @@ fn db_search_merged(
             after_timestamp,
             before_timestamp,
             tag_filters,
-            mailbox,
+            scope,
             limit,
         )
     };
@@ -531,7 +531,11 @@ async fn structured_search(
         parsed.after_timestamp,
         parsed.before_timestamp,
         tag_filters,
-        mailbox,
+        crate::db::emails::search::SearchBoxScope {
+            mailbox,
+            domain: parsed.domain_filter.as_deref(),
+            attachment_ext: parsed.attachment_ext.as_deref(),
+        },
         100,
     )?;
     emit_log(
@@ -1001,7 +1005,11 @@ fn keyword_search(
     limit: i32,
 ) -> Result<Vec<(Email, i64)>> {
     let t = std::time::Instant::now();
-    let direct = db_search_merged(db, targets, query, None, None, None, None, None, None, mailbox, limit)?;
+    let scope = crate::db::emails::search::SearchBoxScope {
+        mailbox,
+        ..Default::default()
+    };
+    let direct = db_search_merged(db, targets, query, None, None, None, None, None, None, scope, limit)?;
     emit_log(
         &None,
         "debug",
@@ -1033,7 +1041,7 @@ fn keyword_search(
         None,
         None,
         None,
-        mailbox,
+        scope,
         limit,
     )?;
     emit_log(
@@ -1604,6 +1612,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(search_ids(&got), ["sent"]);
+    }
+
+    #[tokio::test]
+    async fn domain_and_attachment_tokens_list_what_their_smart_filters_list() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "vendor_pdf", "acc1", "t1", "Invoice", 300);
+        seed_searchable_email(&db, "vendor_plain", "acc1", "t2", "Hello", 200);
+        seed_searchable_email(&db, "other_pdf", "acc1", "t3", "Report", 100);
+        db.connection()
+            .execute(
+                "UPDATE emails SET sender_email = 'billing@vendor.example', sender_domain = 'vendor.example'
+                 WHERE id IN ('vendor_pdf', 'vendor_plain')",
+                [],
+            )
+            .unwrap();
+        for (id, file) in [("vendor_pdf", "invoice.PDF"), ("other_pdf", "report.pdf")] {
+            db.connection()
+                .execute(
+                    "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                     VALUES (?1, ?1, 'acc1', ?2, 'application/pdf')",
+                    rusqlite::params![id, file],
+                )
+                .unwrap();
+        }
+
+        let by_domain = search_emails(&db, Some("acc1"), "domain:vendor.example", false, None, None, None)
+            .await
+            .unwrap();
+        let by_ext = search_emails(&db, Some("acc1"), "ext:pdf", false, None, None, None)
+            .await
+            .unwrap();
+        let both = search_emails(
+            &db,
+            Some("acc1"),
+            "domain:vendor.example ext:pdf",
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(search_ids(&by_domain), ["vendor_pdf", "vendor_plain"]);
+        assert_eq!(search_ids(&by_ext), ["vendor_pdf", "other_pdf"]);
+        assert_eq!(search_ids(&both), ["vendor_pdf"]);
     }
 
     // The `id:` operator (chat "show in list") returns exactly the cited

@@ -688,8 +688,8 @@ impl Database {
     /// the way a smart filter lists it — one row per thread (its newest
     /// matching email), threads sorted by their newest email of any kind (the
     /// returned timestamp), reaching every live mailbox and custom folder but
-    /// never Spam or Trash, never junk, and only `mailbox` when one is given
-    /// (the view the search runs in).
+    /// never Spam or Trash, never junk, narrowed by `scope` (the view the
+    /// search runs in and the search box's own operators).
     #[allow(clippy::too_many_arguments)]
     pub fn search_box_emails(
         &self,
@@ -701,7 +701,7 @@ impl Database {
         after_timestamp: Option<i64>,
         before_timestamp: Option<i64>,
         tag_filters: Option<&[TagQuery]>,
-        mailbox: Option<&str>,
+        scope: SearchBoxScope<'_>,
         limit: i32,
     ) -> Result<Vec<(Email, i64)>> {
         self.search_emails_inner(
@@ -720,7 +720,7 @@ impl Database {
             false,
             false,
             None,
-            SearchShape::SearchBox { mailbox },
+            SearchShape::SearchBox(scope),
         )
     }
 
@@ -806,7 +806,7 @@ impl Database {
         let conn = self.reader();
         let order_clause = match shape {
             SearchShape::Lookup => thread_order_clause("e", ascending),
-            SearchShape::SearchBox { .. } => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
+            SearchShape::SearchBox(_) => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
         };
         // Each thread is represented by one matching email: the latest one
         // newest-first, the earliest one oldest-first — otherwise a thread the
@@ -831,7 +831,7 @@ impl Database {
         // `primary` must not sail through the category filter.
         match shape {
             SearchShape::Lookup => cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string()),
-            SearchShape::SearchBox { .. } => cte_conditions.push(Self::filterable_mailbox("match_e")),
+            SearchShape::SearchBox(_) => cte_conditions.push(Self::filterable_mailbox("match_e")),
         }
         if exclude_spam {
             cte_conditions.push(Self::junk_condition("match_e"));
@@ -846,12 +846,28 @@ impl Database {
         }
         param_idx += 1;
 
-        // The view a search-box query runs in: only that mailbox's mail.
-        if let SearchShape::SearchBox { mailbox: Some(mailbox) } = shape {
-            let mailbox = mailbox.trim();
-            if !mailbox.is_empty() {
+        if let SearchShape::SearchBox(scope) = shape {
+            fn present(v: Option<&str>) -> Option<&str> {
+                v.map(str::trim).filter(|v| !v.is_empty())
+            }
+            // The view a search-box query runs in: only that mailbox's mail.
+            if let Some(mailbox) = present(scope.mailbox) {
                 cte_conditions.push(format!("match_e.mailbox = ?{param_idx}"));
                 params_vec.push(Box::new(mailbox.to_string()));
+                param_idx += 1;
+            }
+            // Same match as the sidebar's domain filter (`get_filtered_emails`).
+            if let Some(domain) = present(scope.domain) {
+                cte_conditions.push(format!("match_e.sender_domain = ?{param_idx}"));
+                params_vec.push(Box::new(domain.to_lowercase()));
+                param_idx += 1;
+            }
+            // Same match as the sidebar's attachment filter.
+            if let Some(ext) = present(scope.attachment_ext) {
+                cte_conditions.push(format!(
+                    "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = match_e.id AND LOWER(am.filename) LIKE ?{param_idx})"
+                ));
+                params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
                 param_idx += 1;
             }
         }
@@ -1228,7 +1244,19 @@ pub(crate) enum SearchShape<'a> {
     Lookup,
     /// The app's search box: listed like a smart filter (see
     /// [`Database::search_box_emails`]).
-    SearchBox { mailbox: Option<&'a str> },
+    SearchBox(SearchBoxScope<'a>),
+}
+
+/// What only the search box narrows by: the view it runs in and the
+/// operators the sender-domain and attachment smart filters write.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchBoxScope<'a> {
+    /// `inbox`, `sent`, `archive` or `folder:<path>`; `None` = every live mailbox.
+    pub mailbox: Option<&'a str>,
+    /// `domain:` — the sender's domain, exactly.
+    pub domain: Option<&'a str>,
+    /// `ext:` — an attachment file extension, without the dot.
+    pub attachment_ext: Option<&'a str>,
 }
 
 /// The column a shape sorts threads by: the matching email itself, or — in
@@ -1237,7 +1265,7 @@ pub(crate) enum SearchShape<'a> {
 fn sort_key_sql(shape: SearchShape<'_>) -> String {
     match shape {
         SearchShape::Lookup => "e.timestamp".to_string(),
-        SearchShape::SearchBox { .. } => format!(
+        SearchShape::SearchBox(_) => format!(
             "(SELECT e3.timestamp
               FROM emails e3 INDEXED BY idx_emails_thread_latest
               WHERE e3.account_id = e.account_id AND e3.thread_id = e.thread_id

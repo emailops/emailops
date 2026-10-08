@@ -266,6 +266,8 @@ Searches can be narrowed with operators, on their own or next to free text:
 | `before:2026-09-01` / `after:2026-09-01` | received date |
 | `id:<email id>` | one specific email |
 | `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
+| `domain:example.com` | the sender's domain |
+| `ext:pdf` | an attachment of that file type |
 
 ## Junk and bulk mail {#junk-and-bulk-mail}
 

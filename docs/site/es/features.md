@@ -282,6 +282,8 @@ Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
 | `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
 | `id:<id del correo>` | un correo concreto |
 | `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
+| `domain:example.com` | el dominio del remitente |
+| `ext:pdf` | un adjunto de ese tipo de archivo |
 
 ## Correo basura y masivo {#junk-and-bulk-mail}
 

@@ -1277,6 +1277,8 @@ mod tests {
             before_timestamp: None,
             tag_filters: Vec::new(),
             id_filters: Vec::new(),
+            domain_filter: None,
+            attachment_ext: None,
         }
     }
 

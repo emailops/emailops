@@ -292,6 +292,8 @@ Les recherches se précisent avec des opérateurs, seuls ou à côté de texte l
 | `before:2026-09-01` / `after:2026-09-01` | date de réception |
 | `id:<id du courriel>` | un courriel précis |
 | `tag:newsletter` / `tag:intent=request` | une étiquette du classifieur, éventuellement dans une facette |
+| `domain:example.com` | le domaine de l'expéditeur |
+| `ext:pdf` | une pièce jointe de ce type de fichier |
 
 ## Indésirables et courrier de masse {#junk-and-bulk-mail}
 

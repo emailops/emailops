@@ -287,6 +287,8 @@ Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
 | `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
 | `id:<E-Mail-ID>` | eine bestimmte E-Mail |
 | `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
+| `domain:example.com` | die Domain des Absenders |
+| `ext:pdf` | ein Anhang dieses Dateityps |
 
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 
