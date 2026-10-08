@@ -538,7 +538,7 @@ checks = [
 [reading-pane-forward]
 checks = [
   { app = true },
-  { manual = 'The forwarded draft itself (no recipients, the Forwarded message header, attachments up to 20 MB, sent as a new message) is not exercised.' },
+  { manual = 'The forwarded draft itself (no recipients, every message of the thread under its own Forwarded message header, attachments up to 20 MB, sent as a new message) is not exercised; the quote shape is covered by src/components/EmailView/forward.test.ts.' },
 ]
 
 [feat-smart-filters-1]

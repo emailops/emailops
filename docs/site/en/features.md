@@ -43,8 +43,10 @@ and drag messages between folders from inside the app.
 
 <!-- claim:reading-pane-forward -->
 **Forward** sits next to **Reply** and **Reply all** in the reading pane. The draft opens with
-no recipients and carries the original message under a *Forwarded message* header with its
-sender, date and recipients, together with the original attachments (up to 20 MB in total).
+no recipients and carries the whole conversation, oldest message first: each message under
+its own *Forwarded message* header with its sender, date and recipients, without the history
+an earlier message already shows, together with the original attachments (up to 20 MB in
+total).
 It goes out as a new message, so it does not join the recipient's existing conversations.
 
 ## Organizing conversations {#organizing-conversations}

@@ -46,9 +46,10 @@ l'application.
 
 <!-- claim:reading-pane-forward -->
 **Transférer** se trouve à côté de **Répondre** et **Répondre à tous** dans le volet de
-lecture. Le brouillon s'ouvre sans destinataire et contient le message d'origine sous un
-en-tête *Message transféré* avec son expéditeur, sa date et ses destinataires, ainsi que les
-pièces jointes d'origine (jusqu'à 20 Mo au total). Il part comme un nouveau message et ne
+lecture. Le brouillon s'ouvre sans destinataire et contient toute la conversation, du message
+le plus ancien au plus récent : chaque message sous son propre en-tête *Message transféré*
+avec son expéditeur, sa date et ses destinataires, sans l'historique qu'un message précédent
+montre déjà, ainsi que les pièces jointes d'origine (jusqu'à 20 Mo au total). Il part comme un nouveau message et ne
 rejoint donc pas les conversations existantes du destinataire.
 
 ## Organiser les conversations {#organizing-conversations}

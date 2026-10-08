@@ -167,6 +167,17 @@ pub async fn get_thread(
     services::emails::get_thread(&state.db, &account_id, &thread_id)
 }
 
+/// Every message of a thread with what it adds to it, oldest first — the
+/// body of a forward of the whole conversation.
+#[tauri::command]
+pub async fn get_thread_new_content(
+    state: State<'_, AppState>,
+    account_id: String,
+    thread_id: String,
+) -> Result<Vec<services::thread_reader::MessageText>, AppError> {
+    services::thread_reader::thread_new_content(&state.db, &account_id, &thread_id)
+}
+
 #[tauri::command]
 pub async fn get_email_body(
     state: State<'_, AppState>,

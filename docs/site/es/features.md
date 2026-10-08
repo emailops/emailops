@@ -44,9 +44,10 @@ renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 
 <!-- claim:reading-pane-forward -->
 **Reenviar** está junto a **Responder** y **Responder a todos** en el panel de lectura. El
-borrador se abre sin destinatarios y lleva el mensaje original bajo una cabecera *Mensaje
-reenviado* con su remitente, fecha y destinatarios, junto con los adjuntos originales (hasta
-20 MB en total). Sale como un mensaje nuevo, así que no se une a las conversaciones que el
+borrador se abre sin destinatarios y lleva la conversación entera, del mensaje más antiguo al
+más reciente: cada mensaje bajo su propia cabecera *Mensaje reenviado* con su remitente, fecha
+y destinatarios, sin el historial que ya muestra un mensaje anterior, junto con los adjuntos
+originales (hasta 20 MB en total). Sale como un mensaje nuevo, así que no se une a las conversaciones que el
 destinatario ya tiene.
 
 ## Organizar conversaciones {#organizing-conversations}
