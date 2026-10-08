@@ -52,6 +52,15 @@ export function SmartFilters({
   const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(true);
   const [menu, setMenu] = useState<{ filter: ActiveFilter; x: number; y: number } | null>(null);
+  // Tag groups the user expanded past the first FILTER_LIMIT values.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (type: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
 
   const header = (
     <div className="flex items-center justify-between mb-2">
@@ -212,7 +221,24 @@ export function SmartFilters({
               <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-3 mb-1">
                 {labelForType(type)}
               </h3>
-              <ul className="space-y-0.5">{tagGroups[type].slice(0, FILTER_LIMIT).map(renderFilter)}</ul>
+              <ul className="space-y-0.5">
+                {(expandedGroups.has(type) ? tagGroups[type] : tagGroups[type].slice(0, FILTER_LIMIT)).map(
+                  renderFilter,
+                )}
+              </ul>
+              {/* Busy accounts carry more values than fit; the ranking puts
+                  promotions and notifications last, so they fall past the cut. */}
+              {tagGroups[type].length > FILTER_LIMIT && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(type)}
+                  className="px-3 mt-0.5 text-xs text-gray-500 hover:text-gray-300"
+                >
+                  {expandedGroups.has(type)
+                    ? t('sidebar:smartFilters.showLess')
+                    : t('sidebar:smartFilters.showMore', { count: tagGroups[type].length - FILTER_LIMIT })}
+                </button>
+              )}
             </div>
           ))}
         </>

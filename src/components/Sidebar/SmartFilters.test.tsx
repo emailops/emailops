@@ -94,3 +94,44 @@ describe('SmartFilters', () => {
     expect(onAppendFilter).not.toHaveBeenCalled();
   });
 });
+
+describe('SmartFilters long tag groups', () => {
+  it('lists the first ten values of a group and shows the rest on request', () => {
+    const topics: SmartFilter[] = Array.from({ length: 12 }, (_, i) => ({
+      type: 'topic',
+      value: `topic${i}`,
+      count: 12 - i,
+    }));
+    act(() => {
+      root.render(
+        <SmartFilters
+          filters={topics}
+          activeFilter={null}
+          isLoading={false}
+          onToggleFilter={onToggleFilter}
+          onAppendFilter={onAppendFilter}
+          onClearFilter={() => {}}
+          onPinFilter={() => {}}
+          onUnpinFilter={() => {}}
+          onRemoveFilter={() => {}}
+          onRefresh={() => {}}
+          isPinned={(_: ActiveFilter) => false}
+        />,
+      );
+    });
+    const shown = () =>
+      Array.from(container.querySelectorAll('li > button span.truncate')).map((s) => s.textContent ?? '');
+    const button = (label: string) =>
+      Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === label);
+
+    expect(shown()).toHaveLength(10);
+    expect(shown()).not.toContain('topic11');
+
+    act(() => button('Show 2 more')?.click());
+    expect(shown()).toHaveLength(12);
+    expect(shown()).toContain('topic11');
+
+    act(() => button('Show less')?.click());
+    expect(shown()).toHaveLength(10);
+  });
+});

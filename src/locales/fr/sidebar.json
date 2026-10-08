@@ -78,7 +78,9 @@
   "smartFilters": {
     "title": "Smart Filters",
     "empty": "Cliquez sur actualiser pour calculer les filtres",
-    "companies": "Entreprises"
+    "companies": "Entreprises",
+    "showMore": "Afficher {{count}} de plus",
+    "showLess": "Afficher moins"
   },
   "allAccounts": "Tous les comptes",
   "allAccountsFooter": "Affichage de tous les comptes",
