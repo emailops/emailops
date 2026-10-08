@@ -154,6 +154,14 @@ praktisch, um einen Kunden, ein Projekt oder eine Newsletter-Flut am Stück abzu
 aktivierter KI speisen dieselben Kennzeichnungen auch das [Tag-Board](../ai-features/#tag-board),
 das sie als Raster aus Blöcken darstellt.
 
+<!-- claim:feat-smart-filters-2 -->
+Ein Klick auf einen Filter schreibt ihn als sichtbare, bearbeitbare Abfrage ins Suchfeld —
+`tag:priority=urgent`, `from:`, `domain:`, `ext:` — ein zweiter Klick entfernt sie wieder. Mit
+Rechtsklick und **Zur Suche hinzufügen** kombinieren Sie ihn mit der aktuellen Suche. Ein Filter
+wirkt in der Ansicht, in der Sie sich befinden: in Gesendet oder einem Ordner listet er nur deren
+E-Mails, und die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
+dass eine Suche aktiv ist, und bietet an, sie zu löschen.
+
 ## Kalender {#calendar}
 
 <!-- claim:feat-calendar-1 -->
@@ -287,6 +295,8 @@ Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
 | `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
 | `id:<E-Mail-ID>` | eine bestimmte E-Mail |
 | `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
+| `domain:example.com` | die Domain des Absenders |
+| `ext:pdf` | ein Anhang dieses Dateityps |
 
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 

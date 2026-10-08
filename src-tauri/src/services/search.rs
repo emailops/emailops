@@ -36,6 +36,10 @@ pub struct EmailWithScore {
     pub relevance_score: Option<f32>,
     /// Human-readable explanation of why this result matched
     pub match_reason: Option<String>,
+    /// Timestamp of the newest email in this row's thread: the search box
+    /// sorts and dates threads by their latest activity, matching or not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_latest_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,57 +96,53 @@ pub(crate) fn parse_tag_token(raw: &str) -> Option<crate::db::emails::search::Ta
     }
 }
 
-/// Run `db.search_emails` once per target account and merge the results
-/// newest-first, up to `limit` per account. Pattern parsing and every other
-/// search decision happens once in the caller — only the DB call fans out.
+/// Run `db.search_box_emails` once per target account and merge the results
+/// by thread activity, up to `limit` per account. Pattern parsing and every
+/// other search decision happens once in the caller — only the DB call fans out.
 #[allow(clippy::too_many_arguments)]
 fn db_search_merged(
     db: &Arc<Database>,
     targets: &[String],
     query: &str,
-    categories: Option<&[String]>,
     from_filter: Option<&str>,
     to_filter: Option<&str>,
     subject_filter: Option<&str>,
     after_timestamp: Option<i64>,
     before_timestamp: Option<i64>,
     tag_filters: Option<&[crate::db::emails::search::TagQuery]>,
+    scope: crate::db::emails::search::SearchBoxScope<'_>,
     limit: i32,
-) -> Result<Vec<Email>> {
-    if let [single] = targets {
-        // Single account: preserve the DB's exact ordering untouched.
-        return db.search_emails(
-            single,
-            query,
-            categories,
-            from_filter,
-            to_filter,
-            subject_filter,
-            after_timestamp,
-            before_timestamp,
-            tag_filters,
-            limit,
-        );
-    }
-    let mut merged: Vec<Email> = Vec::new();
-    for account in targets {
-        merged.extend(db.search_emails(
+) -> Result<Vec<(Email, i64)>> {
+    let search = |account: &str| {
+        db.search_box_emails(
             account,
             query,
-            categories,
             from_filter,
             to_filter,
             subject_filter,
             after_timestamp,
             before_timestamp,
             tag_filters,
+            scope,
             limit,
-        )?);
+        )
+    };
+    if let [single] = targets {
+        // Single account: preserve the DB's exact ordering untouched.
+        return search(single);
     }
-    // Each per-account result is newest-first; merge to a single newest-first
-    // list. No global truncation: `limit` applies per account, otherwise the
-    // busiest account fills the whole window and the others vanish.
-    merged.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+    let mut merged: Vec<(Email, i64)> = Vec::new();
+    for account in targets {
+        merged.extend(search(account)?);
+    }
+    // Each per-account result is sorted by thread activity; merge to one
+    // list in that order. No global truncation: `limit` applies per account,
+    // otherwise the busiest account fills the whole window and the others vanish.
+    merged.sort_by(|(a, a_ts), (b, b_ts)| {
+        b_ts.cmp(a_ts)
+            .then_with(|| b.timestamp.cmp(&a.timestamp))
+            .then_with(|| b.id.cmp(&a.id))
+    });
     Ok(merged)
 }
 
@@ -157,6 +157,9 @@ pub async fn search_emails(
     query: &str,
     use_ai: bool,
     categories: Option<&[String]>,
+    // The view the search runs in (`inbox`, `sent`, `archive`,
+    // `folder:<path>`): only that mailbox's mail. `None` = every live mailbox.
+    mailbox: Option<&str>,
     app: Option<AppHandle>,
 ) -> Result<SearchResult> {
     let search_start = std::time::Instant::now();
@@ -343,7 +346,8 @@ pub async fn search_emails(
                     ),
                 );
                 let t_kw = std::time::Instant::now();
-                let results = emails_to_scored(keyword_search(db, &target_accounts, query, categories, 100)?, None);
+                let results =
+                    emails_to_scored_by_activity(keyword_search(db, &target_accounts, query, mailbox, 100)?, None);
                 emit_log(
                     &app,
                     "debug",
@@ -366,6 +370,7 @@ pub async fn search_emails(
             parsed,
             use_ai && ai_available,
             categories,
+            mailbox,
             &app,
         )
         .await?;
@@ -383,8 +388,8 @@ pub async fn search_emails(
     } else {
         // Simple keyword search
         let match_reason = format!("Contains \"{}\"", query);
-        let results = emails_to_scored(
-            keyword_search(db, &target_accounts, query, categories, 100)?,
+        let results = emails_to_scored_by_activity(
+            keyword_search(db, &target_accounts, query, mailbox, 100)?,
             Some(&match_reason),
         );
         emit_log(
@@ -431,6 +436,7 @@ async fn structured_search(
     parsed: &ParsedSearchQuery,
     ai_enabled: bool,
     categories: Option<&[String]>,
+    mailbox: Option<&str>,
     app: &Option<AppHandle>,
 ) -> Result<Vec<EmailWithScore>> {
     let residual_query = build_effective_query(parsed);
@@ -519,13 +525,17 @@ async fn structured_search(
         db,
         target_accounts,
         &residual_query,
-        categories,
         parsed.from_filter.as_deref(),
         parsed.to_filter.as_deref(),
         parsed.subject_filter.as_deref(),
         parsed.after_timestamp,
         parsed.before_timestamp,
         tag_filters,
+        crate::db::emails::search::SearchBoxScope {
+            mailbox,
+            domain: parsed.domain_filter.as_deref(),
+            attachment_ext: parsed.attachment_ext.as_deref(),
+        },
         100,
     )?;
     emit_log(
@@ -541,8 +551,8 @@ async fn structured_search(
 
     if results.is_empty() && !residual_query.is_empty() {
         let t_fallback = std::time::Instant::now();
-        results = keyword_search(db, target_accounts, &residual_query, categories, 100)?;
-        results.retain(|email| matches_parsed_filters(email, parsed));
+        results = keyword_search(db, target_accounts, &residual_query, mailbox, 100)?;
+        results.retain(|(email, _)| matches_parsed_filters(email, parsed));
         emit_log(
             app,
             "debug",
@@ -555,7 +565,7 @@ async fn structured_search(
         );
     }
 
-    Ok(emails_to_scored(results, Some(&filter_reason)))
+    Ok(emails_to_scored_by_activity(results, Some(&filter_reason)))
 }
 
 /// Hybrid search configuration
@@ -778,6 +788,7 @@ async fn semantic_search(
                 email,
                 relevance_score: Some(adjusted_score),
                 match_reason: Some(match_reason),
+                thread_latest_at: None,
             })
         })
         .collect();
@@ -912,6 +923,20 @@ fn emails_to_scored(emails: Vec<Email>, match_reason: Option<&str>) -> Vec<Email
             email,
             relevance_score: None,
             match_reason: match_reason.map(|s| s.to_string()),
+            thread_latest_at: None,
+        })
+        .collect()
+}
+
+/// [`emails_to_scored`] for rows listed by thread activity: each keeps the
+/// timestamp of its thread's newest email.
+fn emails_to_scored_by_activity(rows: Vec<(Email, i64)>, match_reason: Option<&str>) -> Vec<EmailWithScore> {
+    rows.into_iter()
+        .map(|(email, thread_ts)| EmailWithScore {
+            email,
+            relevance_score: None,
+            match_reason: match_reason.map(|s| s.to_string()),
+            thread_latest_at: Some(thread_ts),
         })
         .collect()
 }
@@ -976,13 +1001,15 @@ fn keyword_search(
     db: &Arc<Database>,
     targets: &[String],
     query: &str,
-    categories: Option<&[String]>,
+    mailbox: Option<&str>,
     limit: i32,
-) -> Result<Vec<Email>> {
+) -> Result<Vec<(Email, i64)>> {
     let t = std::time::Instant::now();
-    let direct = db_search_merged(
-        db, targets, query, categories, None, None, None, None, None, None, limit,
-    )?;
+    let scope = crate::db::emails::search::SearchBoxScope {
+        mailbox,
+        ..Default::default()
+    };
+    let direct = db_search_merged(db, targets, query, None, None, None, None, None, None, scope, limit)?;
     emit_log(
         &None,
         "debug",
@@ -1008,13 +1035,13 @@ fn keyword_search(
         db,
         targets,
         &normalized,
-        categories,
         None,
         None,
         None,
         None,
         None,
         None,
+        scope,
         limit,
     )?;
     emit_log(
@@ -1359,7 +1386,9 @@ mod tests {
         seed_searchable_email(&db, "e3", "acc3", "t3", "Invoice March", 300);
         seed_searchable_email(&db, "e4", "acc1", "t4", "Lunch plans", 400);
 
-        let result = search_emails(&db, None, "invoice", false, None, None).await.unwrap();
+        let result = search_emails(&db, None, "invoice", false, None, None, None)
+            .await
+            .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
 
         assert_eq!(
@@ -1388,7 +1417,9 @@ mod tests {
             );
         }
 
-        let result = search_emails(&db, None, "invoice", false, None, None).await.unwrap();
+        let result = search_emails(&db, None, "invoice", false, None, None, None)
+            .await
+            .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
 
         assert!(
@@ -1407,7 +1438,7 @@ mod tests {
         seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
         seed_searchable_email(&db, "e2", "acc2", "t2", "Invoice February", 200);
 
-        let result = search_emails(&db, Some("acc1"), "invoice", false, None, None)
+        let result = search_emails(&db, Some("acc1"), "invoice", false, None, None, None)
             .await
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
@@ -1459,18 +1490,175 @@ mod tests {
             }
         }
 
-        let typed = search_emails(&db, Some("acc1"), "tag:intent=billing", false, None, None)
+        let typed = search_emails(&db, Some("acc1"), "tag:intent=billing", false, None, None, None)
             .await
             .unwrap();
         let ids: Vec<&str> = typed.emails.iter().map(|e| e.email.id.as_str()).collect();
         assert_eq!(ids, vec!["classified"], "a company named billing is not billing intent");
 
-        let untyped = search_emails(&db, Some("acc1"), "tag:billing", false, None, None)
+        let untyped = search_emails(&db, Some("acc1"), "tag:billing", false, None, None, None)
             .await
             .unwrap();
         let mut ids: Vec<&str> = untyped.emails.iter().map(|e| e.email.id.as_str()).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec!["classified", "vendor"], "a bare tag: still spans every type");
+    }
+
+    // ── The search box lists what the smart filter lists ─────────────────
+
+    fn tag(db: &Database, id: &str, tag_type: &str, value: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO email_tags (email_id, tag_type, tag_value, confidence, created_at) VALUES (?1, ?2, ?3, 1.0, 0)",
+                rusqlite::params![id, tag_type, value],
+            )
+            .unwrap();
+    }
+
+    fn set_mailbox(db: &Database, id: &str, mailbox: &str) {
+        db.connection()
+            .execute(
+                "UPDATE emails SET mailbox = ?2 WHERE id = ?1",
+                rusqlite::params![id, mailbox],
+            )
+            .unwrap();
+    }
+
+    fn search_ids(result: &SearchResult) -> Vec<&str> {
+        result.emails.iter().map(|e| e.email.id.as_str()).collect()
+    }
+
+    #[tokio::test]
+    async fn a_tag_token_lists_what_its_smart_filter_lists() {
+        // An old urgent thread with an untagged reply today, a newer urgent
+        // thread, and an urgent email in junk: the filter and its token return
+        // the same rows, in the same order, dated by each thread's activity.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "old_urgent", "acc1", "t1", "Outage", 100);
+        seed_searchable_email(&db, "reply_today", "acc1", "t1", "Re: Outage", 900);
+        seed_searchable_email(&db, "mid_urgent", "acc1", "t2", "Deadline", 500);
+        seed_searchable_email(&db, "junk_urgent", "acc1", "t3", "Act now", 950);
+        for id in ["old_urgent", "mid_urgent", "junk_urgent"] {
+            tag(&db, id, "priority", "urgent");
+        }
+        db.connection()
+            .execute(
+                "INSERT INTO email_junk (email_id, account_id, spam_score, phish_score, gray_score, band,
+                 primary_kind, reasons_json, method, model_version, scored_at, user_override)
+                 VALUES ('junk_urgent', 'acc1', 0.9, 0.0, 0.0, 'junk', 'spam', '[]', 'deterministic', 1, 0, NULL)",
+                [],
+            )
+            .unwrap();
+
+        let filter = crate::services::filters::get_filtered_emails(
+            &db,
+            Some("acc1"),
+            None,
+            None,
+            Some("priority"),
+            Some("urgent"),
+            None,
+            &crate::models::EmailWindow::default(),
+            50,
+            0,
+        )
+        .unwrap();
+        let searched = search_emails(&db, Some("acc1"), "tag:priority=urgent", false, None, None, None)
+            .await
+            .unwrap();
+
+        let filter_ids: Vec<&str> = filter.emails.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(filter_ids, ["old_urgent", "mid_urgent"]);
+        assert_eq!(search_ids(&searched), filter_ids);
+        let searched_latest: std::collections::HashMap<String, i64> = searched
+            .emails
+            .iter()
+            .map(|e| (e.email.id.clone(), e.thread_latest_at.unwrap()))
+            .collect();
+        assert_eq!(searched_latest, filter.thread_latest_at);
+    }
+
+    #[tokio::test]
+    async fn the_search_box_reaches_custom_folders_and_every_category_but_not_spam() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "folder", "acc1", "t1", "Quarterly report", 300);
+        seed_searchable_email(&db, "promo", "acc1", "t2", "Quarterly report deal", 200);
+        seed_searchable_email(&db, "spam", "acc1", "t3", "Quarterly report spam", 100);
+        set_mailbox(&db, "folder", "folder:Clients");
+        set_mailbox(&db, "spam", "spam");
+        db.connection()
+            .execute("UPDATE emails SET category = 'promotions' WHERE id = 'promo'", [])
+            .unwrap();
+
+        let got = search_emails(&db, Some("acc1"), "subject:quarterly", false, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(search_ids(&got), ["folder", "promo"]);
+    }
+
+    #[tokio::test]
+    async fn a_search_inside_a_view_keeps_only_that_views_mail() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "received", "acc1", "t1", "Invoice", 200);
+        seed_searchable_email(&db, "sent", "acc1", "t2", "Invoice", 100);
+        set_mailbox(&db, "sent", "sent");
+
+        let got = search_emails(&db, Some("acc1"), "subject:invoice", false, None, Some("sent"), None)
+            .await
+            .unwrap();
+
+        assert_eq!(search_ids(&got), ["sent"]);
+    }
+
+    #[tokio::test]
+    async fn domain_and_attachment_tokens_list_what_their_smart_filters_list() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@ex.com", true);
+        seed_searchable_email(&db, "vendor_pdf", "acc1", "t1", "Invoice", 300);
+        seed_searchable_email(&db, "vendor_plain", "acc1", "t2", "Hello", 200);
+        seed_searchable_email(&db, "other_pdf", "acc1", "t3", "Report", 100);
+        db.connection()
+            .execute(
+                "UPDATE emails SET sender_email = 'billing@vendor.example', sender_domain = 'vendor.example'
+                 WHERE id IN ('vendor_pdf', 'vendor_plain')",
+                [],
+            )
+            .unwrap();
+        for (id, file) in [("vendor_pdf", "invoice.PDF"), ("other_pdf", "report.pdf")] {
+            db.connection()
+                .execute(
+                    "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                     VALUES (?1, ?1, 'acc1', ?2, 'application/pdf')",
+                    rusqlite::params![id, file],
+                )
+                .unwrap();
+        }
+
+        let by_domain = search_emails(&db, Some("acc1"), "domain:vendor.example", false, None, None, None)
+            .await
+            .unwrap();
+        let by_ext = search_emails(&db, Some("acc1"), "ext:pdf", false, None, None, None)
+            .await
+            .unwrap();
+        let both = search_emails(
+            &db,
+            Some("acc1"),
+            "domain:vendor.example ext:pdf",
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(search_ids(&by_domain), ["vendor_pdf", "vendor_plain"]);
+        assert_eq!(search_ids(&by_ext), ["vendor_pdf", "other_pdf"]);
+        assert_eq!(search_ids(&both), ["vendor_pdf"]);
     }
 
     // The `id:` operator (chat "show in list") returns exactly the cited
@@ -1483,7 +1671,7 @@ mod tests {
         seed_searchable_email(&db, "e2", "acc1", "t1", "Re: Invoice January", 200);
         seed_searchable_email(&db, "e3", "acc1", "t2", "Lunch plans", 300);
 
-        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2", false, None, None)
+        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2", false, None, None, None)
             .await
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
@@ -1499,7 +1687,7 @@ mod tests {
         seed_searchable_email(&db, "acc2::7", "acc2", "t2", "Invoice February", 200);
         seed_searchable_email(&db, "acc2::8", "acc2", "t3", "Invoice March", 300);
 
-        let result = search_emails(&db, None, "id:e1 id:acc2::7", false, None, None)
+        let result = search_emails(&db, None, "id:e1 id:acc2::7", false, None, None, None)
             .await
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
@@ -1513,9 +1701,17 @@ mod tests {
         seed_searchable_email(&db, "e1", "acc1", "t1", "Invoice January", 100);
         seed_searchable_email(&db, "e2", "acc1", "t2", "Lunch plans", 200);
 
-        let result = search_emails(&db, Some("acc1"), "id:e1 id:e2 subject:invoice", false, None, None)
-            .await
-            .unwrap();
+        let result = search_emails(
+            &db,
+            Some("acc1"),
+            "id:e1 id:e2 subject:invoice",
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.email.id.as_str()).collect();
         assert_eq!(ids, vec!["e1"]);
     }
@@ -1579,12 +1775,12 @@ mod tests {
         eprintln!("=== Service-level search: {:?} ===\n", query);
 
         // Warm up
-        let _ = search_emails(&db, Some(&account_id), &query, false, None, None).await;
+        let _ = search_emails(&db, Some(&account_id), &query, false, None, None, None).await;
 
         // Timed runs
         for run in 1..=3 {
             let t = std::time::Instant::now();
-            let result = search_emails(&db, Some(&account_id), &query, false, None, None)
+            let result = search_emails(&db, Some(&account_id), &query, false, None, None, None)
                 .await
                 .unwrap();
             eprintln!(
@@ -1668,7 +1864,7 @@ mod tests {
 
         barrier.wait(); // wait for blocker to hold the reader
         let t = std::time::Instant::now();
-        let result = search_emails(&db2, Some(&account_id2), &query2, false, None, None)
+        let result = search_emails(&db2, Some(&account_id2), &query2, false, None, None, None)
             .await
             .unwrap();
         let contention_ms = t.elapsed().as_secs_f64() * 1000.0;
@@ -1702,7 +1898,7 @@ mod tests {
 
         for run in 1..=3 {
             let t = std::time::Instant::now();
-            let result = search_emails(&db, Some(&account_id), query, false, None, None)
+            let result = search_emails(&db, Some(&account_id), query, false, None, None, None)
                 .await
                 .unwrap();
             eprintln!(
@@ -1852,7 +2048,7 @@ mod tests {
         // ── Run 1: full service-level search (what the Tauri command does) ──
         eprintln!("\n━━━ End-to-end service search (with timing breakdown) ━━━");
         let t_total = std::time::Instant::now();
-        let result = search_emails(&db, Some(&account_id), &query, use_ai, None, None)
+        let result = search_emails(&db, Some(&account_id), &query, use_ai, None, None, None)
             .await
             .unwrap();
         let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
@@ -2260,6 +2456,32 @@ mod tests {
         eprintln!("\n══════════════════════════════════════════════════════════════\n");
     }
 
+    /// Benchmark the search box on a filter-only query (what clicking a smart
+    /// filter types) on the production DB.
+    ///
+    /// Run with: cargo test -p emailops bench_search_box_tags -- --nocapture --ignored
+    #[tokio::test]
+    #[ignore]
+    async fn bench_search_box_tags() {
+        let (db, account_id) = match open_prod_db() {
+            Some(v) => v,
+            None => return,
+        };
+        for (label, account) in [("account", Some(account_id.as_str())), ("all", None)] {
+            for query in ["tag:priority=urgent", "tag:priority=normal", "tag:priority=low"] {
+                let t = std::time::Instant::now();
+                let result = search_emails(&db, account, query, false, None, None, None)
+                    .await
+                    .unwrap();
+                eprintln!(
+                    "[{:.0}ms] search box {query:?} (scope={label}): {} emails",
+                    t.elapsed().as_secs_f64() * 1000.0,
+                    result.emails.len(),
+                );
+            }
+        }
+    }
+
     /// Benchmark smart filter operations on the production DB.
     ///
     /// Run with: cargo test -p emailops bench_smart_filters -- --nocapture --ignored
@@ -2372,6 +2594,35 @@ mod tests {
             result.emails.len(),
             result.total_count,
         );
+
+        // 7. get_filtered_emails — broad tags, one account and every account.
+        // The sidebar's widest filters: every classified email carries a priority.
+        for (label, scope) in [
+            ("account", crate::db::AccountScope::Account(&account_id)),
+            ("all", crate::db::AccountScope::AllEnabled),
+        ] {
+            for value in ["urgent", "normal", "low"] {
+                let t = std::time::Instant::now();
+                let result = db
+                    .get_filtered_emails(
+                        scope,
+                        None,
+                        None,
+                        Some("priority"),
+                        Some(value),
+                        None,
+                        &crate::models::EmailWindow::default(),
+                        50,
+                        0,
+                    )
+                    .unwrap();
+                eprintln!(
+                    "[{:.0}ms] get_filtered_emails(tag=priority:{value}, scope={label}): {} emails",
+                    t.elapsed().as_secs_f64() * 1000.0,
+                    result.emails.len(),
+                );
+            }
+        }
 
         eprintln!("\n=== Done ===\n");
     }

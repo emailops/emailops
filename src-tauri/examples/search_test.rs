@@ -92,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSearching: \"{}\"", args.query);
     println!("{}", "-".repeat(60));
 
-    let result = search::search_emails(&db, Some(&account_id), &args.query, true, None, None).await?;
+    let result = search::search_emails(&db, Some(&account_id), &args.query, true, None, None, None).await?;
 
     println!("Method: {:?}", result.search_method);
     println!("Results: {}\n", result.emails.len());

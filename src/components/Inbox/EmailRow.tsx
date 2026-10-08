@@ -70,7 +70,8 @@ export function EmailRow({
   onCheck,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox']);
-  const receivedTime = formatReceptionTime(email.timestamp);
+  // Search and smart-filter rows are dated by their thread's latest activity.
+  const receivedTime = formatReceptionTime(email.threadLatestAt ?? email.timestamp);
   // Hide classification chips when the master AI switch is off — the tags
   // remain in the DB (so toggling AI back on is lossless), but the user has
   // explicitly opted out of seeing AI-derived metadata in the inbox.

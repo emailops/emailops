@@ -149,6 +149,14 @@ despachar un cliente, un proyecto o una avalancha de newsletters de una vez. Con
 activada, esas mismas etiquetas alimentan el [Tablero de etiquetas](../ai-features/#tag-board),
 que las muestra como una cuadrícula de bloques.
 
+<!-- claim:feat-smart-filters-2 -->
+Al hacer clic en un filtro, se escribe en el cuadro de búsqueda como una consulta que puedes
+ver y editar —`tag:priority=urgent`, `from:`, `domain:`, `ext:`— y un segundo clic la quita.
+Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro funciona
+dentro de la vista en la que estás, así que en Enviados o en una carpeta lista solo su correo,
+y la búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
+una búsqueda activa y ofrece quitarla.
+
 ## Calendario {#calendar}
 
 <!-- claim:feat-calendar-1 -->
@@ -282,6 +290,8 @@ Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
 | `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
 | `id:<id del correo>` | un correo concreto |
 | `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
+| `domain:example.com` | el dominio del remitente |
+| `ext:pdf` | un adjunto de ese tipo de archivo |
 
 ## Correo basura y masivo {#junk-and-bulk-mail}
 

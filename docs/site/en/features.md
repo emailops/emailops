@@ -139,6 +139,14 @@ Narrow the list by domain, sender, or any classification tag — useful for tria
 client, one project or one newsletter flood at a time. With AI on, the same tags also
 feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid of blocks.
 
+<!-- claim:feat-smart-filters-2 -->
+Clicking a filter writes it into the search box as a query you can see and edit —
+`tag:priority=urgent`, `from:`, `domain:`, `ext:` — and clicking it again clears it.
+Right-click a filter and choose **Add to search** to combine it with what is already there.
+A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail,
+and the search stays set when you switch accounts; when it finds nothing, the list says a
+search is active and offers to clear it.
+
 ## Calendar {#calendar}
 
 <!-- claim:feat-calendar-1 -->
@@ -266,6 +274,8 @@ Searches can be narrowed with operators, on their own or next to free text:
 | `before:2026-09-01` / `after:2026-09-01` | received date |
 | `id:<email id>` | one specific email |
 | `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
+| `domain:example.com` | the sender's domain |
+| `ext:pdf` | an attachment of that file type |
 
 ## Junk and bulk mail {#junk-and-bulk-mail}
 

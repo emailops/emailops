@@ -72,12 +72,15 @@
     "clear": "Aktiven Filter löschen",
     "refresh": "Smart-Filter aktualisieren",
     "recalculate": "Filter neu berechnen",
+    "addToSearch": "Zur Suche hinzufügen",
     "hide": "Diesen Filter ausblenden"
   },
   "smartFilters": {
     "title": "Smart Filters",
     "empty": "Klicke auf Aktualisieren, um die Filter zu berechnen",
-    "companies": "Unternehmen"
+    "companies": "Unternehmen",
+    "showMore": "{{count}} weitere anzeigen",
+    "showLess": "Weniger anzeigen"
   },
   "allAccounts": "Alle Konten",
   "allAccountsFooter": "Alle Konten werden angezeigt",

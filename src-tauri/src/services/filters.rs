@@ -1812,6 +1812,148 @@ mod tests {
         assert_eq!(got.emails.len(), 2);
     }
 
+    // ── get_filtered_emails: the smart-filter list ──────────────────────────
+
+    fn filter_by_tag(db: &Arc<Database>, tag_type: &str, value: &str, window: &EmailWindow) -> FilteredEmailsResult {
+        get_filtered_emails(
+            db,
+            Some("acc1"),
+            None,
+            None,
+            Some(tag_type),
+            Some(value),
+            None,
+            window,
+            50,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn ids(result: &FilteredEmailsResult) -> Vec<&str> {
+        result.emails.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_thread_shows_its_newest_matching_email_and_sorts_by_its_latest_email() {
+        // An old urgent thread that got an untagged reply today: the row is the
+        // urgent email (what matched), and the thread sorts — and is dated — by
+        // the reply, above a newer thread whose last activity is older.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(
+            &db,
+            "old_urgent",
+            "acc1",
+            "t1",
+            "inbox",
+            "priority",
+            "urgent",
+            "primary",
+            100,
+        );
+        insert_email(&db, "reply_today", "acc1", "t1", "someone@example.com", "inbox");
+        set_timestamp(&db, "reply_today", 900);
+        insert_email_tagged_at(
+            &db,
+            "mid_urgent",
+            "acc1",
+            "t2",
+            "inbox",
+            "priority",
+            "urgent",
+            "primary",
+            500,
+        );
+
+        let got = filter_by_tag(&db, "priority", "urgent", &EmailWindow::default());
+
+        assert_eq!(ids(&got), ["old_urgent", "mid_urgent"]);
+        assert_eq!(got.thread_latest_at.get("old_urgent"), Some(&900));
+        assert_eq!(got.thread_latest_at.get("mid_urgent"), Some(&500));
+    }
+
+    #[test]
+    fn sender_and_domain_filters_exclude_junk_like_the_tag_filter() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email(&db, "real", "acc1", "t1", "ana@vendor.example", "inbox");
+        insert_email(&db, "spam", "acc1", "t2", "ana@vendor.example", "inbox");
+        mark_junk(&db, "spam", "spam", "junk", None);
+
+        let by_sender = get_filtered_emails(
+            &db,
+            Some("acc1"),
+            None,
+            Some("ana@vendor.example"),
+            None,
+            None,
+            None,
+            &EmailWindow::default(),
+            50,
+            0,
+        )
+        .unwrap();
+        let by_domain = get_filtered_emails(
+            &db,
+            Some("acc1"),
+            Some("vendor.example"),
+            None,
+            None,
+            None,
+            None,
+            &EmailWindow::default(),
+            50,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(ids(&by_sender), ["real"]);
+        assert_eq!(ids(&by_domain), ["real"]);
+    }
+
+    #[test]
+    fn filters_reach_custom_folders_but_never_spam_or_trash() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(
+            &db,
+            "in_folder",
+            "acc1",
+            "t1",
+            "folder:Clients",
+            "intent",
+            "request",
+            "primary",
+            3,
+        );
+        insert_email_tagged_at(&db, "in_spam", "acc1", "t2", "spam", "intent", "request", "primary", 2);
+        insert_email_tagged_at(
+            &db, "in_trash", "acc1", "t3", "trash", "intent", "request", "primary", 1,
+        );
+
+        let got = filter_by_tag(&db, "intent", "request", &EmailWindow::default());
+
+        assert_eq!(ids(&got), ["in_folder"]);
+    }
+
+    #[test]
+    fn a_filter_inside_a_view_keeps_only_that_views_mail() {
+        // Filtering from Sent lists the sent mail that matches, not the inbox's.
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        db.seed_test_account("acc1");
+        insert_email_tagged_at(&db, "received", "acc1", "t1", "inbox", "topic", "billing", "primary", 2);
+        insert_email_tagged_at(&db, "sent", "acc1", "t2", "sent", "topic", "billing", "primary", 1);
+
+        let window = EmailWindow {
+            mailbox: Some("sent".into()),
+            ..Default::default()
+        };
+        let got = filter_by_tag(&db, "topic", "billing", &window);
+
+        assert_eq!(ids(&got), ["sent"]);
+    }
+
     // ── get_tag_board_stats ──────────────────────────────────────────────────
 
     #[test]

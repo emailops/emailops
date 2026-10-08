@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
+import { filterFromQuery } from '@/lib/filterQuery';
 import { createKeyedCoalescer } from '@/lib/refreshScheduling';
 import { toQueryAccountId } from '@/stores/accountStore';
+import { useEmailStore } from '@/stores/emailStore';
 import type { ActiveFilter, SmartFilter, SmartFilterPref, TagStat } from '@/types';
 
 const TAG_RANK_LIMIT = 40;
@@ -109,7 +111,8 @@ export type FilterAction =
   | { type: 'SET_SUGGESTIONS'; suggestions: SmartFilter[] }
   | { type: 'SET_PREFS'; prefs: SmartFilterPref[] }
   | { type: 'SET_LOADING_STATS'; loading: boolean }
-  | { type: 'TOGGLE_FILTER'; filter: ActiveFilter }
+  /** The search query changed: highlight the filter it names, if any. */
+  | { type: 'SYNC_FROM_QUERY'; query: string | null }
   | { type: 'CLEAR_ACTIVE_FILTER' }
   | { type: 'RESET' };
 
@@ -123,13 +126,10 @@ export function filterReducer(state: FilterState, action: FilterAction): FilterS
       return { ...state, prefs: action.prefs };
     case 'SET_LOADING_STATS':
       return { ...state, isLoadingStats: action.loading };
-    case 'TOGGLE_FILTER': {
-      const isSame =
-        state.activeFilter?.type === action.filter.type && state.activeFilter?.value === action.filter.value;
-      return { ...state, activeFilter: isSame ? null : action.filter };
-    }
     case 'CLEAR_ACTIVE_FILTER':
       return { ...state, activeFilter: null };
+    case 'SYNC_FROM_QUERY':
+      return { ...state, activeFilter: filterFromQuery(action.query) };
     case 'RESET':
       return initialFilterState;
     default:
@@ -195,7 +195,6 @@ interface FilterStore extends FilterState {
    *  rows of every account), and syncs that finish while a refresh runs are
    *  folded into one more refresh. */
   refreshAfterSync: (syncedAccountId: string) => Promise<void>;
-  toggleFilter: (filter: ActiveFilter) => void;
   clearActiveFilter: () => void;
   pinFilter: (accountId: string, filter: ActiveFilter) => Promise<void>;
   unpinFilter: (accountId: string, filter: ActiveFilter) => Promise<void>;
@@ -292,8 +291,6 @@ export const useFilterStore = create<FilterStore>((set, get) => {
 
     refreshAfterSync: (syncedAccountId) => refreshSynced(syncedAccountId),
 
-    toggleFilter: (filter) => dispatch(set, { type: 'TOGGLE_FILTER', filter }),
-
     clearActiveFilter: () => dispatch(set, { type: 'CLEAR_ACTIVE_FILTER' }),
 
     pinFilter: async (accountId, filter) => {
@@ -339,4 +336,13 @@ export const useFilterStore = create<FilterStore>((set, get) => {
 
     reset: () => dispatch(set, { type: 'RESET' }),
   };
+});
+
+// The search text is the one source of truth for the active smart filter:
+// clicking a filter writes its token into the query, and whatever sets, edits
+// or clears the query re-derives which filter the sidebar highlights.
+useEmailStore.subscribe((state, prev) => {
+  if (state.searchQuery !== prev.searchQuery) {
+    useFilterStore.setState((s) => filterReducer(s, { type: 'SYNC_FROM_QUERY', query: state.searchQuery }));
+  }
 });

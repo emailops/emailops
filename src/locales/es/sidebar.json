@@ -72,12 +72,15 @@
     "clear": "Quitar filtro activo",
     "refresh": "Actualizar filtros inteligentes",
     "recalculate": "Recalcular filtros",
+    "addToSearch": "Añadir a la búsqueda",
     "hide": "Ocultar este filtro"
   },
   "smartFilters": {
     "title": "Smart Filters",
     "empty": "Pulsa actualizar para calcular los filtros",
-    "companies": "Empresas"
+    "companies": "Empresas",
+    "showMore": "Ver {{count}} más",
+    "showLess": "Ver menos"
   },
   "allAccounts": "Todas las cuentas",
   "allAccountsFooter": "Viendo todas las cuentas",

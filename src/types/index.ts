@@ -73,6 +73,10 @@ export interface Email {
   /** Starred (Gmail STARRED, Outlook flag, IMAP \Flagged). Per message; in
    *  the thread-deduped inbox list it means "any message of the thread". */
   isStarred: boolean;
+  /** Search and smart-filter rows: when the row's thread last had activity.
+   *  The row is the thread's newest MATCHING email, but the list sorts and
+   *  dates threads by their newest email of any kind. */
+  threadLatestAt?: number;
 }
 
 export type TriageStatus = 'action_needed' | 'fyi' | 'low_priority';
@@ -299,6 +303,8 @@ export interface ActiveFilter {
 export interface FilteredEmailsResult {
   emails: Email[];
   totalCount: number;
+  /** Email id → when that row's thread last had activity (see `Email.threadLatestAt`). */
+  threadLatestAt?: Record<string, number>;
 }
 
 // Attachment types
@@ -520,6 +526,10 @@ export interface EmailWindow {
    *  only, so it lands in one board block. Off, a thread matches every tag any
    *  of its messages carries (the inbox filter rule). */
   latestTagOnly?: boolean;
+  /** Only mail stored in this mailbox (`sent`, `archive`, `folder:<path>`):
+   *  a filter applied from a view lists that view's mail. Absent = every
+   *  live mailbox. */
+  mailbox?: string;
 }
 
 export interface ClassificationConfig {

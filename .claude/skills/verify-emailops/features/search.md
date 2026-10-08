@@ -47,5 +47,8 @@ Live run 11/09/2026: the first four steps proven; evidence in `src-tauri/reports
 | search and Embeddings command arguments | contract (`src/lib/apiContract/busqueda.api.test.ts`) |
 | search box, account chip | vitest (`InboxSearchBox`, `searchQuery`, `Search/*`) |
 | query, empty, clear, trashed mail left out | e2e (`Búsqueda/*`) |
+| a smart filter and its token list the same threads (newest match per thread, sorted by thread activity, live mailboxes + custom folders, no junk, inside the view); `domain:` / `ext:` | unit + integration (`services::filters`, `services::search::tests::a_tag_token_lists_what_its_smart_filter_lists`, `db::emails::search`) |
+| filter ↔ search-box token, the highlighted filter follows the query, one-filter queries page | vitest (`src/lib/filterQuery`, `src/stores/filterStore`, `Sidebar/SmartFilters`, `Inbox/ActiveSearchNotice`) |
+| click writes `tag:topic=<value>` and a second click clears it; right-click → Add to search appends | e2e (`Búsqueda/smart filter escribe su consulta`, `Búsqueda/botón derecho añade el filtro a la búsqueda`) |
 | the chat does not cite a trashed email or a junk-marked lookalike | eval (`retrieval_*` in `src-tauri/evals/chat/cases/retrieval_exclusions.yaml`) |
 | agent search quality | eval on the production mailbox (`agent_search`), outside `make verify` |

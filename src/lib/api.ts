@@ -750,9 +750,16 @@ export interface SearchResult {
 }
 
 /** `accountId: null` searches across every enabled account (unified view).
- *  Search spans every category — the inbox tab does not narrow it. */
-export async function searchEmails(accountId: string | null, query?: string, useAi?: boolean): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi });
+ *  Search spans every category — the inbox tab does not narrow it.
+ *  `mailbox` limits it to the view it runs in (`sent`, `archive`,
+ *  `folder:<path>`); absent = every live mailbox. */
+export async function searchEmails(
+  accountId: string | null,
+  query?: string,
+  useAi?: boolean,
+  mailbox?: string,
+): Promise<SearchResult> {
+  return invoke('search_emails', { accountId, query, useAi, mailbox });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {

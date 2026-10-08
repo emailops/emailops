@@ -89,6 +89,7 @@ interface SidebarProps {
   activeFilter: ActiveFilter | null;
   isLoadingFilters: boolean;
   onToggleFilter: (filter: ActiveFilter) => void;
+  onAppendFilter: (filter: ActiveFilter) => void;
   onClearFilter: () => void;
   onPinFilter: (filter: ActiveFilter) => void;
   onUnpinFilter: (filter: ActiveFilter) => void;
@@ -131,6 +132,7 @@ export function Sidebar({
   activeFilter,
   isLoadingFilters,
   onToggleFilter,
+  onAppendFilter,
   onClearFilter,
   onPinFilter,
   onUnpinFilter,
@@ -1079,6 +1081,7 @@ export function Sidebar({
           activeFilter={activeFilter}
           isLoading={isLoadingFilters}
           onToggleFilter={onToggleFilter}
+          onAppendFilter={onAppendFilter}
           onClearFilter={onClearFilter}
           onPinFilter={onPinFilter}
           onUnpinFilter={onUnpinFilter}

@@ -51,6 +51,8 @@ pub async fn search_emails(
     account_id: Option<String>,
     query: String,
     use_ai: Option<bool>,
+    // The view the search runs in (`inbox`, `sent`, `archive`, `folder:<path>`).
+    mailbox: Option<String>,
 ) -> Result<SearchResult, AppError> {
     let cmd_start = std::time::Instant::now();
     // Master AI switch overrides any caller request: when AI is disabled the
@@ -72,6 +74,7 @@ pub async fn search_emails(
         &query,
         use_ai_flag,
         None,
+        mailbox.as_deref(),
         Some(app.clone()),
     )
     .await?;
