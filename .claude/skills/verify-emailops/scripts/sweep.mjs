@@ -261,6 +261,52 @@ await step('Búsqueda', 'limpiar', 'la ✕ vacía el cuadro y restaura la lista'
   return ok(v === '' && await rows() > 5, `${await rows()} filas`, `valor "${v}", ${await rows()} filas`);
 });
 
+// ---------- Smart filters → cuadro de búsqueda (DECISIONS 2026-10-08) ----------
+const searchValue = () => js(() => document.querySelector('input[placeholder^="Search…"]')?.value ?? null);
+// First filter of a sidebar tag group (heading = the tag type), as { value, active }.
+const firstSmartFilter = (group) => js((g) => {
+  const h = [...document.querySelectorAll('nav h3')].find((x) => x.textContent.trim().toLowerCase() === g);
+  const btn = h?.nextElementSibling?.querySelector('li > button');
+  return btn ? { value: btn.querySelector('span.truncate')?.textContent.trim() || '', active: btn.className.includes('bg-primary-600') } : null;
+}, group);
+const smartFilterButton = (group, rightClick) => js((g, r) => {
+  const h = [...document.querySelectorAll('nav h3')].find((x) => x.textContent.trim().toLowerCase() === g);
+  const btn = h?.nextElementSibling?.querySelector('li > button');
+  if (!btn) return false;
+  if (r) btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+  else btn.click();
+  return true;
+}, group, rightClick);
+const ensureTopicFilters = async () => {
+  if (await firstSmartFilter('topic')) return true;
+  await js(() => document.querySelector('button[title="Recalculate filters"]')?.click()); await sleep(4000);
+  return Boolean(await firstSmartFilter('topic'));
+};
+await step('Búsqueda', 'smart filter escribe su consulta', 'un clic en un smart filter de topic pone tag:topic=<valor> en el cuadro, lo resalta y lista filas; un segundo clic vacía el cuadro', async () => {
+  if (!(await ensureTopicFilters())) return 'FAIL: la barra lateral no muestra smart filters de topic (¿BD demo sin etiquetas?)';
+  const { value } = await firstSmartFilter('topic');
+  await smartFilterButton('topic', false); await sleep(1500);
+  const q = await searchValue(); const active = (await firstSmartFilter('topic'))?.active; const r = await rows();
+  await smartFilterButton('topic', false); await sleep(1500);
+  const cleared = await searchValue(); const back = await rows();
+  return ok(q === `tag:topic=${value}` && active && r > 0 && cleared === '' && back > 5,
+    `«${q}», resaltado, ${r} filas; segundo clic: cuadro vacío, ${back} filas`,
+    `cuadro «${q}» (esperado tag:topic=${value}), resaltado=${active}, ${r} filas; tras el segundo clic «${cleared}», ${back} filas`);
+});
+await step('Búsqueda', 'botón derecho añade el filtro a la búsqueda', 'con «invoice» en el cuadro, botón derecho → Add to search deja «invoice tag:topic=<valor>» y no resalta el filtro (la consulta ya no es solo él)', async () => {
+  if (!(await ensureTopicFilters())) return 'FAIL: la barra lateral no muestra smart filters de topic';
+  const { value } = await firstSmartFilter('topic');
+  await type('input[placeholder^="Search…"]', 'invoice'); await enter(); await sleep(1500);
+  await smartFilterButton('topic', true); await sleep(500);
+  const added = await js(() => { const x = [...document.querySelectorAll('[role="menuitem"]')].find((y) => y.textContent.trim() === 'Add to search'); if (!x) return false; x.click(); return true; });
+  await sleep(1500);
+  const q = await searchValue(); const active = (await firstSmartFilter('topic'))?.active;
+  await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1200);
+  return ok(added && q === `invoice tag:topic=${value}` && !active,
+    `«${q}», filtro sin resaltar`,
+    `menú=${added}, cuadro «${q}» (esperado «invoice tag:topic=${value}»), resaltado=${active}`);
+});
+
 // ---------- Correo de verificación (scripts/generate_demo_db.py, insert_verification_fixtures) ----------
 const SEARCH = 'input[placeholder^="Search…"]';
 const clearSearch = async () => { await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1200); };

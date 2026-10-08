@@ -293,7 +293,9 @@
         "src/components/Inbox/InboxSearchBox",
         "src/lib/searchQuery",
         "src/components/Search",
-        "src/lib/apiContract/busqueda.api.test"
+        "src/lib/apiContract/busqueda.api.test",
+        "src/lib/filterQuery",
+        "src/components/Sidebar/SmartFilters"
       ],
       "e2e": [
         "Búsqueda"
