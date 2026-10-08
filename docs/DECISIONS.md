@@ -3598,3 +3598,26 @@ not CMake's DLL link); exporting flags from `build_platform.sh` (release-only, a
 `-fstack-protector-strong` on macOS (already in the shipped binaries by default, and
 redefining `_FORTIFY_SOURCE` as 2 would downgrade compilers that default to 3); `-Zbuild-std` to
 put CFG in the Rust standard library (nightly only).
+
+## 2026-10-08 — Smart filters write their query into the search box
+
+**Decision:** Clicking a smart filter (company, priority, intent, topic, sender, domain,
+attachment type) replaces the search query with the filter's token
+(`tag:priority=urgent`); right-click offers appending it to the current query. The search
+text is the one source of truth: the sidebar highlights the filter its token names. A
+filter and its token list the same mail: one row per thread — the thread's newest
+MATCHING email — with threads sorted and dated by their newest email of any kind, so an
+old thread with a reply today sorts as today. Both reach the inbox, Sent, the Archive and
+custom folders, never Spam or Trash, always exclude junk, span every category (the
+category tabs are disabled while one is active), and apply inside the current view. An
+empty result says a search is active and offers to clear it, so switching accounts with a
+query still set is visible.
+**Context:** The sidebar filter and the search box were two mechanisms with different
+semantics (row = thread's latest email vs latest match; live mailboxes vs anything but
+spam/trash; junk excluded on tags only), so the same filter could list different mail
+depending on where it was applied. The board still lists a thread under its newest
+classified tag (`latest_tag_only`).
+**Rejected:** Keeping the thread's latest email as the row — it shows a reply that does
+not carry the tag the user asked for. Sorting by the matching email — an old thread with
+fresh activity sinks to the bottom. Dating the matching row by the thread's last email
+while sorting by the match (option b) — the date and the position disagree.

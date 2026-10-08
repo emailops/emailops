@@ -633,6 +633,7 @@ mod tests {
             search: None,
             hide_graymail: false,
             latest_tag_only: true,
+            mailbox: None,
         };
         let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
 

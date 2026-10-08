@@ -361,6 +361,11 @@ pub struct SmartFilterSuggestion {
 pub struct FilteredEmailsResult {
     pub emails: Vec<Email>,
     pub total_count: i32,
+    /// Email id → timestamp of the newest email in its thread. A row is the
+    /// thread's newest MATCHING email, but the list sorts and dates threads by
+    /// their latest activity, matching or not.
+    #[serde(default)]
+    pub thread_latest_at: std::collections::HashMap<String, i64>,
 }
 
 // Attachment types
@@ -1738,6 +1743,10 @@ pub struct EmailWindow {
     /// inbox filter rule — which put one six-message thread in four board
     /// blocks at once.
     pub latest_tag_only: bool,
+    /// Only mail stored in this mailbox (`inbox`, `sent`, `archive`,
+    /// `folder:<path>`): a filter applied from a view lists that view's mail.
+    /// Absent means every live mailbox.
+    pub mailbox: Option<String>,
 }
 
 impl EmailWindow {
@@ -1771,6 +1780,11 @@ impl EmailWindow {
             parts.push(format!("{alias}.timestamp < ?{next_index}"));
             *next_index += 1;
             binds.push(Box::new(until));
+        }
+        if let Some(mailbox) = self.mailbox.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+            parts.push(format!("{alias}.mailbox = ?{next_index}"));
+            *next_index += 1;
+            binds.push(Box::new(mailbox.to_string()));
         }
 
         let sql = if parts.is_empty() {

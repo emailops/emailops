@@ -185,55 +185,91 @@ impl Database {
     /// (`exclude_junk_sql` returns it with a leading `AND` for callers that
     /// append it to a finished clause).
     fn junk_condition(alias: &str) -> String {
-        crate::db::exclude_junk_sql(alias, false)
+        Self::junk_condition_with(alias, false)
+    }
+
+    /// [`Self::junk_condition`], also dropping graymail when `hide_graymail`.
+    fn junk_condition_with(alias: &str, hide_graymail: bool) -> String {
+        crate::db::exclude_junk_sql(alias, hide_graymail)
             .trim_start()
             .trim_start_matches("AND ")
             .to_string()
     }
 
-    /// Latest-email-per-matched-thread CTE shared by both `get_filtered_emails`
-    /// branches. MUST drive from `matched_threads` with an indexed scalar
-    /// subquery per row.
-    ///
-    /// A `emails JOIN matched_threads GROUP BY` shape regressed to 138s on a
-    /// 90k-email DB (unified intent filter): SQLite scanned each matched
-    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id` —
-    /// re-walking the account's whole mailbox partition per thread. The
-    /// `INDEXED BY idx_emails_thread_latest` hint is load-bearing: without it
-    /// the planner prefers the mailbox index for the inner lookup too (54s);
-    /// with it each lookup is a single (account_id, thread_id) seek (40ms).
-    ///
-    /// The subquery picks the representative's id with the inbox's
-    /// `timestamp DESC, id DESC` order, so two emails of one thread stamped in
-    /// the same second still yield exactly one row (a `timestamp = MAX(...)`
-    /// join returned both).
-    const THREAD_LATEST_CTE: &'static str = concat!(
-        "thread_latest AS (
-                 SELECT mt.aid AS aid, mt.tid AS tid,
-                        (SELECT e3.id
-                         FROM emails e3 INDEXED BY idx_emails_thread_latest
-                         WHERE e3.account_id = mt.aid AND e3.thread_id = mt.tid
-                           AND e3.is_deleted = 0 AND e3.mailbox IN ",
-        crate::db::live_mailboxes_sql!(),
-        "
-                         ORDER BY e3.timestamp DESC, e3.id DESC
-                         LIMIT 1) AS rep_id
-                 FROM matched_threads mt
-             )"
-    );
+    /// Mailboxes a smart filter reaches: the live ones plus custom folders,
+    /// never Spam or Trash. The same list the search box uses, so a filter
+    /// and its `tag:` / `from:` token list the same mail.
+    fn filterable_mailbox(alias: &str) -> String {
+        format!(
+            "({alias}.mailbox IN {live} OR {alias}.mailbox LIKE 'folder:%')",
+            live = crate::db::live_mailboxes_sql!()
+        )
+    }
 
-    /// Representative-row SELECT paired with [`Self::THREAD_LATEST_CTE`].
+    /// Everything after the `matched (aid, tid, mid, mts)` CTE both
+    /// `get_filtered_emails` branches build: one row per thread — its newest
+    /// MATCHING email — sorted by the thread's newest email of any kind, so an
+    /// old thread that got a reply today sorts as today.
+    ///
+    /// `ROW_NUMBER` picks the representative in one pass over the matches with
+    /// the inbox's `timestamp DESC, id DESC` order, so two matches stamped in
+    /// the same second still yield exactly one row.
+    ///
+    /// The thread's latest timestamp MUST be an indexed scalar subquery per
+    /// thread. A `emails JOIN matched GROUP BY` shape regressed to 138s on a
+    /// 90k-email DB (unified intent filter): SQLite scanned each matched
+    /// thread against `idx_emails_account_mailbox` — which lacks `thread_id`.
+    /// The `INDEXED BY idx_emails_thread_latest` hint is load-bearing: with it
+    /// each lookup is a single (account_id, thread_id) seek.
+    ///
     /// CROSS JOIN pins the join order (SQLite never reorders CROSS JOIN) so
     /// the probe drives from the small `thread_latest` set into the emails
-    /// primary key, never the reverse.
-    fn representative_select() -> String {
+    /// primary key, never the reverse. The thread timestamp is the last column.
+    fn representative_tail(limit_idx: usize, offset_idx: usize) -> String {
         format!(
-            "SELECT {cols}
+            "picked AS (
+                 SELECT aid, tid, mid,
+                        ROW_NUMBER() OVER (PARTITION BY aid, tid ORDER BY mts DESC, mid DESC) AS rn
+                 FROM matched
+             ),
+             thread_latest AS (
+                 SELECT p.mid AS rep_id,
+                        (SELECT e3.timestamp
+                         FROM emails e3 INDEXED BY idx_emails_thread_latest
+                         WHERE e3.account_id = p.aid AND e3.thread_id = p.tid
+                           AND e3.is_deleted = 0 AND {filterable}
+                         ORDER BY e3.timestamp DESC, e3.id DESC
+                         LIMIT 1) AS thread_ts
+                 FROM picked p
+                 WHERE p.rn = 1
+             )
+             SELECT {cols}, l.thread_ts
              FROM thread_latest l
              CROSS JOIN emails e
-             WHERE e.id = l.rep_id",
-            cols = EMAIL_COLUMNS
+             WHERE e.id = l.rep_id
+             ORDER BY l.thread_ts DESC, e.timestamp DESC, e.id DESC
+             LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+            filterable = Self::filterable_mailbox("e3"),
+            cols = EMAIL_COLUMNS,
         )
+    }
+
+    /// Read the rows [`Self::representative_tail`] returns.
+    fn read_representatives(rows: &mut rusqlite::Rows<'_>) -> Result<FilteredEmailsResult> {
+        let thread_ts_idx = EMAIL_COLUMNS.split(',').count();
+        let mut emails = Vec::new();
+        let mut thread_latest_at = std::collections::HashMap::new();
+        while let Some(row) = rows.next()? {
+            let email = row_to_email(row)?;
+            let thread_ts: i64 = row.get(thread_ts_idx)?;
+            thread_latest_at.insert(email.id.clone(), thread_ts);
+            emails.push(email);
+        }
+        Ok(FilteredEmailsResult {
+            emails,
+            total_count: -1,
+            thread_latest_at,
+        })
     }
 
     /// Get emails filtered by domain or sender, with total count for pagination.
@@ -262,7 +298,6 @@ impl Database {
         offset: i32,
     ) -> Result<FilteredEmailsResult> {
         let conn = self.reader();
-        let order_clause = thread_order_clause("e", false);
 
         // Scope condition for an aliased emails table. Under Account the id
         // binds as ?1 in every query built below.
@@ -284,17 +319,13 @@ impl Database {
         // matching threads, GROUP BY for latest-per-thread. Fast even with 0 matches.
         if let (Some(tt), Some(tv)) = (tag_type, tag_value) {
             // Semantics (user-confirmed): a thread matches the filter if ANY email
-            // in the thread carries the tag. The row shown for that thread is the
-            // thread representative (latest email in the thread). This way,
-            // replying to "Globex" doesn't make the thread disappear from the
-            // Globex filter just because the user's sent reply is the latest.
+            // in the thread carries the tag, so replying to "Globex" doesn't make
+            // the thread disappear from the Globex filter. The row shown is the
+            // thread's newest email that carries the tag; the thread sorts by its
+            // newest email of any kind (see `representative_tail`).
             //
-            // Same shape as the domain/sender branch below: a matched_threads
-            // CTE, then a per-thread latest lookup DRIVEN FROM matched_threads
-            // (see `thread_latest_cte`) so cost stays O(matching_threads).
-            //
-            // `mailbox IN live_mailboxes_sql!()` keeps Spam/Trash copies out of the
-            // filtered views while reaching archived mail.
+            // `filterable_mailbox` keeps Spam/Trash copies out of the filtered
+            // views while reaching archived mail and custom folders.
             // `INDEXED BY idx_email_tags_type_value` is critical: without it SQLite
             // picks the inverted plan — scan all ~87k emails of the account and
             // probe email_tags by email_id — instead of starting from the tag
@@ -304,36 +335,29 @@ impl Database {
             // Window binds land after limit/offset so the fixed indices above
             // keep their positions.
             let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
-            let live = crate::db::live_mailboxes_sql!();
             // The board asks for `latest_tag_only`; the sidebar filter never
             // does, so the "ANY email in the thread" rule above is untouched.
             let latest_sql = crate::db::latest_tagged_in_thread_sql("e2", first_idx, window.latest_tag_only);
             let mut window_idx = first_idx + 4;
             let (window_sql, window_binds) = window.sql("e2", &mut window_idx);
             let select_sql = format!(
-                "WITH matched_threads AS (
-                     SELECT DISTINCT e2.account_id AS aid, e2.thread_id AS tid
+                "WITH matched AS (
+                     SELECT e2.account_id AS aid, e2.thread_id AS tid, e2.id AS mid, e2.timestamp AS mts
                      FROM email_tags et INDEXED BY idx_email_tags_type_value
                      JOIN emails e2 ON e2.id = et.email_id
                      WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
                        AND {scope_e2} AND e2.is_deleted = 0
-                       AND e2.mailbox IN {live}
+                       AND {filterable}
                        {junk_sql}
                        {latest_sql}
                        {window_sql}
                  ),
-                 {thread_latest}
-                 {representative}
-                 ORDER BY {order}
-                 LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+                 {tail}",
                 tt_idx = first_idx,
                 tv_idx = first_idx + 1,
                 scope_e2 = scope_cond("e2"),
-                thread_latest = Self::THREAD_LATEST_CTE,
-                representative = Self::representative_select(),
-                order = order_clause,
-                limit_idx = first_idx + 2,
-                offset_idx = first_idx + 3,
+                filterable = Self::filterable_mailbox("e2"),
+                tail = Self::representative_tail(first_idx + 2, first_idx + 3),
             );
 
             let mut stmt = conn.prepare(&select_sql)?;
@@ -347,34 +371,28 @@ impl Database {
             params_vec.push(Box::new(offset));
             params_vec.extend(window_binds);
             let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-            let mut emails = Vec::new();
             let mut rows = stmt.query(params_refs.as_slice())?;
-            while let Some(row) = rows.next()? {
-                emails.push(row_to_email(row)?);
-            }
-            return Ok(FilteredEmailsResult {
-                emails,
-                total_count: -1,
-            });
+            return Self::read_representatives(&mut rows);
         }
 
         // ── Domain/sender filter: three-step CTE ───────────────────────────────
         // Step 1: find matching (account_id, thread_id) pairs via
         //         idx_emails_domain_filter or idx_emails_sender_filter
         //         (covering, no table access needed).
-        // Step 2: GROUP BY for latest timestamp per (account, thread) —
-        //         O(matching_threads).
+        // Step 2: pick each thread's newest match and its latest timestamp —
+        //         O(matching_threads) (see `representative_tail`).
         // Step 3: join back to emails to fetch the representative row.
         // This is O(emails_from_domain) rather than O(all_emails) and avoids
         // scanning the full inbox in timestamp order.
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut param_idx = 1usize;
 
-        // Inbox-level filtered view: exclude Spam/Trash copies so they don't
-        // leak into the main filter UI. Soft-deleted rows are also excluded.
+        // Inbox-level filtered view: exclude Spam/Trash copies and junk so they
+        // don't leak into the main filter UI. Soft-deleted rows are also excluded.
         let mut match_conditions = vec![
             "is_deleted = 0".to_string(),
-            concat!("mailbox IN ", crate::db::live_mailboxes_sql!()).to_string(),
+            Self::filterable_mailbox("emails"),
+            Self::junk_condition_with("emails", window.hide_graymail),
         ];
         match scope {
             crate::db::AccountScope::Account(id) => {
@@ -412,21 +430,14 @@ impl Database {
 
         let (window_sql, window_binds) = window.sql("emails", &mut param_idx);
         let select_sql = format!(
-            "WITH matched_threads AS (
-                 SELECT DISTINCT account_id AS aid, thread_id AS tid
+            "WITH matched AS (
+                 SELECT account_id AS aid, thread_id AS tid, id AS mid, timestamp AS mts
                  FROM emails
                  WHERE {match_cond}{window_sql}
              ),
-             {thread_latest}
-             {representative}
-             ORDER BY {order}
-             LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+             {tail}",
             match_cond = match_conditions.join(" AND "),
-            thread_latest = Self::THREAD_LATEST_CTE,
-            representative = Self::representative_select(),
-            order = order_clause,
-            limit_idx = param_idx,
-            offset_idx = param_idx + 1,
+            tail = Self::representative_tail(param_idx, param_idx + 1),
         );
 
         params_vec.extend(window_binds);
@@ -435,16 +446,8 @@ impl Database {
 
         let mut stmt = conn.prepare(&select_sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-        let mut emails = Vec::new();
         let mut rows = stmt.query(params_refs.as_slice())?;
-        while let Some(row) = rows.next()? {
-            emails.push(row_to_email(row)?);
-        }
-
-        Ok(FilteredEmailsResult {
-            emails,
-            total_count: -1,
-        })
+        Self::read_representatives(&mut rows)
     }
 
     /// Sender and recipient pairs for each of the given threads, newest message
@@ -1158,15 +1161,15 @@ mod tests {
 
     // Regression for user-confirmed semantics: a tag filter (e.g. company "Globex")
     // must match any thread where AT LEAST ONE email carries the tag, even when the
-    // user has replied and their sent message is now the thread representative.
-    // The row returned for each matching thread is the latest email in the thread.
+    // user has replied and their sent message is now the thread's latest email.
+    // The row returned for each matching thread is its newest MATCHING email.
     #[test]
-    fn tag_filter_matches_thread_if_any_email_tagged_and_returns_latest() {
+    fn tag_filter_matches_thread_if_any_email_tagged_and_returns_newest_match() {
         let db = Database::new_for_testing().unwrap();
         let account = "acc1";
 
         // Thread A: E1 (old, urgent) + E2 (newer, no urgent tag — represents user reply).
-        // The thread should match because E1 is urgent; the row returned is E2 (latest).
+        // The thread matches because E1 is urgent; the row returned is E1.
         insert_email(&db, "e1", account, "thread-a", 100);
         insert_email(&db, "e2", account, "thread-a", 200);
         tag_email(&db, "e1", "priority", "urgent");
@@ -1202,39 +1205,20 @@ mod tests {
             ids
         );
 
-        // Thread A matches because E1 is urgent. The representative row is E2 (latest),
-        // even though E2 itself is tagged "normal" — this is the corrected behavior.
+        // Thread A matches because E1 is urgent, and E1 is what matched: the
+        // row is E1, not the newer `normal` reply.
         assert!(
-            ids.contains(&"e2"),
-            "e2 (latest in urgent-tagged thread A) should appear, got: {:?}",
+            ids.contains(&"e1"),
+            "e1 (urgent match in thread A) should appear, got: {:?}",
             ids
         );
-
-        // E1 is not the thread representative — only one row per thread.
-        assert!(
-            !ids.contains(&"e1"),
-            "e1 (non-representative) must not appear, got: {:?}",
-            ids
-        );
-
-        // Thread C never had an urgent tag.
+        assert!(!ids.contains(&"e2"), "one row per thread, the match: {:?}", ids);
         assert!(
             !ids.contains(&"e4"),
-            "e4 (no urgent tag anywhere in thread C) must not appear, got: {:?}",
+            "e4 (non-urgent thread C) must not appear, got: {:?}",
             ids
         );
-
-        // Exactly two thread representatives match.
-        assert_eq!(
-            result.emails.len(),
-            2,
-            "exactly 2 threads should match urgent filter, got: {} ({:?})",
-            result.emails.len(),
-            ids
-        );
-
-        // Order: newest first (timestamp DESC).
-        assert_eq!(ids, vec!["e3", "e2"], "results should be newest-first");
+        assert_eq!(ids.len(), 2);
     }
 
     // ── search: spam/trash mailbox exclusion ─────────────────────────────────────

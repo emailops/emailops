@@ -2373,6 +2373,35 @@ mod tests {
             result.total_count,
         );
 
+        // 7. get_filtered_emails — broad tags, one account and every account.
+        // The sidebar's widest filters: every classified email carries a priority.
+        for (label, scope) in [
+            ("account", crate::db::AccountScope::Account(&account_id)),
+            ("all", crate::db::AccountScope::AllEnabled),
+        ] {
+            for value in ["urgent", "normal", "low"] {
+                let t = std::time::Instant::now();
+                let result = db
+                    .get_filtered_emails(
+                        scope,
+                        None,
+                        None,
+                        Some("priority"),
+                        Some(value),
+                        None,
+                        &crate::models::EmailWindow::default(),
+                        50,
+                        0,
+                    )
+                    .unwrap();
+                eprintln!(
+                    "[{:.0}ms] get_filtered_emails(tag=priority:{value}, scope={label}): {} emails",
+                    t.elapsed().as_secs_f64() * 1000.0,
+                    result.emails.len(),
+                );
+            }
+        }
+
         eprintln!("\n=== Done ===\n");
     }
 }
