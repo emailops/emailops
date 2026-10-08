@@ -50,6 +50,8 @@ describe('LongText', () => {
     const long = 'word '.repeat(80).trim();
     act(() => root.render(<LongText text={long} className="" />));
     expect(textSpan().className).toContain('line-clamp-3');
+    // `block` would override the clamp's `display: -webkit-box` and show it all.
+    expect(textSpan().className.split(' ')).not.toContain('block');
     expect(textSpan().title).toBe(long);
     expect(toggle()?.textContent).toBe('lenses:table.showMore');
 

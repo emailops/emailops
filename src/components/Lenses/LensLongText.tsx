@@ -16,11 +16,13 @@ export function isLongText(text: string): boolean {
 export function LongText({ text, className }: { text: string; className: string }) {
   const { t } = useTranslation(['lenses']);
   const [expanded, setExpanded] = useState(false);
-  const base = `${className} block max-w-[24rem] whitespace-pre-wrap break-words`;
-  if (!isLongText(text)) return <span className={base}>{text}</span>;
+  const wrap = `${className} whitespace-pre-wrap break-words`;
+  if (!isLongText(text)) return <span className={`${wrap} block max-w-[24rem]`}>{text}</span>;
+  // `line-clamp-3` sets its own display, so the clamped span must not be `block`.
+  // The min width keeps the table from squeezing a long value into a tall, thin column.
   return (
-    <span className="block max-w-[24rem]">
-      <span className={expanded ? base : `${base} line-clamp-3`} title={text}>
+    <span className="block w-max min-w-[16rem] max-w-[24rem]">
+      <span className={expanded ? `${wrap} block` : `${wrap} line-clamp-3`} title={text}>
         {text}
       </span>
       <button
