@@ -3564,3 +3564,37 @@ user edits the glossary. Never dropping planner tags — reopens the guessed-int
 and moves tag-only plans ("who is X?") off retrieval. A structural rule (keep tags only
 when nothing else selects mail) — untested, and a spurious `unread: true`, which the 4B
 models add to Spanish questions, would defeat it.
+
+## 2026-10-07 — Binary hardening flags live in Cargo config and a CMake project include
+
+**Decision:** Hardening that the toolchains do not apply by default is added in two
+places that every build path reads, not in the release scripts: Rust flags in the
+repo-root `.cargo/config.toml` (`-C control-flow-guard` for `windows-msvc`), and C/C++
+flags for llama.cpp/ggml in `src-tauri/cmake/llama-hardening.cmake`, which Cargo's
+`[env]` hands to CMake as `CMAKE_PROJECT_INCLUDE` (llama-cpp-sys-2 forwards every
+`CMAKE_*` variable). Windows adds `/guard:cf` (C/C++ compile, DLL link); Linux adds
+`-z relro -z now` to the shared-library link. Flags the toolchain already applies are
+not repeated: link.exe's `/DYNAMICBASE`, `/NXCOMPAT`, `/HIGHENTROPYVA`; rustc's PIE, full
+RELRO and noexecstack on Linux; Ubuntu GCC's stack protector, FORTIFY and PIC; Apple
+clang's stack protector. Both binaries also restrict the Windows DLL search order at
+startup (application directory, System32, and the CUDA toolkit's `CUDA_PATH` directories
+in the CUDA build), and the Ollama endpoint accepts plain `http://` only for loopback
+hosts, which reverses the LAN-over-http use `OLLAMA_HOST` was introduced for.
+**Context:** CASA AL1 (DASA v2.2.0 desktop: 2.1.2 CFG, 4.1.x ELF hardening, 1.5.2 DLL
+loading, 1.1.1 transport). v0.6.14 lacked GUARD_CF on every Windows PE and BIND_NOW on
+every Linux `.so`; everything else checked was already set. `scripts/build_platform.sh`
+and `release.yml` are being reworked for code signing, and flags there would not reach
+`make dev`, `cargo test` or the CLI build. The release cache key hashes
+`.cargo/config.toml` but not the `.cmake` file, and cmake-rs skips reconfiguring a
+cached build, so a flag change there must touch the config file too. The config sits at
+the repo root, not in `src-tauri/.cargo/`: Cargo reads config from the current directory
+upwards, and `build_platform.sh` compiles from the repo root and stages the ggml/llama
+libraries from that build, so a `src-tauri` config reached only `tauri build`'s
+`emailops.exe` (the first CI build had GUARD_CF on the exe and on none of the DLLs).
+**Rejected:** `CFLAGS_<target>` / `CXXFLAGS_<target>` in `[env]` (reach the compile but
+not CMake's DLL link); exporting flags from `build_platform.sh` (release-only, and
+`RUSTFLAGS` would silently replace the config table); patching llama-cpp-sys-2;
+`-D_FORTIFY_SOURCE` / `-fstack-protector-strong` / `-fPIE` on Linux and
+`-fstack-protector-strong` on macOS (already in the shipped binaries by default, and
+redefining `_FORTIFY_SOURCE` as 2 would downgrade compilers that default to 3); `-Zbuild-std` to
+put CFG in the Rust standard library (nightly only).

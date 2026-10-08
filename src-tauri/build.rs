@@ -35,7 +35,23 @@ fn main() {
     // generate. Cargo compiles build scripts with the package's feature cfgs, so a
     // plain `#[cfg]` is enough here.
     #[cfg(feature = "desktop")]
-    tauri_build::build();
+    run_tauri_build();
+}
+
+/// `tauri_build::build()` with our own Windows application manifest
+/// (`windows-app-manifest.xml`), which adds an explicit `asInvoker` execution
+/// level to the Common-Controls dependency Tauri's default manifest carries.
+/// `app_manifest` replaces the default rather than adding a second manifest
+/// resource. Ignored on non-Windows targets. Errors are reported the way
+/// `tauri_build::build()` reports them.
+#[cfg(feature = "desktop")]
+fn run_tauri_build() {
+    println!("cargo:rerun-if-changed=windows-app-manifest.xml");
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows-app-manifest.xml"));
+    if let Err(error) = tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows)) {
+        println!("{error:#}");
+        std::process::exit(1);
+    }
 }
 
 /// Make Windows test binaries load comctl32 **version 6**.

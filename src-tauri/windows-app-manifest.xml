@@ -1,0 +1,31 @@
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!--
+    Embedded into emailops.exe by tauri-build (build.rs), replacing Tauri's
+    default manifest, which carries only the Common-Controls dependency below.
+  -->
+  <!-- Common Controls v6: needed by the native dialogs (rfd's TaskDialogIndirect). -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+  <!--
+    DASA 1.3.1 (least privilege): run with the invoking user's token, never
+    elevated, and without UI access to higher-integrity windows. Declaring it
+    also stops Windows' installer-detection heuristics from guessing.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

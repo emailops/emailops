@@ -319,4 +319,5 @@ Dos notas de compilación sobre el runtime de IA:
 - También existe una característica de Cargo `cuda` que genera una variante solo para
   NVIDIA. El pipeline de publicación la publica para Windows como un instalador aparte,
   `EmailOps-windows-cuda.msi`, junto a la versión Vulkan predeterminada, que cubre todas las
-  marcas de GPU. <!-- claim:inst-building-from-4 -->
+  marcas de GPU. Necesita el NVIDIA CUDA Toolkit, cuyo instalador define `CUDA_PATH`; sin él,
+  la app muestra un aviso y ejecuta la IA en la CPU. <!-- claim:inst-building-from-4 -->

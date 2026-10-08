@@ -1,0 +1,30 @@
+# Binary-hardening flags for every build of src-tauri (DASA, CASA AL1).
+#
+# They live here, at the repo root, not in src-tauri/.cargo/config.toml: Cargo
+# picks config files from the current directory upwards, not from the manifest.
+# scripts/build_platform.sh compiles from the repo root (`cargo build
+# --manifest-path src-tauri/Cargo.toml`) and stages the ggml/llama libraries from
+# that build, while `tauri build` compiles from src-tauri. A file under src-tauri
+# reached only the second build, so v0.6.14+ shipped a CFG emailops.exe next to
+# non-CFG ggml/llama DLLs (and partial-RELRO .so files on Linux). This file is
+# read by both.
+
+# DASA 2.1.2 (Windows Control Flow Guard): rustc emits CFG checks and passes
+# /guard:cf to link.exe, which marks emailops.exe and emailops_lib.dll
+# GUARD_CF. The prebuilt Rust standard library is not CFG-instrumented (that
+# needs -Zbuild-std); the image is still CFG-enabled and every first-party
+# crate is checked. link.exe already defaults to /DYNAMICBASE, /NXCOMPAT and
+# /HIGHENTROPYVA for x64 (v0.6.14's PE files carry all three), so they are not
+# repeated. A RUSTFLAGS environment variable replaces this table entirely: if a
+# Windows build script ever exports one, add `-C control-flow-guard` to it.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "control-flow-guard"]
+
+# Hardening flags for the llama.cpp / ggml C and C++ build, which Cargo cannot
+# reach through rustflags. llama-cpp-sys-2 forwards every CMAKE_* environment
+# variable to CMake, and CMake includes CMAKE_PROJECT_INCLUDE at the end of
+# llama.cpp's project() call. Per-platform flags live in that file.
+# The release workflow's build cache is keyed on this file, not on the .cmake
+# file: edit this comment when changing a flag there, so CI rebuilds llama.cpp.
+[env]
+CMAKE_PROJECT_INCLUDE = { value = "src-tauri/cmake/llama-hardening.cmake", relative = true }

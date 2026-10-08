@@ -58,5 +58,9 @@
     "title": "Novedades de EmailOps {{version}}",
     "version": "Versión {{version}}",
     "close": "Entendido"
+  },
+  "gpu": {
+    "cudaRuntimeNotFound": "EmailOps no encuentra el NVIDIA CUDA Toolkit, así que la IA local se está ejecutando en la CPU y será mucho más lenta. Instala el CUDA Toolkit (su instalador define CUDA_PATH) o define la variable de entorno CUDA_PATH con la carpeta donde está instalado y reinicia EmailOps.",
+    "downloadCuda": "Descargar CUDA"
   }
 }

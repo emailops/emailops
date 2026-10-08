@@ -326,4 +326,5 @@ Deux remarques de compilation sur le moteur d'IA :
 - Une fonctionnalité Cargo `cuda` produit une variante réservée à NVIDIA. Le pipeline de
   publication la publie pour Windows sous forme d'installeur séparé,
   `EmailOps-windows-cuda.msi`, à côté de la version Vulkan par défaut, qui couvre tous les
-  fabricants de GPU. <!-- claim:inst-building-from-4 -->
+  fabricants de GPU. Elle nécessite le NVIDIA CUDA Toolkit, dont l'installateur définit
+  `CUDA_PATH` ; sans lui, l'application affiche un avis et exécute l'IA sur le CPU. <!-- claim:inst-building-from-4 -->

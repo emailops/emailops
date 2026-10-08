@@ -705,8 +705,6 @@ inbox (dedup is `(account_id, thread_id)`).
 - **`retag_personal_domains` / `rebuild_account_tag_type`** — a data migration
   reachable only from an `examples/` binary. DBs predating the vocabulary change
   keep stale tags forever.
-- **`validate_ai_base_url`** — 8 passing security tests rejecting `file:`,
-  `javascript:`, `data:`; zero call sites. `OLLAMA_HOST` is read unvalidated.
 - **`lenses.max_body_chars`** — documented as "settable from the Settings UI";
   no writer exists. Pinned to 4000 forever.
 - **`EMAILOPS_DEV_TOKENS`** — in both `.env.example` files, read by nothing.

@@ -406,3 +406,9 @@ libc = "0.2"
 # ggml's generic device properties drop that field, so it is read at the source.
 # Already in the tree through Tauri; this only makes the use direct.
 objc2 = "0.6"
+
+# `SetDefaultDllDirectories` / `AddDllDirectory` for the restricted DLL search
+# order (`util::dll_search`). Same version Tauri already pulls in, so this adds
+# no crate to the lock file, only this direct edge.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_System_LibraryLoader"] }

@@ -72,18 +72,53 @@ pub fn safe_attachment_path(app_data_dir: &Path, file_path: &str) -> Result<Path
 /// Reduce a client-supplied filename to a safe bare file name: path
 /// separators and `.`/`..` segments are dropped so a crafted name like
 /// `../../evil.sh` cannot escape the destination directory.
+///
+/// Names Windows would misread are neutralised too, on every OS so the rule is
+/// tested everywhere (DASA 1.4.3): `:` (a drive prefix such as `C:evil.dll`
+/// makes `dir.join(name)` replace `dir`; `x.pdf:s` writes an NTFS alternate
+/// data stream), the other characters Windows forbids (`<>"|?*`) and control
+/// characters become `_`; trailing dots and spaces, which Windows silently
+/// drops, are removed; and a reserved device name (`CON`, `NUL`, `COM1`, …,
+/// with or without an extension) gets a `_` prefix.
 fn sanitize_download_filename(filename: &str) -> String {
-    let name = filename
+    let last = filename
         .replace('\\', "/")
         .split('/')
         .rfind(|part| !part.is_empty() && *part != "." && *part != "..")
         .unwrap_or("")
         .trim()
         .to_string();
+    let name: String = last
+        .chars()
+        .map(|c| match c {
+            ':' | '<' | '>' | '"' | '|' | '?' | '*' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect();
+    let name = name.trim_end_matches(['.', ' ']);
     if name.is_empty() {
         "attachment".to_string()
+    } else if is_windows_reserved_name(name) {
+        format!("_{name}")
     } else {
-        name
+        name.to_string()
+    }
+}
+
+/// `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`: Windows maps
+/// these to devices whatever the extension, so only the part before the first
+/// `.` is compared, case-insensitively.
+fn is_windows_reserved_name(name: &str) -> bool {
+    let base = name.split('.').next().unwrap_or(name).trim_end().to_ascii_uppercase();
+    match base.as_str() {
+        "CON" | "PRN" | "AUX" | "NUL" => true,
+        _ => {
+            let bytes = base.as_bytes();
+            bytes.len() == 4
+                && (base.starts_with("COM") || base.starts_with("LPT"))
+                && (b'1'..=b'9').contains(&bytes[3])
+        }
     }
 }
 
@@ -133,6 +168,20 @@ pub fn unique_download_path(dir: &Path, filename: &str) -> PathBuf {
     }
 }
 
+/// Collision-free destination for `name` in `dir`, refused unless it is a
+/// direct child of `dir`. Callers pass sanitized names, so this is a backstop
+/// against a future caller (or a platform path rule) that lets one escape.
+fn download_dest_in(dir: &Path, name: &str) -> Result<PathBuf> {
+    let dest = unique_download_path(dir, name);
+    if dest.parent() != Some(dir) {
+        return Err(AppError::InvalidInput(format!(
+            "Download name '{name}' resolves outside {}",
+            dir.display()
+        )));
+    }
+    Ok(dest)
+}
+
 /// Destination filename for a bulk download: `<RuleName>_<original>`, or just
 /// the original when the rule has no name. Both parts are reduced to a single
 /// path component so the result always stays inside the Downloads folder.
@@ -142,7 +191,7 @@ pub fn bulk_download_name(rule_name: Option<&str>, filename: &str) -> String {
         .map(|n| n.replace([' ', '/', '\\'], "_"))
         .filter(|n| !n.is_empty())
     {
-        Some(prefix) => format!("{prefix}_{filename}"),
+        Some(prefix) => sanitize_download_filename(&format!("{prefix}_{filename}")),
         None => filename,
     }
 }
@@ -151,7 +200,7 @@ pub fn bulk_download_name(rule_name: Option<&str>, filename: &str) -> String {
 /// sanitized, collision-free name. Returns the path actually written.
 pub fn save_bytes_to_downloads(dir: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf> {
     let safe_name = sanitize_download_filename(filename);
-    let dest = unique_download_path(dir, &safe_name);
+    let dest = download_dest_in(dir, &safe_name)?;
     std::fs::write(&dest, bytes)
         .map_err(|e| AppError::IoError(format!("Failed to save {} to Downloads: {e}", dest.display())))?;
     quarantine_saved_file(&dest);
@@ -163,7 +212,7 @@ pub fn save_bytes_to_downloads(dir: &Path, filename: &str, bytes: &[u8]) -> Resu
 /// attachment file (a copy of a file stored before attachments were marked
 /// carries no mark of its own). Returns the path written.
 pub fn copy_attachment_to_downloads(src: &Path, dir: &Path, download_name: &str) -> Result<PathBuf> {
-    let dest = unique_download_path(dir, download_name);
+    let dest = download_dest_in(dir, &sanitize_download_filename(download_name))?;
     std::fs::copy(src, &dest).map_err(|e| AppError::IoError(format!("Failed to copy {download_name}: {e}")))?;
     quarantine_saved_file(&dest);
     Ok(dest)
@@ -3019,6 +3068,73 @@ mod tests {
     #[test]
     fn bulk_download_name_keeps_a_rule_name_with_slashes_in_one_component() {
         assert_eq!(bulk_download_name(Some("a/../b"), "x.pdf"), "a_.._b_x.pdf");
+    }
+
+    #[test]
+    fn bulk_download_name_neutralises_a_drive_prefix_in_the_rule_name() {
+        assert_eq!(bulk_download_name(Some("C:"), "x.pdf"), "C__x.pdf");
+    }
+
+    // --- sanitize_download_filename: names Windows would misread ---
+
+    #[test]
+    fn sanitize_download_filename_neutralises_windows_hostile_names() {
+        let cases = [
+            // A drive prefix makes dir.join(name) replace dir on Windows.
+            ("C:evil.dll", "C_evil.dll"),
+            // `name:stream` writes an NTFS alternate data stream.
+            ("x.pdf:hidden", "x.pdf_hidden"),
+            ("a<b>c\"d|e?f*g.txt", "a_b_c_d_e_f_g.txt"),
+            ("tab\there.txt", "tab_here.txt"),
+            ("\u{0}nul.txt", "_nul.txt"),
+            ("\u{1f}unit.txt", "_unit.txt"),
+            // Windows drops trailing dots and spaces, so `x.pdf.` is `x.pdf`.
+            ("report.pdf. . ", "report.pdf"),
+            ("...", "attachment"),
+            // Reserved device names, with or without an extension, any case.
+            ("CON", "_CON"),
+            ("con.txt", "_con.txt"),
+            ("Lpt9.tar.gz", "_Lpt9.tar.gz"),
+            ("nul", "_nul"),
+            ("COM1.log", "_COM1.log"),
+            ("aux.", "_aux"),
+            // Not reserved: only the exact base name is.
+            ("CONSOLE.txt", "CONSOLE.txt"),
+            ("COM10.txt", "COM10.txt"),
+            ("my con.txt", "my con.txt"),
+            ("quarterly report.pdf", "quarterly report.pdf"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(sanitize_download_filename(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn copy_attachment_to_downloads_sanitizes_the_download_name() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let src = tmp.path().join("stored.dll");
+        std::fs::write(&src, b"MZ").expect("seed");
+        let downloads = tmp.path().join("Downloads");
+        std::fs::create_dir_all(&downloads).expect("mkdir");
+
+        let dest = copy_attachment_to_downloads(&src, &downloads, "C:evil.dll").expect("copy");
+
+        assert_eq!(dest, downloads.join("C_evil.dll"));
+    }
+
+    #[test]
+    fn download_dest_in_rejects_a_name_that_leaves_the_directory() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        assert_eq!(
+            download_dest_in(tmp.path(), "report.pdf").expect("plain name"),
+            tmp.path().join("report.pdf")
+        );
+        for name in ["sub/report.pdf", "../report.pdf"] {
+            assert!(
+                matches!(download_dest_in(tmp.path(), name), Err(AppError::InvalidInput(_))),
+                "{name} must be rejected"
+            );
+        }
     }
 
     // --- quarantine of every attachment file written to disk ---

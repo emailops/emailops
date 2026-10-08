@@ -41,6 +41,12 @@
 //! The exporter sends to `$PHOENIX_HOST/v1/traces`.
 //! (`with_endpoint` in opentelemetry-otlp 0.31 does NOT append the path automatically.)
 
+// DASA 1.8.2: the exporter sends prompts and replies (email content) over
+// plain-HTTP OTLP to PHOENIX_HOST. Keep it out of release builds, like the
+// `webdriver` feature (only `make dev-trace`, a debug build, enables it).
+#[cfg(all(feature = "tracing", not(debug_assertions)))]
+compile_error!("the `tracing` feature exports prompts and replies over plain-HTTP OTLP; it is dev-only and must not be built in release");
+
 use std::sync::OnceLock;
 
 // ── Global driver ─────────────────────────────────────────────────────────────

@@ -10,3 +10,7 @@ incremental = true
 # without affecting panic backtraces).
 [target.'cfg(target_os = "macos")']
 rustflags = ["-C", "link-arg=-Wl,-S"]
+
+# Binary-hardening flags (DASA) live in the repo-root .cargo/config.toml, the one
+# config Cargo reads both from the repo root (scripts/build_platform.sh) and from
+# src-tauri (tauri build).

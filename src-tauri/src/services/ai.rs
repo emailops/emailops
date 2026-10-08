@@ -1146,14 +1146,15 @@ impl AiService {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Reject AI provider base URLs that aren't plain `http://` or `https://`.
+/// Reject AI provider base URLs that would send email content somewhere unsafe.
 ///
-/// Anything else (`file:`, `javascript:`, `data:`, `gopher:`, custom schemes …)
-/// would either point the AI HTTP client at the local filesystem or open up
-/// SSRF-style pivots through another protocol handler. We don't try to be
-/// clever about private/loopback IPs here because the supported vllm/Ollama
-/// deployment is *meant* to run on `127.0.0.1` / `localhost`; the rule we
-/// actually want to enforce is "must be an HTTP(S) URL with a host".
+/// Only `http://` and `https://` URLs with a host are accepted: anything else
+/// (`file:`, `javascript:`, `data:`, `gopher:`, custom schemes …) would either
+/// point the AI HTTP client at the local filesystem or open up SSRF-style pivots
+/// through another protocol handler. Plain `http://` is further limited to
+/// loopback hosts (`localhost`, `127.0.0.0/8`, `::1`), where the traffic never
+/// leaves the machine; any other host must use `https://` so prompts built from
+/// email never cross a network in cleartext (DASA 1.1.1).
 pub fn validate_ai_base_url(raw: &str) -> Result<()> {
     let parsed = url::Url::parse(raw).map_err(|e| {
         AppError::AiError(format!(
@@ -1170,8 +1171,20 @@ pub fn validate_ai_base_url(raw: &str) -> Result<()> {
         }
     }
 
-    if parsed.host_str().is_none_or(|h| h.is_empty()) {
+    let Some(host) = parsed.host() else {
         return Err(AppError::AiError(format!("AI base URL '{raw}' has no host component.")));
+    };
+
+    let loopback = match host {
+        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    if parsed.scheme() == "http" && !loopback {
+        return Err(AppError::AiError(format!(
+            "AI base URL '{raw}' would send email content unencrypted to another machine. \
+             Use https:// for a remote server, or http:// only with localhost, 127.0.0.1 or ::1."
+        )));
     }
 
     Ok(())
@@ -1948,6 +1961,7 @@ mod provider_models_tests {
 #[cfg(test)]
 mod url_validation_tests {
     use super::validate_ai_base_url;
+    use crate::models::error::AppError;
 
     #[test]
     fn accepts_localhost_and_https_hosts() {
@@ -1968,6 +1982,33 @@ mod url_validation_tests {
     fn rejects_malformed_input() {
         assert!(validate_ai_base_url("not a url").is_err());
         assert!(validate_ai_base_url("http://").is_err());
+    }
+
+    #[test]
+    fn plain_http_is_allowed_only_for_loopback_hosts() {
+        for ok in [
+            "http://localhost:11434",
+            "http://LOCALHOST:11434",
+            "http://127.0.0.1:11434",
+            "http://127.4.5.6:11434",
+            "http://[::1]:11434",
+            "https://ollama:11434",
+            "https://10.0.0.5:11434",
+        ] {
+            assert!(validate_ai_base_url(ok).is_ok(), "{ok} must be accepted");
+        }
+        for refused in [
+            "http://10.0.0.5:11434",
+            "http://ollama:11434",
+            "http://localhost.example.com:11434",
+            "http://[::2]:11434",
+            "http://0.0.0.0:11434",
+        ] {
+            assert!(
+                matches!(validate_ai_base_url(refused), Err(AppError::AiError(_))),
+                "{refused} must be refused"
+            );
+        }
     }
 }
 

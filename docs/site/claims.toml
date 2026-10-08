@@ -394,8 +394,9 @@ checks = [
 checks = [
   { release = 'EmailOps-windows-cuda.msi' },
   { file = '.github/workflows/release.yml', has = '"vulkan","cuda"', covers = ["A cuda Cargo feature builds an NVIDIA-only variant."] },
+  { file = 'src-tauri/src/util/dll_search.rs', has = 'CudaRuntimeNotFound', covers = ["It needs the NVIDIA CUDA Toolkit, whose installer sets CUDA_PATH; without it the app shows a notice and runs AI on the CPU."] },
 ]
-fix = 'Say which CUDA build the release publishes (release.yml windows-* jobs, variant cuda) in all four languages.'
+fix = 'Say which CUDA build the release publishes (release.yml windows-* jobs, variant cuda) and that it needs the CUDA Toolkit (CUDA_PATH, util/dll_search.rs) in all four languages.'
 
 # ── getting-started.md ────────────────────────────────────────────────
 

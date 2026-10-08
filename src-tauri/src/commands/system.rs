@@ -175,6 +175,13 @@ pub async fn is_rosetta_translated() -> Result<bool, AppError> {
     Ok(crate::util::system::is_rosetta_translated())
 }
 
+/// A GPU-runtime problem found at startup that only the user can fix (e.g. the
+/// CUDA build cannot find the CUDA toolkit), or `None`.
+#[tauri::command]
+pub async fn get_gpu_runtime_notice() -> Result<Option<crate::util::dll_search::GpuRuntimeNotice>, AppError> {
+    Ok(crate::util::dll_search::startup_gpu_runtime_notice())
+}
+
 #[tauri::command]
 pub async fn detect_ai_capability() -> Result<AiCapability, AppError> {
     Ok(ai_capability_from(
