@@ -155,6 +155,14 @@ traiter un client, un projet ou un déluge de newsletters à la fois. Avec l'IA 
 mêmes étiquettes alimentent aussi le [Tableau d'étiquettes](../ai-features/#tag-board), qui
 les présente sous forme de grille de blocs.
 
+<!-- claim:feat-smart-filters-2 -->
+Cliquer sur un filtre l'écrit dans le champ de recherche sous forme de requête visible et
+modifiable — `tag:priority=urgent`, `from:`, `domain:`, `ext:` — et un second clic l'efface.
+Clic droit sur un filtre puis **Ajouter à la recherche** le combine avec la recherche en cours.
+Un filtre s'applique dans la vue où vous êtes : dans les éléments envoyés ou un dossier, il ne
+liste que leur courrier, et la recherche reste active quand vous changez de compte ; si elle ne
+trouve rien, la liste indique qu'une recherche est active et propose de l'effacer.
+
 ## Calendrier {#calendar}
 
 <!-- claim:feat-calendar-1 -->
