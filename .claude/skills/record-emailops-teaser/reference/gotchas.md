@@ -69,9 +69,17 @@ others (~55) under the opener questions.
 **Highlight pills on top of the first row hide it.** Put a band's label pill
 at the bottom of the band.
 
+**Soft UI text had four causes, all fixed in the scripts.** (1) The 1080p
+render shrank the 2x screenshots: a whole 1800-px window at 0.95 gives 11–12 px
+text. Render at 4K (`TEASER_SCALE=2`). (2) Zooms past 2.0 CSS→logical upsample
+the screenshot; cap them. (3) Animated zooms resized with BILINEAR; everything
+is Lanczos now. (4) Two lossy passes (CRF 14 master, CRF 20 final) plus a
+denoised CRF 25 preview: the master is now the only lossy pass for 4K, and the
+1080p cut is a single encode from it.
+
 **The preview shown to the developer must be < 30 MB** (SendUserFile limit):
-`finish.sh` makes a 30 fps, lightly denoised CRF 25 copy (~9 MB for 74 s).
-The 60 fps master stays in `docs/marketing/videos/` (gitignored).
+`finish.sh` makes a 1080p30 copy without denoise, raising the CRF only until it
+fits. It is still a compressed preview: judge sharpness on 1:1 stills.
 
 **`rm` of a relative glob after `cd` is blocked** by the harness. Write every
 render or preview to a new directory or name instead of cleaning one.

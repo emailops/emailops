@@ -46,7 +46,7 @@ def sc_open(t):
     lt = t - i * OPEN_D
     name, l1, l2 = OPEN_LINES[i]
     c = field(lt + i * 0.4, **FIELDS[name])
-    c.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, 115 if name == "agate" else 55)))
+    c.alpha_composite(new_img((W, H), (0, 0, 0, 115 if name == "agate" else 55)))
     white = (255, 255, 255, 255)
     words_in(c, l1, W / 2, 430, lt, 0.1, FONT_DISPLAY, 84, white, align="center", stagger=0.08)
     words_in(c, l2, W / 2, 535, lt, 0.35, FONT_DISPLAY, 84, white, align="center", stagger=0.08)
@@ -56,7 +56,7 @@ def sc_open(t):
 def sc_grid(t):
     """3.6 -> 8.2: chips + dots, converge, headline."""
     c = GRID.copy()
-    d = ImageDraw.Draw(c)
+    d = draw(c)
     conv = ease_io(ramp(t, 1.25, 0.75))  # chips & dots fly to centre
     for i, (lab, addr, x, y) in enumerate(CHIPS):
         k = ease_back(ramp(t, 0.1 + i * 0.18, 0.45))
@@ -65,10 +65,10 @@ def sc_grid(t):
         a = ramp(t, 0.1 + i * 0.18, 0.2) * (1 - ramp(t, 1.6, 0.35))
         s = lerp(0.7, 1, k) * lerp(1, 0.6, conv)
         if s != 1:
-            im = im.resize((int(im.width * s), int(im.height * s)), Image.BILINEAR)
-        paste_alpha(c, im, cx - im.width / 2, cy - im.height / 2, a)
+            im = im.resize((int(im.width * s), int(im.height * s)), Image.LANCZOS)
+        paste_alpha(c, im, cx - lw(im) / 2, cy - lh(im) / 2, a)
         mono = text_img(addr or " ", FONT_REG, 24, (140, 140, 146, 255))
-        paste_alpha(c, mono, x - mono.width / 2, y - 84, a * (1 - conv))
+        paste_alpha(c, mono, x - lw(mono) / 2, y - 84, a * (1 - conv))
     for j, (x, y) in enumerate(DOTS):
         a = 255 * ramp(t, 0.3 + j * 0.05, 0.2)
         if t < 2.0:
@@ -107,14 +107,14 @@ def sc_window(t):
         pulse = 1 + 0.06 * math.sin(max(0, t - 0.9) * 8)
         cx, cy = (X0 + X1) / 2, (Y0 + Y1) / 2
         hw, hh = (X1 - X0) / 2 * pulse + 8, (Y1 - Y0) / 2 * pulse + 8
-        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        dd = ImageDraw.Draw(ov)
+        ov = new_img((W, H), (0, 0, 0, 0))
+        dd = draw(ov)
         dd.rounded_rectangle([cx - hw, cy - hh, cx + hw, cy + hh], 12, outline=BLUE + (int(255 * a),), width=4)
         lab = text_img("Unified inbox", FONT_MED, 26, (255, 255, 255, 255))
-        pw = lab.width + 32
+        pw = lw(lab) + 32
         dd.rounded_rectangle([cx - pw / 2, cy - hh - 58, cx + pw / 2, cy - hh - 14], 22, fill=BLUE + (int(255 * a),))
         c.alpha_composite(ov)
-        paste_alpha(c, lab, cx - lab.width / 2, cy - hh - 53, a)
+        paste_alpha(c, lab, cx - lw(lab) / 2, cy - hh - 53, a)
     return c
 
 
@@ -134,7 +134,7 @@ def sc_chat(t):
         name = "u03-answer"
     cam_place(c, F10 + name, UBOX, [U_WIDE, _u_chat()], z, smax=1.35)
     if z > 0:
-        left = GRID.crop((0, 0, 700, H))
+        left = grid_strip(700)
         left.putalpha(int(255 * z))
         c.alpha_composite(left)
     beat_text(c, t, "Ask your", "inbox.", "Answers link the emails they came from.", t0=1.2)
@@ -148,16 +148,16 @@ def sc_privacy(t):
     beat_text(c, t, "All AI runs on", "your computer.", "No email ever travels to an AI in the cloud.")
     note = text_img("Remote models are off unless you turn them on.", FONT_REG, 22, (150, 150, 156, 255))
     paste_alpha(c, note, 122, 632, ramp(t, 1.0, 0.4))
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(ov)
+    ov = new_img((W, H), (0, 0, 0, 0))
+    d = draw(ov)
     k = ease_back(ramp(t, 0.3, 0.55), 1.1)
     a = ramp(t, 0.3, 0.25)
     # the computer: a dark card
     X, Y, BW, BH = 1000, 330, 700, 420
     Y += (1 - k) * 40
-    sh = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(sh).rounded_rectangle([X, Y + 18, X + BW, Y + BH + 18], 28, fill=int(80 * a))
-    c.alpha_composite(Image.merge("RGBA", (Image.new("L", (W, H), 10),) * 3 + (sh.filter(ImageFilter.GaussianBlur(26)),)))
+    sh = new_img((W, H), 0, "L")
+    draw(sh).rounded_rectangle([X, Y + 18, X + BW, Y + BH + 18], 28, fill=int(80 * a))
+    c.alpha_composite(Image.merge("RGBA", (new_img((W, H), 10, "L"),) * 3 + (sh.filter(blur(26)),)))
     d.rounded_rectangle([X, Y, X + BW, Y + BH], 28, fill=(22, 22, 26, int(255 * a)))
     lab = text_img("Your computer", FONT_MED, 26, (150, 150, 158, 255))
     # envelope
@@ -193,9 +193,9 @@ def sc_privacy(t):
         d.line([(cx - 95, cy + 70), (lerp(cx - 95, cx + 95, sl), lerp(cy + 70, cy - 70, sl))], fill=(225, 60, 60, 255), width=9)
     c.alpha_composite(ov)
     paste_alpha(c, lab, X + 40, Y + 32, a)
-    paste_alpha(c, chipl, mx - chipl.width / 2, my - 36, a)
+    paste_alpha(c, chipl, mx - lw(chipl) / 2, my - 36, a)
     nolab = text_img("Cloud AI", FONT_MED, 24, (160, 160, 166, 255))
-    paste_alpha(c, nolab, cx - nolab.width / 2, cy + 70, ca)
+    paste_alpha(c, nolab, cx - lw(nolab) / 2, cy + 70, ca)
     return c
 
 
@@ -204,12 +204,12 @@ def sc_classify2(t):
     c = GRID.copy()
     box = (560, 124, 1620, 708)
     wide = (1.0, 790, 560 - (box[3] - box[1]) / 2)
-    tags = focus_state(box, 2.3, 1535, 250, 1300, 520)
-    comp = focus_state(box, 2.3, 640, 250, 1300, 520)
+    tags = focus_state(box, 2.0, 1535, 250, 1300, 520)
+    comp = focus_state(box, 2.0, 640, 250, 1300, 520)
     k = ease_out(ramp(t, 0.05, 0.6))
     z = ease_io(ramp(t, 1.0, 1.0)) + ease_io(ramp(t, 2.6, 0.9))
     s, ox, oy = cam_place(c, F5 + "v00-inbox", box, [(wide[0], wide[1] + (1 - k) * 140, wide[2]), tags, comp], z,
-                          smax=2.3, alpha=k)
+                          smax=2.0, alpha=k)
     # highlight the column the camera is on: AI tags around z=1, companies around z=2
     for (x0, x1, zc, label) in ((1462, 1608, 1.0, "intent · topic"), (568, 680, 2.0, "company")):
         a = clamp(1 - abs(z - zc) / 0.35)
@@ -217,20 +217,20 @@ def sc_classify2(t):
             continue
         X0, X1 = ox + (x0 - box[0]) * s, ox + (x1 - box[0]) * s
         Y0, Y1 = max(oy, 0) + 6, min(oy + (box[3] - box[1]) * s, H) - 6
-        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        dd = ImageDraw.Draw(ov)
+        ov = new_img((W, H), (0, 0, 0, 0))
+        dd = draw(ov)
         dd.rounded_rectangle([X0, Y0, X1, Y1], 18, fill=BLUE + (int(30 * a),), outline=BLUE + (int(235 * a),), width=4)
         lab = text_img(label, FONT_MED, 30, (255, 255, 255, 255))
-        pw = lab.width + 36
+        pw = lw(lab) + 36
         PY = Y1 - 70
         dd.rounded_rectangle([(X0 + X1) / 2 - pw / 2, PY, (X0 + X1) / 2 + pw / 2, PY + 48], 24,
                              fill=BLUE + (int(255 * a),))
         c.alpha_composite(ov)
-        paste_alpha(c, lab, (X0 + X1) / 2 - lab.width / 2, PY + 6, a)
+        paste_alpha(c, lab, (X0 + X1) / 2 - lw(lab) / 2, PY + 6, a)
     # keep the words on clean paper while the zoomed panel fills the frame
     a = min(1.0, z)
     if a > 0:
-        left = GRID.crop((0, 0, 680, H))
+        left = grid_strip(680)
         left.putalpha(int(255 * a))
         c.alpha_composite(left)
     beat_text(c, t, "Classified", "by AI.", "Company, intent and topic.")
@@ -239,8 +239,9 @@ def sc_classify2(t):
 
 @lru_cache(None)
 def strip_img(scale):
+    """The stitched sidebar strip (2x CSS) at `scale` logical px per CSS px, physical size."""
     im = Image.open(FRAMES / (F6 + "sidebar-strip.png")).convert("RGBA")
-    return im.resize((int(im.width / 2 * scale), int(im.height / 2 * scale)), Image.LANCZOS)
+    return im.resize((P(im.width / 2 * scale), P(im.height / 2 * scale)), Image.LANCZOS)
 
 
 def sc_sidetags(t):
@@ -248,18 +249,17 @@ def sc_sidetags(t):
     beat_text(c, t, "Filter by", "any tag.", "Every tag becomes a filter in the sidebar.")
     s = 1.8
     st = strip_img(s)
-    vw, vh = st.width, 800
+    vw, vh = lw(st), 800
     k = ease_out(ramp(t, 0.05, 0.6))
     y = lerp(200, 1180 - vh / s, ease_io(ramp(t, 0.7, 2.6))) * s
-    view = st.crop((0, int(y), vw, int(y) + vh))
+    view = st.crop((0, P(y), st.width, P(y) + P(vh)))
     view.putalpha(rounded_mask(view.size, 20))
     pad = 60
-    out = Image.new("RGBA", (vw + pad * 2, vh + pad * 2), (0, 0, 0, 0))
-    sh = Image.new("L", out.size, 0)
-    ImageDraw.Draw(sh).rounded_rectangle([pad, pad + 18, pad + vw, pad + vh + 18], 20, fill=90)
-    black = Image.new("RGBA", out.size, (10, 12, 20, 0))
-    black.putalpha(sh.filter(ImageFilter.GaussianBlur(30)))
-    black.alpha_composite(view, (pad, pad))
+    sh = new_img((vw + pad * 2, vh + pad * 2), 0, "L")
+    draw(sh).rounded_rectangle([pad, pad + 18, pad + vw, pad + vh + 18], 20, fill=90)
+    black = new_img((vw + pad * 2, vh + pad * 2), (10, 12, 20, 0))
+    black.putalpha(sh.filter(blur(30)))
+    black.alpha_composite(view, (P(pad), P(pad)))
     paste_alpha(c, black, 1120 - pad + (1 - k) * 120, 540 - vh / 2 - pad, k)
     return c
 
@@ -388,8 +388,8 @@ def sc_sync(t):
     paste_alpha(c, note, 122, 636, ramp(t, 1.0, 0.4))
     a = ramp(t, 0.3, 0.3)
     k = ease_out(ramp(t, 0.3, 0.6))
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(ov)
+    ov = new_img((W, H), (0, 0, 0, 0))
+    d = draw(ov)
     L = (940 - (1 - k) * 60, 560, 300, 200)
     R = (1500 + (1 - k) * 60, 560, 300, 200)
     laptop(d, *L, a)
@@ -418,11 +418,11 @@ def sc_sync(t):
     c.alpha_composite(ov)
     for (x, y, w, h), name in ((L, "You"), (R, "Your teammate")):
         lab = text_img(name, FONT_MED, 26, INK + (255,))
-        paste_alpha(c, lab, x + w / 2 - lab.width / 2, y + h + 34, a)
+        paste_alpha(c, lab, x + w / 2 - lw(lab) / 2, y + h + 34, a)
         doc = text_img("EO Doc", FONT_MED, 24, (200, 200, 206, 255))
-        paste_alpha(c, doc, x + w / 2 - doc.width / 2, y + h / 2 - 14, a)
+        paste_alpha(c, doc, x + w / 2 - lw(doc) / 2, y + h / 2 - 14, a)
     mail = text_img("your email", FONT_MED, 24, BLUE + (255,))
-    paste_alpha(c, mail, (xa + xb) / 2 - mail.width / 2, 450, ramp(t, 1.0, 0.4))
+    paste_alpha(c, mail, (xa + xb) / 2 - lw(mail) / 2, 450, ramp(t, 1.0, 0.4))
     return c
 
 
@@ -444,33 +444,33 @@ def sc_end(t):
     """31.8 -> 37.0"""
     c = field(t + 2, **{**FIELDS["meadow"], "push": 0.025})
     # soft darkening so white type reads
-    c.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, 70)))
+    c.alpha_composite(new_img((W, H), (0, 0, 0, 70)))
     k = ease_out(ramp(t, 0.25, 0.8))
     ic = icon_img(118)
     word = text_img("EmailOps", FONT_DISPLAY, 112, (255, 255, 255, 255))
-    total = ic.width + 26 + word.width
+    total = lw(ic) + 26 + lw(word)
     x = W / 2 - total / 2
     y = 420 + (1 - k) * 24
     paste_alpha(c, ic, x, y - 4, k)
-    paste_alpha(c, word, x + ic.width + 26, y - 6, k)
+    paste_alpha(c, word, x + lw(ic) + 26, y - 6, k)
     words_in(c, "Your email, understood. Privately.", W / 2, 580, t, 0.9, FONT_MED, 40, (255, 255, 255, 255),
              align="center", stagger=0.07, rise=12)
     pill = text_img("Local AI  ·  Private  ·  Free and open source", FONT_MED, 32, (255, 255, 255, 255))
     pa = ramp(t, 1.5, 0.5)
-    pw, ph = pill.width + 56, 64
-    ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(ov).rounded_rectangle([W / 2 - pw / 2, 650, W / 2 + pw / 2, 650 + ph], 32,
+    pw, ph = lw(pill) + 56, 64
+    ov = new_img((W, H), (0, 0, 0, 0))
+    draw(ov).rounded_rectangle([W / 2 - pw / 2, 650, W / 2 + pw / 2, 650 + ph], 32,
                                          fill=(255, 255, 255, int(38 * pa)), outline=(255, 255, 255, int(120 * pa)), width=2)
     c.alpha_composite(ov)
-    paste_alpha(c, pill, W / 2 - pill.width / 2, 662, pa)
+    paste_alpha(c, pill, W / 2 - lw(pill) / 2, 662, pa)
     url = text_img("getemailops.com", FONT_MED, 28, (235, 235, 235, 255))
-    paste_alpha(c, url, W / 2 - url.width / 2, 760, ramp(t, 2.0, 0.5) * 0.9)
+    paste_alpha(c, url, W / 2 - lw(url) / 2, 760, ramp(t, 2.0, 0.5) * 0.9)
     foot = text_img("macOS · Windows · Linux", FONT_REG, 24, (225, 225, 225, 255))
-    paste_alpha(c, foot, W / 2 - foot.width / 2, 980, ramp(t, 2.3, 0.5) * 0.8)
+    paste_alpha(c, foot, W / 2 - lw(foot) / 2, 980, ramp(t, 2.3, 0.5) * 0.8)
     # final fade
     f = ramp(t, 4.6, 0.8)
     if f > 0:
-        c.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, int(255 * f))))
+        c.alpha_composite(new_img((W, H), (0, 0, 0, int(255 * f))))
     return c
 
 

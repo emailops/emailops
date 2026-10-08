@@ -9,16 +9,23 @@ A storyboard does from teaser_fx import *, defines scene functions
 scene(t) -> RGBA Image and a TIMELINE = [(start, dur, scene), ...],
 then calls run(TIMELINE). See examples/launch_teaser.py.
 
-Coordinates: screen space is 1920x1080. Panel boxes are CSS pixels of the
-1800-wide app window; screenshots are 2x (retina), so panel crops at 2x.
+Coordinates: scenes work in a *logical* 1920x1080 screen. Images are *physical*:
+TEASER_SCALE (default 2) times bigger, so the master renders at 3840x2160 and the
+2x (retina) screenshots land 1:1 in the wide shots instead of being shrunk.
+Scene code never sees physical pixels if it sticks to the helpers: new_img()
+(not Image.new), draw() (not ImageDraw.Draw), blur(), lw()/lh() for an image's
+logical width/height, tlen() for text length, grid_strip() for a slice of GRID.
+Panel boxes are CSS pixels of the 1800-wide app window.
 
 Config (env):
   TEASER_FRAMES  directory the panel names are relative to (default: cwd)
+  TEASER_SCALE   physical pixels per logical pixel: 2 = 4K master (default), 1 = 1080p
   TEASER_FONTS   directory holding the Inter TTFs (default: ~/.cache/emailops-teaser/fonts,
                  filled by scripts/fetch_fonts.sh)
 """
 import math
 import os
+import shutil
 import subprocess
 import sys
 from functools import lru_cache
@@ -28,6 +35,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H, FPS = 1920, 1080, 60
+S = float(os.environ.get("TEASER_SCALE", "2"))
+WS, HS = int(W * S), int(H * S)
 FRAMES = Path(os.environ.get("TEASER_FRAMES", "."))
 FONTS = Path(os.environ.get("TEASER_FONTS", Path.home() / ".cache/emailops-teaser/fonts"))
 FONT_DISPLAY = str(FONTS / "InterDisplay-SemiBold.ttf")
@@ -36,6 +45,72 @@ FONT_REG = str(FONTS / "Inter-Regular.ttf")
 REPO = Path(__file__).resolve().parents[4]
 ICON = REPO / "src-tauri/icons/icon.png"
 SYMBOLS = "/System/Library/Fonts/Apple Symbols.ttf"  # ⌘ and ↵ glyphs for keycaps
+# Prefer the native Homebrew ffmpeg: /usr/local/bin may hold an x86_64 one that runs (slowly) under Rosetta.
+FFMPEG = os.environ.get("TEASER_FFMPEG") or (
+    "/opt/homebrew/bin/ffmpeg" if Path("/opt/homebrew/bin/ffmpeg").exists() else shutil.which("ffmpeg") or "ffmpeg")
+
+
+
+def P(v):
+    """Logical -> physical pixels."""
+    return int(round(v * S))
+
+
+def new_img(size, color=(0, 0, 0, 0), mode="RGBA"):
+    """Image.new with a logical size."""
+    return Image.new(mode, (max(1, P(size[0])), max(1, P(size[1]))), color)
+
+
+def lw(im):
+    return im.width / S
+
+
+def lh(im):
+    return im.height / S
+
+
+def blur(r):
+    return ImageFilter.GaussianBlur(r * S)
+
+
+class _SDraw:
+    """ImageDraw.Draw taking logical coordinates, radii and widths."""
+
+    def __init__(self, im):
+        self.d = ImageDraw.Draw(im)
+
+    @staticmethod
+    def _xy(xy):
+        if len(xy) and isinstance(xy[0], (tuple, list)):
+            return [(a * S, b * S) for a, b in xy]
+        return [v * S for v in xy]
+
+    @staticmethod
+    def _w(width):
+        return max(1, int(round(width * S)))
+
+    def line(self, xy, fill=None, width=1):
+        self.d.line(self._xy(xy), fill=fill, width=self._w(width))
+
+    def rectangle(self, xy, fill=None, outline=None, width=1):
+        self.d.rectangle(self._xy(xy), fill=fill, outline=outline, width=self._w(width))
+
+    def rounded_rectangle(self, xy, radius=0, fill=None, outline=None, width=1):
+        self.d.rounded_rectangle(self._xy(xy), radius * S, fill=fill, outline=outline, width=self._w(width))
+
+    def ellipse(self, xy, fill=None, outline=None, width=1):
+        self.d.ellipse(self._xy(xy), fill=fill, outline=outline, width=self._w(width))
+
+    def polygon(self, xy, fill=None, outline=None):
+        self.d.polygon(self._xy(xy), fill=fill, outline=outline)
+
+    def text(self, xy, text, font=None, fill=None):
+        self.d.text((xy[0] * S, xy[1] * S), text, font=font, fill=fill)
+
+
+def draw(im):
+    return _SDraw(im)
+
 
 INK = (17, 17, 19)
 
@@ -80,7 +155,13 @@ def loglerp(a, b, x):
 
 @lru_cache(None)
 def font(path, size):
-    return ImageFont.truetype(path, size)
+    """A physical-size font for a logical point size."""
+    return ImageFont.truetype(path, max(1, int(round(size * S))))
+
+
+def tlen(path, size, text):
+    """Logical length of a text run."""
+    return font(path, size).getlength(text) / S
 
 
 @lru_cache(None)
@@ -88,14 +169,14 @@ def text_img(s, path, size, color, tracking=0):
     f = font(path, size)
     l, t, r, b = f.getbbox(s)
     asc, desc = f.getmetrics()
-    w = r + max(0, tracking * len(s)) + 4
-    im = Image.new("RGBA", (int(w), asc + desc + 4), (0, 0, 0, 0))
+    w = r + max(0, tracking * S * len(s)) + 4 * S
+    im = Image.new("RGBA", (int(w), int(asc + desc + 4 * S)), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     if tracking:
         x = 0
         for ch in s:
             d.text((x, 0), ch, font=f, fill=color)
-            x += f.getlength(ch) + tracking
+            x += f.getlength(ch) + tracking * S
     else:
         d.text((0, 0), s, font=f, fill=color)
     return im
@@ -108,16 +189,16 @@ def paste_alpha(canvas, im, x, y, alpha=1.0):
         im = im.copy()
         a = im.getchannel("A").point(lambda v: int(v * alpha))
         im.putalpha(a)
-    canvas.alpha_composite(im, (int(round(x)), int(round(y))))
+    canvas.alpha_composite(im, (P(x), P(y)))
 
 
 def words_in(canvas, line, x, y, t, t0, path, size, color, stagger=0.07, rise=26, dur=0.5, align="left",
              out_t=None, out_d=0.25):
     """Word-by-word rise + fade, like the reference's kinetic titles."""
     words = line.split(" ")
-    space = font(path, size).getlength(" ")
+    space = tlen(path, size, " ")
     imgs = [text_img(w, path, size, color) for w in words]
-    total = sum(font(path, size).getlength(w) for w in words) + space * (len(words) - 1)
+    total = sum(tlen(path, size, w) for w in words) + space * (len(words) - 1)
     cx = x - total / 2 if align == "center" else x
     for i, (w, im) in enumerate(zip(words, imgs)):
         k = ease_out(ramp(t, t0 + i * stagger, dur))
@@ -125,14 +206,15 @@ def words_in(canvas, line, x, y, t, t0, path, size, color, stagger=0.07, rise=26
         if out_t is not None:
             a *= 1 - ramp(t, out_t, out_d)
         paste_alpha(canvas, im, cx, y + (1 - k) * rise, a)
-        cx += font(path, size).getlength(w) + space
+        cx += tlen(path, size, w) + space
     return total
 
 
 # film grain tiles, vignette and the low-res sampling grid for field()
-_grain = [np.clip(np.random.default_rng(i).normal(0, 7, (H, W, 1)), -20, 20).astype(np.int16) for i in range(6)]
-_yy, _xx = np.mgrid[0:H, 0:W].astype(np.float32)
-_vig = (1 - 0.55 * (((_xx - W / 2) / (W / 2)) ** 2 + ((_yy - H / 2) / (H / 2)) ** 2) ** 1.2 * 0.5)[..., None]
+_grain = [np.clip(np.random.default_rng(i).normal(0, 7, (HS, WS, 1)), -20, 20).astype(np.int16) for i in range(6)]
+_yy, _xx = np.mgrid[0:HS, 0:WS].astype(np.float32)
+_vig = (1 - 0.55 * (((_xx - WS / 2) / (WS / 2)) ** 2 + ((_yy - HS / 2) / (HS / 2)) ** 2) ** 1.2 * 0.5)[..., None]
+del _yy, _xx
 _ly, _lx = np.mgrid[0:270, 0:480].astype(np.float32)
 
 
@@ -192,7 +274,7 @@ def field(t, palette, blobs, base_top, base_bot, push=0.06, bands=None, clouds=(
     small = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
     z = 1 + push * t
     cw, ch = 480 / z, 270 / z
-    small = small.resize((W, H), Image.BICUBIC, box=((480 - cw) / 2, (270 - ch) / 2, (480 + cw) / 2, (270 + ch) / 2))
+    small = small.resize((WS, HS), Image.BICUBIC, box=((480 - cw) / 2, (270 - ch) / 2, (480 + cw) / 2, (270 + ch) / 2))
     a = np.asarray(small).astype(np.float32) * _vig
     a = a.astype(np.int16) + _grain[int(t * 24) % 6]
     return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).convert("RGBA")
@@ -229,8 +311,8 @@ FIELDS = {
 
 
 def make_grid():
-    im = Image.new("RGBA", (W, H), PAPER + (255,))
-    d = ImageDraw.Draw(im)
+    im = new_img((W, H), PAPER + (255,))
+    d = draw(im)
     step = 48
     for x in range(0, W, step):
         d.line([(x, 0), (x, H)], fill=(234, 234, 230, 255))
@@ -242,35 +324,44 @@ def make_grid():
 GRID = make_grid()
 
 
+def grid_strip(x1):
+    """The grid's left strip [0, x1) (logical), for laying clean paper back over a zoomed panel."""
+    return GRID.crop((0, 0, P(x1), HS))
+
+
 def rounded_mask(size, r):
+    """Mask of physical `size` with a logical corner radius."""
     m = Image.new("L", size, 0)
-    ImageDraw.Draw(m).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], r, fill=255)
+    ImageDraw.Draw(m).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], r * S, fill=255)
     return m
 
 
 @lru_cache(None)
 def panel(name, box, scale, radius=18, shadow=36, border=True):
     """Crop a CSS-pixel box out of a 2x screenshot, scale it, round it and give
-    it a soft drop shadow. Returns (image, pad)."""
+    it a soft drop shadow. Returns (image, logical pad).
+
+    `scale` is logical pixels per CSS pixel. The screenshot holds 2 physical
+    pixels per CSS pixel, so scale * S <= 2 never upsamples: at S=2 the wide
+    shots (scale <= 1) are 1:1 or downscaled, zooms above 1 upsample a little."""
     src = Image.open(FRAMES / f"{name}.png").convert("RGBA")
     x0, y0, x1, y1 = [v * 2 for v in box]
     im = src.crop((x0, y0, x1, y1))
-    w, h = int((x1 - x0) / 2 * scale), int((y1 - y0) / 2 * scale)
-    im = im.resize((w, h), Image.LANCZOS)
+    w, h = P((box[2] - box[0]) * scale), P((box[3] - box[1]) * scale)
+    if (w, h) != im.size:
+        im = im.resize((w, h), Image.LANCZOS)
     im.putalpha(rounded_mask((w, h), radius))
     pad = shadow * 2
-    out = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
-    sh = Image.new("L", out.size, 0)
-    ImageDraw.Draw(sh).rounded_rectangle([pad, pad + 18, pad + w, pad + h + 18], radius, fill=70)
-    sh = sh.filter(ImageFilter.GaussianBlur(shadow))
+    pp = P(pad)
+    sh = Image.new("L", (w + pp * 2, h + pp * 2), 0)
+    ImageDraw.Draw(sh).rounded_rectangle([pp, pp + P(18), pp + w, pp + h + P(18)], radius * S, fill=70)
+    sh = sh.filter(blur(shadow))
+    out = Image.new("RGBA", sh.size, (10, 12, 20, 0))
     out.putalpha(sh)
-    out = Image.composite(out, Image.new("RGBA", out.size, (0, 0, 0, 0)), sh)
-    black = Image.new("RGBA", out.size, (10, 12, 20, 0))
-    black.putalpha(sh)
-    out = black
-    out.alpha_composite(im, (pad, pad))
+    out.alpha_composite(im, (pp, pp))
     if border:
-        ImageDraw.Draw(out).rounded_rectangle([pad, pad, pad + w - 1, pad + h - 1], radius, outline=(0, 0, 0, 28), width=1)
+        ImageDraw.Draw(out).rounded_rectangle([pp, pp, pp + w - 1, pp + h - 1], radius * S, outline=(0, 0, 0, 28),
+                                              width=max(1, P(1)))
     return out, pad
 
 
@@ -278,7 +369,7 @@ def put_panel(canvas, pimg, pad, x, y, s=1.0, alpha=1.0):
     """Place panel so its content's top-left is at (x, y), scaled by s around it."""
     if s != 1.0:
         w, h = pimg.size
-        pimg = pimg.resize((max(1, int(w * s)), max(1, int(h * s))), Image.BILINEAR)
+        pimg = pimg.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
         pad = pad * s
     paste_alpha(canvas, pimg, x - pad, y - pad, alpha)
 
@@ -312,23 +403,24 @@ def focus_state(box, s, fx, fy, sx, sy):
 
 @lru_cache(None)
 def keycap(label, size=96, pressed=False):
+    """A dark macOS keycap; returns (image, logical pad)."""
     pad = 30
-    im = Image.new("RGBA", (size + pad * 2, size + pad * 2), (0, 0, 0, 0))
-    sh = Image.new("L", im.size, 0)
+    im = new_img((size + pad * 2, size + pad * 2))
+    sh = new_img((size + pad * 2, size + pad * 2), 0, "L")
     off = 4 if pressed else 12
-    ImageDraw.Draw(sh).rounded_rectangle([pad, pad + off, pad + size, pad + size + off], 20, fill=110 if not pressed else 70)
-    sh = sh.filter(ImageFilter.GaussianBlur(10))
-    base = Image.new("RGBA", im.size, (0, 0, 0, 0))
-    base.putalpha(sh)
-    im = base
-    d = ImageDraw.Draw(im)
+    draw(sh).rounded_rectangle([pad, pad + off, pad + size, pad + size + off], 20, fill=110 if not pressed else 70)
+    im.putalpha(sh.filter(blur(10)))
+    d = draw(im)
     d.rounded_rectangle([pad, pad, pad + size, pad + size], 20, fill=(38, 38, 42, 255))
     d.rounded_rectangle([pad + 3, pad + 2, pad + size - 3, pad + size - 8], 17, fill=(52, 52, 57, 255))
-    f = font(FONT_MED, int(size * (0.42 if len(label) == 1 else 0.24)))
     if label in ("⌘", "↵"):
-        f = ImageFont.truetype(SYMBOLS, int(size * 0.5))
-    l, t, r, b = d.textbbox((0, 0), label, font=f)
-    d.text((pad + (size - (r - l)) / 2 - l, pad + (size - 8 - (b - t)) / 2 - t), label, font=f, fill=(240, 240, 242, 255))
+        f = ImageFont.truetype(SYMBOLS, P(size * 0.5))
+    else:
+        f = font(FONT_MED, size * (0.42 if len(label) == 1 else 0.24))
+    l, t, r, b = d.d.textbbox((0, 0), label, font=f)
+    x = P(pad) + (P(size) - (r - l)) / 2 - l
+    y = P(pad) + (P(size - 8) - (b - t)) / 2 - t
+    d.d.text((x, y), label, font=f, fill=(240, 240, 242, 255))
     return im, pad
 
 
@@ -355,33 +447,33 @@ def pointer(canvas, x, y, alpha=1.0):
 
 @lru_cache(None)
 def pointer_img():
-    s = 2
-    im = Image.new("RGBA", (40 * s, 52 * s), (0, 0, 0, 0))
+    k = 2 * S  # draw supersampled, then shrink to the physical size
+    im = Image.new("RGBA", (int(40 * k), int(52 * k)), (0, 0, 0, 0))
     pts = [(6, 4), (6, 38), (14, 30), (20, 44), (26, 41), (20, 28), (31, 28)]
-    pts = [(x * s, y * s) for x, y in pts]
+    pts = [(x * k, y * k) for x, y in pts]
     sh = Image.new("L", im.size, 0)
-    ImageDraw.Draw(sh).polygon([(x + 3, y + 5) for x, y in pts], fill=110)
-    sh = sh.filter(ImageFilter.GaussianBlur(4))
+    ImageDraw.Draw(sh).polygon([(x + 1.5 * k, y + 2.5 * k) for x, y in pts], fill=110)
+    sh = sh.filter(ImageFilter.GaussianBlur(2 * k))
     im.putalpha(sh)
     d = ImageDraw.Draw(im)
     d.polygon(pts, fill=(255, 255, 255, 255))
     inner = [(8, 9), (8, 33), (14.5, 26.5), (20.5, 40), (23.5, 38.5), (17.5, 25.5), (26, 25.5)]
-    d.polygon([(x * s, y * s) for x, y in inner], fill=(15, 15, 18, 255))
-    return im.resize((40, 52), Image.LANCZOS)
+    d.polygon([(x * k, y * k) for x, y in inner], fill=(15, 15, 18, 255))
+    return im.resize((P(40), P(52)), Image.LANCZOS)
 
 
 def ripple(canvas, x, y, t, tc):
     k = ramp(t, tc, 0.55)
     if 0 < k < 1:
-        ov = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+        ov = new_img((200, 200))
         r = 12 + 60 * ease_out(k)
-        ImageDraw.Draw(ov).ellipse([100 - r, 100 - r, 100 + r, 100 + r], outline=BLUE + (int(220 * (1 - k)),), width=5)
-        canvas.alpha_composite(ov, (int(x - 100), int(y - 100)))
+        draw(ov).ellipse([100 - r, 100 - r, 100 + r, 100 + r], outline=BLUE + (int(220 * (1 - k)),), width=5)
+        canvas.alpha_composite(ov, (P(x - 100), P(y - 100)))
 
 
 def brackets(canvas, cx, cy, w, h, a):
     """The reference's bracket marks around a brand name."""
-    d = ImageDraw.Draw(canvas)
+    d = draw(canvas)
     L = 34
     c = (255, 255, 255, int(235 * a))
     for sx in (-1, 1):
@@ -392,23 +484,23 @@ def brackets(canvas, cx, cy, w, h, a):
 
 @lru_cache(None)
 def chip(label):
-    f = font(FONT_MED, 30)
-    tw = f.getlength(label) + 7 * len(label)
+    tw = tlen(FONT_MED, 30, label) + 7 * len(label)
     w, h = int(tw + 96), 72
-    im = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
-    sh = Image.new("L", im.size, 0)
-    ImageDraw.Draw(sh).rounded_rectangle([20, 26, 20 + w, 26 + h], 12, fill=40)
-    im.putalpha(sh.filter(ImageFilter.GaussianBlur(8)))
-    d = ImageDraw.Draw(im)
+    im = new_img((w + 40, h + 40))
+    sh = new_img((w + 40, h + 40), 0, "L")
+    draw(sh).rounded_rectangle([20, 26, 20 + w, 26 + h], 12, fill=40)
+    im.putalpha(sh.filter(blur(8)))
+    d = draw(im)
     d.rounded_rectangle([20, 20, 20 + w, 20 + h], 12, fill=(255, 255, 255, 255), outline=(225, 225, 222, 255))
     # tiny envelope glyph
     ex, ey = 44, 45
     d.rounded_rectangle([ex, ey, ex + 32, ey + 23], 4, outline=INK + (255,), width=3)
     d.line([(ex + 2, ey + 3), (ex + 16, ey + 13), (ex + 30, ey + 3)], fill=INK + (255,), width=3)
     x = ex + 48
+    f = font(FONT_MED, 30)
     for ch in label:
         d.text((x, 39), ch, font=f, fill=INK + (255,))
-        x += f.getlength(ch) + 7
+        x += tlen(FONT_MED, 30, ch) + 7
     return im
 
 
@@ -442,32 +534,32 @@ def envelope(d, cx, cy, sz, col):
 @lru_cache(None)
 def os_tile(name):
     w, h = 300, 120
-    im = Image.new("RGBA", (w + 60, h + 60), (0, 0, 0, 0))
-    sh = Image.new("L", im.size, 0)
-    ImageDraw.Draw(sh).rounded_rectangle([30, 40, 30 + w, 40 + h], 20, fill=50)
-    im.putalpha(sh.filter(ImageFilter.GaussianBlur(14)))
-    d = ImageDraw.Draw(im)
+    im = new_img((w + 60, h + 60))
+    sh = new_img((w + 60, h + 60), 0, "L")
+    draw(sh).rounded_rectangle([30, 40, 30 + w, 40 + h], 20, fill=50)
+    im.putalpha(sh.filter(blur(14)))
+    d = draw(im)
     d.rounded_rectangle([30, 30, 30 + w, 30 + h], 20, fill=(255, 255, 255, 255), outline=(225, 225, 222, 255))
-    f = font(FONT_DISPLAY, 40)
-    tw = f.getlength(name)
-    d.text((30 + (w - tw) / 2, 30 + 34), name, font=f, fill=INK + (255,))
+    tw = tlen(FONT_DISPLAY, 40, name)
+    d.text((30 + (w - tw) / 2, 30 + 34), name, font=font(FONT_DISPLAY, 40), fill=INK + (255,))
     return im
 
 
 @lru_cache(None)
 def icon_img(size):
-    return Image.open(ICON).convert("RGBA").resize((size, size), Image.LANCZOS)
+    return Image.open(ICON).convert("RGBA").resize((P(size), P(size)), Image.LANCZOS)
 
 
 def frame_at(timeline, T):
     for start, dur, fn in timeline:
         if start <= T < start + dur:
             return fn(T - start).convert("RGB")
-    return Image.new("RGB", (W, H))
+    return Image.new("RGB", (WS, HS))
 
 
 def run(timeline, argv=None):
-    """CLI: storyboard.py OUT.mp4 renders the silent master (60 fps, CRF 14);
+    """CLI: storyboard.py OUT.mp4 renders the silent master (WSxHS, 60 fps, CRF 12, one
+    lossy pass; finish.sh derives the 1080p cut from it with a Lanczos downscale);
     storyboard.py PREFIX --preview 1.2,13.5 writes PREFIX-<t>.png stills."""
     argv = argv or sys.argv[1:]
     out = argv[0]
@@ -477,8 +569,8 @@ def run(timeline, argv=None):
         return
     total = timeline[-1][0] + timeline[-1][1]
     n = int(total * FPS)
-    p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-                          "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", "14",
+    p = subprocess.Popen([FFMPEG, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{WS}x{HS}",
+                          "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", "12",
                           "-tune", "film", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], stdin=subprocess.PIPE)
     for i in range(n):
         p.stdin.write(frame_at(timeline, i / FPS).tobytes())

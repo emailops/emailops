@@ -58,9 +58,9 @@ W=<scratchpad>/teaser            # work dir: frames, previews, renders
 | 4. Strip | `scripts/stitch_strip.py` | `frames6/sidebar-strip.png` |
 | 5. Storyboard | copy `examples/launch_teaser.py`, edit scenes + `TIMELINE` | — |
 | 6. Preview | `… launch_teaser.py $W/pv/f --preview t1,t2,…` | stills to check |
-| 7. Render | `… launch_teaser.py $W/out/silent.mp4` | silent master (~2 min) |
+| 7. Render | `… launch_teaser.py $W/out/silent-4k.mp4` | silent 4K master (one lossy pass) |
 | 8. Subtitles | `scripts/make_srt.py cues.json` | `<name>-<lang>.srt` |
-| 9. Finish | `scripts/finish.sh` | final, sin-música, preview; copied to `docs/marketing/videos/` |
+| 9. Finish | `scripts/finish.sh` | `-4k` (YouTube), 1080p (X), sin-música, preview; copied to `docs/marketing/videos/` |
 | 10. Show | `SendUserFile` the `-preview.mp4` (the master is >30 MB) | — |
 
 ### 1–2. Data and app
@@ -96,8 +96,19 @@ when the shoot is over.
 ### 5–7. Storyboard
 
 A scene is `scene(t) -> RGBA Image` on local time `t`; `TIMELINE` is
-`[(start, dur, scene), …]` and `run(TIMELINE)` renders. Grammar that worked
-(all in `teaser_fx.py`, used in `launch_teaser.py`):
+`[(start, dur, scene), …]` and `run(TIMELINE)` renders.
+
+**Sharpness: render at 4K, think in 1080.** Scenes use logical 1920x1080
+coordinates; images are physical, `TEASER_SCALE` (default 2) times bigger, so
+the master is 3840x2160 and the 2x screenshots land 1:1 in wide shots. The
+first teaser rendered at 1080p looked soft: a 1800-px window shown whole had
+11–12 px text. Keep scene code resolution-free: `new_img` (not `Image.new`),
+`draw` (not `ImageDraw.Draw`), `blur`, `lw`/`lh` for an image's logical size,
+`tlen` for text length, `grid_strip(x)` for clean paper. Never zoom a panel past
+2.0 CSS→logical (the screenshot's resolution); `TEASER_SCALE=1` gives fast 1080p
+previews of motion.
+
+Grammar that worked (all in `teaser_fx.py`, used in `launch_teaser.py`):
 
 - `GRID.copy()` canvas; `beat_text(c, t, line1, line2, sub)` — left column,
   76 px InterDisplay, words rise in one by one.
@@ -127,8 +138,15 @@ move, move their cues with them. Then:
 
 ```bash
 uv run --no-project python $K/scripts/make_srt.py cues.json $W/out emailops-launch-vN
-$K/scripts/finish.sh $W/out/silent.mp4 <music.mp3> emailops-launch-vN $W/out
+$K/scripts/finish.sh $W/out/silent-4k.mp4 <music.mp3> emailops-launch-vN $W/out
 ```
+
+`finish.sh` muxes the music onto the 4K master without re-encoding
+(`-4k.mp4`, for YouTube), derives the 1080p cut with a Lanczos downscale at
+CRF 16 (`.mp4`, for X, which serves 1080p), copies its video into the
+music-less cut, and makes a 1080p30 preview under 30 MB with no denoise
+(denoise smears small UI text). When the developer judges sharpness, send a
+couple of 1:1 crops of 4K stills too: the preview is still compressed.
 
 Music: "Inspired", Kevin MacLeod (incompetech.com), CC BY 4.0 —
 `https://incompetech.com/music/royalty-free/mp3-royaltyfree/Inspired.mp3`.
