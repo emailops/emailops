@@ -419,6 +419,30 @@ pub fn update_account_sync_from(
     Ok((account, change))
 }
 
+/// Persist `account_id`'s settings.
+///
+/// Selecting another Gmail category reopens the whole-inbox listing, so the
+/// next sync downloads that category's existing mail rather than only what
+/// arrives from now on.
+pub fn save_account_settings(db: &Database, account_id: &str, settings: &crate::models::AccountSettings) -> Result<()> {
+    let key = format!("account_settings:{account_id}");
+    let previous: crate::models::AccountSettings = match db.get_preference(&key)? {
+        Some(json) => serde_json::from_str(&json).unwrap_or_default(),
+        None => crate::models::AccountSettings::default(),
+    };
+    let json = serde_json::to_string(settings).map_err(|e| AppError::InvalidInput(e.to_string()))?;
+    db.set_preference(&key, &json)?;
+
+    let added_category = settings
+        .gmail_categories
+        .iter()
+        .any(|c| !previous.gmail_categories.contains(c));
+    if added_category {
+        crate::services::emails::reopen_inbox_gap_repair(db, account_id)?;
+    }
+    Ok(())
+}
+
 /// Name for the From header of mail sent from `account`, or `None` when the
 /// account has no real display name — accounts added without one store their
 /// address as the name.
@@ -1887,5 +1911,54 @@ mod tests {
     fn unknown_provider_has_no_category_tabs() {
         let got = available_categories("brand-new-protocol", &[]);
         assert!(got.is_empty(), "expected empty, got {:?}", got);
+    }
+
+    fn gmail_settings(categories: &[&str]) -> crate::models::AccountSettings {
+        crate::models::AccountSettings {
+            gmail_categories: categories.iter().map(|c| c.to_string()).collect(),
+            auto_download_attachment_categories: vec![],
+        }
+    }
+
+    const GAP_REPAIR_KEY: &str = "inbox_gap_repair_v1:acc-g";
+
+    #[test]
+    fn adding_a_gmail_category_reopens_the_inbox_gap_repair() {
+        // Regression: the incremental pass only lists mail newer than the
+        // newest stored message, so mail of a newly selected category that
+        // arrived before that point was never fetched.
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        save_account_settings(&db, "acc-g", &gmail_settings(&["primary", "updates"])).expect("save");
+        db.set_preference(GAP_REPAIR_KEY, "1").expect("mark repaired");
+
+        save_account_settings(&db, "acc-g", &gmail_settings(&["primary", "updates", "forums"])).expect("widen");
+
+        assert_eq!(
+            db.get_preference(GAP_REPAIR_KEY).expect("read"),
+            None,
+            "the next sync must list the whole inbox again"
+        );
+    }
+
+    #[test]
+    fn removing_a_gmail_category_keeps_the_inbox_gap_repair() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        save_account_settings(&db, "acc-g", &gmail_settings(&["primary", "updates"])).expect("save");
+        db.set_preference(GAP_REPAIR_KEY, "1").expect("mark repaired");
+
+        save_account_settings(&db, "acc-g", &gmail_settings(&["primary"])).expect("narrow");
+
+        assert_eq!(db.get_preference(GAP_REPAIR_KEY).expect("read"), Some("1".to_string()));
+    }
+
+    #[test]
+    fn first_save_compares_against_the_default_categories() {
+        // An account that never saved settings syncs the default (Primary).
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.set_preference(GAP_REPAIR_KEY, "1").expect("mark repaired");
+
+        save_account_settings(&db, "acc-g", &gmail_settings(&["primary", "updates"])).expect("save");
+
+        assert_eq!(db.get_preference(GAP_REPAIR_KEY).expect("read"), None);
     }
 }

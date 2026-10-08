@@ -3302,6 +3302,18 @@ fn inbox_gap_repair_key(account_id: &str) -> String {
     format!("inbox_gap_repair_v1:{account_id}")
 }
 
+/// Make the next sync list the account's whole inbox again (see
+/// [`apply_inbox_gap_repair`]).
+///
+/// Called when the user selects another Gmail category: the incremental pass
+/// only lists mail newer than the newest stored message, so the new category's
+/// existing mail sits below that floor and would never be fetched otherwise.
+/// Deleting the marker is safe while a sync runs: a run that started with the
+/// repair recorded never writes it back.
+pub fn reopen_inbox_gap_repair(db: &Database, account_id: &str) -> Result<()> {
+    db.delete_preference(&inbox_gap_repair_key(account_id))
+}
+
 /// One-time repair of inbox holes left by versions without the resume floor.
 ///
 /// Before `incremental_after_with_resume`, a catch-up with more new mail than

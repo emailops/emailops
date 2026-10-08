@@ -50,8 +50,8 @@ pub use snooze::{
 pub use spam::{file_in_spam, restore_from_spam, SpamFiling};
 pub(crate) use state_refresh::last_refresh_key as state_refresh_last_key;
 pub use sync::{
-    request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full, sync_account,
-    sync_account_with_contention, sync_account_with_provider, SyncContention,
+    reopen_inbox_gap_repair, request_extra_mailbox_backfill_reset, request_sync_abort, resync_mailbox_full,
+    sync_account, sync_account_with_contention, sync_account_with_provider, SyncContention,
 };
 pub use thread_actions::{
     apply_thread_action, apply_to_account, plan_thread_action, widen_stars_to_threads, ProviderAccess, ThreadAction,
