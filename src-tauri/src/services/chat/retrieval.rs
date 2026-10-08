@@ -205,6 +205,9 @@ pub struct ScoredEmail {
     pub body: String,
     pub score: f32,
     pub citation_number: i32,
+    /// Messages in this email's thread (1 when unknown), so the prompt can
+    /// say a source is one message of a longer exchange.
+    pub thread_size: usize,
 }
 
 // ── Retrieval ───────────────────────────────────────────────────────────────
@@ -554,6 +557,7 @@ pub async fn retrieve_context_full(
                 body,
                 score,
                 citation_number: (citation_idx + 1) as i32,
+                thread_size: 1,
             });
         }
     }
@@ -634,6 +638,7 @@ pub async fn retrieve_context_full(
                     body,
                     score: expansion_score,
                     citation_number: 0, // re-assigned below
+                    thread_size: 1,
                 });
                 expansion_count += 1;
             }
@@ -672,6 +677,29 @@ pub async fn retrieve_context_full(
     );
 
     let expansion_ms = t_expansion.elapsed().as_millis() as i64;
+
+    // How many messages each source's thread holds: a source that is one of
+    // several tells the model the thread is worth reading whole. A failed
+    // count only leaves the size at 1.
+    let threads: Vec<(&str, &str)> = results
+        .iter()
+        .map(|r| (r.email.account_id.as_str(), r.email.thread_id.as_str()))
+        .collect();
+    match db.thread_sizes(&threads) {
+        Ok(sizes) => {
+            let sized: Vec<usize> = results
+                .iter()
+                .map(|r| {
+                    let key = (r.email.account_id.clone(), r.email.thread_id.clone());
+                    sizes.get(&key).map(|n| (*n).max(1) as usize).unwrap_or(1)
+                })
+                .collect();
+            for (r, n) in results.iter_mut().zip(sized) {
+                r.thread_size = n;
+            }
+        }
+        Err(e) => emit_log("warn", &format!("retrieval: thread sizes unavailable ({e})")),
+    }
 
     let trace = RetrievalTrace {
         vector_hits,

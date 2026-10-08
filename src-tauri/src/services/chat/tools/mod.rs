@@ -3537,6 +3537,47 @@ mod tests {
         assert!(!out.contains("unrelated"), "other thread leaked: {}", out);
     }
 
+    /// A model that only holds an email's id passes it as the thread id; the
+    /// email's own thread is what it meant, from the first message on.
+    #[test]
+    fn get_thread_given_an_email_id_reads_that_emails_thread() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "acc::1",
+            "acc",
+            "thread-1",
+            "A",
+            "a@x.com",
+            "first msg",
+            "body A",
+            100,
+        );
+        seed_email(&db, "acc::2", "acc", "thread-1", "B", "b@x.com", "reply", "body B", 200);
+        seed_email(
+            &db, "other::9", "other", "thread-9", "Z", "z@x.com", "foreign", "body Z", 50,
+        );
+
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "get_thread",
+            &arg(serde_json::json!({ "thread_id": "acc::2" })),
+        );
+        assert!(out.contains("first msg") && out.contains("reply"), "{out}");
+
+        // Another account's email is not a door into its thread.
+        let out = execute_tool(
+            &db,
+            "acc",
+            &[],
+            "get_thread",
+            &arg(serde_json::json!({ "thread_id": "other::9" })),
+        );
+        assert!(!out.contains("foreign"), "{out}");
+    }
+
     /// Regression: `get_thread` used to clip each email at a hard 1500-char
     /// cap. It now reuses `thread_clean::clean_email_body` with the
     /// thread-aware budget (`chars_per_email(n)`), so a short thread keeps each

@@ -296,13 +296,20 @@ fn stripped_history_content(msg: &ChatMessage) -> Option<String> {
 
 /// The `- From: … id=…` line a source is introduced with, body excluded.
 fn source_header(src: &ScoredEmail) -> String {
+    let size = if src.thread_size > 1 {
+        format!(" messages={}", src.thread_size)
+    } else {
+        String::new()
+    };
     format!(
-        "- From: {} <{}>  Subject: {}  Date: {}  id={}\n    ",
+        "- From: {} <{}>  Subject: {}  Date: {}  id={} thread_id={}{}\n    ",
         src.email.sender,
         src.email.sender_email,
         src.email.subject,
         format_date(src.email.timestamp),
         src.email.id,
+        src.email.thread_id,
+        size,
     )
 }
 
@@ -564,6 +571,15 @@ before answering any factual question about the user's mailbox.)\n",
         // bullets of its own answer with them and the UI opened unrelated
         // emails. A fact is cited by linking its email's `id=`.
         tail.push_str("Sources (cite each fact with a link to the email it came from: [short label](email://ID)):\n");
+        // Same contract as a search_emails row: a source may be one message of
+        // a longer exchange, and only its thread holds the rest (the first
+        // message included).
+        if sources.iter().any(|s| s.thread_size > 1) {
+            tail.push_str(
+                "(messages=N: the source is one of N messages in its thread — call get_thread(thread_id) \
+when the answer needs the whole conversation, e.g. to summarise an exchange)\n",
+            );
+        }
         for src in sources {
             let body_text = strip_html_for_fts(&src.body);
             let sliced = smart_body_slice_indexed(&body_text, user_question, source_body_chars);
@@ -6076,6 +6092,7 @@ mod tests {
             body: body.into(),
             score: 1.0 / citation_number as f32,
             citation_number,
+            thread_size: 1,
         }
     }
 
@@ -7578,6 +7595,33 @@ mod tests {
         let src_pos = last.find("Subject: Invoice").expect("sources missing");
         assert!(q_pos > src_pos, "question must follow the sources block");
         assert!(last.trim_end().ends_with("when do we ship?"));
+    }
+
+    /// "Summarise the exchange with X" answered from the two latest messages
+    /// RAG found, never reading the thread's first email: a source did not say
+    /// which thread it belongs to or that the thread held more messages, so
+    /// the model guessed get_thread ids (the account id, an email id).
+    #[test]
+    fn a_source_from_a_longer_thread_names_its_thread_and_size() {
+        let mut long = make_scored(1, "Pilot", "can you talk now?");
+        long.thread_size = 6;
+        let lone = make_scored(2, "Invoice", "pay");
+
+        let msgs = build_prompt(&[long, lone], &[], "summarise the pilot exchange", "en", "", tpl(), "");
+        let last = &msgs.last().unwrap().1;
+
+        assert!(last.contains("id=e1 thread_id=t1 messages=6"), "{last}");
+        assert!(
+            last.contains("id=e2 thread_id=t2\n"),
+            "a lone email has no count: {last}"
+        );
+        assert!(last.contains("call get_thread(thread_id)"), "{last}");
+    }
+
+    #[test]
+    fn sources_of_single_emails_carry_no_thread_hint() {
+        let msgs = build_prompt(&[make_scored(1, "Invoice", "pay")], &[], "q", "en", "", tpl(), "");
+        assert!(!msgs.last().unwrap().1.contains("get_thread"));
     }
 
     /// Sources are cited by link, not by number: a model given `[1]`…`[8]`

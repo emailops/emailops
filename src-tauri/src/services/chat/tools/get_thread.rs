@@ -43,7 +43,19 @@ impl Tool for GetThreadTool {
         use crate::services::thread_reader::{
             load_thread, read_thread, render_thread, ReadOptions, CHAT_THREAD_BUDGET,
         };
-        match load_thread(ctx.db, ctx.account_id, thread_id) {
+        // A model that only holds an email's id passes it here; that email's
+        // own thread is what it meant.
+        let loaded = match load_thread(ctx.db, ctx.account_id, thread_id) {
+            Ok(messages) if messages.is_empty() => match ctx.db.get_email_by_id(thread_id) {
+                Ok(Some(email)) if email.account_id == ctx.account_id => {
+                    load_thread(ctx.db, ctx.account_id, &email.thread_id)
+                }
+                Ok(_) => Ok(messages),
+                Err(e) => Err(e),
+            },
+            other => other,
+        };
+        match loaded {
             Ok(messages) if messages.is_empty() => Ok(ToolOutput::text("No emails found in this thread.")),
             Ok(messages) => {
                 let read = read_thread(&messages, &ReadOptions::budget(CHAT_THREAD_BUDGET));
