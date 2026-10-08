@@ -55,6 +55,36 @@ describe('MarkdownContent — URI scheme rendering', () => {
     expect(html).toContain('title="Open email: Seguimiento Comité de Buenas Prácticas"');
   });
 
+  it('renders a pill for a link the model wrapped in backticks', () => {
+    // qwen3.6-35b wrote every citation as `` `[1](email://…)` ``: inline code,
+    // so the answer showed the raw markdown instead of chips. The ids are
+    // IMAP-shaped (`<account>::<uid>`, `<account>::SENT::<uid>`).
+    const ids = ['acc-1::223', 'acc-1::SENT::12'];
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        content={`Proposal \`[1](email://${ids[0]})\` and reply \`[2](email://${ids[1]})\`.`}
+        sources={[]}
+        accountId="acc-1"
+        emailRefAllowlist={ids}
+      />,
+    );
+    expect(html).toContain('title="Open email: 1"');
+    expect(html).toContain('title="Open email: 2"');
+    expect(html).not.toContain('](email://');
+  });
+
+  it('keeps code that only mentions a link as code', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        content="Write links as `see [label](email://ID) here`."
+        sources={[]}
+        accountId="acc-1"
+        emailRefAllowlist={[]}
+      />,
+    );
+    expect(html).toContain('<code');
+  });
+
   it('drops `email://` links whose id is not in the allowlist (hallucinations)', () => {
     const html = renderToStaticMarkup(
       <MarkdownContent

@@ -51,8 +51,15 @@ function unwrapLooseListParagraph(children: ReactNode): ReactNode {
  *  custom `a` renderer below.
  */
 function preprocessContent(content: string): string {
+  // A model (qwen3.6-35b) wraps whole chip links in backticks, which makes
+  // them inline code shown as raw markdown: unwrap a code span that is
+  // nothing but one chat link. Code that merely mentions a link stays code.
+  const unwrapped = content.replace(
+    /`(\[[^\]`\n]+\]\((?:email|draft|attachment|citation|help):\/\/[^)`\s]+\))`/g,
+    '$1',
+  );
   // Match [n] that is NOT already followed by ( (i.e., not already a link)
-  return content.replace(/\[(\d+)\](?!\()/g, '[$1](citation://$1)');
+  return unwrapped.replace(/\[(\d+)\](?!\()/g, '[$1](citation://$1)');
 }
 
 function AttachmentChip({ label, onOpen }: { label: string; onOpen: () => void }) {
