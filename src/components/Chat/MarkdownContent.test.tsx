@@ -42,17 +42,17 @@ describe('MarkdownContent — URI scheme rendering', () => {
 
   it('still renders the pill when the link sits inside bold (`**[label](email://X)**`)', () => {
     // This is exactly the shape the LLM emits in the user's failing case
-    // ("**[Seguimiento Comité de Buenas Prácticas](email://...)** — de
-    // Chema López…"). The bold wrapper must not interfere.
+    // ("**[Seguimiento Comité de Calidad Interna](email://...)** — de
+    // Jose Pérez…"). The bold wrapper must not interfere.
     const html = renderToStaticMarkup(
       <MarkdownContent
-        content="**[Seguimiento Comité de Buenas Prácticas](email://19e2598128ca4655)**"
+        content="**[Seguimiento Comité de Calidad Interna](email://19e2598128ca4655)**"
         sources={[]}
         accountId="acc-1"
         emailRefAllowlist={['19e2598128ca4655']}
       />,
     );
-    expect(html).toContain('title="Open email: Seguimiento Comité de Buenas Prácticas"');
+    expect(html).toContain('title="Open email: Seguimiento Comité de Calidad Interna"');
   });
 
   it('renders a pill for a link the model wrapped in backticks', () => {
@@ -120,7 +120,7 @@ describe('MarkdownContent — URI scheme rendering', () => {
     // The fix should keep the `<p>` rendered inline so the chip flows
     // next to the marker the way prose does.
     const content =
-      '1. **[Seguimiento](email://eml-1)** — de Chema López — 2026-05-14\n   Snippet: "foo"\n\n2. **[Otro](email://eml-2)** — de Chema López';
+      '1. **[Seguimiento](email://eml-1)** — de Jose Pérez — 2026-05-14\n   Snippet: "foo"\n\n2. **[Otro](email://eml-2)** — de Jose Pérez';
     const html = renderToStaticMarkup(
       <MarkdownContent content={content} sources={[]} accountId="acc-1" emailRefAllowlist={['eml-1', 'eml-2']} />,
     );
