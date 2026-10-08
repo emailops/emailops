@@ -755,7 +755,7 @@ impl GmailClient {
     ) -> Result<serde_json::Value> {
         let in_reply_to = reply.and_then(|r| r.message_id).filter(|v| !v.trim().is_empty());
         let references = reply.and_then(|r| r.references).filter(|v| !v.trim().is_empty());
-        let mime = crate::sync::mime_builder::build_send_mime(&crate::sync::mime_builder::SendMimeParams {
+        let mime = crate::sync::mime_builder::build_draft_mime(&crate::sync::mime_builder::SendMimeParams {
             from_email,
             from_name: None,
             to_emails,
