@@ -1,0 +1,11 @@
+[
+  {
+    "account": "work",
+    "sender_name": "Jonas Weber",
+    "sender_email": "jonas@kanzlei-weber.example",
+    "subject": "Anfrage: lokale KI für unsere Kanzlei",
+    "minutes_ago": 30,
+    "category": "primary",
+    "body": "Hallo Ulises,\n\nwir sind eine kleine Steuerkanzlei in Leipzig mit sechs Mitarbeitenden. Unsere Mandanten schicken uns täglich Rechnungen, Verträge und Steuerbescheide per E-Mail – deshalb darf nichts davon an einen Cloud-Dienst gehen.\n\nLäuft die KI in EmailOps wirklich komplett lokal? Und könnten Sie uns bei der Einrichtung auf unseren Windows-Rechnern unterstützen? Ein Angebot für zwei Tage Beratung wäre ideal.\n\nViele Grüße\nJonas Weber"
+  }
+]

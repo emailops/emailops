@@ -1,0 +1,162 @@
+[
+ {
+  "start": 0.1,
+  "end": 2.0,
+  "text": {
+   "en": "Your inbox knows everything about you.",
+   "es": "Tu bandeja de entrada lo sabe todo de ti.",
+   "fr": "Votre boîte mail sait tout de vous.",
+   "de": "Dein Posteingang weiß alles über dich."
+  }
+ },
+ {
+  "start": 2.1,
+  "end": 4.0,
+  "text": {
+   "en": "Your clients. Your invoices. Your family.",
+   "es": "Tus clientes. Tus facturas. Tu familia.",
+   "fr": "Vos clients. Vos factures. Votre famille.",
+   "de": "Deine Kunden. Deine Rechnungen. Deine Familie."
+  }
+ },
+ {
+  "start": 4.1,
+  "end": 6.0,
+  "text": {
+   "en": "Why send it to someone else's AI?",
+   "es": "¿Por qué enviarlo a la IA de otro?",
+   "fr": "Pourquoi l'envoyer à l'IA de quelqu'un d'autre ?",
+   "de": "Warum sie an die KI eines anderen schicken?"
+  }
+ },
+ {
+  "start": 8.1,
+  "end": 10.4,
+  "text": {
+   "en": "Every account. One inbox.",
+   "es": "Todas tus cuentas. Una bandeja.",
+   "fr": "Tous vos comptes. Une seule boîte.",
+   "de": "Alle Konten. Ein Posteingang."
+  }
+ },
+ {
+  "start": 14.2,
+  "end": 21.4,
+  "text": {
+   "en": "Ask your inbox.\nAnswers link the emails they came from.",
+   "es": "Pregunta a tu bandeja.\nLas respuestas enlazan los emails de los que salen.",
+   "fr": "Interrogez votre boîte.\nLes réponses renvoient aux e-mails d'origine.",
+   "de": "Frag deinen Posteingang.\nAntworten verlinken die E-Mails, aus denen sie stammen."
+  }
+ },
+ {
+  "start": 21.5,
+  "end": 25.8,
+  "text": {
+   "en": "All AI runs on your computer.\nNo email ever travels to an AI in the cloud.",
+   "es": "Toda la IA funciona en tu ordenador.\nNingún email viaja a una IA en la nube.",
+   "fr": "Toute l'IA tourne sur votre ordinateur.\nAucun e-mail n'est envoyé à une IA dans le cloud.",
+   "de": "Die gesamte KI läuft auf deinem Computer.\nKeine E-Mail geht an eine Cloud-KI."
+  }
+ },
+ {
+  "start": 25.9,
+  "end": 30.2,
+  "text": {
+   "en": "Classified by AI.\nCompany, intent and topic.",
+   "es": "Clasificado por IA.\nEmpresa, intención y tema.",
+   "fr": "Classé par l'IA.\nEntreprise, intention et sujet.",
+   "de": "Von KI klassifiziert.\nFirma, Absicht und Thema."
+  }
+ },
+ {
+  "start": 30.3,
+  "end": 34.0,
+  "text": {
+   "en": "Filter by any tag.\nEvery tag becomes a filter in the sidebar.",
+   "es": "Filtra por cualquier etiqueta.\nCada etiqueta es un filtro en la barra lateral.",
+   "fr": "Filtrez par n'importe quelle étiquette.\nChaque étiquette devient un filtre dans la barre latérale.",
+   "de": "Nach jedem Tag filtern.\nJeder Tag wird zum Filter in der Seitenleiste."
+  }
+ },
+ {
+  "start": 34.1,
+  "end": 40.8,
+  "text": {
+   "en": "Type the idea. Get the reply.\nDrafted from the thread, locally.",
+   "es": "Escribe la idea. Recibe la respuesta.\nRedactada a partir del hilo, en local.",
+   "fr": "Tapez l'idée. Obtenez la réponse.\nRédigée à partir du fil, en local.",
+   "de": "Idee tippen. Antwort bekommen.\nAus dem Verlauf entworfen, lokal."
+  }
+ },
+ {
+  "start": 40.9,
+  "end": 45.2,
+  "text": {
+   "en": "Read any language.\nTranslated by the AI on your computer.",
+   "es": "Lee cualquier idioma.\nTraducido por la IA de tu ordenador.",
+   "fr": "Lisez toutes les langues.\nTraduit par l'IA de votre ordinateur.",
+   "de": "Lies jede Sprache.\nÜbersetzt von der KI auf deinem Computer."
+  }
+ },
+ {
+  "start": 45.3,
+  "end": 48.4,
+  "text": {
+   "en": "Find anything. Instantly. (⌘ K)\nEverything is indexed on your computer.",
+   "es": "Encuentra lo que sea. Al instante. (⌘ K)\nTodo está indexado en tu ordenador.",
+   "fr": "Trouvez tout. Instantanément. (⌘ K)\nTout est indexé sur votre ordinateur.",
+   "de": "Finde alles. Sofort. (⌘ K)\nAlles ist auf deinem Computer indexiert."
+  }
+ },
+ {
+  "start": 48.5,
+  "end": 54.0,
+  "text": {
+   "en": "Different views of your inbox.\nTag Board, attachments, calendar.",
+   "es": "Diferentes vistas de tu bandeja.\nTag Board, adjuntos, calendario.",
+   "fr": "Différentes vues de votre boîte.\nTag Board, pièces jointes, calendrier.",
+   "de": "Verschiedene Ansichten deines Posteingangs.\nTag Board, Anhänge, Kalender."
+  }
+ },
+ {
+  "start": 54.1,
+  "end": 59.6,
+  "text": {
+   "en": "Shared docs. No cloud.\nEdit together. Changes travel by email.",
+   "es": "Documentos compartidos. Sin nube.\nEdita en equipo. Los cambios viajan por email.",
+   "fr": "Documents partagés. Sans cloud.\nÉditez ensemble. Les modifications voyagent par e-mail.",
+   "de": "Geteilte Dokumente. Ohne Cloud.\nGemeinsam bearbeiten. Änderungen reisen per E-Mail."
+  }
+ },
+ {
+  "start": 59.7,
+  "end": 64.4,
+  "text": {
+   "en": "Synced by email. Not by a cloud.\nShared docs sync through your own mail account. No EmailOps servers.",
+   "es": "Sincronizado por email. No por una nube.\nLos documentos compartidos se sincronizan con tu propia cuenta de correo. Sin servidores de EmailOps.",
+   "fr": "Synchronisé par e-mail. Pas par un cloud.\nLes documents partagés se synchronisent via votre propre compte mail. Aucun serveur EmailOps.",
+   "de": "Per E-Mail synchronisiert. Nicht über eine Cloud.\nGeteilte Dokumente synchronisieren über dein eigenes Mailkonto. Keine EmailOps-Server."
+  }
+ },
+ {
+  "start": 64.5,
+  "end": 68.6,
+  "text": {
+   "en": "Runs on Mac, Windows or Linux.*\nFree and open source. Apache-2.0.\n*Windows/Linux: GPU (Vulkan or CUDA) for full speed. Mac: Apple Silicon; Intel Macs can use Ollama.",
+   "es": "Funciona en Mac, Windows o Linux.*\nGratis y de código abierto. Apache-2.0.\n*Windows/Linux: GPU (Vulkan o CUDA) para ir a máxima velocidad. Mac: Apple Silicon; en Intel, Ollama.",
+   "fr": "Fonctionne sur Mac, Windows ou Linux.*\nGratuit et open source. Apache-2.0.\n*Windows/Linux : GPU (Vulkan ou CUDA) pour la pleine vitesse. Mac : Apple Silicon ; Intel via Ollama.",
+   "de": "Läuft auf Mac, Windows oder Linux.*\nKostenlos und Open Source. Apache-2.0.\n*Windows/Linux: GPU (Vulkan oder CUDA) für volle Geschwindigkeit. Mac: Apple Silicon; Intel-Macs per Ollama."
+  }
+ },
+ {
+  "start": 69.5,
+  "end": 73.6,
+  "text": {
+   "en": "EmailOps — Your email, understood. Privately.\nLocal AI · Private · Free and open source — getemailops.com",
+   "es": "EmailOps — Tu correo, entendido. En privado.\nIA local · Privado · Gratis y de código abierto — getemailops.com",
+   "fr": "EmailOps — Vos e-mails, compris. En privé.\nIA locale · Privé · Gratuit et open source — getemailops.com",
+   "de": "EmailOps — Deine E-Mails, verstanden. Privat.\nLokale KI · Privat · Kostenlos und Open Source — getemailops.com"
+  }
+ }
+]
