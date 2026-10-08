@@ -334,6 +334,26 @@ pub struct UpdateLensInput {
     pub sort_order: Option<i64>,
 }
 
+/// What a scope matches right now: the count, and the most recent emails.
+/// Backs the Test button of the Lens config dialog.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeSample {
+    pub total: i64,
+    /// `total` hit the scope evaluator's cap, so the real count is higher.
+    pub capped: bool,
+    pub recent: Vec<ScopeSampleEmail>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeSampleEmail {
+    pub email_id: String,
+    pub subject: String,
+    pub sender: String,
+    pub timestamp: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewRow {

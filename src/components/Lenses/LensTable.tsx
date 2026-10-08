@@ -8,6 +8,7 @@ import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { LensColumn, LensColumnFilter, LensRow, LensSortSpec } from '@/types';
 import { LensColumnFilterMenu } from './LensColumnFilterMenu';
+import { LongText } from './LensLongText';
 import { DATE_SORT_KEY, nextSort } from './lensSort';
 import { planUrlCell } from './lensUrlCell';
 
@@ -145,8 +146,9 @@ function Cell({ column, value, hasOverride }: CellProps) {
         </button>
       );
     }
+    case 'string':
     case 'text':
-      return <span className={`${cls} block max-w-[24rem] whitespace-pre-wrap break-words`}>{String(value)}</span>;
+      return <LongText text={String(value)} className={cls} />;
     default:
       return <span className={cls}>{String(value)}</span>;
   }

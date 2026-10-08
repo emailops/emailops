@@ -420,6 +420,7 @@ macro_rules! app_commands {
             commands::lenses::list_lens_runs,
             commands::lenses::reextract_lens_row,
             commands::lenses::preview_lens_extraction,
+            commands::lenses::sample_lens_scope,
         ]
     };
 }

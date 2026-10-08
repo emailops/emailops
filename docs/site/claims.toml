@@ -1141,6 +1141,13 @@ checks = [
   { manual = 'The demo mailbox has no custom IMAP folders to pick, so the folder scope is not driven by the docs check.' },
 ]
 
+[ai-lenses-4]
+checks = [
+  { tests = ['services::lenses::scope::tests::sample_counts_matches_and_returns_the_most_recent_first'], covers = ["In a Lens's settings, Test shows how many emails the filters you are editing match and the three most recent ones, before you save."] },
+  { tests = ['services::lenses::runner::tests::backfill_after_adding_a_column_fills_it_for_already_extracted_emails'], covers = ['Changing the columns or the prompt marks the extracted rows as out of date, and the next Run backfill extracts them again, keeping the values you edited by hand.'] },
+  { manual = 'The Test button and the clamped cells are covered by src/components/Lenses/LensConfigModal.scopeTest.test.tsx and src/components/Lenses/LensLongText.test.tsx (vitest); no docClaim case drives them yet.', covers = ['Long values are cut to three lines in the table; more shows the rest.'] },
+]
+
 [ai-skills-1]
 checks = [
   { tests = ['services::skills::tests::parses_name_description_and_body', 'services::skills::tests::rejects_a_name_that_does_not_match_its_folder'], covers = ["a short header with a name (the folder's name) and a description of what it does and when to use it, then the instructions in Markdown"] },

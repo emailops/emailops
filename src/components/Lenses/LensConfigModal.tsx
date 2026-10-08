@@ -8,10 +8,12 @@ import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/common/Modal';
 import { Select } from '@/components/shared/Select';
+import { sampleLensScope } from '@/lib/api';
 import { errorText } from '@/lib/errors';
+import { formatDate } from '@/lib/intl';
 import { useAccountStore } from '@/stores/accountStore';
 import { useLensStore } from '@/stores/lensStore';
-import type { Lens, LensDirection, LensScope } from '@/types';
+import type { Lens, LensDirection, LensScope, LensScopeSample } from '@/types';
 
 import { LensColumnsEditor } from './LensColumnsEditor';
 import { LensFolderChips } from './LensFolderChips';
@@ -29,7 +31,7 @@ const MAILBOXES = ['inbox', 'sent', 'archive', 'spam', 'trash'] as const;
 const CATEGORIES = ['Primary', 'Promotions', 'Social', 'Updates', 'Forums'] as const;
 
 export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
-  const { t } = useTranslation(['common', 'lenses']);
+  const { t, i18n } = useTranslation(['common', 'lenses']);
   const accounts = useAccountStore((s) => s.accounts);
   const updateLens = useLensStore((s) => s.updateLens);
 
@@ -47,6 +49,8 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
   const [senderEmails, setSenderEmails] = useState('');
   const [query, setQuery] = useState('');
   const [querySearchBody, setQuerySearchBody] = useState(true);
+  const [scopeSample, setScopeSample] = useState<LensScopeSample | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
 
   // ── Columns state ────────────────────────────────────────────────────────
   // Stored labels are shown as they are: this edits the Lens, not a template.
@@ -75,6 +79,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     setPromptText(lens.promptText);
     setColumns(initialColumns);
     setActiveTab('scope');
+    setScopeSample(null);
     setError(null);
   }, [open, lens, initialColumns]);
 
@@ -96,6 +101,19 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
     // Only include querySearchBody when true — backend defaults to false (subject only).
     if (querySearchBody) scope.querySearchBody = true;
     return scope;
+  };
+
+  const handleTestScope = async () => {
+    setIsTesting(true);
+    setError(null);
+    setScopeSample(null);
+    try {
+      setScopeSample(await sampleLensScope(buildScope()));
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const promptDirty = promptText.trim() !== (lens?.promptText ?? '').trim();
@@ -318,13 +336,24 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
           <div className="space-y-2">
             <label className="block">
               <span className="mb-1 block text-gray-400">{t('lenses:scope.keywordQuery')}</span>
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('lenses:scope.keywordPlaceholder')}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
-              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('lenses:scope.keywordPlaceholder')}
+                  className="min-w-0 flex-1 rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleTestScope()}
+                  disabled={isTesting || !!domainCheck.error || !!emailCheck.error}
+                  title={t('lenses:scope.testHint')}
+                  className="shrink-0 rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {isTesting ? t('lenses:scope.testing') : t('lenses:scope.test')}
+                </button>
+              </div>
             </label>
             <label className="flex items-center gap-2 text-[11px] text-gray-300">
               <input
@@ -336,6 +365,30 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
               {t('lenses:scope.searchBody')}
               <span className="text-gray-500">{t('lenses:scope.keywordsBodyHint')}</span>
             </label>
+            {scopeSample && (
+              <div className="rounded border border-gray-700 bg-[#1e1e1e] p-2">
+                <p className="text-gray-300">
+                  {scopeSample.capped
+                    ? t('lenses:scope.testResultCapped', { count: scopeSample.total })
+                    : t('lenses:scope.testResult', { count: scopeSample.total })}
+                </p>
+                {scopeSample.recent.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {scopeSample.recent.map((email) => (
+                      <li key={email.emailId} className="flex gap-2 text-[11px]">
+                        <span className="shrink-0 text-gray-500">{formatDate(email.timestamp, i18n.language)}</span>
+                        <span className="truncate text-gray-200" title={email.subject}>
+                          {email.subject}
+                        </span>
+                        <span className="ml-auto max-w-[35%] shrink-0 truncate text-gray-500" title={email.sender}>
+                          {email.sender}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
 
           {error && <div className="text-xs text-red-400">{error}</div>}

@@ -61,7 +61,13 @@
       "invalidEmail": "« {{value}} » n'est pas une adresse e-mail valide."
     },
     "keywordPlaceholder": "ex. devis OR tarif",
-    "foldersFilter": "Filtrer les dossiers…"
+    "foldersFilter": "Filtrer les dossiers…",
+    "test": "Tester",
+    "testing": "Test en cours…",
+    "testHint": "Compte les e-mails que ces filtres trouvent maintenant et affiche les 3 plus récents",
+    "testResult_one": "{{count}} e-mail correspond",
+    "testResult_other": "{{count}} e-mails correspondent",
+    "testResultCapped": "Plus de {{count}} e-mails correspondent"
   },
   "prompt": {
     "placeholder": "Décrivez ce qu'il faut extraire de chaque e-mail…"
@@ -185,7 +191,9 @@
       "clear": "Retirer le filtre",
       "noValues": "Pas encore de valeurs",
       "noMatches": "Aucune ligne ne correspond aux filtres de colonne."
-    }
+    },
+    "showMore": "plus",
+    "showLess": "moins"
   },
   "row": {
     "sourceEmail": "E-mail source",

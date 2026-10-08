@@ -288,6 +288,12 @@ sidebar. Turn them off in **Settings → AI Lenses**.
 <!-- claim:ai-lenses-3 -->
 A Lens can be limited to chosen **Folders** of an account, custom IMAP folders included.
 
+<!-- claim:ai-lenses-4 -->
+In a Lens's settings, **Test** shows how many emails the filters you are editing match and the
+three most recent ones, before you save. Changing the columns or the prompt marks the extracted
+rows as out of date, and the next **Run backfill** extracts them again, keeping the values you
+edited by hand. Long values are cut to three lines in the table; **more** shows the rest.
+
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->

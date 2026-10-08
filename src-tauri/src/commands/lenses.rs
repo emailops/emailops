@@ -9,8 +9,8 @@ use tauri::{AppHandle, Emitter, State};
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{
     ColumnFilter, ColumnValueCount, CreateLensInput, Lens, LensRowsPage, LensRunFailure, LensRunHandle,
-    LensRunHistoryEntry, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, SortSpec,
-    UpdateLensInput,
+    LensRunHistoryEntry, LensRunKind, LensSchema, LensScope, LensStatus, LensSummary, PreviewRow, ScopeSample,
+    SortSpec, UpdateLensInput,
 };
 use crate::models::AppLogEvent;
 use crate::services::ai::AiService;
@@ -380,6 +380,14 @@ pub async fn reextract_lens_row(
         })
         .await;
     Ok(())
+}
+
+// ── Scope test ─────────────────────────────────────────────────────────────
+
+/// Test button of the config dialog: what the scope being edited matches now.
+#[tauri::command]
+pub async fn sample_lens_scope(state: State<'_, AppState>, scope: LensScope) -> Result<ScopeSample> {
+    scope_eval::sample(&state.db, &scope, 3)
 }
 
 // ── Dry-run ────────────────────────────────────────────────────────────────

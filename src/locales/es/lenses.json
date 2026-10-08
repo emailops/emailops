@@ -61,7 +61,13 @@
       "invalidEmail": "\"{{value}}\" no es una dirección de correo válida."
     },
     "keywordPlaceholder": "p. ej. presupuesto OR cotización",
-    "foldersFilter": "Filtrar carpetas…"
+    "foldersFilter": "Filtrar carpetas…",
+    "test": "Probar",
+    "testing": "Probando…",
+    "testHint": "Cuenta los correos que coinciden ahora con estos filtros y muestra los 3 más recientes",
+    "testResult_one": "Coincide {{count}} correo",
+    "testResult_other": "Coinciden {{count}} correos",
+    "testResultCapped": "Coinciden más de {{count}} correos"
   },
   "prompt": {
     "placeholder": "Describe qué extraer de cada correo…"
@@ -185,7 +191,9 @@
       "clear": "Quitar filtro",
       "noValues": "Aún no hay valores",
       "noMatches": "Ninguna fila coincide con los filtros de columna."
-    }
+    },
+    "showMore": "más",
+    "showLess": "menos"
   },
   "row": {
     "sourceEmail": "Correo de origen",
