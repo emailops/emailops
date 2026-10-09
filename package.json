@@ -29,7 +29,7 @@
     "test:frontend": "vitest run",
     "test:all": "npm run test:rust && npm run test:frontend",
     "i18n:check": "node scripts/check-i18n-drift.mjs",
-    "i18n:extract": "i18next 'src/**/*.{ts,tsx}' --config i18next-parser.config.cjs",
+    "i18n:extract": "i18next-cli extract",
     "i18n:no-jsx-literals": "node scripts/check-jsx-literals.mjs",
     "tauri": "tauri"
   },
@@ -73,7 +73,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "@vitest/coverage-v8": "^5.0.2",
-    "i18next-parser": "^9.0.2",
+    "i18next-cli": "^1.75.1",
     "jsdom": "^30.1.1",
     "lefthook": "^2.1.14",
     "postcss": "^8.5.28",
