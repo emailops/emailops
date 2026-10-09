@@ -61,7 +61,13 @@
       "invalidEmail": "\"{{value}}\" is not a valid email address."
     },
     "keywordPlaceholder": "e.g. quote OR estimate",
-    "foldersFilter": "Filter folders…"
+    "foldersFilter": "Filter folders…",
+    "test": "Test",
+    "testing": "Testing…",
+    "testHint": "Count the emails these filters match now and show the 3 most recent",
+    "testResult_one": "{{count}} email matches",
+    "testResult_other": "{{count}} emails match",
+    "testResultCapped": "More than {{count}} emails match"
   },
   "prompt": {
     "placeholder": "Describe what to extract from each email…"
@@ -185,7 +191,9 @@
       "clear": "Clear filter",
       "noValues": "No values yet",
       "noMatches": "No rows match the column filters."
-    }
+    },
+    "showMore": "more",
+    "showLess": "less"
   },
   "row": {
     "sourceEmail": "Source email",

@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **Test a Lens's filters before saving.** **Test** in the Lens settings shows
+  how many emails the filters match and the three most recent ones.
+
+### Fixed
+
+- Adding a column to a Lens (or editing its prompt) and running the backfill
+  again now fills the new column for emails the Lens had already extracted,
+  keeping values edited by hand.
+- Long values no longer take over the Lens table: they are cut to three lines,
+  with **more** to show the rest.
 
 ## [0.6.15] — 2026-10-08
 

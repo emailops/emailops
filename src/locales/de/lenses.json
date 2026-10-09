@@ -61,7 +61,13 @@
       "invalidEmail": "„{{value}}“ ist keine gültige E-Mail-Adresse."
     },
     "keywordPlaceholder": "z. B. Angebot OR Kostenvoranschlag",
-    "foldersFilter": "Ordner filtern…"
+    "foldersFilter": "Ordner filtern…",
+    "test": "Testen",
+    "testing": "Wird getestet…",
+    "testHint": "Zählt die E-Mails, auf die diese Filter jetzt zutreffen, und zeigt die 3 neuesten",
+    "testResult_one": "{{count}} E-Mail passt",
+    "testResult_other": "{{count}} E-Mails passen",
+    "testResultCapped": "Mehr als {{count}} E-Mails passen"
   },
   "prompt": {
     "placeholder": "Beschreibe, was aus jeder E-Mail extrahiert werden soll…"
@@ -185,7 +191,9 @@
       "clear": "Filter entfernen",
       "noValues": "Noch keine Werte",
       "noMatches": "Keine Zeile entspricht den Spaltenfiltern."
-    }
+    },
+    "showMore": "mehr",
+    "showLess": "weniger"
   },
   "row": {
     "sourceEmail": "Quell-E-Mail",

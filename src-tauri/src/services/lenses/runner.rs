@@ -25,7 +25,8 @@ fn is_cancelled(flag: Option<&Arc<AtomicBool>>) -> bool {
 }
 
 /// Run a backfill: extract every scope-matching email that isn't already
-/// covered by an existing `lens_rows` entry (any status) or `lens_exclusions`.
+/// covered by a current, non-failed `lens_rows` entry or `lens_exclusions`.
+/// Rows left stale by a prompt or column edit are extracted again.
 ///
 /// Returns the run id (also written to `lens_runs`).
 pub async fn backfill_lens(
@@ -63,9 +64,9 @@ pub async fn backfill_lens(
             cancelled = true;
             break;
         }
-        // Skip emails that already have a non-failed row OR are excluded.
-        // Failed rows are retried on subsequent backfill runs so that schema
-        // or prompt fixes can recover from a previously broken run.
+        // Skip emails that already have a current non-failed row OR are
+        // excluded. Failed and stale rows are retried, so a prompt fix or a
+        // new column reaches emails a previous run already extracted.
         if db.lens_row_completed_or_excluded(&lens_id, &email_id).unwrap_or(false) {
             continue;
         }
@@ -372,7 +373,7 @@ mod tests {
     use crate::db::Database;
     use crate::models::error::Result as AppResult;
     use crate::models::lens::{
-        CreateLensInput, DateRange, Direction, LensColumn, LensColumnType, LensSchema, LensScope,
+        CreateLensInput, DateRange, Direction, LensColumn, LensColumnType, LensSchema, LensScope, UpdateLensInput,
     };
     use async_trait::async_trait;
 
@@ -652,6 +653,79 @@ mod tests {
         assert_eq!(runs[0].status, "complete");
         assert_eq!(runs[0].succeeded, 1);
         assert_eq!(runs[0].failed, 0);
+    }
+
+    /// Adding a column after a first backfill makes the existing rows stale;
+    /// the next backfill must re-extract them so the new column gets filled,
+    /// keeping the user's manual overrides.
+    #[tokio::test]
+    async fn backfill_after_adding_a_column_fills_it_for_already_extracted_emails() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let acct = "acct1";
+        insert_account(&db, acct, "owner@example.com");
+        let email_id = "e1";
+        insert_invoice_email(
+            &db,
+            email_id,
+            acct,
+            "Example Supplies",
+            "billing@example.com",
+            "Your invoice",
+            "Invoice INV-1 for 10,00 EUR, due 2026-04-15.",
+            "inbox",
+            "Primary",
+            now_secs() - 60,
+        );
+        let lens = db.create_lens(&invoices_lens_input(acct)).expect("create lens");
+        let first = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Example Supplies",
+                "amount": { "amount": 10.0, "currency": "EUR" },
+                "status": "unpaid",
+            }),
+        });
+        backfill_lens(db.clone(), first, lens.id.clone(), None, None)
+            .await
+            .expect("first backfill");
+        db.set_lens_row_override(&lens.id, email_id, &serde_json::json!({ "status": "paid" }))
+            .expect("override");
+
+        let mut schema = lens.schema.clone();
+        schema.columns.push(LensColumn {
+            key: "due_date".into(),
+            label: "Due date".into(),
+            column_type: LensColumnType::String,
+            description: "Payment due date".into(),
+            enum_values: None,
+            required: false,
+            is_unique_key: false,
+        });
+        db.update_lens(
+            &lens.id,
+            &UpdateLensInput {
+                schema: Some(schema),
+                ..Default::default()
+            },
+        )
+        .expect("add column");
+
+        let second = Arc::new(MockProvider {
+            tool_args: serde_json::json!({
+                "vendor": "Example Supplies",
+                "amount": { "amount": 10.0, "currency": "EUR" },
+                "status": "unpaid",
+                "due_date": "2026-04-15",
+            }),
+        });
+        backfill_lens(db.clone(), second, lens.id.clone(), None, None)
+            .await
+            .expect("second backfill");
+
+        let rows = db.get_lens_rows(&lens.id, None, 50, 0).expect("rows").rows;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].data["due_date"], "2026-04-15");
+        assert_eq!(rows[0].data["status"], "paid", "manual override must survive");
+        assert_eq!(db.count_stale_rows(&lens.id).expect("stale"), 0);
     }
 
     /// A run stopped from the queue (the provider is about to change) ends

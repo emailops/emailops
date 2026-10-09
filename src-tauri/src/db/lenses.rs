@@ -549,15 +549,18 @@ impl Database {
         Ok(exists)
     }
 
-    /// Like `lens_row_exists` but ignores rows with `status = 'failed'`, so a
-    /// subsequent backfill picks them back up. Returns `true` when there is a
-    /// row in `ok` / `excluded` state, or a matching exclusion entry.
+    /// Like `lens_row_exists` but ignores rows with `status = 'failed'` and
+    /// rows extracted under an older `prompt_version` (a prompt or column
+    /// edit since), so a subsequent backfill picks them back up. Returns
+    /// `true` when there is a current row in `ok` / `excluded` state, or a
+    /// matching exclusion entry.
     pub fn lens_row_completed_or_excluded(&self, lens_id: &str, email_id: &str) -> Result<bool> {
         let conn = self.reader();
         let exists: bool = conn.query_row(
             "SELECT EXISTS( \
-                SELECT 1 FROM lens_rows \
-                  WHERE lens_id = ?1 AND email_id = ?2 AND status != 'failed' \
+                SELECT 1 FROM lens_rows r JOIN lenses l ON l.id = r.lens_id \
+                  WHERE r.lens_id = ?1 AND r.email_id = ?2 AND r.status != 'failed' \
+                    AND r.prompt_version >= l.prompt_version \
                 UNION ALL \
                 SELECT 1 FROM lens_exclusions WHERE lens_id = ?1 AND email_id = ?2 \
              )",

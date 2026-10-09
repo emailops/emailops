@@ -10,7 +10,7 @@ use rusqlite::params_from_iter;
 
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::models::lens::{Direction, LensScope};
+use crate::models::lens::{Direction, LensScope, ScopeSample, ScopeSampleEmail};
 
 /// Maximum email_ids a single scope evaluation will return. v1 caps at 5 000
 /// so a runaway scope can't materialise the entire mailbox into memory. PRD
@@ -32,6 +32,27 @@ pub fn evaluate_with_limit(db: &Database, scope: &LensScope, limit: i64) -> Resu
 /// backfill can never disagree about which emails a Lens covers.
 pub fn email_matches(db: &Database, scope: &LensScope, email_id: &str) -> Result<bool> {
     Ok(!run_scope_query(db, scope, Some(email_id), 1)?.is_empty())
+}
+
+/// Count what `scope` matches and return its `recent` most recent emails.
+pub fn sample(db: &Database, scope: &LensScope, recent: usize) -> Result<ScopeSample> {
+    let ids = evaluate(db, scope)?;
+    let mut emails = Vec::with_capacity(recent);
+    for id in ids.iter().take(recent) {
+        if let Some(e) = db.get_email_by_id(id)? {
+            emails.push(ScopeSampleEmail {
+                email_id: e.id,
+                subject: e.subject,
+                sender: e.sender,
+                timestamp: e.timestamp,
+            });
+        }
+    }
+    Ok(ScopeSample {
+        total: ids.len() as i64,
+        capped: ids.len() as i64 >= MAX_SCOPE_RESULTS,
+        recent: emails,
+    })
 }
 
 fn run_scope_query(db: &Database, scope: &LensScope, email_id: Option<&str>, limit: i64) -> Result<Vec<String>> {
@@ -387,6 +408,43 @@ mod tests {
         };
         let ids = evaluate(&db, &scope).unwrap();
         assert_eq!(ids, vec!["b".to_string(), "a".to_string()]);
+    }
+
+    /// The config dialog's Test button: how many emails the draft scope
+    /// matches, plus the most recent few to eyeball the keyword query.
+    #[test]
+    fn sample_counts_matches_and_returns_the_most_recent_first() {
+        let db = Database::new_for_testing().expect("db");
+        for (id, ts) in [("a", 100), ("b", 200), ("c", 300), ("d", 400), ("e", 500)] {
+            insert_email(&db, id, "acct1", "inbox", ts);
+        }
+        let conn = db.connection();
+        for (id, subject) in [
+            ("a", "Invoice 1"),
+            ("b", "Invoice 2"),
+            ("c", "Lunch"),
+            ("d", "Invoice 3"),
+            ("e", "Invoice 4"),
+        ] {
+            conn.execute(
+                "INSERT INTO emails_fts (email_id, subject, sender, body) VALUES (?1, ?2, '', '')",
+                rusqlite::params![id, subject],
+            )
+            .expect("index");
+        }
+        drop(conn);
+
+        let scope = LensScope {
+            query: Some("invoice".into()),
+            ..Default::default()
+        };
+        let result = sample(&db, &scope, 3).unwrap();
+        assert_eq!(result.total, 4);
+        assert!(!result.capped);
+        let ids: Vec<&str> = result.recent.iter().map(|e| e.email_id.as_str()).collect();
+        assert_eq!(ids, vec!["e", "d", "b"]);
+        assert_eq!(result.recent[0].timestamp, 500);
+        assert_eq!(result.recent[0].subject, "Subject");
     }
 
     #[test]

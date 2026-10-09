@@ -60,6 +60,7 @@ import type {
   LensRunKind,
   LensSchema,
   LensScope,
+  LensScopeSample,
   LensSortSpec,
   LensStatus,
   LensSummary,
@@ -2088,6 +2089,10 @@ export async function listLensRuns(lensId: string, limit?: number): Promise<Lens
 
 export async function reextractLensRow(lensId: string, emailId: string): Promise<void> {
   return invoke('reextract_lens_row', { lensId, emailId });
+}
+
+export async function sampleLensScope(scope: LensScope): Promise<LensScopeSample> {
+  return invoke('sample_lens_scope', { scope });
 }
 
 export async function previewLensExtraction(

@@ -1374,6 +1374,13 @@ export interface UpdateLensInput {
   sortOrder?: number;
 }
 
+/** Mirrors `models::lens::ScopeSample` — the config dialog's Test result. */
+export interface LensScopeSample {
+  total: number;
+  capped: boolean;
+  recent: { emailId: string; subject: string; sender: string; timestamp: number }[];
+}
+
 export interface LensPreviewRow {
   emailId: string;
   emailSubject: string;

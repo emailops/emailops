@@ -302,6 +302,13 @@ Seitenleiste an und führen Sie sie aus. Deaktivieren Sie sie unter **Einstellun
 Eine Linse lässt sich auf ausgewählte **Ordner** eines Kontos beschränken, eigene IMAP-Ordner
 eingeschlossen.
 
+<!-- claim:ai-lenses-4 -->
+In den Einstellungen einer Linse zeigt **Testen** vor dem Speichern, auf wie viele E-Mails die
+gerade bearbeiteten Filter zutreffen, und die drei neuesten davon. Wer die Spalten oder den Prompt
+ändert, markiert die extrahierten Zeilen als veraltet; das nächste **Backfill ausführen** extrahiert sie erneut
+und behält die von Hand bearbeiteten Werte. Lange Werte werden in der Tabelle auf drei Zeilen
+gekürzt; **mehr** zeigt den Rest.
+
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
