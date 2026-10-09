@@ -518,8 +518,12 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
+    # One variant at a time: both log in to Certum with the same one-time
+    # password, and a second login in the same OTP window is rejected
+    # ("no authorization code after login") — v0.6.15 needed two reruns.
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
     steps:
@@ -610,8 +614,12 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
+    # One variant at a time: both log in to Certum with the same one-time
+    # password, and a second login in the same OTP window is rejected
+    # ("no authorization code after login") — v0.6.15 needed two reruns.
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
     steps:
