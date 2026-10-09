@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 // i18n drift check (`npm run i18n:check`).
 //
-// i18next-parser 9.x removed the `--dry-run` flag this script's predecessor
-// relied on, so we emulate it: run the same extraction as `npm run
-// i18n:extract` against a temp copy of the locale catalogs, then compare
-// semantically. `src/locales/` is never touched.
+// Runs the same extraction as `npm run i18n:extract` (i18next-cli, with the
+// project's i18next.config.js) against a temp copy of the locale catalogs,
+// then compares semantically. `src/locales/` is never touched.
 //
-// The comparison is key-based, not byte-based, because the parser's canonical
-// output can never match the catalogs exactly:
+// The comparison is key-based, not byte-based, because the extractor's
+// canonical output can never match the catalogs exactly:
 //   * `sort: true` reorders keys, while the checked-in files are hand-ordered.
-//   * The parser scaffolds plural-suffix keys (`key_one`, `key_many`,
-//     `key_other`) with empty values for every `t(key, { count })` call. The
-//     catalogs intentionally keep the bare `key` instead — i18next falls back
-//     to it at runtime — and committing empty plural strings would replace
-//     real text with "".
+//   * The extractor scaffolds plural-suffix keys (`key_one`, `key_many`,
+//     `key_other`) for every `t(key, { count })` call, with the key itself as
+//     the value. The catalogs intentionally keep the bare `key` instead —
+//     i18next falls back to it at runtime — and committing the scaffolds would
+//     replace real text with the key name.
 //
 // So we fail only on real drift: a key the code uses that no catalog defines
 // (typo or forgotten addition), or a value extraction would change.
 
-import { execFileSync } from 'node:child_process';
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runExtractor } from 'i18next-cli';
+import config from '../i18next.config.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const LOCALES = join(ROOT, 'src', 'locales');
@@ -48,14 +48,14 @@ function readCatalog(dir, locale, file) {
 const tmp = mkdtempSync(join(tmpdir(), 'i18n-check-'));
 const violations = [];
 try {
-  // Seed the temp output with the real catalogs so the parser merges existing
-  // translations exactly as `i18n:extract` would.
+  // Seed the temp output with the real catalogs so the extractor merges
+  // existing translations exactly as `i18n:extract` would.
   cpSync(LOCALES, join(tmp, 'locales'), { recursive: true });
-  execFileSync(
-    join(ROOT, 'node_modules', '.bin', 'i18next'),
-    ['src/**/*.{ts,tsx}', '--config', 'i18next-parser.config.cjs', '--silent', '--output', join(tmp, 'locales', '$LOCALE', '$NAMESPACE.json')],
-    { cwd: ROOT, stdio: 'inherit' },
-  );
+  const output = join(tmp, 'locales', '{{language}}', '{{namespace}}.json');
+  // The temp files it rewrites are not news; warnings and errors still show.
+  const logger = { info: () => {}, warn: console.warn, error: console.error };
+  const { hasErrors } = await runExtractor({ ...config, extract: { ...config.extract, output } }, { quiet: true, logger });
+  if (hasErrors) violations.push('the extractor reported errors (see above)');
 
   for (const locale of readdirSync(join(tmp, 'locales'))) {
     for (const file of readdirSync(join(tmp, 'locales', locale))) {
@@ -72,8 +72,13 @@ try {
           }
           continue;
         }
-        // Parser-scaffolded plural variant whose bare key the catalog covers.
-        if (PLURAL_SUFFIX_RE.test(key) && key.replace(PLURAL_SUFFIX_RE, '') in catalog) continue;
+        // Extractor-scaffolded plural variant the catalog covers: by its bare
+        // key, or by another plural form of it (the extractor emits every CLDR
+        // form, e.g. `_many` for fr/es, where the catalogs hold `_one`/`_other`).
+        if (PLURAL_SUFFIX_RE.test(key)) {
+          const base = key.replace(PLURAL_SUFFIX_RE, '');
+          if (base in catalog || Object.keys(catalog).some((k) => k.replace(PLURAL_SUFFIX_RE, '') === base && k !== base)) continue;
+        }
         violations.push(`${locale}/${file}: missing key "${key}"`);
       }
     }

@@ -3649,3 +3649,17 @@ the e2e sweep checks that searching for a marked phishing email finds it with it
 Excluding junk from every search-box query removed that way back to it.
 **Rejected:** Never showing junk in search (it would only be reachable from the Spam/Junk
 views, and the docs would have to drop the promise).
+
+## 2026-10-09 — i18n keys are extracted with i18next-cli, not i18next-parser
+
+**Decision:** `npm run i18n:extract` and `npm run i18n:check` run i18next-cli
+(`i18next.config.js`; the check calls its `runExtractor` against a temp copy of the
+catalogs). A plural variant counts as covered when the catalog has its bare key or any
+other plural form of it.
+**Context:** i18next-parser is deprecated in favour of i18next-cli, and its dependency
+chain (broccoli-plugin → quick-temp → underscore.string) pulled in sprintf-js 1.1.3,
+which has an advisory with no patched release. i18next-cli emits every CLDR plural form
+(`_many` for fr/es) where the catalogs hold `_one`/`_other`.
+**Rejected:** Dismissing the advisory as a dev-only risk (it would stay on a deprecated
+tool with no upgrade path). `disablePlurals` (catalogs that use `_one`/`_other` keys
+would then read as missing).

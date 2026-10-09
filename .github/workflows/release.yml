@@ -518,8 +518,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
+    # One variant at a time: in v0.6.15 the two variants' signing steps
+    # collided when they ran together.
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
     steps:
@@ -610,8 +613,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
+    # One variant at a time: in v0.6.15 the two variants' signing steps
+    # collided when they ran together.
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         variant: ${{ fromJSON(inputs.targets == 'windows-vulkan' && '["vulkan"]' || inputs.targets == 'windows-cuda' && '["cuda"]' || '["vulkan","cuda"]') }}
     steps:
