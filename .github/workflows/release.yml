@@ -518,9 +518,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
-    # One variant at a time: both log in to Certum with the same one-time
-    # password, and a second login in the same OTP window is rejected
-    # ("no authorization code after login") — v0.6.15 needed two reruns.
+    # One variant at a time: in v0.6.15 the two variants' signing steps
+    # collided when they ran together.
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -614,9 +613,8 @@ jobs:
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
-    # One variant at a time: both log in to Certum with the same one-time
-    # password, and a second login in the same OTP window is rejected
-    # ("no authorization code after login") — v0.6.15 needed two reruns.
+    # One variant at a time: in v0.6.15 the two variants' signing steps
+    # collided when they ran together.
     strategy:
       fail-fast: false
       max-parallel: 1
