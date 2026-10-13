@@ -46,7 +46,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
 # Still on 0.39: `refinery` 0.9 capped its rusqlite range at <=0.39. Since
 # refinery 0.10 allows <=0.40, the rusqlite bump is unblocked but not done yet.
-rusqlite = { version = "0.39", features = ["bundled", "backup"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
