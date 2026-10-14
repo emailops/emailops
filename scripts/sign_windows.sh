@@ -65,7 +65,8 @@ fi
 # The single object ssign-pkcs11 exposes, selected by type.
 CERT_URI="pkcs11:object=Certum%20SimplySign%20%28ssign%29;type=cert"
 KEY_URI="pkcs11:object=Certum%20SimplySign%20%28ssign%29;type=private"
-for msi in "${MSI_FILES[@]}"; do
+# ${A[@]+"${A[@]}"}: an empty array under set -u is "unbound" in bash 3.2 (macOS /bin/bash).
+for msi in ${MSI_FILES[@]+"${MSI_FILES[@]}"}; do
   echo "[sign-windows] signing $(basename "$msi") with osslsigncode + ssign-pkcs11"
   "$OSSLSIGNCODE" sign -pkcs11module "$SSIGN_PKCS11_MODULE" \
     -pkcs11cert "$CERT_URI" -key "$KEY_URI" \
@@ -76,7 +77,7 @@ for msi in "${MSI_FILES[@]}"; do
 done
 
 FAILED=()
-for f in "${PE_FILES[@]}" "${MSI_FILES[@]}"; do
+for f in ${PE_FILES[@]+"${PE_FILES[@]}"} ${MSI_FILES[@]+"${MSI_FILES[@]}"}; do
   if "$OSSLSIGNCODE" verify -in "$f" > "$f.verify.log" 2>&1; then
     echo "[sign-windows] verified $f"
   else
