@@ -13,6 +13,11 @@ from tasks import (  # noqa: E402
     add_artifact,
     add_milestone,
     agents_by_task,
+    board_summary,
+    filter_rows,
+    format_rows,
+    page_version,
+    task_rows,
     edit_location,
     excerpt,
     merge,
@@ -554,3 +559,116 @@ def test_a_deleted_task_whose_worktree_remains_is_listed_with_discard():
     html = render([task("T-0002")], local_wt(dirty=0, unique=0), token="tok")
     assert "T-0001 was deleted" in html
     assert 'data-discard="T-0001" data-loss="nothing unsaved"' in html
+
+
+# --- CLI rows (task_board.py list / show / summary) -----------------------
+
+
+def wt_info(name="T-0001-a-task", **kw):
+    base = dict(name=name, branch="feature/T-0001-a-task", last_commit="5m ago · feat: x", dirty=2, ahead=1, idle_min=3, agent=True)
+    base.update(kw)
+    return WorktreeInfo(**base)
+
+
+def test_task_rows_describe_each_task_for_the_cli():
+    t = task(status="doing", worktree="T-0001-a-task")
+    agents = {"T-0001": AgentInfo(machine="Laptop", machine_id=None, status="blocked", pane_id="w1:p1")}
+    [row] = task_rows([t], {"T-0001-a-task": wt_info()}, agents)
+    assert row["id"] == "T-0001" and row["status"] == "doing" and row["milestone"] == "0.7.0"
+    assert row["branch"] == "feature/T-0001-a-task" and row["where"] == "local"
+    assert row["agent"] == "blocked" and row["machine"] == "Laptop" and row["needs_you"] is True
+    assert row["dirty"] == 2 and row["ahead"] == 1
+
+
+def test_task_rows_of_a_task_nobody_started_have_no_branch_or_agent():
+    [row] = task_rows([task()], {}, {})
+    assert row["branch"] is None and row["where"] is None and row["agent"] is None and row["needs_you"] is False
+
+
+def test_task_rows_mark_a_pushed_branch_with_no_local_worktree_as_remote():
+    t = task(status="doing", worktree="origin/feature/T-0001-a-task")
+    [row] = task_rows([t], {t.worktree: wt_info(name=t.worktree, remote=True, agent=False)}, {})
+    assert row["where"] == "remote"
+
+
+def test_filter_rows_keeps_open_tasks_by_default():
+    rows = task_rows([task("T-0001", "todo"), task("T-0002", "done", pr=1), task("T-0003", "review", pr=2)], {}, {})
+    assert [r["id"] for r in filter_rows(rows)] == ["T-0001", "T-0003"]
+
+
+def test_filter_rows_by_status_and_milestone():
+    rows = task_rows([task("T-0001", "todo"), task("T-0002", "todo", milestone="later"), task("T-0003", "doing")], {}, {})
+    assert [r["id"] for r in filter_rows(rows, statuses=["todo"], milestone="later")] == ["T-0002"]
+
+
+def test_filter_rows_needs_you_keeps_only_waiting_agents():
+    agents = {"T-0002": AgentInfo(machine="Laptop", machine_id=None, status="done", pane_id="p")}
+    rows = task_rows([task("T-0001", "doing"), task("T-0002", "doing")], {}, agents)
+    assert [r["id"] for r in filter_rows(rows, needs_you=True)] == ["T-0002"]
+
+
+def test_format_rows_is_an_aligned_table_with_the_agent_state():
+    agents = {"T-0002": AgentInfo(machine="Laptop", machine_id=None, status="blocked", pane_id="p")}
+    rows = task_rows([task("T-0001", "todo", title="Short"), task("T-0002", "doing", title="A longer title")], {}, agents)
+    lines = format_rows(rows).splitlines()
+    assert lines[0].split() == ["ID", "STATUS", "MILESTONE", "AGENT", "TITLE"]
+    assert lines[1].index("todo") == lines[2].index("doing")
+    assert "needs you" in lines[2]
+
+
+def test_format_rows_without_rows_says_so():
+    assert format_rows([]) == "no tasks"
+
+
+def test_board_summary_counts_by_status_and_lists_who_waits():
+    agents = {"T-0003": AgentInfo(machine="Laptop", machine_id=None, status="blocked", pane_id="p")}
+    rows = task_rows([task("T-0001", "todo"), task("T-0002", "todo"), task("T-0003", "doing")], {}, agents)
+    s = board_summary(rows)
+    assert s["counts"] == {"todo": 2, "doing": 1, "review": 0}
+    assert s["needs_you"] == ["T-0003"]
+    assert s["text"] == "tasks: 2 todo · 1 doing · needs you: T-0003"
+
+
+def test_board_summary_without_waiting_agents_omits_them():
+    assert board_summary(task_rows([task("T-0001", "review", pr=3)], {}, {}))["text"] == "tasks: 1 review"
+
+
+# --- page_version (the served board's change detection) -------------------
+
+
+def test_page_version_ignores_the_generated_stamp():
+    a = render_html([task()], {}, repo="o/r", generated="13/10/2026 10:00:00", token="t")
+    b = render_html([task()], {}, repo="o/r", generated="13/10/2026 10:00:05", token="t")
+    assert page_version(a, "13/10/2026 10:00:00") == page_version(b, "13/10/2026 10:00:05")
+
+
+def test_page_version_changes_with_a_status():
+    a = render_html([task(status="todo")], {}, repo="o/r", generated="x1", token="t")
+    b = render_html([task(status="doing")], {}, repo="o/r", generated="x1", token="t")
+    assert page_version(a, "x1") != page_version(b, "x1")
+
+
+# --- the served page's refresh ----------------------------------------------
+
+
+def test_served_page_refreshes_when_the_server_announces_a_change():
+    page = render_html([task()], {}, repo="o/r", generated="x", token="t")
+    assert 'new EventSource("/events?token="' in page
+
+
+def test_filters_in_the_top_bar_do_not_pause_the_refresh():
+    # Only controls the swap replaces (a card's milestone picker) may hold it back.
+    page = render_html([task()], {}, repo="o/r", generated="x", token="t")
+    assert 'closest(".board, #notes")' in page
+    assert '["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)' not in page
+
+
+def test_scripts_compile_on_the_system_python():
+    # The URL handler and `make tasks-serve` run macOS /usr/bin/python3 (3.9).
+    import shutil, subprocess
+    py = "/usr/bin/python3" if pathlib.Path("/usr/bin/python3").exists() else shutil.which("python3")
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for name in ("tasks.py", "task_board.py"):
+        src = (root / name).read_text(encoding="utf-8")
+        proc = subprocess.run([py, "-c", "import sys; compile(sys.stdin.read(), sys.argv[1], 'exec')", name], input=src, capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr

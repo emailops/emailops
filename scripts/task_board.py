@@ -4,9 +4,11 @@
 Usage:
   task_board.py [--port N]
       Print the board's URL (a random token in it guards every request) and
-      serve it until Ctrl+C. Each refresh re-reads the tasks (see tasks.py) and
-      the coding agents Herdr runs here and on its saved machines; the page
-      swaps in the new board every few seconds. From the page:
+      serve it until Ctrl+C. While a page watches it, the server rebuilds the
+      board in the background (the tasks, see tasks.py, and the coding agents
+      Herdr runs here and on its saved machines) every REBUILD_SECONDS and
+      announces each change on /events, so the page swaps in a new status
+      within a second or two; requests read the cached board. From the page:
       - Open in Herdr: focus the task's agent, or create (or reuse) the task's
         worktree, open a Herdr tab there, start Claude and type
         /work-on-task T-NNNN without sending it. Starting in the worktree, not
@@ -26,6 +28,20 @@ Usage:
   task_board.py new --title TEXT --milestone NAME [--body-file PATH|-]
       Commit a new todo task on chore/tasks-board and print its id; the
       new-task skill uses it for "create a task for ...".
+  task_board.py list [--status S]... [--all] [--milestone M] [--needs-you] [--json]
+  task_board.py show T-NNNN [--json]
+  task_board.py summary [--json]
+      The board from a terminal or a Claude session (the tasks skill): open
+      tasks unless --status/--all, one task with its Markdown and artifacts,
+      or one line of counts and the tasks whose agent waits for you.
+  task_board.py open T-NNNN [--mode herdr|bg|cloud]
+      Start or focus a task's session: a Herdr tab in its worktree (the
+      board's Open in Herdr), a background Claude session there (claude
+      attach T-NNNN), or a cloud session in a Herdr tab.
+  task_board.py focus|delete T-NNNN, milestone T-NNNN NAME, new-milestone NAME,
+  discard T-NNNN [--yes]
+      The board's other buttons. discard without --yes only says what it
+      would remove.
 """
 
 from __future__ import annotations
@@ -42,6 +58,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,14 +68,21 @@ from tasks import (
     BOARD,
     BOARD_BRANCH,
     ID_RE,
+    OPEN,
+    STATUSES,
     TASK_BASE,
     TASK_BRANCH_RE,
     add_milestone,
+    agent_label,
     agents_by_task,
+    board_summary,
     build_page,
     collect,
     edit_location,
+    filter_rows,
+    format_rows,
     git,
+    loss_text,
     main_root,
     new_task_text,
     next_id,
@@ -67,13 +91,57 @@ from tasks import (
     set_field,
     slugify,
     task_of_path,
+    task_rows,
     worktrees,
 )
 
 PORT = 8780
 FETCH_SECONDS = 60  # how often the server fetches origin, to see task branches pushed elsewhere
+REBUILD_SECONDS = 1.5  # how often a watched board is rebuilt in the background
+WATCH_SECONDS = 60  # a board nobody asked for in this long is not rebuilt
+EVENT_SECONDS = 15  # an /events keep-alive at least this often
 OUTPUT_LINES = 80
 MAX_FORM = 64 * 1024  # bytes of a POST body (a new task's details)
+
+
+class Snapshot:
+    """The last board page built, rebuilt in the background while a page watches it.
+
+    Requests read the cached page instead of re-running git and Herdr, and
+    /events wakes the pages as soon as a rebuild changes the board.
+    build() returns (page, version).
+    """
+
+    def __init__(self, build, clock=time.monotonic):
+        self.build, self.clock = build, clock
+        self.page, self.version, self.asked = None, None, None
+        self.changed = threading.Condition()
+
+    def get(self):
+        self.asked = self.clock()
+        if self.page is None:
+            self.refresh()
+        return self.page, self.version
+
+    def refresh(self):
+        """Rebuild now; whether the board changed. A failed build keeps the last good page."""
+        page, version = self.build()
+        with self.changed:
+            moved = version != self.version
+            self.page, self.version = page, version
+            if moved:
+                self.changed.notify_all()
+        return moved
+
+    def wait(self, seen, timeout):
+        """The current version once it differs from seen, or seen after timeout."""
+        self.asked = self.clock()
+        with self.changed:
+            self.changed.wait_for(lambda: self.version != seen, timeout)
+            return self.version
+
+    def watched(self):
+        return self.asked is not None and self.clock() - self.asked < WATCH_SECONDS
 
 
 def task_worktree(file_name, root):
@@ -85,6 +153,26 @@ def task_worktree(file_name, root):
 def agent_name(task_id):
     """Herdr agent name for a task (names are lowercase)."""
     return task_id.lower()
+
+
+START_MODES = ("herdr", "bg", "cloud")
+
+
+def start_args(task_id, mode):
+    """How a task's session starts, by mode. Pure.
+
+    herdr: no extra arguments (Claude starts in a Herdr tab and the skill is typed, not sent).
+    bg: the full command of a named background session in the task's worktree.
+    cloud: Claude's arguments for a cloud session, started in a Herdr tab so it stays attached.
+    """
+    prompt = f"/work-on-task {task_id}"
+    if mode == "herdr":
+        return []
+    if mode == "bg":
+        return ["claude", "--bg", "-n", task_id, prompt]
+    if mode == "cloud":
+        return ["--cloud", prompt]
+    raise ValueError(f"start mode {mode!r}: use one of {', '.join(START_MODES)}")
 
 
 def pick_workspace(workspaces, label):
@@ -391,10 +479,8 @@ def discard_task(query):
     git("branch", "-D", branch)
 
 
-def open_in_herdr(task_id):
-    if task_id in live_agents()[0]:
-        return focus(task_id)
-    root, task, _ = find_task(task_id)
+def ensure_worktree(task, root):
+    """The task's worktree, created (or re-attached to its surviving branch) when missing."""
     path, branch = task_worktree(task.file, root)
     cwd = next((p for p, b in worktrees() if b == branch), None)
     if cwd is None:
@@ -403,16 +489,53 @@ def open_in_herdr(task_id):
         else:
             git("worktree", "add", "-b", branch, str(path), TASK_BASE)
         cwd = path
+    return cwd
+
+
+def herdr_tab(root, cwd, label):
+    """A new Herdr tab (or workspace) at cwd in the repo's workspace; its root pane id."""
     ws = pick_workspace(herdr("workspace", "list")["result"]["workspaces"], root.name)
     if ws is None:
         made = herdr("workspace", "create", "--cwd", cwd, "--label", root.name, "--focus")["result"]
     else:
-        made = herdr("tab", "create", "--workspace", ws, "--cwd", cwd, "--label", task_id, "--focus")["result"]
+        made = herdr("tab", "create", "--workspace", ws, "--cwd", cwd, "--label", label, "--focus")["result"]
         herdr("workspace", "focus", ws)
-    pane = made["root_pane"]["pane_id"]
+    return made["root_pane"]["pane_id"]
+
+
+def open_task(task_id, mode="herdr"):
+    """Start (or focus) a task's session; a message saying what happened.
+
+    herdr: focus its live agent, or open a Herdr tab in its worktree with Claude
+    and /work-on-task typed. bg: a background Claude session in the worktree
+    (`claude attach T-NNNN`). cloud: a cloud session in a Herdr tab at the main
+    checkout; the board sees it once it pushes feature/T-NNNN-*.
+    """
+    extra = start_args(task_id, mode)
+    if mode == "herdr" and task_id in live_agents()[0]:
+        focus(task_id)
+        return f"{task_id}: focused its agent"
+    root, task, _ = find_task(task_id)
+    if mode == "cloud":
+        pane = herdr_tab(root, root, f"{task_id} cloud")
+        herdr("agent", "start", f"{agent_name(task_id)}-cloud", "--kind", "claude", "--pane", pane, "--", *extra)
+        raise_terminal()
+        return f"{task_id}: cloud session starting in a Herdr tab"
+    cwd = ensure_worktree(task, root)
+    if mode == "bg":
+        out = subprocess.run(extra, cwd=cwd, capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"claude --bg: {out.stderr.strip() or out.returncode}")
+        return f"{task_id}: background session {out.stdout.strip()} in {cwd} (claude attach {task_id})"
+    pane = herdr_tab(root, cwd, task_id)
     herdr("agent", "start", agent_name(task_id), "--kind", "claude", "--pane", pane)
     herdr("pane", "send-text", pane, f"/work-on-task {task_id}")
     raise_terminal()
+    return f"{task_id}: Herdr tab opened in {cwd}"
+
+
+def open_in_herdr(task_id):
+    open_task(task_id, "herdr")
 
 
 def fetch_forever():
@@ -424,10 +547,28 @@ def fetch_forever():
             print(f"git fetch: {proc.stderr.strip()}", file=sys.stderr)
 
 
+def rebuild_forever(snapshot):
+    """Rebuild the board every REBUILD_SECONDS while a page watches it."""
+    stop = threading.Event()
+    while not stop.wait(REBUILD_SECONDS):
+        if not snapshot.watched():
+            continue
+        try:
+            snapshot.refresh()
+        except (subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as err:
+            print(f"board rebuild: {err}", file=sys.stderr)
+
+
 def serve(port):
     token = secrets.token_urlsafe(16)
+
+    def build():
+        agents, warnings = live_agents()
+        return build_page(token, agents, warnings)
+
+    snapshot = Snapshot(build)
     actions = {
-        "/open": lambda q: open_in_herdr(q.get("task", "")),
+        "/open": lambda q: open_task(q.get("task", ""), q.get("mode", "herdr")),
         "/focus": lambda q: focus(q.get("task", "")),
         "/milestone/new": new_milestone,
         "/milestone/set": set_milestone,
@@ -453,19 +594,36 @@ def serve(port):
 
         def do_GET(self):
             route = urlsplit(self.path).path
-            known = route in ("/", "/output") or route.startswith("/a/")
+            known = route in ("/", "/output", "/events") or route.startswith("/a/")
             if not authorized("GET", self.path, self.headers, token, port) or not known:
                 return self.reply(404, "not found", "text/plain")
             try:
+                if route == "/events":
+                    return self.events()
                 if route == "/output":
                     return self.reply(200, agent_output(self.task()), "text/plain; charset=utf-8")
                 if route.startswith("/a/"):
                     return self.artifact(route)
-                agents, warnings = live_agents()
-                self.reply(200, build_page(token, agents, warnings)[1], "text/html; charset=utf-8", cookie=True)
+                self.reply(200, snapshot.get()[0], "text/html; charset=utf-8", cookie=True)
             except (subprocess.CalledProcessError, OSError, ValueError, RuntimeError) as err:
                 print(f"GET {route}: {err}", file=sys.stderr)
                 self.reply(500, f"failed: {err}", "text/plain")
+
+        def events(self):
+            """Server-sent events: the board's version now and after every change, until the page goes."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            seen = None
+            try:
+                while True:
+                    current = snapshot.wait(seen, EVENT_SECONDS) if seen is not None else snapshot.get()[1]
+                    self.wfile.write(f"data: {current}\n\n".encode() if current != seen else b": ping\n\n")
+                    self.wfile.flush()
+                    seen = current
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # the page closed or reloaded
 
         def artifact(self, route):
             _, _, task_id, n, rel = (unquote(part) for part in route.split("/", 4))
@@ -485,16 +643,23 @@ def serve(port):
                 return self.reply(413, "too large", "text/plain")
             try:
                 actions[route](post_params(urlsplit(self.path).query, self.rfile.read(length).decode()))
-                self.reply(200, json.dumps({"ok": True}), "application/json")
             except (ValueError, RuntimeError, subprocess.CalledProcessError) as err:
                 print(f"POST {route} {self.task()}: {err}", file=sys.stderr)
-                self.reply(200, json.dumps({"ok": False, "error": str(err)}), "application/json")
+                return self.reply(200, json.dumps({"ok": False, "error": str(err)}), "application/json")
+            try:
+                # Before the reply: the page re-reads the board on "ok" and must get the edit.
+                snapshot.refresh()
+            except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as err:
+                print(f"POST {route}: board rebuild after the edit: {err}", file=sys.stderr)
+            self.reply(200, json.dumps({"ok": True}), "application/json")
 
         def log_message(self, *args):
-            pass  # the page polls every few seconds; errors are printed where they happen
+            pass  # the page and its event stream ask often; errors are printed where they happen
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True  # open /events streams must not keep Ctrl+C waiting
     threading.Thread(target=fetch_forever, daemon=True).start()
+    threading.Thread(target=rebuild_forever, args=(snapshot,), daemon=True).start()
     print(f"http://127.0.0.1:{port}/?token={token}  (Ctrl+C to stop)", flush=True)
     try:
         server.serve_forever()
@@ -503,27 +668,120 @@ def serve(port):
     return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--port", type=int, default=PORT)
-    sub = parser.add_subparsers(dest="cmd")
+def board_rows():
+    """(rows, artifacts by task id, worktree infos, warnings) of the board as it is now."""
+    agents, warnings = live_agents()
+    _, tasks, infos, _, found, artifacts = collect()
+    return task_rows(tasks, infos, agents), artifacts, infos, [*warnings, *found]
+
+
+def emit(data, as_json, text):
+    print(json.dumps(data, indent=2, ensure_ascii=False) if as_json else text)
+
+
+def cmd_list(args):
+    rows, _, _, warnings = board_rows()
+    statuses = STATUSES if args.all else (args.status or OPEN)
+    rows = filter_rows(rows, statuses, args.milestone, args.needs_you)
+    emit({"tasks": rows, "warnings": warnings}, args.json, "\n".join([format_rows(rows), *(f"warning: {w}" for w in warnings)]))
+
+
+def cmd_show(args):
+    rows, artifacts, _, _ = board_rows()
+    row = next((r for r in rows if r["id"] == args.task), None)
+    if row is None:
+        raise ValueError(f"no task {args.task}")
+    _, task, _ = find_task(args.task)
+    data = {**row, "body": task.body, "artifacts": artifacts.get(args.task, [])}
+    head = [f"{row['id']} · {row['title']}", f"status {row['status']} · milestone {row['milestone']} · agent {agent_label(row)}"]
+    if row["branch"]:
+        head.append(f"{row['where']} branch {row['branch']} · {row['last_commit']} · {row['dirty']} changed · {row['ahead']} ahead")
+    head += [f"artifact: {a['label']} ({a['path']})" for a in data["artifacts"]]
+    emit(data, args.json, "\n".join(head) + "\n\n" + task.body)
+
+
+def cmd_summary(args):
+    s = board_summary(board_rows()[0])
+    emit(s, args.json, s["text"])
+
+
+def cmd_discard(args):
+    found = task_checkout(args.task, worktrees())
+    if found is None:
+        raise ValueError(f"{args.task} has no worktree on this machine")
+    if not args.yes:
+        info = board_rows()[2].get(found[0].name)
+        lost = loss_text(info) if info else "the worktree"
+        print(f"{args.task}: discarding removes {found[0]} and branch {found[1]} with {lost}. Re-run with --yes to do it.")
+        return 2
+    discard_task({"task": args.task})
+    print(f"{args.task}: worktree, branch and Herdr panes removed (a pushed branch and its PR stay)")
+    return 0
+
+
+def cmd_new(args):
+    body = ""
+    if args.body_file:
+        body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text(encoding="utf-8")
+    task_id, name = create_task(args.title, args.milestone, body)
+    print(f"{task_id} {name} (committed on {BOARD_BRANCH}; not pushed)")
+
+
+def parser():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--port", type=int, default=PORT)
+    sub = p.add_subparsers(dest="cmd")
     new_p = sub.add_parser("new", help="commit a new todo task on the board branch and print its id")
     new_p.add_argument("--title", required=True)
     new_p.add_argument("--milestone", required=True)
     new_p.add_argument("--body-file", help="Markdown details; '-' reads stdin; omit for the Context/Acceptance template")
-    args = parser.parse_args()
-    if args.cmd != "new":
+    list_p = sub.add_parser("list", help="the board's tasks as a table (open ones unless --status/--all)")
+    list_p.add_argument("--status", action="append", choices=STATUSES)
+    list_p.add_argument("--all", action="store_true")
+    list_p.add_argument("--milestone")
+    list_p.add_argument("--needs-you", action="store_true", help="only tasks whose agent waits for you")
+    list_p.add_argument("--json", action="store_true")
+    show_p = sub.add_parser("show", help="one task: status, branch, agent, artifacts and its Markdown")
+    show_p.add_argument("task")
+    show_p.add_argument("--json", action="store_true")
+    sum_p = sub.add_parser("summary", help="one line: open tasks by status and who waits for you")
+    sum_p.add_argument("--json", action="store_true")
+    open_p = sub.add_parser("open", help="start or focus a task's session")
+    open_p.add_argument("task")
+    open_p.add_argument("--mode", choices=START_MODES, default="herdr")
+    sub.add_parser("focus", help="focus the task's agent and raise its terminal").add_argument("task")
+    ms_p = sub.add_parser("milestone", help="move a task to another milestone")
+    ms_p.add_argument("task")
+    ms_p.add_argument("name")
+    sub.add_parser("new-milestone", help="add a milestone to tasks/milestones.md").add_argument("name")
+    sub.add_parser("delete", help="delete a task's card (its worktree and branch stay)").add_argument("task")
+    dis_p = sub.add_parser("discard", help="remove a task's worktree, local branch and Herdr panes")
+    dis_p.add_argument("task")
+    dis_p.add_argument("--yes", action="store_true", help="without it, only say what would be lost")
+    return p
+
+
+def main(argv=None):
+    args = parser().parse_args(argv)
+    if args.cmd is None:
         return serve(args.port)
-    body = ""
-    if args.body_file:
-        body = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text(encoding="utf-8")
+    commands = {
+        "new": cmd_new,
+        "list": cmd_list,
+        "show": cmd_show,
+        "summary": cmd_summary,
+        "discard": cmd_discard,
+        "open": lambda a: print(open_task(a.task, a.mode)),
+        "focus": lambda a: (focus(a.task), print(f"{a.task}: focused"))[-1],
+        "milestone": lambda a: (set_milestone({"task": a.task, "name": a.name}), print(f"{a.task}: milestone {a.name}"))[-1],
+        "new-milestone": lambda a: (new_milestone({"name": a.name}), print(f"milestone {a.name} added"))[-1],
+        "delete": lambda a: (delete_task({"task": a.task}), print(f"{a.task}: card deleted"))[-1],
+    }
     try:
-        task_id, name = create_task(args.title, args.milestone, body)
-    except (ValueError, subprocess.CalledProcessError) as err:
+        return commands[args.cmd](args) or 0
+    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
-    print(f"{task_id} {name} (committed on {BOARD_BRANCH}; not pushed)")
-    return 0
 
 
 if __name__ == "__main__":

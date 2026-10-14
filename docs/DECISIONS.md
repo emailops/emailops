@@ -3710,3 +3710,25 @@ folder-management entry); this dedicated action is the way out of it.
 client. Adding Spam to the generic move picker — it would not record the not-junk
 correction and would offer Spam as a destination without the junk feedback that
 "Confirm junk" records.
+
+## 2026-10-14 — The task board is also a CLI, and pushes status changes to the page
+
+**Decision:** Everything the task board's buttons do is also a subcommand of
+`scripts/task_board.py` (`list`, `show`, `summary`, `open`, `focus`, `milestone`,
+`new-milestone`, `delete`, `discard`) calling the same functions, and the `tasks` skill
+drives it from a Claude session. `open --mode bg|cloud` starts a task as a background
+Claude session in its worktree or as a cloud session, next to the Herdr tab.
+A `task-status` Claude Code plugin shows the board's summary in the status line.
+The served board keeps one cached page, rebuilt every 1.5 s while a page watches it,
+and announces each change over server-sent events (`/events`). The 5-second page poll
+is now only a 30-second fallback.
+**Context:** Managing tasks meant switching to the browser page, and status changes
+showed up to 5 s late, or not at all while the search box or a filter kept focus.
+**Rejected:** A skill that reads the task files and calls Herdr itself (it would
+re-implement how the board merges its four sources, and drift); a skill that drives the
+running server over HTTP (needs the server up and its per-run token); a separate task
+store such as GitHub Issues (already rejected on 2026-10-13); a subagent of the
+current session as the background mode (it cannot be attached to or talked to while it
+works, unlike `claude --bg`); polling faster without a cache (every page would re-run
+git and Herdr each second).
+

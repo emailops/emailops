@@ -16,6 +16,8 @@ from task_board import (  # noqa: E402
     pick_workspace,
     raise_command,
     read_args,
+    Snapshot,
+    start_args,
     sync_board,
     task_checkout,
     task_worktree,
@@ -267,3 +269,103 @@ def test_create_task_commits_the_next_id_on_the_board(tmp_path, monkeypatch):
     assert (task_id, name) == ("T-0002", "tasks/T-0002-do-a-thing.md")
     assert sh(board, "log", "-1", "--format=%s") == "chore: add T-0002"
     assert "title: Do a thing" in (board / name).read_text()
+
+
+# --- start modes ------------------------------------------------------------
+
+
+def test_a_herdr_start_types_the_skill_without_extra_agent_args():
+    assert start_args("T-0004", "herdr") == []
+
+
+def test_a_background_start_runs_a_named_background_session():
+    assert start_args("T-0004", "bg") == ["claude", "--bg", "-n", "T-0004", "/work-on-task T-0004"]
+
+
+def test_a_cloud_start_passes_the_skill_to_a_cloud_session():
+    assert start_args("T-0004", "cloud") == ["--cloud", "/work-on-task T-0004"]
+
+
+def test_an_unknown_start_mode_is_refused():
+    import pytest
+
+    with pytest.raises(ValueError):
+        start_args("T-0004", "teleport")
+
+
+# --- Snapshot (the cached board the server hands out) -----------------------
+
+
+class FakeBuild:
+    def __init__(self, *versions):
+        self.versions, self.calls = list(versions), 0
+
+    def __call__(self):
+        self.calls += 1
+        v = self.versions[min(self.calls, len(self.versions)) - 1]
+        return f"<page {v}>", v
+
+
+def test_snapshot_builds_once_and_serves_the_cached_page():
+    build = FakeBuild("v1")
+    snap = Snapshot(build)
+    assert snap.get() == ("<page v1>", "v1")
+    assert snap.get() == ("<page v1>", "v1")
+    assert build.calls == 1
+
+
+def test_snapshot_refresh_reports_whether_the_board_changed():
+    snap = Snapshot(FakeBuild("v1", "v1", "v2"))
+    snap.get()
+    assert snap.refresh() is False
+    assert snap.refresh() is True
+    assert snap.get()[1] == "v2"
+
+
+def test_wait_returns_at_once_when_the_caller_is_behind():
+    snap = Snapshot(FakeBuild("v1"))
+    snap.get()
+    assert snap.wait("old", timeout=5) == "v1"
+
+
+def test_wait_wakes_up_on_a_change():
+    import threading
+
+    snap = Snapshot(FakeBuild("v1", "v2"))
+    snap.get()
+    threading.Timer(0.05, snap.refresh).start()
+    assert snap.wait("v1", timeout=5) == "v2"
+
+
+def test_wait_times_out_with_the_same_version():
+    snap = Snapshot(FakeBuild("v1"))
+    snap.get()
+    assert snap.wait("v1", timeout=0.01) == "v1"
+
+
+def test_snapshot_is_watched_only_while_a_page_asked_recently():
+    now = [100.0]
+    snap = Snapshot(FakeBuild("v1"), clock=lambda: now[0])
+    assert snap.watched() is False
+    snap.get()
+    assert snap.watched() is True
+    now[0] += 120
+    assert snap.watched() is False
+
+
+def test_a_failing_build_keeps_the_last_good_page():
+    calls = []
+
+    def build():
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("git broke")
+        return "<page v1>", "v1"
+
+    snap = Snapshot(build)
+    snap.get()
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        snap.refresh()
+    assert snap.get() == ("<page v1>", "v1")

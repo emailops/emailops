@@ -34,6 +34,7 @@ whether an agent is on it).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -61,7 +62,7 @@ ARTIFACTS = Path(".claude") / "task-artifacts.local.json"  # per task worktree, 
 MAX_ARTIFACTS = 20
 NEEDS_YOU = ("blocked", "done")  # Herdr states where the agent waits for the user
 ACTIVE_MINUTES = 10  # a worktree changed this recently counts as having an agent on it
-POLL_SECONDS = 5  # the served page re-reads the board this often
+POLL_SECONDS = 30  # fallback re-read of the served page; /events pushes each change as it happens
 TASK_BASE = "origin/main"  # task worktrees and the board branch start here; the server fetches it every minute
 
 
@@ -393,6 +394,79 @@ def agents_by_task(entries):
     return found
 
 
+OPEN = ("todo", "doing", "review")  # what `task_board.py list` shows without --status/--all
+
+
+def task_rows(tasks, worktrees, agents):
+    """One JSON-ready dict per task, for the CLI (list, show, summary). Pure."""
+    rows = []
+    for t in tasks:
+        wt = worktrees.get(t.worktree) if t.worktree not in (MAIN, BOARD) else None
+        ag = agents.get(t.id)
+        rows.append(
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "milestone": t.milestone,
+                "pr": t.pr,
+                "issue": t.issue,
+                "file": t.file,
+                "branch": wt.branch if wt else None,
+                "where": ("remote" if wt.remote else "local") if wt else None,
+                "last_commit": wt.last_commit if wt else None,
+                "dirty": wt.dirty if wt else 0,
+                "ahead": wt.ahead if wt else 0,
+                "idle_min": wt.idle_min if wt else None,
+                "agent": ag.status if ag else None,
+                "machine": ag.machine if ag else None,
+                "needs_you": bool(ag and needs_you(ag.status)),
+            }
+        )
+    return rows
+
+
+def filter_rows(rows, statuses=OPEN, milestone=None, needs_you=False):
+    """The rows a CLI listing keeps. Pure."""
+    return [
+        r
+        for r in rows
+        if r["status"] in statuses and (milestone is None or r["milestone"] == milestone) and (not needs_you or r["needs_you"])
+    ]
+
+
+def agent_label(row):
+    if row["agent"] is None:
+        return "-"
+    state = "needs you" if row["needs_you"] else row["agent"]
+    return f"{state} ({row['machine']})"
+
+
+def format_rows(rows):
+    """An aligned plain-text table of rows, sorted like the board. Pure."""
+    if not rows:
+        return "no tasks"
+    rows = sorted(rows, key=lambda r: (RANK.get(r["status"], -1), milestone_key(r["milestone"]), r["id"]))
+    table = [("ID", "STATUS", "MILESTONE", "AGENT", "TITLE")] + [(r["id"], r["status"], r["milestone"], agent_label(r), r["title"]) for r in rows]
+    widths = [max(len(line[i]) for line in table) for i in range(4)]
+    return "\n".join("  ".join(cell.ljust(w) for cell, w in zip(line[:4], widths)) + "  " + line[4] for line in table)
+
+
+def board_summary(rows):
+    """Counts of the open statuses, the tasks whose agent waits, and a one-line text. Pure."""
+    counts = {s: sum(1 for r in rows if r["status"] == s) for s in OPEN}
+    waiting = [r["id"] for r in rows if r["needs_you"]]
+    text = "tasks: " + " · ".join(f"{n} {s}" for s, n in counts.items() if n) if any(counts.values()) else "tasks: none open"
+    if waiting:
+        text += " · needs you: " + ", ".join(waiting)
+    return {"counts": counts, "needs_you": waiting, "text": text}
+
+
+def page_version(page, generated):
+    """A fingerprint of the board page that ignores its "Generated" stamp. Pure."""
+    return hashlib.sha1(page.replace(generated, "").encode()).hexdigest()[:16]
+
+
 def render_html(tasks, worktrees, repo, generated, token, warnings=(), milestones=(), agents=None, artifacts=None):
     """The board page task_board.py serves; token guards the requests it sends back. Pure."""
     e = html.escape
@@ -450,8 +524,9 @@ def render_html(tasks, worktrees, repo, generated, token, warnings=(), milestone
             if wt is not None and not wt.remote and t.worktree not in (MAIN, BOARD):
                 delete += discard_button(t.id, wt)
             launch = f'<button class="btn primary" data-launch="{e(t.id)}">Open in Herdr</button>'
+            has_agent = ' data-agent="1"' if ag else ""
             cards.append(
-                f'<article class="card" id="{e(t.id)}" data-milestone="{e(t.milestone)}"{' data-agent="1"' if ag else ""} '
+                f'<article class="card" id="{e(t.id)}" data-milestone="{e(t.milestone)}"{has_agent} '
                 f'data-text="{e((t.id + " " + t.title + " " + t.body).lower())}">'
                 f'<header><span class="tid">{e(t.id)}</span>{"".join(meta)}</header>'
                 f'<h3>{e(t.title)}</h3>{summary}{live}{activity}'
@@ -484,11 +559,16 @@ def render_html(tasks, worktrees, repo, generated, token, warnings=(), milestone
     )
 
 
-# Swap in a fresh board without losing scroll, filter or the open panel.
-SERVE_JS = """async function refresh() {
-  // Not while the reader types or picks: swapping the board would drop the control.
-  if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
-  if (document.querySelector("[data-armed]")) return;  // a delete or discard waiting for its confirming click
+# Swap in a fresh board without losing scroll, filter or the open panel. The
+# server announces each change on /events, so a status shows within a second
+# or two; the timer is only the fallback for a dropped event stream.
+SERVE_JS = """let pending = false;
+async function refresh() {
+  // Not while a control the swap replaces (a card's milestone picker) has focus, nor while
+  // a delete or discard waits for its confirming click: retry once that ends.
+  const held = document.activeElement && document.activeElement.closest(".board, #notes") && document.activeElement.matches("input, select, textarea");
+  if (held || document.querySelector("[data-armed]")) { pending = true; return; }
+  pending = false;
   try {
     const r = await fetch("/?token=" + TOKEN, { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
@@ -498,6 +578,11 @@ SERVE_JS = """async function refresh() {
     if (!panel.hidden) openTask(readHash().open);
   } catch (err) { document.querySelector(".gen").textContent = "Board server unreachable (" + err.message + ")"; }
 }
+document.addEventListener("focusout", () => setTimeout(() => { if (pending) refresh(); }, 0));
+setInterval(() => { if (pending) refresh(); }, 1000);  // an armed button disarms on its own timer
+let version = null;
+const events = new EventSource("/events?token=" + TOKEN);
+events.onmessage = ev => { if (ev.data !== version) { version = ev.data; refresh(); } };
 setInterval(refresh, %d);"""
 
 
@@ -859,13 +944,13 @@ def cmd_check():
 
 
 def build_page(token, agents=None, warnings=()):
-    """(main checkout, page) built from collect()."""
-    root, tasks, infos, milestones, found_warnings, artifacts = collect()
+    """(page, version) built from collect(); the version ignores the "Generated" stamp."""
+    _, tasks, infos, milestones, found_warnings, artifacts = collect()
     stamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     page = render_html(
         tasks, infos, repo_slug(), stamp, token, warnings=[*warnings, *found_warnings], milestones=milestones, agents=agents, artifacts=artifacts
     )
-    return root, page
+    return page, page_version(page, stamp)
 
 
 def cmd_artifact(path, label):

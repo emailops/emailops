@@ -45,9 +45,10 @@ Why the task exists and what it touches.
 - `make tasks-check`: validate the files (also runs in the pre-commit hook).
 - `make tasks-serve` (`scripts/task_board.py`): the task board, served live on
   `127.0.0.1:8780` (the printed URL carries a random token; leave it running in
-  a terminal or Herdr pane). Every refresh re-reads the tasks and the agents
-  Herdr runs here and on its saved machines, and the page updates in place
-  every 5 seconds. A card with an agent says where it runs; a yellow
+  a terminal or Herdr pane). While the page is open the server re-reads the
+  tasks and the agents Herdr runs here and on its saved machines every 1.5
+  seconds and pushes each change to the page, which updates in place within a
+  second or two (filters and the search box never hold it back). A card with an agent says where it runs; a yellow
   **needs you** chip (agent blocked on a question, or done with its turn)
   focuses that Herdr pane and raises the terminal. Each card shows the first
   two lines of its details; clicking the card (or **Details**) opens them
@@ -76,6 +77,20 @@ Why the task exists and what it touches.
 - From Claude: "create a task for …" (the `new-task` skill) drafts the title,
   context and acceptance and commits the task on `chore/tasks-board` through
   `python3 scripts/task_board.py new --title … --milestone … --body-file …`.
+- From Claude, everything else the board does: the `tasks` skill (`/tasks`,
+  "qué tareas hay", "empieza la T-0004 en segundo plano") runs
+  `python3 scripts/task_board.py list | show | summary | open | focus |
+  milestone | new-milestone | delete | discard`, the same code as the
+  buttons. `open --mode bg` starts the task as a background Claude session in
+  its worktree (`claude attach T-NNNN`); `open --mode cloud` starts a cloud
+  session in a Herdr tab, which the board shows once it pushes its branch.
+- In Claude Code's status line: the `task-status` plugin
+  (`.claude/plugins/task-status`) shows the open tasks by status every 20
+  seconds and a toast when a task's agent starts waiting for you. Load it with
+  `claude --plugin-dir .claude/plugins/task-status`, or for every session add
+  its absolute path to `CLAUDE_CODE_PLUGIN_DIRS` in the `env` block of
+  `~/.claude/settings.json`. `claude plugin test .claude/plugins/task-status`
+  runs its tests.
 - `python3 scripts/tasks.py artifact <path> --label "eval report"` (from a
   task worktree; `/work-on-task` does it) records a file the session produced.
   The card links the latest one and **Details** lists them; the live board
