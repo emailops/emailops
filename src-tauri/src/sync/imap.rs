@@ -3135,7 +3135,14 @@ mod tests {
             (ImapFolder::Trash, 9),
             (ImapFolder::Custom("Archive/2026".to_string()), 12),
         ] {
-                #[test]
+            let id = client.located_id(&folder, uid);
+            let (parsed_folder, parsed_uid) = client.parse_message_ref(&id);
+            assert_eq!(parsed_folder, folder, "folder round-trip for {id}");
+            assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
+        }
+    }
+
+    #[test]
     fn tls_timeout_fallback_never_retries_certificate_errors() {
         use std::io::{Error, ErrorKind};
 
