@@ -769,10 +769,7 @@ impl ImapClient {
 
     fn is_retryable_tls_timeout(error: &str) -> bool {
         let msg = error.to_ascii_lowercase();
-        msg.contains("timed out")
-            || msg.contains("timeout")
-            || msg.contains("10060")
-            || msg.contains("zeitspanne")
+        msg.contains("timed out") || msg.contains("timeout") || msg.contains("10060") || msg.contains("zeitspanne")
     }
 
     /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
@@ -3146,9 +3143,7 @@ mod tests {
         assert!(!ImapClient::is_retryable_tls_timeout(
             "The certificate CN name does not match"
         ));
-        assert!(!ImapClient::is_retryable_tls_timeout(
-            "certificate verify failed"
-        ));
+        assert!(!ImapClient::is_retryable_tls_timeout("certificate verify failed"));
         assert!(!ImapClient::is_retryable_tls_timeout("connection reset"));
     }
 }
