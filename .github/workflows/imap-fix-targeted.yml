@@ -1,0 +1,35 @@
+name: IMAP fix targeted tests
+on:
+  push:
+    branches:
+      - fix/imap-tls-sync-reliability
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  imap-windows:
+    name: IMAP Rust checks (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: imap-targeted-windows
+      - name: Placeholder bundled model
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/models
+          touch src-tauri/resources/models/nomic-embed-text-v1.5-q4_k_m.gguf
+      - name: Rustfmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Targeted IMAP tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features tls_timeout_fallback
+      - name: Clippy (including tests)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features --tests -- -D warnings
