@@ -767,6 +767,14 @@ impl ImapClient {
         Ok(session)
     }
 
+    fn is_retryable_tls_timeout(error: &str) -> bool {
+        let msg = error.to_ascii_lowercase();
+        msg.contains("timed out")
+            || msg.contains("timeout")
+            || msg.contains("10060")
+            || msg.contains("zeitspanne")
+    }
+
     /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
     /// the socket. Shared by [`Self::connect_sync`] and the IDLE session.
     fn open_tls_stream(
@@ -783,24 +791,45 @@ impl ImapClient {
             imap::Error::Bad(format!("TLS init failed: {e}"))
         })?;
 
-        // Resolve the first address and connect with a timeout.
-        let addr = (creds.host.as_str(), creds.port)
+        // DNS may return multiple IMAP endpoints. A transient TCP/TLS timeout
+        // on one endpoint must not prevent trying the others.
+        let addrs: Vec<_> = (creds.host.as_str(), creds.port)
             .to_socket_addrs()
             .map_err(imap::Error::Io)?
-            .next()
-            .ok_or_else(|| {
-                imap::Error::Io(io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    format!("No addresses resolved for {}:{}", creds.host, creds.port),
-                ))
-            })?;
+            .collect();
+        if addrs.is_empty() {
+            return Err(imap::Error::Io(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("No addresses resolved for {}:{}", creds.host, creds.port),
+            )));
+        }
 
-        let tcp = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(imap::Error::Io)?;
-        tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
-        tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
+        let mut last_error = None;
+        for addr in addrs {
+            let tcp = match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
+                Ok(tcp) => tcp,
+                Err(err) => {
+                    last_error = Some(imap::Error::Io(err));
+                    continue;
+                }
+            };
+            tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
+            tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
 
-        tls.connect(creds.host.as_str(), tcp)
-            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))
+            match tls.connect(creds.host.as_str(), tcp) {
+                Ok(stream) => return Ok(stream),
+                Err(err) => {
+                    let message = err.to_string();
+                    // Never retry non-timeout TLS failures (e.g. invalid
+                    // certificates); doing so would obscure security errors.
+                    if !Self::is_retryable_tls_timeout(&message) {
+                        return Err(imap::Error::Bad(format!("TLS handshake failed: {err}")));
+                    }
+                    last_error = Some(imap::Error::Bad(format!("TLS handshake failed: {err}")));
+                }
+            }
+        }
+        Err(last_error.expect("at least one resolved address was attempted"))
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
