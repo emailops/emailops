@@ -3135,4 +3135,20 @@ mod tests {
             assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
         }
     }
+
+    #[test]
+    fn tls_timeout_fallback_never_retries_certificate_errors() {
+        assert!(ImapClient::is_retryable_tls_timeout("os error 10060"));
+        assert!(ImapClient::is_retryable_tls_timeout("connection timed out"));
+        assert!(ImapClient::is_retryable_tls_timeout(
+            "Ein Verbindungsversuch ist nach einer Zeitspanne fehlgeschlagen"
+        ));
+        assert!(!ImapClient::is_retryable_tls_timeout(
+            "The certificate CN name does not match"
+        ));
+        assert!(!ImapClient::is_retryable_tls_timeout(
+            "certificate verify failed"
+        ));
+        assert!(!ImapClient::is_retryable_tls_timeout("connection reset"));
+    }
 }
