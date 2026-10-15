@@ -81,7 +81,8 @@ Why the task exists and what it touches.
   "qué tareas hay", "empieza la T-0004 en segundo plano") runs
   `python3 scripts/task_board.py list | show | summary | open | focus |
   milestone | new-milestone | delete | discard`, the same code as the
-  buttons. `open --mode bg` starts the task as a background Claude session in
+  buttons. `close-merged <PR>...` sets done, on the board branch, the open
+  tasks whose PR merged; `babysit-prs` runs it on every pass. `open --mode bg` starts the task as a background Claude session in
   its worktree (`claude attach T-NNNN`); `open --mode cloud` starts a cloud
   session in a Herdr tab, which the board shows once it pushes its branch.
 - In Claude Code's status line: the `task-status` plugin

@@ -84,6 +84,7 @@ from tasks import (
     git,
     loss_text,
     main_root,
+    merged_open,
     new_task_text,
     next_id,
     parse_task,
@@ -460,6 +461,26 @@ def remove_card(root, task):
     commit(board, f"tasks/{task.file}", f"chore: delete {task.id}")
 
 
+def close_merged(prs):
+    """Set done, on the board branch, every open task whose PR is in prs; the ids closed.
+
+    Always the board, even for a started task: its own branch is merged and
+    finished, so an edit there would never reach main.
+    """
+    root, tasks = collect()[:2]
+    board = board_worktree(root)
+    closed = []
+    for task in merged_open(tasks, set(prs)):
+        file = board / "tasks" / task.file
+        if not file.exists():
+            raise ValueError(f"{task.id} exists only in {task.worktree}; set it done there")
+        file.write_text(set_field(file.read_text(encoding="utf-8"), "status", "done"), encoding="utf-8")
+        git("add", f"tasks/{task.file}", cwd=board)
+        commit(board, f"tasks/{task.file}", f"chore: {task.id} done (#{task.pr})")
+        closed.append(task.id)
+    return closed
+
+
 def discard_task(query):
     """Remove everything of a task on this machine: card, Herdr panes, worktree (uncommitted work too), local branch.
 
@@ -763,6 +784,8 @@ def parser():
     ms_p.add_argument("name")
     sub.add_parser("new-milestone", help="add a milestone to tasks/milestones.md").add_argument("name")
     sub.add_parser("delete", help="delete a task's card (its worktree and branch stay)").add_argument("task")
+    close_p = sub.add_parser("close-merged", help="set done, on the board branch, the open tasks whose PR is one of these merged PRs")
+    close_p.add_argument("prs", nargs="+", type=int)
     dis_p = sub.add_parser("discard", help="remove a task's worktree, local branch and Herdr panes")
     dis_p.add_argument("task")
     dis_p.add_argument("--yes", action="store_true", help="without it, only say what would be lost")
@@ -784,6 +807,7 @@ def main(argv=None):
         "milestone": lambda a: (set_milestone({"task": a.task, "name": a.name}), print(f"{a.task}: milestone {a.name}"))[-1],
         "new-milestone": lambda a: (new_milestone({"name": a.name}), print(f"milestone {a.name} added"))[-1],
         "delete": lambda a: (delete_task({"task": a.task}), print(f"{a.task}: card deleted"))[-1],
+        "close-merged": lambda a: print("\n".join(f"{t}: done" for t in close_merged(a.prs)) or "no open task has one of these PRs"),
     }
     try:
         return commands[args.cmd](args) or 0

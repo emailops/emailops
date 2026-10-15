@@ -10,6 +10,7 @@ from tasks import (  # noqa: E402
     WorktreeInfo,
     is_active,
     loss_text,
+    merged_open,
     add_artifact,
     add_milestone,
     agents_by_task,
@@ -180,6 +181,18 @@ def test_set_field_on_a_missing_key_raises():
 def test_prune_done_lists_only_done_task_files():
     tasks = [task("T-0001", status="done", pr=3), task("T-0002", status="review", pr=4), task("T-0003")]
     assert prune_done(tasks) == ["T-0001-a-task.md"]
+
+
+def test_merged_open_lists_open_tasks_whose_pr_merged():
+    tasks = [
+        task("T-0001", status="review", pr=174),
+        task("T-0002", status="done", pr=173),
+        task("T-0003", status="doing", pr=172),
+        task("T-0004", status="review", pr=99),
+        task("T-0005", status="dropped", pr=171),
+        task("T-0006"),
+    ]
+    assert [t.id for t in merged_open(tasks, {171, 172, 173, 174})] == ["T-0001", "T-0003"]
 
 
 # --- validate -------------------------------------------------------------

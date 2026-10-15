@@ -107,12 +107,18 @@ a `PushNotification` ("PR #<n> stuck: <one line>").
 
 ## 3. Tasks
 
-For every PR from the allowlist merged since the last pass
-(`gh pr list --state merged --limit 30 --json number,mergedAt`), look for a
-task file on `origin/main` whose `pr:` is that number and whose status is not
-`done`. If there are any, commit the change to `status: done` on a
-`chore/tasks-sync` branch in its own worktree and report it. Do not push it
-to `main`.
+Close the tasks whose PR merged. A task file often lives only on the board
+branch (`chore/tasks-board`) or in the task's worktree, never on `origin/main`,
+so read the tasks as the board does, not from `main`:
+
+```bash
+gh pr list --state merged --limit 30 --json number,author --jq '.[].number'
+python3 "$ROOT/scripts/task_board.py" close-merged <those numbers>
+```
+
+Pass only the PRs whose author is on the allowlist. It sets `status: done`,
+one commit per task on `chore/tasks-board`, for every open task whose `pr:` is
+one of them, and prints each id it closed. Report them. Do not push.
 
 ## 4. Summary
 

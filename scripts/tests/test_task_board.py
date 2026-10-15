@@ -6,10 +6,12 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import task_board  # noqa: E402
+import tasks  # noqa: E402
 from task_board import (  # noqa: E402
     agent_name,
     artifact_target,
     authorized,
+    close_merged,
     create_task,
     panes_in,
     post_params,
@@ -270,6 +272,21 @@ def test_create_task_commits_the_next_id_on_the_board(tmp_path, monkeypatch):
     assert (task_id, name) == ("T-0002", "tasks/T-0002-do-a-thing.md")
     assert sh(board, "log", "-1", "--format=%s") == "chore: add T-0002"
     assert "title: Do a thing" in (board / name).read_text()
+
+
+def test_close_merged_sets_done_on_the_board_even_for_a_started_task(tmp_path, monkeypatch):
+    root, board = repo_with_board(tmp_path)
+    review = "---\nid: T-0002\ntitle: B\nstatus: review\nmilestone: later\npr: 7\n---\n\nBody.\n"
+    commit_file(board, "tasks/T-0002-b.md", review, "board: T-0002 in review")
+    tree = root / ".claude" / "worktrees" / "T-0002-b"
+    sh(root, "worktree", "add", "-q", "-b", "feature/T-0002-b", str(tree), "chore/tasks-board")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(task_board, "TASK_BASE", "main")
+    monkeypatch.setattr(tasks, "TASK_BASE", "main")
+    assert close_merged([7, 8]) == ["T-0002"]
+    assert sh(board, "log", "-1", "--format=%s") == "chore: T-0002 done (#7)"
+    assert "\nstatus: done\n" in (board / "tasks" / "T-0002-b.md").read_text()
+    assert close_merged([7]) == []
 
 
 # --- start modes ------------------------------------------------------------

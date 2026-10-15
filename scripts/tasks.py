@@ -186,6 +186,11 @@ def prune_done(tasks):
     return [t.file for t in tasks if t.status == "done"]
 
 
+def merged_open(tasks, merged_prs):
+    """The tasks still open (not done or dropped) whose PR is one of the merged ones. Pure."""
+    return [t for t in tasks if t.pr in merged_prs and t.status not in ("done", "dropped")]
+
+
 NEW_BODY = "## Context\n\nTo be written.\n\n## Acceptance\n\n- To be defined when the task starts.\n"
 
 
