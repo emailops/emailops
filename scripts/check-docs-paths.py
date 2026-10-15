@@ -30,7 +30,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWED_UNRESOLVED = {
     "docs/site/README.md:scripts/sync-docs.sh": "lives in the getemailops.com repo",
     "homebrew/README.md:../homebrew-tap/Casks/emailops.rb": "lives in the emailops/homebrew-tap repo",
-    "docs/DECISIONS.md:scripts/task_board.py": "moved to the private emailops/tasks repo; the append-only log keeps the old path",
 }
 
 # Source and config files only. Binary artefacts (png, icns, gguf) are

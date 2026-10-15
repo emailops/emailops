@@ -3664,32 +3664,6 @@ which has an advisory with no patched release. i18next-cli emits every CLDR plur
 tool with no upgrade path). `disablePlurals` (catalogs that use `_one`/`_other` keys
 would then read as missing).
 
-## 2026-10-13 — Roadmap tasks live in the repo; contributor PRs are babysat locally, never auto-merged
-
-**Decision:** Planned work is one Markdown file per task under `tasks/` (frontmatter:
-id, title, status, milestone, pr), the source of truth for status; `ROADMAP.md` stays
-the prose overview. The board is a local server (`make tasks-serve`, 127.0.0.1 with a
-random token) that layers the base branch, the branch `chore/tasks-board` it commits its
-own edits to, each task's own worktree and pushed task branches, and shows the agents
-Herdr runs on each task; it starts work in a Herdr tab inside the task's worktree.
-Board edits are local commits, never pushed: `chore/tasks-board` reaches `main` through a
-PR with a merge commit and then fast-forwards, and a deletion there hides the task from
-every source. Open PRs from an allowlist of contributors are
-kept mergeable by the `babysit-prs` skill, repeated with `/loop` on the developer's
-machine: it pushes conflict and CI fixes to the PR branch but never merges.
-**Context:** Conflicts and red CI on contributor PRs piled up until someone looked, and
-the plan was split across `ROADMAP.md`, `docs/IMPLEMENTATION-GAPS.md` and agent memory.
-Several agents work on different tasks in parallel worktrees, so the status has to be
-read from all of them, not only from `main`.
-**Rejected:** GitHub Actions or cloud routines for PR fixing (no embedded models or full
-gates there, and secrets around untrusted PR code); auto-merge when green (merging stays
-a human call); GitHub Issues/Projects as the source (status off the repo, not visible
-to agents in a worktree); a generated index committed to git (every task branch would
-conflict on it); Backlog.md (a new dependency for what one stdlib script does); a static
-page with no backend (it cannot edit tasks or start agents, and a `file://` page cannot
-fetch live state); writing board edits straight to `main` or pushing them (every click
-would be a push).
-
 ## 2026-10-14 — "Not spam" moves the message back to the inbox at the provider
 
 **Decision:** A conversation filed in Spam offers "Not spam" in the thread toolbar, and
@@ -3710,48 +3684,3 @@ folder-management entry); this dedicated action is the way out of it.
 client. Adding Spam to the generic move picker — it would not record the not-junk
 correction and would offer Spam as a destination without the junk feedback that
 "Confirm junk" records.
-
-## 2026-10-14 — The task board is also a CLI, and pushes status changes to the page
-
-**Decision:** Everything the task board's buttons do is also a subcommand of
-`scripts/task_board.py` (`list`, `show`, `summary`, `open`, `focus`, `milestone`,
-`new-milestone`, `delete`, `discard`) calling the same functions, and the `tasks` skill
-drives it from a Claude session. `open --mode bg|cloud` starts a task as a background
-Claude session in its worktree or as a cloud session, next to the Herdr tab.
-A `task-status` Claude Code plugin shows the board's summary in the status line.
-The served board keeps one cached page, rebuilt every 1.5 s while a page watches it,
-and announces each change over server-sent events (`/events`). The 5-second page poll
-is now only a 30-second fallback.
-**Context:** Managing tasks meant switching to the browser page, and status changes
-showed up to 5 s late, or not at all while the search box or a filter kept focus.
-**Rejected:** A skill that reads the task files and calls Herdr itself (it would
-re-implement how the board merges its four sources, and drift); a skill that drives the
-running server over HTTP (needs the server up and its per-run token); a separate task
-store such as GitHub Issues (already rejected on 2026-10-13); a subagent of the
-current session as the background mode (it cannot be attached to or talked to while it
-works, unlike `claude --bg`); polling faster without a cache (every page would re-run
-git and Herdr each second).
-
-
-## 2026-10-15 — Roadmap tasks move to a private repo, with their board and skills as a plugin
-
-**Decision:** Tasks, the board (`tasks.py`, `task_board.py`) and the skills that work on
-them (`board`, `new-task`, `work-on-task`, `babysit-prs`, plus the status-line hook) live
-in the private repo `emailops/tasks`, cloned into the app's main checkout as `.tasks/`
-(`make tasks-clone`, gitignored) and installed as the Claude Code plugin `tasks` from that
-clone. Every edit rebases that repo onto origin, commits the one file and pushes it. Task
-branches in the app carry code only. `task_board.py close-merged` sets `done` the tasks
-whose PR merged; `babysit-prs` runs it. The app keeps `ROADMAP.md` as the public overview
-and `make tasks-serve`. This replaces the in-repo tasks of 2026-10-13 and the board branch
-`chore/tasks-board`.
-**Context:** The app repo is public, so every task's context and the agents' progress lines
-were published once merged. Board edits were unpushed local commits that another machine
-never saw, task branches started without their task, a merged PR closed nothing, and the
-app's own hooks blocked task edits. Reading four sources (main, the board branch, worktrees,
-pushed branches) cost about 1.7 s per listing.
-**Rejected:** Keeping tasks in the app repo with a pushed orphan `tasks` branch (fixes the
-sources and the machines, not privacy); GitHub Issues in a private repo (no validated
-format, no offline or grep, and a rewrite of the board's reads and writes for a kanban we
-did not need); Backlog.md (the same in-repo, read-every-branch model, with the same gaps);
-skills as nested `.tasks/.claude/skills` (they load only once a session touches `.tasks/`)
-or copies in `~/.claude/skills` (they drift between machines).

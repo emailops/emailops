@@ -18,11 +18,6 @@ target/
 # Claude Code — share skills, keep personal/local state out of the repo.
 .claude/settings.local.json
 .claude/worktrees/
-# Local PR-watch allowlist and state (logins identify people)
-.claude/pr-watch*.local.*
-.claude/task-artifacts.local.json
-# Checkout of the private task repo emailops/tasks (make tasks-clone)
-/.tasks/
 # Agent implementation plans and their scratch state stay local, never in the repo.
 /docs/superpowers/plans/
 .superpowers/
