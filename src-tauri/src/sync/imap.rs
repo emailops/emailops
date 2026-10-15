@@ -834,7 +834,10 @@ impl ImapClient {
             }
         }
         Err(last_error.unwrap_or_else(|| {
-            imap::Error::Io(io::Error::new(io::ErrorKind::AddrNotAvailable, "No IMAP address could be reached"))
+            imap::Error::Io(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "No IMAP address could be reached",
+            ))
         }))
     }
 
@@ -3148,7 +3151,11 @@ mod tests {
 
         assert!(ImapClient::is_retryable_tls_timeout(&Error::from(ErrorKind::TimedOut)));
         assert!(ImapClient::is_retryable_tls_timeout(&Error::from_raw_os_error(10060)));
-        assert!(!ImapClient::is_retryable_tls_timeout(&Error::from(ErrorKind::ConnectionReset)));
-        assert!(!ImapClient::is_retryable_tls_timeout(&Error::other("certificate verify failed")));
+        assert!(!ImapClient::is_retryable_tls_timeout(&Error::from(
+            ErrorKind::ConnectionReset
+        )));
+        assert!(!ImapClient::is_retryable_tls_timeout(&Error::other(
+            "certificate verify failed"
+        )));
     }
 }
