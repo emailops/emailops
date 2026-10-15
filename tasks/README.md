@@ -7,7 +7,7 @@ prose overview.
 ## Format
 
 One file per task, named after its id and a short slug (for example
-`tasks/T-0001-qwen-3-6-27b-catalog.md`):
+`T-0001-short-imperative-title.md`):
 
 ```markdown
 ---
