@@ -386,7 +386,15 @@ def commit(cwd, path, message):
     except subprocess.CalledProcessError as err:
         git("reset", "-q", "HEAD", "--", path, cwd=cwd)
         git("checkout", "-q", "HEAD", "--", path, cwd=cwd)
-        raise ValueError(f"commit refused: {(err.stderr or err.stdout or '').strip()[-400:]}") from err
+        raise ValueError(refusal((err.stdout or "") + (err.stderr or ""), cwd)) from err
+
+
+def refusal(output, cwd):
+    """Why a commit was refused: the hooks lefthook marks failed (🥊), else the end of the output."""
+    failed = re.findall(r"^\U0001f94a (\S+)", output, re.MULTILINE)
+    if failed:
+        return f"commit refused by the pre-commit hook: {', '.join(failed)} (git commit in {cwd} shows why)"
+    return f"commit refused: {output.strip()[-400:]}"
 
 
 def new_milestone(query):

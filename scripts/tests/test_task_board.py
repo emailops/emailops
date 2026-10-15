@@ -16,6 +16,7 @@ from task_board import (  # noqa: E402
     pick_workspace,
     raise_command,
     read_args,
+    refusal,
     Snapshot,
     start_args,
     sync_board,
@@ -369,3 +370,25 @@ def test_a_failing_build_keeps_the_last_good_page():
     with pytest.raises(RuntimeError):
         snap.refresh()
     assert snap.get() == ("<page v1>", "v1")
+
+
+LEFTHOOK_FAILURE = """\
+  File "scripts/tasks.py", line 454
+SyntaxError: f-string: expecting '}'
+INF no leaks found
+summary: (done in 0.18 seconds)
+\u2714\ufe0f no-invoke-outside-api (0.05 seconds)
+\u2714\ufe0f gitleaks (0.08 seconds)
+\U0001f94a docs-paths (0.01 seconds)
+\U0001f94a tasks-check (0.03 seconds)
+"""
+
+
+def test_refusal_names_the_hooks_that_failed_not_the_last_ones_that_passed():
+    assert refusal(LEFTHOOK_FAILURE, "/repo/.claude/worktrees/tasks-board") == (
+        "commit refused by the pre-commit hook: docs-paths, tasks-check (git commit in /repo/.claude/worktrees/tasks-board shows why)"
+    )
+
+
+def test_refusal_without_a_hook_summary_keeps_the_end_of_the_output():
+    assert refusal("fatal: unable to write index\n", "/repo") == "commit refused: fatal: unable to write index"
