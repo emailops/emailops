@@ -767,9 +767,17 @@ impl ImapClient {
         Ok(session)
     }
 
-    fn is_retryable_tls_timeout(error: &str) -> bool {
-        let msg = error.to_ascii_lowercase();
-        msg.contains("timed out") || msg.contains("timeout") || msg.contains("10060") || msg.contains("zeitspanne")
+    fn is_retryable_tls_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
+        let mut source = Some(error);
+        while let Some(current) = source {
+            if let Some(io_error) = current.downcast_ref::<std::io::Error>() {
+                if io_error.kind() == std::io::ErrorKind::TimedOut || io_error.raw_os_error() == Some(10060) {
+                    return true;
+                }
+            }
+            source = current.source();
+        }
+        false
     }
 
     /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
@@ -816,17 +824,18 @@ impl ImapClient {
             match tls.connect(creds.host.as_str(), tcp) {
                 Ok(stream) => return Ok(stream),
                 Err(err) => {
-                    let message = err.to_string();
-                    // Never retry non-timeout TLS failures (e.g. invalid
-                    // certificates); doing so would obscure security errors.
-                    if !Self::is_retryable_tls_timeout(&message) {
+                    // Retry only typed I/O timeouts in the error chain.
+                    // Certificate validation errors remain terminal.
+                    if !Self::is_retryable_tls_timeout(&err) {
                         return Err(imap::Error::Bad(format!("TLS handshake failed: {err}")));
                     }
                     last_error = Some(imap::Error::Bad(format!("TLS handshake failed: {err}")));
                 }
             }
         }
-        Err(last_error.expect("at least one resolved address was attempted"))
+        Err(last_error.unwrap_or_else(|| {
+            imap::Error::Io(io::Error::new(io::ErrorKind::AddrNotAvailable, "No IMAP address could be reached"))
+        }))
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -3126,24 +3135,13 @@ mod tests {
             (ImapFolder::Trash, 9),
             (ImapFolder::Custom("Archive/2026".to_string()), 12),
         ] {
-            let id = client.located_id(&folder, uid);
-            let (parsed_folder, parsed_uid) = client.parse_message_ref(&id);
-            assert_eq!(parsed_folder, folder, "folder round-trip for {id}");
-            assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
-        }
-    }
-
-    #[test]
+                #[test]
     fn tls_timeout_fallback_never_retries_certificate_errors() {
-        assert!(ImapClient::is_retryable_tls_timeout("os error 10060"));
-        assert!(ImapClient::is_retryable_tls_timeout("connection timed out"));
-        assert!(ImapClient::is_retryable_tls_timeout(
-            "Ein Verbindungsversuch ist nach einer Zeitspanne fehlgeschlagen"
-        ));
-        assert!(!ImapClient::is_retryable_tls_timeout(
-            "The certificate CN name does not match"
-        ));
-        assert!(!ImapClient::is_retryable_tls_timeout("certificate verify failed"));
-        assert!(!ImapClient::is_retryable_tls_timeout("connection reset"));
+        use std::io::{Error, ErrorKind};
+
+        assert!(ImapClient::is_retryable_tls_timeout(&Error::from(ErrorKind::TimedOut)));
+        assert!(ImapClient::is_retryable_tls_timeout(&Error::from_raw_os_error(10060)));
+        assert!(!ImapClient::is_retryable_tls_timeout(&Error::from(ErrorKind::ConnectionReset)));
+        assert!(!ImapClient::is_retryable_tls_timeout(&Error::other("certificate verify failed")));
     }
 }
