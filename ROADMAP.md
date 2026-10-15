@@ -8,9 +8,6 @@ priority.
 > For the current shipping version and what each release contained, see
 > [CHANGELOG.md](CHANGELOG.md). Restating the version number here only bought a
 > line that went stale every release — it read 0.6.6 while 0.6.8 was out.
->
-> Each item below is tracked as a task file under [tasks/](tasks/README.md),
-> which holds its status and the PR that ships it.
 
 ## Next up (targeting 0.7.0)
 

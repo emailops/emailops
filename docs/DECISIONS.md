@@ -3732,3 +3732,26 @@ current session as the background mode (it cannot be attached to or talked to wh
 works, unlike `claude --bg`); polling faster without a cache (every page would re-run
 git and Herdr each second).
 
+
+## 2026-10-15 — Roadmap tasks move to a private repo, with their board and skills as a plugin
+
+**Decision:** Tasks, the board (`tasks.py`, `task_board.py`) and the skills that work on
+them (`board`, `new-task`, `work-on-task`, `babysit-prs`, plus the status-line hook) live
+in the private repo `emailops/tasks`, cloned into the app's main checkout as `.tasks/`
+(`make tasks-clone`, gitignored) and installed as the Claude Code plugin `tasks` from that
+clone. Every edit rebases that repo onto origin, commits the one file and pushes it. Task
+branches in the app carry code only. `task_board.py close-merged` sets `done` the tasks
+whose PR merged; `babysit-prs` runs it. The app keeps `ROADMAP.md` as the public overview
+and `make tasks-serve`. This replaces the in-repo tasks of 2026-10-13 and the board branch
+`chore/tasks-board`.
+**Context:** The app repo is public, so every task's context and the agents' progress lines
+were published once merged. Board edits were unpushed local commits that another machine
+never saw, task branches started without their task, a merged PR closed nothing, and the
+app's own hooks blocked task edits. Reading four sources (main, the board branch, worktrees,
+pushed branches) cost about 1.7 s per listing.
+**Rejected:** Keeping tasks in the app repo with a pushed orphan `tasks` branch (fixes the
+sources and the machines, not privacy); GitHub Issues in a private repo (no validated
+format, no offline or grep, and a rewrite of the board's reads and writes for a kanban we
+did not need); Backlog.md (the same in-repo, read-every-branch model, with the same gaps);
+skills as nested `.tasks/.claude/skills` (they load only once a session touches `.tasks/`)
+or copies in `~/.claude/skills` (they drift between machines).

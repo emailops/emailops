@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean tasks-check tasks-serve install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean tasks-clone tasks-serve install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -444,13 +444,13 @@ disk-report:
 disk-clean:
 	python3 scripts/disk_clean.py clean $(ARGS)
 
-# Validate the task files under tasks/
-tasks-check:
-	python3 scripts/tasks.py check
+# Clone the private task repo emailops/tasks into .tasks/ (needs access to it)
+tasks-clone:
+	test -d .tasks || git clone git@github.com:emailops/tasks.git .tasks || { echo "tasks-clone: no access to the private repo emailops/tasks"; exit 1; }
 
-# Serve the board live on 127.0.0.1 (prints the URL with its token); its Open button starts the task in Herdr
+# Serve the task board live on 127.0.0.1 (prints the URL with its token); its Open button starts the task in Herdr
 tasks-serve:
-	python3 scripts/task_board.py
+	python3 .tasks/scripts/task_board.py
 
 # Install git hooks
 hooks:

@@ -1,5 +1,0 @@
-{
-  "name": "task-status",
-  "version": "0.1.0",
-  "description": "EmailOps task board in the status line: open tasks by status, and a toast when a task's agent waits for you"
-}
