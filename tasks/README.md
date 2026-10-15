@@ -55,10 +55,7 @@ Why the task exists and what it touches.
   rendered as Markdown, with the agent's latest output in a collapsed section. **Open in Herdr** focuses the task's agent if there is
   one, otherwise it creates (or reuses) the task's worktree
   `.claude/worktrees/T-NNNN-slug` on `feature/T-NNNN-slug`, opens a Herdr tab
-  there, starts Claude and types `/work-on-task T-NNNN` (not sent). A new
-  task branch starts from `origin/main` with `chore/tasks-board` merged on
-  top, so it carries its task file and the milestones, and merging its PR
-  (with a merge commit) brings the board's edits to `main`.
+  there, starts Claude and types `/work-on-task T-NNNN` (not sent).
   The served board also edits: **New task** (title, milestone and Markdown
   details), **New milestone** (appended to `tasks/milestones.md`), a milestone
   picker on each card, and **Delete** (two clicks). Deleting a started task

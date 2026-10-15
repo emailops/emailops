@@ -3732,25 +3732,3 @@ current session as the background mode (it cannot be attached to or talked to wh
 works, unlike `claude --bg`); polling faster without a cache (every page would re-run
 git and Herdr each second).
 
-
-## 2026-10-15 — Task branches carry the board; a merged PR closes its task
-
-**Decision:** A new task branch starts from `origin/main` with `chore/tasks-board`
-merged on top (`ensure_worktree` in `scripts/task_board.py`, and `/work-on-task`
-by hand). The branch therefore holds its own task file and the milestones, and
-merging its PR with a merge commit brings every board edit made so far to `main`,
-after which the board fast-forwards to it. `task_board.py close-merged <PR>...`
-sets `status: done` on the board branch for the open tasks whose `pr:` merged.
-`babysit-prs` runs it on every pass and reads the tasks as the board shows them,
-not from `main`.
-**Context:** Tasks created from the board lived only on `chore/tasks-board` until
-someone merged it by hand, and task branches started from `main` without them.
-One agent copied its task file and a milestone onto its branch by hand. Another
-tracked its status on the board, so its PR merged without the file and nothing
-closed it: `babysit-prs` only looked for task files on `main`.
-**Rejected:** Copying only the task's own file onto the branch (milestones and the
-other board edits still wait for a separate board PR, and a copied milestone line
-conflicts with the board's); basing task branches on `chore/tasks-board`
-(identical result while the board is up to date, but a stale board would hold back
-the branch's base); closing tasks from GitHub Actions on merge (needs a token that
-can push task edits, and the board's state lives in local branches).
