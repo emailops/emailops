@@ -13,6 +13,7 @@ from task_board import (  # noqa: E402
     authorized,
     close_merged,
     create_task,
+    ensure_worktree,
     panes_in,
     post_params,
     pick_workspace,
@@ -287,6 +288,21 @@ def test_close_merged_sets_done_on_the_board_even_for_a_started_task(tmp_path, m
     assert sh(board, "log", "-1", "--format=%s") == "chore: T-0002 done (#7)"
     assert "\nstatus: done\n" in (board / "tasks" / "T-0002-b.md").read_text()
     assert close_merged([7]) == []
+
+
+def test_a_new_task_branch_starts_from_the_base_with_the_board_merged_on_top(tmp_path, monkeypatch):
+    root, board = repo_with_board(tmp_path)
+    commit_file(board, "tasks/milestones.md", "- 0.7.0\n- 0.8.0\n- later\n", "board: add milestone 0.8.0")
+    commit_file(board, "tasks/T-0002-b.md", "---\nid: T-0002\ntitle: B\nstatus: todo\nmilestone: 0.8.0\npr: null\n---\n\nBody.\n", "board: add T-0002")
+    commit_file(root, "README", "x\n", "more work on main")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(task_board, "TASK_BASE", "main")
+    cwd = ensure_worktree(task("T-0002"), root)
+    assert sh(cwd, "branch", "--show-current") == "feature/T-0002-a-task"
+    assert (cwd / "tasks" / "T-0002-b.md").exists()
+    assert "0.8.0" in (cwd / "tasks" / "milestones.md").read_text()
+    assert (cwd / "README").exists()
+    sh(cwd, "merge-base", "--is-ancestor", "chore/tasks-board", "HEAD")
 
 
 # --- start modes ------------------------------------------------------------

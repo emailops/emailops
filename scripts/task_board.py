@@ -509,16 +509,32 @@ def discard_task(query):
 
 
 def ensure_worktree(task, root):
-    """The task's worktree, created (or re-attached to its surviving branch) when missing."""
+    """The task's worktree, created (or re-attached to its surviving branch) when missing.
+
+    A new branch starts from the base with the board branch merged on top, so it
+    carries its own task file and the milestones, and merging its PR brings the
+    board's edits to main.
+    """
     path, branch = task_worktree(task.file, root)
     cwd = next((p for p, b in worktrees() if b == branch), None)
     if cwd is None:
         if branch_exists(branch):
             git("worktree", "add", str(path), branch)  # the branch outlived its worktree
         else:
+            board_worktree(root)  # brought up to the base first when its edits are merged
             git("worktree", "add", "-b", branch, str(path), TASK_BASE)
+            merge_board(path)
         cwd = path
     return cwd
+
+
+def merge_board(path):
+    """Merge the board branch into the checkout at path; a conflict is undone and reported."""
+    try:
+        git("merge", "-q", "--no-edit", "-m", f"chore: merge {BOARD_BRANCH}", BOARD_BRANCH, cwd=path)
+    except subprocess.CalledProcessError as err:
+        subprocess.run(["git", "merge", "--abort"], cwd=path, capture_output=True)
+        raise ValueError(f"merging {BOARD_BRANCH} into {path} failed: {(err.stdout or err.stderr).strip()[-400:]}") from err
 
 
 def herdr_tab(root, cwd, label):

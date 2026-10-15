@@ -14,9 +14,10 @@ source of truth for what to build; `tasks/README.md` documents the format.
 - If this session already runs in the task's worktree (the board's "Open in
   Herdr" button creates `.claude/worktrees/<id>-<slug>` on
   `feature/<id>-<slug>` and starts Claude there), read `tasks/<id>-*.md` from
-  it and skip to step 3. Otherwise read it from the main checkout's `main`
-  branch (`git show origin/main:tasks/...` after `git fetch origin main`).
-  No such file → say so and stop; do not invent a task.
+  it and skip to step 3. Otherwise read it as the board shows it
+  (`python3 scripts/task_board.py show <id>` after `git fetch -q origin`): a
+  new task often lives only on the board branch `chore/tasks-board`, not on
+  `main`. No such task → say so and stop; do not invent a task.
 - If `status` is `done` or `dropped`, say so and ask whether to reopen it.
 - If another worktree already has this task at `doing`/`review`
   (`git worktree list`, then read `tasks/<id>-*.md` in each), resume there
@@ -26,10 +27,12 @@ source of truth for what to build; `tasks/README.md` documents the format.
 
 - Branch: `feature/<id>-<slug>` (slug = the task file's slug); `fix/` or
   `refactor/` instead when the task is clearly one of those.
-- Worktree: `.claude/worktrees/<id>-<slug>` off `origin/main`
-  (`git worktree add -b <branch> <path> origin/main`), or reuse the existing
-  one. Work only inside it from here on (confirm with
-  `git rev-parse --show-toplevel`).
+- Worktree: `.claude/worktrees/<id>-<slug>` off `origin/main` with the board
+  branch merged on top (`git worktree add -b <branch> <path> origin/main`,
+  then `git merge --no-edit chore/tasks-board` inside it), or reuse the
+  existing one. The merge brings this task's file and the milestones, and
+  merging the PR brings the board's edits to `main`. Work only inside it from
+  here on (confirm with `git rev-parse --show-toplevel`).
 
 ## 3. Mark it started
 
