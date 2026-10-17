@@ -143,7 +143,7 @@ export function LensesView({ initialLensId, onCreateWithChat }: LensesViewProps)
   };
 
   return (
-    <div className="flex h-full flex-1 flex-col overflow-hidden bg-[#1e1e1e] text-gray-200">
+    <div className="theme-pinned flex h-full flex-1 flex-col overflow-hidden bg-[#1e1e1e] text-gray-200">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
         <div className="min-w-40 flex-1">

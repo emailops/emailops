@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dark theme.** **Settings → Appearance → Theme** chooses **Light**, **Dark** or
+  **System**, which follows the operating system (the default); the onboarding's
+  inbox-layout step offers the same choice. The choice survives restarts and
+  the window title bar follows it. The sidebar, settings and dialogs keep
+  their look. Messages follow the dark theme whenever they can: one that brings
+  its own dark styles uses them, a plain message or a light design is adapted
+  (with its images intact), and a design that is already dark is left alone.
 - **About tab in Settings** with the app version and links to the website,
   the source code and the new GitHub Sponsors page: EmailOps now accepts
   sponsorships. If you find it useful, **Sponsor the project** in Settings →
@@ -18,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linux: every dropdown follows the theme.** The chat's account and
+  conversation pickers, EO Docs' kind and folder selects and the onboarding
+  language picker were native `<select>` elements, whose popup WebKitGTK
+  paints light whatever the app's theme; they now use the same owned dropdown
+  as the rest of the app (native on macOS and Windows, where the popup follows
+  the theme).
 - Adding a column to a Lens (or editing its prompt) and running the backfill
   again now fills the new column for emails the Lens had already extracted,
   keeping values edited by hand.

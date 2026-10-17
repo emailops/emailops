@@ -453,6 +453,7 @@ checks = [
 [start-3-inbox-1]
 checks = [
   { app = true },
+  { judge = "In the onboarding's inbox-layout step, is a Theme choice (Light, Dark, System) shown under the layout cards with System selected on a fresh install, and does choosing Dark darken the app behind the wizard at once?", evidence = ["file:src/components/Onboarding/StepLayout.tsx", "file:src/components/shared/ThemeChoice.tsx"], visual = true, covers = ["The same step offers the theme: light, dark, or whatever the system uses."] },
 ]
 
 [start-4-connect-1]
@@ -728,6 +729,12 @@ checks = [
 [feat-interface-1]
 checks = [
   { app = true },
+]
+
+[feat-interface-2]
+checks = [
+  { judge = "Open Settings → Appearance. Are Light, Dark and System offered under Theme, does choosing Dark turn the inbox, reading pane and chat dark at once while the sidebar and the settings dialog keep their look, and is the choice still there after a relaunch?", evidence = ["file:src/components/Settings/ThemeSetting.tsx", "file:src/stores/themeStore.ts", "file:src/index.css"], visual = true, covers = ["EmailOps has a light and a dark theme.", "Settings → Appearance → Theme offers Light, Dark and System, which follows the operating system's appearance; the choice is kept across restarts."] },
+  { judge = "On the dark theme, open a plain reply, a white newsletter, a message with @media (prefers-color-scheme: dark) rules and one designed dark: are the first two shown dark with their images intact, does the third use its own dark styles, and is the fourth unchanged?", evidence = ["file:src/lib/emailScheme.ts", "file:src/components/shared/EmailHtmlFrame.tsx"], visual = true, covers = ["On the dark theme, messages are shown dark too whenever they can be: a message that brings its own dark design uses it, a plain message or a light design is adapted, and a design that is already dark is left as it is."] },
 ]
 
 [feat-organize-1]

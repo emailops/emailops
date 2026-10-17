@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { ThemeChoice } from '@/components/shared/ThemeChoice';
 import type { InboxLayout } from '@/types';
 
 export function StepLayout({
@@ -32,6 +33,12 @@ export function StepLayout({
           description={t('auth:onboarding.layout.fullWidthDesc')}
           icon={<FullWidthIcon />}
         />
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold text-gray-200">{t('auth:onboarding.layout.themeTitle')}</h3>
+        <p className="text-xs text-gray-500 mt-1 mb-3">{t('auth:onboarding.layout.themeHelp')}</p>
+        <ThemeChoice ariaLabel={t('auth:onboarding.layout.themeTitle')} />
       </div>
 
       <div className="flex justify-between">

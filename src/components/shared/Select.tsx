@@ -30,6 +30,11 @@ interface SelectProps<T extends string> {
    *  (Settings, Lenses, Calendar, LogPanel); 'light' matches the compose
    *  surfaces (white/gray-50 backgrounds). */
   variant?: 'dark' | 'light';
+  /** `data-testid` for the control: the native <select>, or the owned trigger
+   *  (whose popup options are `button[role="option"]`). */
+  testId?: string;
+  /** Tooltip for the control. */
+  title?: string;
 }
 
 const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
@@ -76,6 +81,8 @@ export function Select<T extends string>({
   className = '',
   align = 'left',
   variant = 'dark',
+  testId,
+  title,
 }: SelectProps<T>) {
   const colors = VARIANT_CLASSES[variant];
 
@@ -121,6 +128,8 @@ export function Select<T extends string>({
     return (
       <select
         aria-label={ariaLabel}
+        data-testid={testId}
+        title={title}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value as T)}
@@ -155,13 +164,17 @@ export function Select<T extends string>({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-testid={testId}
+        title={title}
         disabled={disabled}
         onClick={() => {
           if (!disabled) setOpen((v) => !v);
         }}
         className={`flex items-center justify-between gap-1.5 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
       >
-        <span className={selected ? '' : colors.placeholder}>{selected ? selected.label : (placeholder ?? '')}</span>
+        <span className={`truncate ${selected ? '' : colors.placeholder}`}>
+          {selected ? selected.label : (placeholder ?? '')}
+        </span>
         <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path
             fillRule="evenodd"
@@ -177,7 +190,7 @@ export function Select<T extends string>({
           aria-label={ariaLabel}
           className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${
             openDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          } z-20 max-h-64 overflow-y-auto rounded shadow-lg py-1 ${colors.popup} ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
+          } z-20 max-h-64 overflow-y-auto rounded shadow-lg py-1 ${colors.popup} ${fullWidth ? 'w-full' : 'min-w-[8rem] w-max max-w-[20rem]'}`}
         >
           {options.map((opt) => (
             <button

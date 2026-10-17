@@ -295,7 +295,7 @@ export function TagBoardToolbar({
               aria-pressed={activeCategory === 'all'}
               onClick={() => onSelectCategories(new Set(availableCategories))}
               className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                activeCategory === 'all' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                activeCategory === 'all' ? 'bg-gray-900 text-gray-50' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
               {t('inbox:allCategories')}
@@ -307,7 +307,7 @@ export function TagBoardToolbar({
                 aria-pressed={activeCategory === c}
                 onClick={() => onSelectCategories(new Set([c]))}
                 className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                  activeCategory === c ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  activeCategory === c ? 'bg-gray-900 text-gray-50' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
                 {t(`inbox:categoryFilter.${c}`)}

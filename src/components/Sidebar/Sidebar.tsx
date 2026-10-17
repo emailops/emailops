@@ -296,7 +296,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col">
+    <aside className="theme-pinned w-64 bg-gray-900 text-white flex flex-col">
       <div className="p-4 border-b border-gray-700">
         <div className="flex items-center justify-between">
           <div>

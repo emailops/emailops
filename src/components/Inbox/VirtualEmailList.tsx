@@ -277,6 +277,8 @@ export function VirtualEmailList({
           const email = emails[virtualRow.index];
           return (
             <div
+              // `bg-white` as a class (not an inline colour) so the dark theme can remap it.
+              className="bg-white"
               key={virtualRow.key}
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
@@ -291,7 +293,6 @@ export function VirtualEmailList({
                 top: 0,
                 left: 0,
                 width: '100%',
-                backgroundColor: 'white',
                 overflow: 'hidden',
                 transform: `translateY(${virtualRow.start}px)`,
               }}

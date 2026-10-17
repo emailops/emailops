@@ -59,7 +59,8 @@ unter macOS in der App enthalten — für die Suche gibt es also nichts herunter
 
 <!-- claim:start-3-inbox-1 -->
 Wählen Sie die Aufteilung — **geteilt** (Liste links, Nachricht rechts) oder **volle Breite**
-(ein Bereich nach dem anderen). Jederzeit änderbar unter **Einstellungen → Erscheinungsbild**,
+(ein Bereich nach dem anderen). Derselbe Schritt bietet das Farbschema an: hell, dunkel oder
+wie das System. Beides ist jederzeit änderbar unter **Einstellungen → Erscheinungsbild**,
 zusammen mit der Sprache der Oberfläche (Deutsch, Englisch, Spanisch, Französisch).
 
 ## 4. Ein Konto verbinden

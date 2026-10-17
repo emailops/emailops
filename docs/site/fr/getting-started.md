@@ -60,8 +60,9 @@ recherche.
 
 <!-- claim:start-3-inbox-1 -->
 Choisissez la disposition — **divisée** (liste à gauche, message à droite) ou **pleine
-largeur** (un panneau à la fois). Modifiable à tout moment dans **Paramètres → Apparence**, avec
-la langue de l'interface (français, anglais, espagnol, allemand).
+largeur** (un panneau à la fois). La même étape propose le thème : clair, sombre ou celui du
+système. Les deux sont modifiables à tout moment dans **Paramètres → Apparence**, avec la
+langue de l'interface (français, anglais, espagnol, allemand).
 
 ## 4. Connecter un compte
 

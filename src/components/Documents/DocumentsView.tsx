@@ -1,5 +1,6 @@
 import { type DragEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { isDocDrag, readDocDrag, writeDocDrag } from '@/lib/docDrag';
 import { childFolders, folderPath } from '@/lib/docFolders';
@@ -333,7 +334,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
   const shownError = actionError ?? error;
 
   return (
-    <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]" data-testid="documents-view">
+    <div className="theme-pinned flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]" data-testid="documents-view">
       <aside className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col min-h-0">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700">
           <h2 className="text-sm font-semibold text-gray-200 flex-1 whitespace-nowrap">{t('documents:title')}</h2>
@@ -424,15 +425,18 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             />
             <div className="flex gap-2">
               {creating === 'doc' && (
-                <select
-                  data-testid="shared-doc-new-kind"
+                <Select
+                  testId="shared-doc-new-kind"
+                  ariaLabel={t('documents:kind.doc')}
                   value={kind}
-                  onChange={(e) => setKind(e.target.value === 'sheet' ? 'sheet' : 'doc')}
-                  className="flex-1 px-2 py-1 text-xs rounded bg-gray-800 border border-gray-600 text-gray-200"
-                >
-                  <option value="doc">{t('documents:kind.doc')}</option>
-                  <option value="sheet">{t('documents:kind.sheet')}</option>
-                </select>
+                  options={[
+                    { value: 'doc', label: t('documents:kind.doc') },
+                    { value: 'sheet', label: t('documents:kind.sheet') },
+                  ]}
+                  onChange={(v) => setKind(v === 'sheet' ? 'sheet' : 'doc')}
+                  size="xs"
+                  className="flex-1"
+                />
               )}
               <button
                 type="submit"

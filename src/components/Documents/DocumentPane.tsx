@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/react';
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import { useSharedYDoc } from '@/hooks/useSharedYDoc';
 import { useSheetConflicts } from '@/hooks/useSheetConflicts';
@@ -163,21 +164,22 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             {t('documents:share')}
           </button>
         )}
-        <select
-          data-testid="shared-doc-move"
-          aria-label={t('documents:folders.moveTo')}
+        <Select
+          testId="shared-doc-move"
+          ariaLabel={t('documents:folders.moveTo')}
           title={t('documents:folders.moveTo')}
           value={doc.folderId ?? ''}
-          onChange={(e) => void act('The document could not be moved', () => moveDoc(doc.id, e.target.value || null))}
-          className="max-w-40 px-1 py-1 text-xs rounded bg-gray-700 text-gray-200 border border-gray-600"
-        >
-          <option value="">{t('documents:folders.none')}</option>
-          {folderOptions(folders).map(({ folder, depth }) => (
-            <option key={folder.id} value={folder.id}>
-              {`${'\u2003'.repeat(depth)}${folder.name}`}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: '', label: t('documents:folders.none') },
+            ...folderOptions(folders).map(({ folder, depth }) => ({
+              value: folder.id,
+              label: `${'\u2003'.repeat(depth)}${folder.name}`,
+            })),
+          ]}
+          onChange={(id) => void act('The document could not be moved', () => moveDoc(doc.id, id || null))}
+          size="xs"
+          className="max-w-40"
+        />
         <button
           type="button"
           data-testid="shared-doc-history-toggle"

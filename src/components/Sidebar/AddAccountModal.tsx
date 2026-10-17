@@ -141,7 +141,7 @@ export function AddAccountModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-[#1f1f20] shadow-2xl">
+      <div className="theme-pinned w-full max-w-lg rounded-xl bg-[#1f1f20] shadow-2xl">
         <div className="border-b border-gray-700 px-6 py-4">
           <h2 className="text-lg font-semibold text-gray-100">{resolvedTitle}</h2>
           <p className="mt-1 text-sm text-gray-500">{description}</p>

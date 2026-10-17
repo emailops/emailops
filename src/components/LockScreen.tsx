@@ -39,7 +39,7 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#1a1a1b]">
+    <div className="theme-pinned fixed inset-0 z-[9999] flex items-center justify-center bg-[#1a1a1b]">
       <div className="w-full max-w-sm px-4">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary-900/40 border border-primary-700 mb-4">

@@ -351,6 +351,13 @@ Split or full-width inbox layout, and a UI available in English, Spanish, French
 The AI's output language is set separately, so you can read the interface in one language and
 have replies drafted in another.
 
+<!-- claim:feat-interface-2 -->
+EmailOps has a light and a dark theme. **Settings → Appearance → Theme** offers **Light**,
+**Dark** and **System**, which follows the operating system's appearance; the choice is kept
+across restarts. On the dark theme, messages are shown dark too whenever they can be: a message
+that brings its own dark design uses it, a plain message or a light design is adapted, and a
+design that is already dark is left as it is.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

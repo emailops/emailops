@@ -20,8 +20,10 @@ import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
+import { type EmailSchemePlan, LIGHT_EMAIL_PLAN, planEmailScheme } from '@/lib/emailScheme';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
 import { useOverlay } from '@/stores/overlayStore';
+import { useThemeStore } from '@/stores/themeStore';
 
 export interface EmailHtmlFrameProps {
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
@@ -82,29 +84,42 @@ export const BRIDGE_SCRIPT = String.raw`
   // appearance. A newsletter's dark-scheme media rules would then switch its
   // text to white while its dark background never shows — white on white.
   // Drop those conditions from the email's own (parsed) stylesheets.
-  function dropDarkSchemeRules(owner){
+  // The message's own colour-scheme media rules. On the app's light theme a
+  // dark-scheme rule is dropped (the pane is light whatever the OS says). On
+  // the dark theme (<html data-dark-rules="force">) a dark-scheme rule is made
+  // unconditional and a light-scheme rule is dropped, so the message's own
+  // dark design applies whatever scheme the webview reports.
+  function adaptSchemeRules(owner, force){
     var rules = owner.cssRules;
     for (var i = rules.length - 1; i >= 0; i--){
       var rule = rules[i];
       if (!rule.cssRules) continue;
       if (rule.media){
-        var dark = [];
+        var dark = [], light = [];
         for (var j = 0; j < rule.media.length; j++){
           var medium = rule.media.item(j);
           if (/prefers-color-scheme\s*:\s*dark/i.test(medium)) dark.push(medium);
+          else if (/prefers-color-scheme\s*:\s*light/i.test(medium)) light.push(medium);
         }
-        if (dark.length > 0 && dark.length === rule.media.length){
-          owner.deleteRule(i);
-          continue;
+        if (force && dark.length > 0){
+          while (rule.media.length > 0) rule.media.deleteMedium(rule.media.item(0));
+          rule.media.appendMedium('all');
+        } else {
+          var drop = force ? light : dark;
+          if (drop.length > 0 && drop.length === rule.media.length){
+            owner.deleteRule(i);
+            continue;
+          }
+          drop.forEach(function(m){ rule.media.deleteMedium(m); });
         }
-        dark.forEach(function(m){ rule.media.deleteMedium(m); });
       }
-      dropDarkSchemeRules(rule);
+      adaptSchemeRules(rule, force);
     }
   }
   function init(){
+    var force = document.documentElement.getAttribute('data-dark-rules') === 'force';
     for (var s = 0; s < document.styleSheets.length; s++){
-      dropDarkSchemeRules(document.styleSheets[s]);
+      adaptSchemeRules(document.styleSheets[s], force);
     }
     // macOS touchpad pinch: Chromium/Firefox deliver it as ctrl+wheel; WebKit
     // (the Tauri webview) fires proprietary gesture events with an absolute
@@ -238,10 +253,14 @@ export const BRIDGE_SCRIPT = String.raw`
 // Baseline styles inside the frame. Tailwind doesn't apply here — these
 // reproduce the look the previous div-based renderer had via utility classes.
 export const FRAME_BASE_CSS = `
-  /* The reading pane is light-only: resolve system colours (Canvas,
-     CanvasText, form controls) light even when the OS is in dark mode. */
+  /* The light rendering: system colours (Canvas, CanvasText, form controls)
+     resolve light whatever the OS says, on a white canvas of the frame's own
+     rather than the pane showing through. frameSchemeCss() appends the dark
+     theme's overrides after this. */
   :root { color-scheme: light only; }
-  html, body { margin: 0; padding: 0; background: transparent; }
+  html { background: #fff; }
+  html, body { margin: 0; padding: 0; }
+  body { background: transparent; }
   body {
     /* flow-root establishes a block formatting context so the first/last child's
        vertical margins stay *inside* the body instead of collapsing through it.
@@ -279,15 +298,52 @@ export const FRAME_BASE_CSS = `
  */
 const BLOCK_REMOTE_IMAGES_CSP = 'img-src data: blob: cid:';
 
-function buildSrcDoc(sanitizedHtml: string, allowRemoteContent: boolean): string {
+/** The dark canvas behind a message on the dark theme (the app's `--eo-surface`). */
+const DARK_CANVAS = '#111827';
+
+/**
+ * What the dark theme adds on top of `FRAME_BASE_CSS` (`src/lib/emailScheme`
+ * decides which). Empty for the light rendering.
+ *
+ * - `invert`: luminance inversion with the hue kept, applied to the body and
+ *   undone on images, so dark text reads light and a white design reads dark
+ *   while a photo stays a photo (the Dark Reader technique).
+ * - dark canvas without inversion: the message brings its own dark styles
+ *   (or is dark already); only the frame's defaults change to light text.
+ */
+export function frameSchemeCss(plan: EmailSchemePlan): string {
+  if (plan.canvas === 'light') return '';
+  if (plan.invert) {
+    return `
+  html { background: ${DARK_CANVAS}; }
+  body { filter: invert(1) hue-rotate(180deg); }
+  img, picture, video, svg, canvas, mark, [style*="background-image"] { filter: invert(1) hue-rotate(180deg); }
+`;
+  }
+  return `
+  :root { color-scheme: dark; }
+  html { background: ${DARK_CANVAS}; }
+  body { color: #e5e7eb; }
+  a { color: #60a5fa; }
+  blockquote { color: #9ca3af; border-left-color: #374151; }
+`;
+}
+
+export function buildSrcDoc(
+  sanitizedHtml: string,
+  allowRemoteContent: boolean,
+  plan: EmailSchemePlan = LIGHT_EMAIL_PLAN,
+): string {
   const csp = allowRemoteContent
     ? ''
     : `<meta http-equiv="Content-Security-Policy" content="${BLOCK_REMOTE_IMAGES_CSP}">\n`;
-  return `<!doctype html><html><head>
+  const htmlAttrs = plan.darkRules === 'force' ? ' data-dark-rules="force"' : '';
+  const metaScheme = plan.canvas === 'dark' && !plan.invert ? 'dark' : 'light';
+  return `<!doctype html><html${htmlAttrs}><head>
 ${csp}<meta charset="utf-8">
-<meta name="color-scheme" content="light">
+<meta name="color-scheme" content="${metaScheme}">
 <base target="_top">
-<style>${FRAME_BASE_CSS}</style>
+<style>${FRAME_BASE_CSS}${frameSchemeCss(plan)}</style>
 <script>${BRIDGE_SCRIPT}</script>
 </head><body>${sanitizedHtml}</body></html>`;
 }
@@ -307,7 +363,11 @@ export function EmailHtmlFrame({
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
   useOverlay(confirmUrl !== null);
 
-  const srcDoc = useMemo(() => buildSrcDoc(html, allowRemoteContent), [html, allowRemoteContent]);
+  // On the dark theme the message is shown dark whenever it can be; the
+  // planner reads the sanitized HTML, so the frame never looks inside the DOM.
+  const scheme = useThemeStore((s) => s.scheme);
+  const plan = useMemo(() => planEmailScheme(html, scheme), [html, scheme]);
+  const srcDoc = useMemo(() => buildSrcDoc(html, allowRemoteContent, plan), [html, allowRemoteContent, plan]);
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {

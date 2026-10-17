@@ -87,7 +87,7 @@ export function AiWorkInProgressDialog({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
-      <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
+      <div className="theme-pinned bg-[#2d2d2e] border border-gray-600 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
         <h3 className="text-base font-semibold text-gray-100 mb-2">{t('settings:aiWork.title')}</h3>
         {error && (
           <div role="alert" className="mb-3 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">

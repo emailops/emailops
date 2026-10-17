@@ -59,7 +59,7 @@ export function SenderBanner({ accountId, emailId }: Omit<SenderControlProps, 's
   const openDialog = useSenderStore((s) => s.openDialog);
   if (!status || (!status.blocked && status.unsubscribedAt === null)) return null;
   return (
-    <div className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+    <div className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
       {status.blocked && (
         <div className="flex items-center gap-2" data-testid="blocked-sender-banner">
           <span>{t('inbox:sender.blockedBanner')}</span>

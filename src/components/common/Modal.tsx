@@ -123,7 +123,7 @@ export function Modal({
       aria-modal={nonBlocking ? undefined : 'true'}
     >
       <div
-        className={`${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl${
+        className={`theme-pinned ${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl${
           nonBlocking ? ' pointer-events-auto' : ''
         }`}
       >

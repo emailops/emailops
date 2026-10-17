@@ -383,6 +383,13 @@ Boîte en vue divisée ou pleine largeur, et une interface disponible en frança
 espagnol et allemand. La langue de sortie de l'IA se règle séparément : vous pouvez lire
 l'interface dans une langue et faire rédiger les réponses dans une autre.
 
+<!-- claim:feat-interface-2 -->
+EmailOps propose un thème clair et un thème sombre. **Paramètres → Apparence → Thème** offre
+**Clair**, **Sombre** et **Système**, qui suit l'apparence du système d'exploitation ; le choix
+est conservé d'un redémarrage à l'autre. Avec le thème sombre, les e-mails s'affichent eux aussi en
+sombre dès que c'est possible : un e-mail qui apporte son propre design sombre l'utilise, un e-mail
+simple ou au design clair est adapté, et un design déjà sombre est laissé tel quel.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

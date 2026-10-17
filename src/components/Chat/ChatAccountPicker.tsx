@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { accountColorClass } from '@/lib/colors';
 import { useAccountStore } from '@/stores/accountStore';
 
@@ -35,24 +36,19 @@ export function ChatAccountPicker({ accountId, onChange, compact = false }: Chat
   // Nothing to choose between — a one-option dropdown is just noise.
   if (enabled.length <= 1) return null;
 
+  // The shared Select, not a native <select>: on Linux WebKitGTK paints a
+  // native popup light whatever the theme (see Select.tsx).
   const select = (
-    <select
+    <Select
       value={accountId ?? ''}
-      onChange={(e) => e.target.value && onChange(e.target.value)}
+      options={enabled.map((a) => ({ value: a.id, label: a.email }))}
+      onChange={(id) => id && onChange(id)}
+      ariaLabel={t('chat:accountPicker.label')}
       title={t('chat:accountPicker.hint')}
-      aria-label={t('chat:accountPicker.label')}
-      className={
-        compact
-          ? 'min-w-0 max-w-[11rem] truncate rounded border-none bg-transparent px-1 py-0.5 text-xs text-gray-600 hover:bg-gray-100 focus:outline-none'
-          : 'min-w-0 max-w-full truncate rounded-full border border-gray-200 bg-white py-1 pl-2 pr-6 text-sm text-gray-700 shadow-sm focus:outline-none'
-      }
-    >
-      {enabled.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.email}
-        </option>
-      ))}
-    </select>
+      variant="light"
+      size={compact ? 'xs' : 'sm'}
+      className={compact ? 'min-w-0 max-w-[11rem]' : 'min-w-0 max-w-full'}
+    />
   );
 
   // The colour dot matches the account's indicator in the unified inbox rows,

@@ -473,7 +473,7 @@ export function Inbox({
 
   const showTabs = showCategoryFilter && visibleCategories.length > 0;
   return (
-    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
+    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 flex flex-col`}>
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
         {/* While rows are selected the bulk toolbar takes the header row's
             place (count, select-all, actions); the tabs stay below it. */}

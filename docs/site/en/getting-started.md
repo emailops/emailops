@@ -55,8 +55,9 @@ inside the app on macOS, so there is nothing to download for search.
 
 <!-- claim:start-3-inbox-1 -->
 Choose how the mailbox is laid out — **split** (list on the left, message on the right) or
-**full width** (one pane at a time). Change it whenever you like in **Settings → Appearance**,
-along with the interface language (English, Spanish, French, German).
+**full width** (one pane at a time). The same step offers the theme: light, dark, or whatever
+the system uses. Change both whenever you like in **Settings → Appearance**, along with the
+interface language (English, Spanish, French, German).
 
 ## 4. Connect an account
 

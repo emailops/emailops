@@ -82,7 +82,7 @@ export function Dashboard({ accounts, onOpenAccountSettings }: DashboardProps) {
   }, [refreshStats]);
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-950 text-gray-200 p-6">
+    <div className="theme-pinned flex-1 overflow-auto bg-gray-950 text-gray-200 p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         <header>
           <h1 className="text-2xl font-semibold text-white">{t('dashboard:title')}</h1>

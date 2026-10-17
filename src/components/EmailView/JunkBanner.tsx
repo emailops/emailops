@@ -56,8 +56,8 @@ const STYLES: Record<JunkKind, { wrap: string; button: string }> = {
     button: 'text-orange-900',
   },
   graymail: {
-    wrap: 'bg-slate-50 border-slate-200 text-slate-700',
-    button: 'text-slate-700',
+    wrap: 'bg-gray-50 border-gray-200 text-gray-700',
+    button: 'text-gray-700',
   },
   legit: { wrap: '', button: '' },
 };

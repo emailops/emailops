@@ -226,7 +226,7 @@ export function EmailRow({
             {/* Its own flex item, so truncating the subject never swallows the chip
                 and the chip never swallows the subject. */}
             {companyTag && (
-              <span className="flex-shrink-0 max-w-[30%] truncate self-center rounded-full font-medium text-[11px] px-1.5 py-0 bg-slate-100 text-slate-700">
+              <span className="flex-shrink-0 max-w-[30%] truncate self-center rounded-full font-medium text-[11px] px-1.5 py-0 bg-gray-100 text-gray-700">
                 {companyTag}
               </span>
             )}
@@ -329,7 +329,7 @@ export function EmailRow({
             title={companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : undefined}
           >
             {companyTag && (
-              <span className="inline-block rounded-full font-medium text-sm px-2 py-0.5 bg-slate-100 text-slate-700 mr-1.5 align-middle">
+              <span className="inline-block rounded-full font-medium text-sm px-2 py-0.5 bg-gray-100 text-gray-700 mr-1.5 align-middle">
                 {companyTag}
               </span>
             )}

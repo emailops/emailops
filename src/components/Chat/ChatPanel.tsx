@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { prewarmChat } from '@/lib/api';
 import {
   type ChatContext,
@@ -149,20 +150,20 @@ export function ChatPanel({
   const header = (
     <div className="flex items-center gap-1 border-b border-gray-200 bg-white px-2 py-1.5">
       <ChatAccountPicker accountId={accountId} onChange={onAccountChange} compact />
-      <select
+      <Select
         value={activeConversationId ?? ''}
-        onChange={(e) => void selectConversation(e.target.value || null)}
+        options={[
+          { value: '', label: t('chat:conversations.newChat') },
+          ...conversations.map((c) => ({ value: c.id, label: c.title })),
+        ]}
+        onChange={(id) => void selectConversation(id || null)}
+        ariaLabel={t('chat:panel.conversationPicker')}
         title={t('chat:panel.conversationPicker')}
-        aria-label={t('chat:panel.conversationPicker')}
-        className="min-w-0 flex-1 truncate rounded border-none bg-transparent px-1 py-0.5 text-xs font-medium text-gray-700 hover:bg-gray-100 focus:outline-none"
-      >
-        <option value="">{t('chat:conversations.newChat')}</option>
-        {conversations.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.title}
-          </option>
-        ))}
-      </select>
+        variant="light"
+        size="xs"
+        align="right"
+        className="min-w-0 flex-1 font-medium"
+      />
       <button
         type="button"
         onClick={() => void handleCreate()}

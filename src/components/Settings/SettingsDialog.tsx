@@ -25,6 +25,7 @@ import { PrivacySettings } from './PrivacySettings';
 import { SignaturesSettings } from './SignaturesSettings';
 import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
+import { ThemeSetting } from './ThemeSetting';
 import { UndoSendSetting } from './UndoSendSetting';
 
 export type SettingsTab =
@@ -160,7 +161,7 @@ export function SettingsDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handleOverlayClick}>
-      <div className="bg-[#252526] border border-gray-700 rounded-lg w-full max-w-5xl h-[85vh] shadow-xl flex overflow-hidden">
+      <div className="theme-pinned bg-[#252526] border border-gray-700 rounded-lg w-full max-w-5xl h-[85vh] shadow-xl flex overflow-hidden">
         {/* Tab rail */}
         <aside className="w-56 flex-shrink-0 border-r border-gray-700 bg-[#1f1f20] py-4 flex flex-col">
           <div className="px-4 pb-3 mb-1 border-b border-gray-700">
@@ -265,7 +266,7 @@ export function SettingsDialog({
       {/* Account switch confirmation dialog */}
       {pendingAccountId && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40">
-          <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-5 shadow-xl max-w-sm w-full mx-4">
+          <div className="theme-pinned bg-[#2d2d2e] border border-gray-600 rounded-lg p-5 shadow-xl max-w-sm w-full mx-4">
             <h3 className="text-sm font-semibold text-gray-100 mb-2">{t('settings:dialog.switchAccountTitle')}</h3>
             <p className="text-xs text-gray-400 mb-4">{t('settings:dialog.switchAccountConfirm')}</p>
             <div className="flex gap-2 justify-end">
@@ -313,6 +314,7 @@ function AppearancePanel({
           onChange={(next) => void setLanguage(next)}
         />
       </section>
+      <ThemeSetting />
       <section>
         <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.layout')}</h3>
         <div className="grid grid-cols-2 gap-3">
