@@ -767,6 +767,20 @@ impl ImapClient {
         Ok(session)
     }
 
+    /// A timed-out blocking TLS handshake is reported as WouldBlock by
+    /// native-tls, not as an io::Error in its source chain. For Failure,
+    /// elapsed time distinguishes a socket timeout from fast TLS failures.
+    fn is_retryable_tls_timeout(
+        error: &native_tls::HandshakeError<std::net::TcpStream>,
+        elapsed: std::time::Duration,
+        timeout: std::time::Duration,
+    ) -> bool {
+        match error {
+            native_tls::HandshakeError::WouldBlock(_) => true,
+            native_tls::HandshakeError::Failure(_) => elapsed >= timeout,
+        }
+    }
+
     /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
     /// the socket. Shared by [`Self::connect_sync`] and the IDLE session.
     fn open_tls_stream(
@@ -774,33 +788,79 @@ impl ImapClient {
     ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, imap::Error> {
         use std::io;
         use std::net::{TcpStream, ToSocketAddrs};
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+        const OVERALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-        let tls = native_tls::TlsConnector::new().map_err(|e| {
-            // Wrap as a MissingMessageData error since there's no generic imap::Error variant for TLS
-            imap::Error::Bad(format!("TLS init failed: {e}"))
-        })?;
+        let tls = native_tls::TlsConnector::new().map_err(|e| imap::Error::Bad(format!("TLS init failed: {e}")))?;
 
-        // Resolve the first address and connect with a timeout.
-        let addr = (creds.host.as_str(), creds.port)
+        let addrs: Vec<_> = (creds.host.as_str(), creds.port)
             .to_socket_addrs()
             .map_err(imap::Error::Io)?
-            .next()
-            .ok_or_else(|| {
-                imap::Error::Io(io::Error::new(
-                    io::ErrorKind::AddrNotAvailable,
-                    format!("No addresses resolved for {}:{}", creds.host, creds.port),
-                ))
-            })?;
+            .collect();
+        if addrs.is_empty() {
+            return Err(imap::Error::Io(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("No addresses resolved for {}:{}", creds.host, creds.port),
+            )));
+        }
 
-        let tcp = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(imap::Error::Io)?;
-        tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
-        tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(imap::Error::Io)?;
+        let deadline = Instant::now() + OVERALL_TIMEOUT;
+        let mut failures = Vec::new();
+        let mut attempted = 0;
+        for addr in addrs {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            attempted += 1;
+            let tcp = match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT.min(remaining)) {
+                Ok(tcp) => tcp,
+                Err(err) => {
+                    failures.push(format!("{addr}: TCP connect failed: {err}"));
+                    continue;
+                }
+            };
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                failures.push(format!("{addr}: overall connection deadline exceeded"));
+                break;
+            }
+            let timeout = IO_TIMEOUT.min(remaining);
+            tcp.set_read_timeout(Some(timeout)).map_err(imap::Error::Io)?;
+            tcp.set_write_timeout(Some(timeout)).map_err(imap::Error::Io)?;
 
-        tls.connect(creds.host.as_str(), tcp)
-            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))
+            let started = Instant::now();
+            match tls.connect(creds.host.as_str(), tcp) {
+                Ok(stream) => return Ok(stream),
+                Err(err) => {
+                    let message = format!("{addr}: TLS handshake failed: {err}");
+                    // Certificate/protocol failures are terminal. native-tls
+                    // WouldBlock is how a socket read/write timeout surfaces.
+                    if !Self::is_retryable_tls_timeout(&err, started.elapsed(), timeout) {
+                        failures.push(message);
+                        return Err(imap::Error::Bad(format!(
+                            "IMAP connection failed after {} address(es): {}",
+                            failures.len(),
+                            failures.join("; ")
+                        )));
+                    }
+                    failures.push(message);
+                }
+            }
+        }
+        if deadline.saturating_duration_since(Instant::now()).is_zero() {
+            failures.push(format!(
+                "overall connection deadline of {}s exceeded",
+                OVERALL_TIMEOUT.as_secs()
+            ));
+        }
+        Err(imap::Error::Bad(format!(
+            "IMAP connection failed after {} address attempt(s): {}",
+            attempted,
+            failures.join("; ")
+        )))
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -3105,5 +3165,60 @@ mod tests {
             assert_eq!(parsed_folder, folder, "folder round-trip for {id}");
             assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
         }
+    }
+
+    #[test]
+    fn tls_timeout_fallback_classifies_real_handshakes() {
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let tls = native_tls::TlsConnector::new().unwrap_or_else(|e| panic!("TLS setup: {e}"));
+        let timeout = Duration::from_millis(150);
+
+        // A peer that accepts and never sends TLS bytes causes the socket
+        // read timeout during the *actual* native-tls handshake.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(400));
+        });
+        let tcp = TcpStream::connect(addr).unwrap();
+        tcp.set_read_timeout(Some(timeout)).unwrap();
+        tcp.set_write_timeout(Some(timeout)).unwrap();
+        let started = Instant::now();
+        let error = match tls.connect("localhost", tcp) {
+            Err(err) => err,
+            Ok(_) => panic!("silent peer unexpectedly completed a TLS handshake"),
+        };
+        assert!(
+            ImapClient::is_retryable_tls_timeout(&error, started.elapsed(), timeout),
+            "real handshake timeout must be retryable: {error}"
+        );
+        server.join().unwrap();
+
+        // A peer that sends invalid TLS bytes fails immediately and must
+        // not trigger an address fallback.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(b"HTTP/1.1 400 Bad Request\\r\\n\\r\\n").unwrap();
+        });
+        let tcp = TcpStream::connect(addr).unwrap();
+        tcp.set_read_timeout(Some(timeout)).unwrap();
+        tcp.set_write_timeout(Some(timeout)).unwrap();
+        let started = Instant::now();
+        let error = match tls.connect("localhost", tcp) {
+            Err(err) => err,
+            Ok(_) => panic!("invalid TLS unexpectedly completed a handshake"),
+        };
+        assert!(
+            !ImapClient::is_retryable_tls_timeout(&error, started.elapsed(), timeout),
+            "invalid TLS response must be terminal: {error}"
+        );
+        server.join().unwrap();
     }
 }
