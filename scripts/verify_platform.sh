@@ -38,8 +38,15 @@ case "$PLATFORM" in
     echo "── artifacts ──"
     DEB=$(find "$BUNDLE/deb" -name '*.deb' 2>/dev/null | head -1 || true)
     APPIMAGE=$(find "$BUNDLE/appimage" -name '*.AppImage' 2>/dev/null | head -1 || true)
-    [ -n "$DEB" ] && pass "deb: $(basename "$DEB")" || fail "no .deb found (run 'make build-linux')"
-    [ -n "$APPIMAGE" ] && pass "AppImage: $(basename "$APPIMAGE")" || fail "no .AppImage found (run 'make build-linux')"
+    # LINUX_BUNDLES (see build_platform.sh) narrows what must be present.
+    case ",${LINUX_BUNDLES:-deb,appimage}," in *,deb,*) WANT_DEB=1 ;; *) WANT_DEB= ;; esac
+    case ",${LINUX_BUNDLES:-deb,appimage}," in *,appimage,*) WANT_APPIMAGE=1 ;; *) WANT_APPIMAGE= ;; esac
+    if [ -n "$WANT_DEB" ]; then
+      [ -n "$DEB" ] && pass "deb: $(basename "$DEB")" || fail "no .deb found (run 'make build-linux')"
+    fi
+    if [ -n "$WANT_APPIMAGE" ]; then
+      [ -n "$APPIMAGE" ] && pass "AppImage: $(basename "$APPIMAGE")" || fail "no .AppImage found (run 'make build-linux')"
+    fi
 
     echo "── binary ──"
     if [ ! -f "$BIN" ]; then

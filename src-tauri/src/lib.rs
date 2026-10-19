@@ -430,6 +430,11 @@ macro_rules! app_commands {
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First, before GTK or WebKit read the environment: keep COLRv1 fonts
+    // away from the AppImage's bundled WebKitGTK, which aborts on them.
+    #[cfg(target_os = "linux")]
+    util::colrv1_fonts::apply_appimage_workaround();
+
     // Dotenv is a developer convenience only. In release builds, keep it off
     // unless explicitly requested to avoid accidental secret loading.
     if should_load_dotenv() {
@@ -472,6 +477,13 @@ pub fn run() {
             services::events::install(Arc::new(services::events::TauriEventSink::new(app.handle().clone())));
             // Desktop notifications (new mail, snoozed conversations back).
             services::notifier::install(Arc::new(services::notifier::TauriNotifier::new(app.handle().clone())));
+
+            // A crashed WebKitGTK web process otherwise leaves a blank window
+            // that still holds the instance lock.
+            #[cfg(target_os = "linux")]
+            for window in app.webview_windows().values() {
+                util::web_process_crash::watch(window);
+            }
 
             let t = std::time::Instant::now();
             // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.

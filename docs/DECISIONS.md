@@ -3684,3 +3684,22 @@ folder-management entry); this dedicated action is the way out of it.
 client. Adding Spam to the generic move picker — it would not record the not-junk
 correction and would offer Spam as a destination without the junk feedback that
 "Confirm junk" records.
+
+## 2026-10-16 — The Linux AppImage builds on Ubuntu 24.04; the .deb stays on 22.04
+
+**Decision:** The release workflow builds the Linux bundles in two jobs. The `.deb` stays
+on `ubuntu-22.04` (glibc 2.35 floor). The AppImage builds on `ubuntu-24.04`, so it bundles
+the newer WebKitGTK and needs glibc 2.39 or newer. Independently of the build image, an
+AppImage launch rejects COLRv1 color fonts through a generated fontconfig file
+(`util::colrv1_fonts`). On Linux, a crashed web process now reloads the page, and after 3
+crashes within 60 s the app shows a dialog and exits, which releases the instance lock
+(`util::web_process_crash`).
+**Context:** The WebKitGTK the AppImage carries comes from the build host. On 22.04 that is
+2.50, whose Skia aborts the web process on COLRv1 fonts, the only format of Noto Color
+Emoji on current Fedora, so any emoji blanked the window and the dead window kept the
+instance lock. The `.deb` uses the distro's WebKitGTK and never had the bug, so raising its
+glibc floor would cost users and gain nothing.
+**Rejected:** Moving the whole Linux job to 24.04 also raises the `.deb`'s floor, which would
+repeat the earlier "GLIBC_2.38 not found" regression on 22.04 for no gain. Relying on the
+newer WebKitGTK alone is not enough either: nobody has confirmed that 2.52 fixes the Skia
+bug. Shipping Flatpak or RPM packages is a larger, separate piece of work.

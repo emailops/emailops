@@ -31,6 +31,8 @@
     "documentsDesc": "Dokumente und Tabellen gemeinsam per E-Mail bearbeiten",
     "privacy": "Datenschutz & Sicherheit",
     "privacyDesc": "Passwort, externe Inhalte",
+    "about": "Über",
+    "aboutDesc": "Version und Links",
     "junk": "Spam",
     "junkDesc": "Spam, Identitätsmissbrauch und Massenmail"
   },
@@ -652,5 +654,11 @@
   "documents": {
     "enable": "EO Docs aktivieren",
     "enableDesc": "Experimentell. EO Docs: Bearbeite Dokumente und Tabellen gemeinsam mit anderen EmailOps-Nutzern, ohne Cloud: Änderungen gehen als E-Mails zwischen euren Konten hin und her. Wenn aktiviert, erscheint EO Docs in der Seitenleiste. Es wird nichts gesendet, bevor du ein Dokument teilst oder annimmst."
+  },
+  "about": {
+    "tagline": "E-Mail-Client mit lokaler KI. Open Source, Apache-2.0.",
+    "website": "Website",
+    "sourceCode": "Quellcode auf GitHub",
+    "sponsor": "Projekt unterstützen ♥"
   }
 }

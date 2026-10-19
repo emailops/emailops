@@ -1,3 +1,4 @@
+pub mod colrv1_fonts;
 pub mod dll_search;
 pub mod email_addr;
 pub mod fs_link;
@@ -8,3 +9,4 @@ pub mod private_eval_db;
 pub mod startup_dialog;
 pub mod system;
 pub mod text;
+pub mod web_process_crash;

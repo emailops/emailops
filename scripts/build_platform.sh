@@ -36,6 +36,10 @@ NO_DEFAULT_FEATURES="${NO_DEFAULT_FEATURES:-}"
 # Set to 1 to ship ggml's backends as loadable modules so one artifact can use
 # a GPU when the driver is present and fall back to CPU when it is not.
 DYNAMIC_BACKENDS="${DYNAMIC_BACKENDS:-}"
+# Linux only: comma-separated subset of the bundles in tauri.linux.conf.json
+# (deb,appimage). Empty builds them all. The release workflow builds the .deb
+# and the AppImage on different Ubuntu images, one bundle per job.
+LINUX_BUNDLES="${LINUX_BUNDLES:-}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -347,6 +351,7 @@ fi
 
 BUILD_ARGS=()
 [ "$PHASE" = "compile" ] && BUILD_ARGS=(--no-bundle)
+[ "$PLATFORM" = "linux" ] && [ -n "$LINUX_BUNDLES" ] && BUILD_ARGS+=(--bundles "$LINUX_BUNDLES")
 if [ ${#CARGO_ARGS[@]} -gt 0 ]; then
   npm run tauri -- build --target "$TARGET" "${BUILD_ARGS[@]}" "${CONFIG_ARGS[@]}" -- "${CARGO_ARGS[@]}"
 else

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **About tab in Settings** with the app version and links to the website,
+  the source code and the new GitHub Sponsors page: EmailOps now accepts
+  sponsorships. If you find it useful, **Sponsor the project** in Settings →
+  About opens the sponsor page.
 - **Test a Lens's filters before saving.** **Test** in the Lens settings shows
   how many emails the filters match and the three most recent ones.
 

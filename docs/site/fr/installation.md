@@ -151,6 +151,11 @@ chmod +x EmailOps-linux.AppImage
 ./EmailOps-linux.AppImage
 ```
 
+<!-- claim:inst-linux-requirements-1 -->
+L'AppImage nécessite glibc 2.39 ou plus récent (Ubuntu 24.04, Fedora 40, Debian 13 et suivantes).
+Sur une distribution plus ancienne, installez plutôt **EmailOps-linux.deb** depuis la même version ;
+il utilise le moteur web du système.
+
 ### Vérifier le téléchargement {#linux-verify}
 
 <!-- claim:inst-linux-verify-1 -->

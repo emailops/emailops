@@ -61,8 +61,11 @@ stage() {
 case "$PLATFORM" in
   linux)
     BUNDLE="$TARGET_DIR/x86_64-unknown-linux-gnu/release/bundle"
-    stage "$BUNDLE/appimage" AppImage EmailOps-linux.AppImage required
-    stage "$BUNDLE/deb"      deb      EmailOps-linux.deb      required
+    # LINUX_BUNDLES (see build_platform.sh): a bundle that was not built is
+    # not required.
+    want() { case ",${LINUX_BUNDLES:-deb,appimage}," in *,"$1",*) echo required ;; *) echo optional ;; esac; }
+    stage "$BUNDLE/appimage" AppImage EmailOps-linux.AppImage "$(want appimage)"
+    stage "$BUNDLE/deb"      deb      EmailOps-linux.deb      "$(want deb)"
     stage "$BUNDLE/rpm"      rpm      EmailOps-linux.rpm      optional
     ;;
   windows)

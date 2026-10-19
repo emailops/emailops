@@ -31,6 +31,8 @@
     "documentsDesc": "Documentos y hojas editados juntos por email",
     "privacy": "Privacidad y seguridad",
     "privacyDesc": "Contraseña, contenido remoto",
+    "about": "Acerca de",
+    "aboutDesc": "Versión y enlaces",
     "junk": "Basura",
     "junkDesc": "Spam, suplantación y correo masivo"
   },
@@ -652,5 +654,11 @@
   "documents": {
     "enable": "Activar EO Docs",
     "enableDesc": "Experimental. EO Docs: edita documentos y hojas de cálculo junto con otros usuarios de EmailOps, sin nube: los cambios viajan como emails entre vuestras cuentas. Al activarlo aparece EO Docs en la barra lateral. No se envía nada hasta que compartes o aceptas un documento."
+  },
+  "about": {
+    "tagline": "Cliente de correo con IA local. Código abierto, Apache-2.0.",
+    "website": "Sitio web",
+    "sourceCode": "Código fuente en GitHub",
+    "sponsor": "Apoya el proyecto ♥"
   }
 }

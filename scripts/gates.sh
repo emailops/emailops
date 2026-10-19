@@ -100,11 +100,20 @@ run_gate() {
     # they need rustc 1.95, which CI already has (`dtolnay/rust-toolchain@stable`),
     # so 1.95 is now the floor for building this crate — `rustup update` if a
     # local `cargo check` refuses to resolve them.
+    #
+    # A scratch resolve that fails outright ("failed to select a version",
+    # e.g. every release a dependency accepts is yanked) cannot be fixed here,
+    # so the loop below reports it as a warning instead of failing the gate.
     outdated)       cargo outdated --manifest-path src-tauri/Cargo.toml --root-deps-only --exit-code 1 --exclude rusqlite --ignore reqwest ;;
     biome)          PATH="$NODE_BIN:$PATH" ./node_modules/.bin/biome check src/ ;;
     tsc)            PATH="$NODE_BIN:$PATH" ./node_modules/.bin/tsc --noEmit ;;
     vitest)         PATH="$NODE_BIN:$PATH" ./node_modules/.bin/vitest run ;;
   esac > "$file" 2>&1
+}
+
+# cargo-outdated's scratch resolve failed, as opposed to finding outdated deps.
+outdated_unresolvable() {
+  grep -q '^error: failed to select a version' "$1"
 }
 
 summary() {
@@ -113,7 +122,12 @@ summary() {
     rust-test) awk '/^test result:/{n++; p+=$4; f+=$6} END{print p " passed; " f " failed (" n " test binaries)"}' "$f" ;;
     clippy|clippy-desktop) awk '/^error: could not compile|Finished /' "$f" ;;
     fmt|tsc)   awk 'END{print NR " lines of output"}' "$f" ;;
-    outdated)  awk 'NR>2{n++} END{print n+0 " outdated root dependencies"}' "$f" ;;
+    outdated)
+      if outdated_unresolvable "$f"; then
+        echo "could not resolve dependencies on crates.io (warning only): $(awk '/^error:/{sub(/^error: /, ""); print; exit}' "$f")"
+      else
+        awk 'NR>2{n++} END{print n+0 " outdated root dependencies"}' "$f"
+      fi ;;
     biome)     awk '/Checked /' "$f" ;;
     vitest)    awk '/Tests /' "$f" ;;
   esac
@@ -150,7 +164,9 @@ for gate in "${GATES[@]}"; do
   run_gate "$gate"
   code=$?
   status=ok
-  if [[ $code -ne 0 ]]; then
+  if [[ $gate == outdated && $code -ne 0 ]] && outdated_unresolvable "$OUT/$gate.txt"; then
+    status=warn
+  elif [[ $code -ne 0 ]]; then
     status=FAIL
     failed=1
     failing+=("$gate")

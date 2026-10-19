@@ -31,6 +31,8 @@
     "documentsDesc": "Docs and sheets edited together by email",
     "privacy": "Privacy & Security",
     "privacyDesc": "Password, remote content",
+    "about": "About",
+    "aboutDesc": "Version and links",
     "junk": "Junk",
     "junkDesc": "Spam, impersonation and bulk mail"
   },
@@ -652,5 +654,11 @@
   "documents": {
     "enable": "Enable EO Docs",
     "enableDesc": "Experimental. EO Docs: edit documents and sheets together with other EmailOps users, with no cloud: changes travel as emails between your accounts. When on, EO Docs appears in the sidebar. Nothing is sent until you share or accept a document."
+  },
+  "about": {
+    "tagline": "Local AI email client. Open source, Apache-2.0.",
+    "website": "Website",
+    "sourceCode": "Source code on GitHub",
+    "sponsor": "Sponsor the project ♥"
   }
 }

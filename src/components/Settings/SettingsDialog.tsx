@@ -6,6 +6,7 @@ import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { Account, InboxLayout } from '@/types';
+import { AboutSettings } from './AboutSettings';
 import { AiDraftsSettings } from './AiDraftsSettings';
 import { AiSearchSettings } from './AiSearchSettings';
 import { AiSettings } from './AiSettings';
@@ -42,7 +43,8 @@ export type SettingsTab =
   | 'aisearch'
   | 'skills'
   | 'documents'
-  | 'privacy';
+  | 'privacy'
+  | 'about';
 
 interface SettingsDialogProps {
   initialTab?: SettingsTab;
@@ -86,6 +88,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'skills', experimental: true, needsAi: true },
   { id: 'documents', experimental: true },
   { id: 'privacy' },
+  { id: 'about' },
 ];
 
 export function SettingsDialog({
@@ -255,6 +258,7 @@ export function SettingsDialog({
           {tab === 'skills' && <SkillsSettings />}
           {tab === 'documents' && <DocumentsSettings />}
           {tab === 'privacy' && <PrivacySettings />}
+          {tab === 'about' && <AboutSettings />}
         </div>
       </div>
 

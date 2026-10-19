@@ -54,9 +54,9 @@ jobs:
   # convention so every platform has a permanent latest-download URL:
   #   .../releases/latest/download/EmailOps-linux.AppImage
   release:
-    name: Release (${{ matrix.platform }})
+    name: Release (${{ matrix.platform }} ${{ matrix.bundle }})
     if: ${{ inputs.targets == 'all' || inputs.targets == 'linux' }}
-    # Pinned to 22.04, NOT ubuntu-latest. glibc is only backward
+    # The .deb is pinned to 22.04, NOT ubuntu-latest. glibc is only backward
     # compatible: a binary built against glibc 2.35 runs on 2.39, but not
     # the reverse — so the runner image sets the *minimum* glibc a user
     # needs, and `ubuntu-latest` silently raises that floor whenever
@@ -69,16 +69,35 @@ jobs:
     # covers 22.04/24.04/25.x, Debian 12+, and RHEL 9 derivatives.
     # When GitHub retires the 22.04 image, replace this with a
     # `container: ubuntu:22.04` on a newer runner rather than bumping it.
-    runs-on: ubuntu-22.04
+    #
+    # The AppImage is the exception and builds on 24.04. Unlike the .deb it
+    # carries its own WebKitGTK, copied from the build host, and 22.04's
+    # (2.50) aborts its web process on COLRv1 color fonts, the default emoji
+    # font on current Fedora; 24.04 ships a newer one. The cost is a glibc
+    # 2.39 floor for the AppImage only: users on older distros install the
+    # .deb. See docs/DECISIONS.md.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        # A one-leg matrix keeps `matrix.platform` in the make targets and
-        # artifact names below; Windows has its own job chain further down.
-        platform: [linux]
+        # `matrix.platform` stays in the make targets and artifact names
+        # below; Windows has its own job chain further down. One bundle per
+        # leg (LINUX_BUNDLES), because each needs a different image.
+        include:
+          - platform: linux
+            bundle: deb
+            os: ubuntu-22.04
+            libfuse: libfuse2
+          - platform: linux
+            bundle: appimage
+            os: ubuntu-24.04
+            # Renamed in 24.04 by the 64-bit time_t transition.
+            libfuse: libfuse2t64
+    env:
+      LINUX_BUNDLES: ${{ matrix.bundle }}
 
     steps:
       - uses: actions/checkout@v7
@@ -103,7 +122,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: release-ubuntu-22.04
+          key: release-${{ matrix.os }}
 
       - name: Install system dependencies (Linux)
         run: |
@@ -115,7 +134,7 @@ jobs:
           # them is an accident of the image, not a guarantee — and now that
           # this job is pinned to a specific image, an image that happens to
           # omit one would fail the build with a confusing downstream error.
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake libclang-dev xdg-utils libfuse2
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev cmake libclang-dev xdg-utils ${{ matrix.libfuse }}
 
       # Vulkan SDK provides the headers/loader and the glslc shader compiler
       # that ggml's Vulkan backend needs at *build* time. Only the runtime
@@ -159,7 +178,8 @@ jobs:
       # missing DLL next to the exe). It does NOT prove GPU offload works:
       # these runners have no GPU, so Vulkan always falls back to CPU here.
       # That still needs an occasional check on real GPU hardware.
-      - name: Smoke test (Linux)
+      - name: Smoke test (Linux .deb)
+        if: ${{ matrix.bundle == 'deb' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -205,6 +225,34 @@ jobs:
             kill "$APP_PID"
           '
 
+      # Same check for the AppImage, which carries its own WebKitGTK and so
+      # can fail in ways the .deb cannot. Extract-and-run avoids needing FUSE
+      # inside the runner.
+      - name: Smoke test (Linux AppImage)
+        if: ${{ matrix.bundle == 'appimage' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y xvfb dbus-x11 gnome-keyring imagemagick
+          APPIMAGE_FILE="$PWD/release/EmailOps-linux.AppImage"
+          chmod +x "$APPIMAGE_FILE"
+          export WEBKIT_DISABLE_COMPOSITING_MODE=1 APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGE_FILE
+          xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
+            "$APPIMAGE_FILE" > /tmp/smoke.log 2>&1 &
+            APP_PID=$!
+            sleep 15
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "ERROR: the AppImage exited within 15s of launch" >&2
+              cat /tmp/smoke.log >&2
+              exit 1
+            fi
+            echo "AppImage is running (pid $APP_PID) after 15s — smoke test passed"
+            sleep 7
+            import -window root /tmp/smoke-linux.png || echo "WARN: screenshot capture failed"
+            kill "$APP_PID"
+          '
+
       # `always()`: the screenshot is most valuable precisely when the smoke
       # test just failed — a blank window or a visible error dialog explains a
       # startup failure that the process-liveness check can only report as a
@@ -213,7 +261,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: smoke-screenshot-${{ matrix.platform }}
+          name: smoke-screenshot-${{ matrix.platform }}-${{ matrix.bundle }}
           path: /tmp/smoke-linux.png
           if-no-files-found: ignore
           retention-days: 14
@@ -221,7 +269,7 @@ jobs:
       # For linux-sign, which checksums and signs these exact files.
       - uses: actions/upload-artifact@v7
         with:
-          name: linux-installers
+          name: linux-installers-${{ matrix.bundle }}
           path: release/
           if-no-files-found: error
           retention-days: 3
@@ -233,13 +281,13 @@ jobs:
         if: ${{ inputs.dry_run }}
         uses: actions/upload-artifact@v7
         with:
-          name: emailops-${{ matrix.platform }}-dry-run
+          name: emailops-${{ matrix.platform }}-${{ matrix.bundle }}-dry-run
           path: release/*
           if-no-files-found: error
 
-      # Each of the 3 publishing jobs (linux here, both windows-publish legs)
+      # Each of the 4 publishing jobs (both linux legs here, both windows-publish legs)
       # hits this same tag, so `generate_release_notes: true` would call
-      # GitHub's auto-generate API 3 times against an already-existing
+      # GitHub's auto-generate API 4 times against an already-existing
       # release; it *appends* to the current body rather than replacing it,
       # producing duplicated "What's Changed"/"New Contributors" blocks (hit
       # in practice on the v0.6.5 release). Extracting the matching
@@ -293,7 +341,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: linux-installers
+          pattern: linux-installers-*
+          merge-multiple: true
           path: release
 
       - name: Sign checksums

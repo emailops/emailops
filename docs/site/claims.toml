@@ -232,6 +232,13 @@ checks = [
   { release = 'EmailOps-linux.AppImage' },
 ]
 
+[inst-linux-requirements-1]
+checks = [
+  { file = '.github/workflows/release.yml', has = 'os: ubuntu-24.04', covers = ['The AppImage needs glibc 2.39 or newer'] },
+  { file = '.github/workflows/release.yml', has = 'bundle: deb', covers = ['install EmailOps-linux.deb from the same release instead'] },
+  { manual = 'Which glibc each distribution release ships is outside this repo.', covers = ['Ubuntu 24.04, Fedora 40, Debian 13 and later'] },
+]
+
 [inst-linux-verify-1]
 checks = [
   { file = '.github/workflows/release.yml', has = 'EmailOps-linux-SHA256SUMS.asc', covers = ['Every release also carries EmailOps-linux-SHA256SUMS and its GPG signature, EmailOps-linux-SHA256SUMS.asc'] },

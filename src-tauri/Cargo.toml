@@ -168,6 +168,7 @@ desktop = [
     "dep:tauri-plugin-dialog",
     "dep:tauri-plugin-os",
     "dep:tauri-plugin-notification",
+    "dep:webkit2gtk",
 ]
 
 # Embedded W3C WebDriver server for driving the real app in UI verification
@@ -406,6 +407,12 @@ libc = "0.2"
 # ggml's generic device properties drop that field, so it is read at the source.
 # Already in the tree through Tauri; this only makes the use direct.
 objc2 = "0.6"
+
+# `connect_web_process_terminated` on the webview, so a crashed web process is
+# reloaded instead of leaving a blank window (`util::web_process_crash`). Same
+# version wry already pulls in, so this adds only a direct edge.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0", optional = true }
 
 # `SetDefaultDllDirectories` / `AddDllDirectory` for the restricted DLL search
 # order (`util::dll_search`). Same version Tauri already pulls in, so this adds
