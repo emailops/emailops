@@ -793,8 +793,7 @@ impl ImapClient {
         const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
         const OVERALL_TIMEOUT: Duration = Duration::from_secs(30);
 
-        let tls = native_tls::TlsConnector::new()
-            .map_err(|e| imap::Error::Bad(format!("TLS init failed: {e}")))?;
+        let tls = native_tls::TlsConnector::new().map_err(|e| imap::Error::Bad(format!("TLS init failed: {e}")))?;
 
         let addrs: Vec<_> = (creds.host.as_str(), creds.port)
             .to_socket_addrs()
@@ -809,11 +808,13 @@ impl ImapClient {
 
         let deadline = Instant::now() + OVERALL_TIMEOUT;
         let mut failures = Vec::new();
+        let mut attempted = 0;
         for addr in addrs {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 break;
             }
+            attempted += 1;
             let tcp = match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT.min(remaining)) {
                 Ok(tcp) => tcp,
                 Err(err) => {
@@ -850,11 +851,14 @@ impl ImapClient {
             }
         }
         if deadline.saturating_duration_since(Instant::now()).is_zero() {
-            failures.push(format!("overall connection deadline of {}s exceeded", OVERALL_TIMEOUT.as_secs()));
+            failures.push(format!(
+                "overall connection deadline of {}s exceeded",
+                OVERALL_TIMEOUT.as_secs()
+            ));
         }
         Err(imap::Error::Bad(format!(
             "IMAP connection failed after {} address attempt(s): {}",
-            failures.iter().filter(|s| s.contains(": TCP connect failed:") || s.contains(": TLS handshake failed:") || s.contains(": overall connection deadline")).count(),
+            attempted,
             failures.join("; ")
         )))
     }
@@ -3217,5 +3221,4 @@ mod tests {
         );
         server.join().unwrap();
     }
-
 }
