@@ -141,6 +141,9 @@ interface ChatStore {
     contextThreadId?: string | null,
     contextAccountId?: string | null,
     contextView?: api.ChatViewContext | null,
+    /** The account the sending surface shows; a first message creates its
+     * conversation there. Falls back to `currentAccountId`. */
+    accountId?: string | null,
   ) => Promise<void>;
   /**
    * "This answer is wrong" → a fresh corrective turn.
@@ -206,6 +209,8 @@ interface TurnOptions {
   correction?: api.ChatCorrection | null;
   research?: boolean;
   researchEstimateId?: string | null;
+  /** Account for the conversation a first message creates. */
+  accountId?: string | null;
 }
 
 /** A research question waiting for the user to confirm its estimate. */
@@ -499,8 +504,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
 
-    sendMessage: async (content, contextThreadId, contextAccountId, contextView) => {
-      const opts: TurnOptions = { contextThreadId, contextAccountId, contextView };
+    sendMessage: async (content, contextThreadId, contextAccountId, contextView, accountId) => {
+      const opts: TurnOptions = { contextThreadId, contextAccountId, contextView, accountId };
       if (!get().researchMode) {
         await get().dispatchTurn(content, opts);
         return;
@@ -509,10 +514,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // is spent on this question either way.
       set({ researchMode: false });
       // The estimate is asked per conversation; a first question creates it.
-      const accountId = get().currentAccountId;
-      if (!get().activeConversationId && accountId) {
+      const owner = accountId ?? get().currentAccountId;
+      if (!get().activeConversationId && owner) {
         try {
-          await get().createConversation(accountId);
+          await get().createConversation(owner);
         } catch (e) {
           set({ error: errorText(e) });
           return;
@@ -614,7 +619,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // isSending lock, so a second click meanwhile cannot start another one.
       let conversationId = get().activeConversationId;
       if (!conversationId) {
-        const accountId = get().currentAccountId;
+        // The surface's account, not only the store's: right after an account
+        // switch `reset()` leaves `currentAccountId` null until `selectAccount`
+        // runs again, and a click in that gap must still land.
+        const accountId = opts.accountId ?? get().currentAccountId;
         if (!accountId) {
           set((s) => ({ isSending: false, error: 'No active conversation', messages: withoutPending(s.messages) }));
           return;

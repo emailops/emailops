@@ -24,3 +24,43 @@
   expected_tools_not_called: ["generate_email_draft"]
   expected_output: "Carla reported that on iOS Safari the bottom nav overlaps the footer on the pricing page. You replied that it was a safe-area-inset issue, that the fix is on staging, and asked her to confirm on her device. Nothing is waiting on you: the open point is Carla's confirmation. Links email:// to the messages."
   metrics: [answer_relevancy, faithfulness]
+
+# The unanswered-thread starter. On the demo persona the newest thread where
+# someone else wrote last is the order-processing bug, and that last word is a
+# thank-you: the answer must say nothing is needed rather than invent a request.
+# The UI sends it grounded in that thread (the starter carries its id), which is
+# what `ambient_thread_subject` reproduces.
+- id: starter_reply_unanswered_bug
+  question: "In “Production bug: orders stuck in 'processing'”, Marisol Vega wrote last and I haven't answered. Do they need anything from me? If so, what and by when?"
+  account: "ulises@emailopslabs.dev"
+  ambient_thread_subject: "Production bug: orders stuck in 'processing'"
+  category: thread_summary
+  tier: full
+  expected_answer_contains_any: ["moving again", "Moving again"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "Marisol reported orders stuck in 'processing'; you rolled back the queue change and lengthened the carrier webhook timeout. Her last message confirms the orders are moving again and thanks you, so she needs nothing more from you; at most a short acknowledgement. Links email:// to the messages."
+  metrics: [answer_relevancy, faithfulness]
+
+# The starters shown while the docked panel has the open thread as context
+# (`chat:starters.openThread.*.prompt`): the turn is grounded in that thread.
+- id: starter_open_thread_summary
+  question: "Summarise this thread: who is involved, what has been agreed and what is still open."
+  account: "ulises@emailopslabs.dev"
+  ambient_thread_subject: "Mobile nav overlapping the footer"
+  category: thread_summary
+  tier: full
+  expected_answer_contains_any: ["safe-area", "safe area", "staging"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "Carla (Bahia Studio) and you. She reported the bottom nav overlapping the footer on iOS Safari on the pricing page; you traced it to a safe-area-inset issue and put the fix on staging. Still open: Carla confirming the fix on her device."
+  metrics: [answer_relevancy, faithfulness]
+
+- id: starter_open_thread_asks
+  question: "What is being asked of me in this thread, and by when?"
+  account: "ulises@emailopslabs.dev"
+  ambient_thread_subject: "Production bug: orders stuck in 'processing'"
+  category: thread_summary
+  tier: full
+  expected_answer_contains_any: ["processing", "ASAP", "moving again"]
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_output: "Marisol asked you to look ASAP at orders stuck in 'processing' that never move to 'shipped'. You already handled it (rolled back the queue change, longer webhook timeout) and she confirmed the orders are moving again, so nothing is pending now."
+  metrics: [answer_relevancy, faithfulness]

@@ -131,7 +131,9 @@ export function ChatPanel({
     }
   };
 
-  const handleSend = async (content: string) => {
+  // `threadId`: a starter about one thread of this account grounds the turn in
+  // it, as the context chip does.
+  const handleSend = async (content: string, threadId?: string) => {
     // A first message creates its conversation inside the store, after the
     // user's text is already on screen (`chatStore.dispatchTurn`).
     if (!accountId) return;
@@ -141,7 +143,8 @@ export function ChatPanel({
     // The thread's OWN account travels with it — in unified mode it differs
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
-    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null, viewContext);
+    const grounding = threadId ? { threadId, accountId } : turnContext;
+    await sendMessage(content, grounding?.threadId ?? null, grounding?.accountId ?? null, viewContext, accountId);
   };
 
   const header = (
@@ -220,9 +223,10 @@ export function ChatPanel({
             <p className="text-center text-sm leading-relaxed text-gray-500">{t('chat:panel.emptyHint')}</p>
             <ChatStarters
               accountId={accountId}
+              threadContext={contextActive}
               compact
               disabled={isSending || streamingMessageId !== null}
-              onSend={(prompt) => void handleSend(prompt)}
+              onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
               onPrefill={prefillInput}
               onSomethingElse={() => setInputFocusNonce((n) => (n ?? 0) + 1)}
             />

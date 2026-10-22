@@ -50,6 +50,10 @@
   "starters": {
     "title": "Demandes suggérées",
     "somethingElse": "Autre chose…",
+    "reply": {
+      "label": "Sans réponse : {{name}} — « {{subject}} »",
+      "prompt": "Dans « {{subject}} », {{name}} a écrit en dernier et je n’ai pas répondu. Attend-on quelque chose de moi ? Si oui, quoi et pour quand ?"
+    },
     "sender": {
       "label": "Qu’est-ce que {{name}} m’a écrit ?",
       "prompt": "Qu’est-ce que {{name}} m’a écrit récemment ? Résume chaque e-mail en une ligne et cite-le."
@@ -57,6 +61,20 @@
     "thread": {
       "label": "Résumer « {{subject}} »",
       "prompt": "Résume le fil « {{subject}} » et dis-moi si quelque chose y attend une action de ma part."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Résumer ce fil",
+        "prompt": "Résume ce fil : qui y participe, ce qui a été convenu et ce qui reste en suspens."
+      },
+      "asks": {
+        "label": "Qu’attend-on de moi ici ?",
+        "prompt": "Qu’attend-on de moi dans ce fil, et pour quand ?"
+      },
+      "reply": {
+        "label": "Rédiger une réponse",
+        "prompt": "Rédige une réponse à ce fil qui "
+      }
     }
   },
   "message": {

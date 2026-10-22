@@ -26,11 +26,16 @@ pub struct SenderCandidate {
     pub threads: u32,
 }
 
-/// A recent inbound thread in the chat's category scope.
+/// A recent inbound thread in the chat's category scope, described by its
+/// newest inbound email.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadCandidate {
+    pub thread_id: String,
     pub subject: String,
     pub sender_email: String,
+    pub sender_name: String,
+    /// The owner has not written in the thread since that email.
+    pub awaiting_reply: bool,
 }
 
 impl Database {
@@ -80,8 +85,19 @@ impl Database {
             return Ok(Vec::new());
         }
         let (scope, mut args) = scope_clause(account_id, categories, own_addresses, since);
+        // The owner's later messages can sit in any mailbox (Sent, archive), so
+        // this looks across the whole thread, not just the inbox scope.
+        let answered = format!(
+            "EXISTS (SELECT 1 FROM emails o WHERE o.account_id = ?1 AND o.thread_id = emails.thread_id
+                     AND o.is_deleted = 0 AND o.timestamp > emails.timestamp AND {})",
+            owner_match(
+                "o.sender_email",
+                owner_first_param(&args, own_addresses),
+                own_addresses.len()
+            )
+        );
         let sql = format!(
-            "SELECT thread_id, subject, sender_email FROM emails WHERE {scope}
+            "SELECT thread_id, subject, sender_email, sender, NOT {answered} FROM emails WHERE {scope}
              ORDER BY timestamp DESC, id DESC LIMIT ?{}",
             args.len() + 1
         );
@@ -89,19 +105,19 @@ impl Database {
         let conn = self.reader();
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                ThreadCandidate {
-                    subject: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    sender_email: row.get(2)?,
-                },
-            ))
+            Ok(ThreadCandidate {
+                thread_id: row.get(0)?,
+                subject: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                sender_email: row.get(2)?,
+                sender_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                awaiting_reply: row.get(4)?,
+            })
         })?;
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for row in rows {
-            let (thread_id, candidate) = row?;
-            if seen.insert(thread_id) {
+            let candidate = row?;
+            if seen.insert(candidate.thread_id.clone()) {
                 out.push(candidate);
                 if out.len() == THREAD_LIMIT {
                     break;
@@ -132,11 +148,7 @@ fn scope_clause(
             args.push(Box::new(c.clone()));
         }
     }
-    // `sender_email = ? COLLATE NOCASE` keeps idx_emails_sender_email_nocase usable.
-    let owners: Vec<String> = (0..own_addresses.len())
-        .map(|i| format!("sender_email = ?{} COLLATE NOCASE", args.len() + 1 + i))
-        .collect();
-    let by_owner = format!("({})", owners.join(" OR "));
+    let by_owner = owner_match("sender_email", args.len() + 1, own_addresses.len());
     clause.push_str(&format!(
         " AND NOT {by_owner} AND thread_id IN (SELECT thread_id FROM emails WHERE account_id = ?1 AND {by_owner})"
     ));
@@ -144,6 +156,20 @@ fn scope_clause(
         args.push(Box::new(a.clone()));
     }
     (clause, args)
+}
+
+/// `(<column> = ?first COLLATE NOCASE OR …)` over `count` owner addresses.
+/// The `COLLATE NOCASE` form keeps idx_emails_sender_email_nocase usable.
+fn owner_match(column: &str, first: usize, count: usize) -> String {
+    let parts: Vec<String> = (0..count)
+        .map(|i| format!("{column} = ?{} COLLATE NOCASE", first + i))
+        .collect();
+    format!("({})", parts.join(" OR "))
+}
+
+/// Where `scope_clause` put the owner addresses: they are its last arguments.
+fn owner_first_param(args: &[Box<dyn rusqlite::ToSql>], own_addresses: &[String]) -> usize {
+    args.len() - own_addresses.len() + 1
 }
 
 #[cfg(test)]
@@ -268,6 +294,36 @@ mod tests {
         let threads = db.chat_starter_threads("acct", &primary(), &own(), 50).unwrap();
         let got: Vec<&str> = threads.iter().map(|t| t.subject.as_str()).collect();
         assert_eq!(got, vec!["Talked"]);
+    }
+
+    #[test]
+    fn a_thread_whose_newest_email_is_inbound_awaits_a_reply() {
+        let db = Database::new_for_testing().unwrap();
+        insert(&db, "1", "t1", "ana@acme.test", "Waiting", 100, "primary", "inbox");
+        reply(&db, "r1", "t1");
+        let threads = db.chat_starter_threads("acct", &primary(), &own(), 50).unwrap();
+        assert!(threads[0].awaiting_reply);
+        assert_eq!(threads[0].sender_name, "Name ana@acme.test");
+        assert_eq!(threads[0].thread_id, "t1");
+    }
+
+    #[test]
+    fn a_thread_the_owner_answered_last_does_not_await_a_reply() {
+        let db = Database::new_for_testing().unwrap();
+        insert(&db, "1", "t1", "ana@acme.test", "Answered", 100, "primary", "inbox");
+        // The answer sits in Sent, outside the inbox scope the scan reads.
+        insert(
+            &db,
+            "r1",
+            "t1",
+            "me@example.com",
+            "Re: Answered",
+            150,
+            "primary",
+            "sent",
+        );
+        let threads = db.chat_starter_threads("acct", &primary(), &own(), 50).unwrap();
+        assert!(!threads[0].awaiting_reply);
     }
 
     #[test]

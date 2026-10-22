@@ -13,8 +13,18 @@ const FIXED: ChatStarter[] = [
   { kind: 'draft', action: 'prefill' },
 ];
 
+// With the open thread armed as context every answer is grounded in that thread
+// alone, so mailbox-wide suggestions would mislead: these replace them.
+type OpenThreadKind = 'summary' | 'asks' | 'reply';
+const OPEN_THREAD: { kind: OpenThreadKind; action: ChatStarter['action'] }[] = [
+  { kind: 'summary', action: 'send' },
+  { kind: 'asks', action: 'send' },
+  { kind: 'reply', action: 'prefill' },
+];
+
 const ICONS: Record<ChatStarter['kind'], string> = {
   today: '📋',
+  reply: '↩️',
   sender: '👤',
   thread: '🧵',
   thisWeek: '📅',
@@ -23,10 +33,13 @@ const ICONS: Record<ChatStarter['kind'], string> = {
 
 interface ChatStartersProps {
   accountId: string;
+  /** The open thread is armed as the turn's context (the docked panel's chip). */
+  threadContext?: boolean;
   disabled: boolean;
   /** Tighter rows for the narrow side panel. */
   compact?: boolean;
-  onSend: (prompt: string) => void;
+  /** `threadId`: ground the turn in that thread (the unanswered-thread row). */
+  onSend: (prompt: string, threadId?: string) => void;
   onPrefill: (text: string) => void;
   /** The last row: the user wants to type their own request. */
   onSomethingElse: () => void;
@@ -34,11 +47,14 @@ interface ChatStartersProps {
 
 /**
  * The requests an empty conversation suggests, as a vertical list: today's
- * mail, a recent correspondent, a recent thread, this week and a draft. The
- * backend picks them from the mailbox; the wording comes from the locales.
+ * mail, a thread waiting on a reply, a recent correspondent, a recent thread,
+ * this week and a draft. The backend picks them from the mailbox; the wording
+ * comes from the locales. With the open thread as context, the list is about
+ * that thread instead.
  */
 export function ChatStarters({
   accountId,
+  threadContext = false,
   disabled,
   compact = false,
   onSend,
@@ -67,6 +83,13 @@ export function ChatStarters({
 
   const text = (s: ChatStarter): { label: string; prompt: string } => {
     switch (s.kind) {
+      case 'reply': {
+        const params = { name: s.senderName ?? '', subject: s.subject ?? '' };
+        return {
+          label: t('chat:starters.reply.label', params),
+          prompt: t('chat:starters.reply.prompt', params),
+        };
+      }
       case 'sender': {
         const name = s.senderName ?? '';
         return {
@@ -109,23 +132,42 @@ export function ChatStarters({
       onKeyDown={onKeyDown}
       className="flex w-full max-w-md flex-col gap-1.5"
     >
-      {starters.map((s) => {
-        const { label, prompt } = text(s);
-        return (
-          <button
-            key={`${s.kind}-${label}`}
-            type="button"
-            data-testid="chat-starter"
-            disabled={disabled}
-            title={label}
-            onClick={() => (s.action === 'prefill' ? onPrefill(prompt) : onSend(prompt))}
-            className={row}
-          >
-            <span aria-hidden="true">{ICONS[s.kind]}</span>
-            <span className="truncate">{label}</span>
-          </button>
-        );
-      })}
+      {(threadContext
+        ? OPEN_THREAD.map((s) => ({
+            key: `openThread-${s.kind}`,
+            icon: '✉️',
+            action: s.action,
+            threadId: undefined,
+            label: t(`chat:starters.openThread.${s.kind}.label`),
+            prompt: t(`chat:starters.openThread.${s.kind}.prompt`),
+          }))
+        : starters.map((s) => {
+            const { label, prompt } = text(s);
+            return {
+              key: `${s.kind}-${label}`,
+              icon: ICONS[s.kind],
+              action: s.action,
+              threadId: s.threadId,
+              label,
+              prompt,
+            };
+          })
+      ).map(({ key, icon, action, threadId, label, prompt }) => (
+        <button
+          key={key}
+          type="button"
+          data-testid="chat-starter"
+          disabled={disabled}
+          title={label}
+          onClick={() =>
+            action === 'prefill' ? onPrefill(prompt) : threadId ? onSend(prompt, threadId) : onSend(prompt)
+          }
+          className={row}
+        >
+          <span aria-hidden="true">{icon}</span>
+          <span className="truncate">{label}</span>
+        </button>
+      ))}
       <button
         type="button"
         data-testid="chat-starter-other"

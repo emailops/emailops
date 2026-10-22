@@ -47,11 +47,12 @@ afterEach(() => {
   container.remove();
 });
 
-async function render() {
+async function render(threadContext = false) {
   await act(async () => {
     root.render(
       <ChatStarters
         accountId="acct"
+        threadContext={threadContext}
         disabled={false}
         onSend={onSend}
         onPrefill={onPrefill}
@@ -135,5 +136,36 @@ describe('ChatStarters', () => {
     await press('ArrowUp');
     await press('ArrowUp');
     expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it('names the person and the thread waiting on a reply', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue([
+      { kind: 'today', action: 'send' },
+      { kind: 'reply', action: 'send', senderName: 'Ana Ruiz', subject: 'Kickoff agenda', threadId: 'thread-1' },
+    ]);
+    await render();
+    expect(labels()[1]).toBe('chat:starters.reply.label|Ana Ruiz,Kickoff agenda');
+    await act(async () => rows()[1].click());
+    // The thread travels with the prompt, so the answer is grounded in it.
+    expect(onSend).toHaveBeenCalledWith('chat:starters.reply.prompt|Ana Ruiz,Kickoff agenda', 'thread-1');
+  });
+
+  it('offers requests about the open thread instead of the mailbox ones', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
+    await render(true);
+    expect(labels()).toEqual([
+      'chat:starters.openThread.summary.label',
+      'chat:starters.openThread.asks.label',
+      'chat:starters.openThread.reply.label',
+    ]);
+  });
+
+  it('puts a reply stem for the open thread in the input', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
+    await render(true);
+    await act(async () => rows()[2].click());
+    expect(onPrefill).toHaveBeenCalledWith('chat:starters.openThread.reply.prompt');
+    await act(async () => rows()[0].click());
+    expect(onSend).toHaveBeenCalledWith('chat:starters.openThread.summary.prompt');
   });
 });

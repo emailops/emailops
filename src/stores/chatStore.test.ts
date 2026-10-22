@@ -1129,3 +1129,32 @@ describe('the processing status of a first message', () => {
     expect(useChatStore.getState().streamingPhase).toBe('runningTools');
   });
 });
+
+describe('a first message while the store has no account yet', () => {
+  // Right after an account switch `reset()` clears `currentAccountId` until the
+  // surface's `selectAccount` runs again; a click in that gap must still land.
+  it('creates its conversation on the account the surface passes', async () => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: null,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+      isSending: false,
+      researchMode: false,
+      error: null,
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.createChatConversation).mockResolvedValue({
+      id: 'conv-new',
+      accountId: 'acct',
+      title: 'New chat',
+      createdAt: 0,
+      updatedAt: 0,
+    } as never);
+    vi.mocked(api.sendChatMessage).mockReturnValue(new Promise(() => {}));
+    void useChatStore.getState().sendMessage('hola', null, null, null, 'acct');
+    await vi.waitFor(() => expect(api.createChatConversation).toHaveBeenCalledWith('acct'));
+    expect(useChatStore.getState().error).toBeNull();
+  });
+});

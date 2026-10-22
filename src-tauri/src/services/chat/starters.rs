@@ -2,7 +2,8 @@
 //
 // The chat suggests a handful of requests the user can click: fixed ones
 // (today's mail, this week, a draft) plus ones built from the account's own
-// mail (a frequent recent correspondent, a recent thread). No model call — the
+// mail (a thread waiting on the user's reply, a frequent recent correspondent,
+// a recent thread). No model call — the
 // mailbox-derived ones come straight from SQLite, so the list shows instantly.
 //
 // The backend picks *what* to suggest; the frontend words it in the user's
@@ -26,6 +27,7 @@ pub const MAX_SUBJECT_CHARS: usize = 60;
 #[serde(rename_all = "camelCase")]
 pub enum StarterKind {
     Today,
+    Reply,
     Sender,
     Thread,
     ThisWeek,
@@ -50,6 +52,10 @@ pub struct ChatStarter {
     pub sender_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// The thread a `Reply` starter is about: the turn is grounded in it, the
+    /// way the panel's open-thread chip grounds a turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
 }
 
 /// The starters for an empty conversation on `account_id`, read from mail in
@@ -80,24 +86,42 @@ pub fn plan_chat_starters(
         !email.is_empty() && !own_addresses.contains(&email) && classify_kind(&email) == "person"
     };
 
-    let mut ranked: Vec<&SenderCandidate> = senders.iter().filter(|s| is_person(&s.email)).collect();
-    ranked.sort_by(|a, b| b.threads.cmp(&a.threads).then_with(|| a.email.cmp(&b.email)));
-    let top = ranked.first();
-    let sender = top.map(|s| {
-        let name = s.name.trim();
-        if name.is_empty() { s.email.trim() } else { name }.to_string()
-    });
+    let display = |name: &str, email: &str| {
+        let name = name.trim();
+        if name.is_empty() { email.trim() } else { name }.to_string()
+    };
 
-    // Prefer a thread from someone else, so the two mailbox starters do not
-    // both point at the same person; fall back to theirs when it is the only one.
-    let eligible: Vec<(&ThreadCandidate, String)> = threads
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+
+    let mut eligible: Vec<(&ThreadCandidate, String)> = threads
         .iter()
         .filter(|t| is_person(&t.sender_email))
         .map(|t| (t, clean_subject(&t.subject)))
         .filter(|(_, s)| !s.is_empty())
         .collect();
-    let same_person =
-        |t: &ThreadCandidate| top.is_some_and(|s| s.email.trim().eq_ignore_ascii_case(t.sender_email.trim()));
+
+    // The newest thread where someone is waiting on the user. It leaves the
+    // pool, so the recent-thread starter does not repeat it.
+    let reply = eligible
+        .iter()
+        .position(|(t, _)| t.awaiting_reply)
+        .map(|i| eligible.remove(i));
+
+    // The most frequent correspondent, preferring someone other than the person
+    // waiting on a reply, so two rows do not name the same person.
+    let mut ranked: Vec<&SenderCandidate> = senders.iter().filter(|s| is_person(&s.email)).collect();
+    ranked.sort_by(|a, b| b.threads.cmp(&a.threads).then_with(|| a.email.cmp(&b.email)));
+    let top = ranked
+        .iter()
+        .find(|s| !reply.as_ref().is_some_and(|(t, _)| same(&s.email, &t.sender_email)))
+        .or_else(|| ranked.first())
+        .copied();
+    let sender = top.map(|s| display(&s.name, &s.email));
+    let reply = reply.map(|(t, subject)| (display(&t.sender_name, &t.sender_email), subject, t.thread_id.clone()));
+
+    // Prefer a thread from someone else, so the two mailbox starters do not
+    // both point at the same person; fall back to theirs when it is the only one.
+    let same_person = |t: &ThreadCandidate| top.is_some_and(|s| same(&s.email, &t.sender_email));
     let subject = eligible
         .iter()
         .find(|(t, _)| !same_person(t))
@@ -105,6 +129,14 @@ pub fn plan_chat_starters(
         .map(|(_, s)| s.clone());
 
     let mut starters = vec![fixed(StarterKind::Today, StarterAction::Send)];
+    if let Some((name, subject, thread_id)) = reply {
+        starters.push(ChatStarter {
+            sender_name: Some(name),
+            subject: Some(subject),
+            thread_id: Some(thread_id),
+            ..fixed(StarterKind::Reply, StarterAction::Send)
+        });
+    }
     if let Some(name) = sender {
         starters.push(ChatStarter {
             sender_name: Some(name),
@@ -128,6 +160,7 @@ fn fixed(kind: StarterKind, action: StarterAction) -> ChatStarter {
         action,
         sender_name: None,
         subject: None,
+        thread_id: None,
     }
 }
 
@@ -165,8 +198,19 @@ mod tests {
 
     fn thread(subject: &str, sender_email: &str) -> ThreadCandidate {
         ThreadCandidate {
+            thread_id: format!("thread-{subject}"),
             subject: subject.to_string(),
             sender_email: sender_email.to_string(),
+            sender_name: String::new(),
+            awaiting_reply: false,
+        }
+    }
+
+    fn awaiting(subject: &str, sender_email: &str, sender_name: &str) -> ThreadCandidate {
+        ThreadCandidate {
+            sender_name: sender_name.to_string(),
+            awaiting_reply: true,
+            ..thread(subject, sender_email)
         }
     }
 
@@ -401,5 +445,91 @@ mod tests {
         let subject = starters[1].subject.clone().unwrap_or_default();
         assert_eq!(subject.chars().count(), MAX_SUBJECT_CHARS + 1);
         assert!(subject.ends_with('…'));
+    }
+
+    #[test]
+    fn a_thread_awaiting_a_reply_is_suggested_right_after_today() {
+        let starters = plan_chat_starters(
+            &[sender("bob@acme.test", "Bob Lee", 3)],
+            &[
+                thread("Q3 budget", "cy@acme.test"),
+                awaiting("Kickoff agenda", "ana@acme.test", "Ana Ruiz"),
+            ],
+            &own(),
+        );
+        assert_eq!(
+            kinds(&starters),
+            vec![
+                StarterKind::Today,
+                StarterKind::Reply,
+                StarterKind::Sender,
+                StarterKind::Thread,
+                StarterKind::ThisWeek,
+                StarterKind::Draft
+            ]
+        );
+        assert_eq!(starters[1].sender_name.as_deref(), Some("Ana Ruiz"));
+        assert_eq!(starters[1].subject.as_deref(), Some("Kickoff agenda"));
+    }
+
+    #[test]
+    fn the_reply_starter_carries_its_thread_so_the_turn_is_grounded_in_it() {
+        let starters = plan_chat_starters(&[], &[awaiting("Kickoff agenda", "ana@acme.test", "Ana")], &own());
+        assert_eq!(starters[1].thread_id.as_deref(), Some("thread-Kickoff agenda"));
+    }
+
+    #[test]
+    fn the_newest_thread_awaiting_a_reply_is_the_one_suggested() {
+        let starters = plan_chat_starters(
+            &[],
+            &[
+                awaiting("Newest", "ana@acme.test", "Ana"),
+                awaiting("Older", "bob@acme.test", "Bob"),
+            ],
+            &own(),
+        );
+        assert_eq!(starters[1].subject.as_deref(), Some("Newest"));
+    }
+
+    #[test]
+    fn no_reply_starter_when_nothing_awaits_a_reply() {
+        let starters = plan_chat_starters(&[], &[thread("Q3 budget", "ana@acme.test")], &own());
+        assert!(!kinds(&starters).contains(&StarterKind::Reply));
+    }
+
+    #[test]
+    fn an_automated_thread_never_awaits_a_reply() {
+        let starters = plan_chat_starters(&[], &[awaiting("Your order", "noreply@shop.test", "Shop")], &own());
+        assert!(!kinds(&starters).contains(&StarterKind::Reply));
+    }
+
+    #[test]
+    fn the_thread_awaiting_a_reply_is_not_suggested_twice() {
+        let starters = plan_chat_starters(
+            &[],
+            &[
+                awaiting("Kickoff agenda", "ana@acme.test", "Ana"),
+                thread("Q3 budget", "bob@acme.test"),
+            ],
+            &own(),
+        );
+        let subjects: Vec<_> = starters.iter().filter_map(|s| s.subject.as_deref()).collect();
+        assert_eq!(subjects, vec!["Kickoff agenda", "Q3 budget"]);
+    }
+
+    #[test]
+    fn the_suggested_sender_is_someone_other_than_the_one_awaiting_a_reply_when_it_can() {
+        let starters = plan_chat_starters(
+            &[sender("ana@acme.test", "Ana", 5), sender("bob@acme.test", "Bob", 2)],
+            &[awaiting("Kickoff agenda", "ana@acme.test", "Ana")],
+            &own(),
+        );
+        assert_eq!(starters[2].sender_name.as_deref(), Some("Bob"));
+    }
+
+    #[test]
+    fn a_reply_starter_without_a_display_name_is_named_by_address() {
+        let starters = plan_chat_starters(&[], &[awaiting("Kickoff", "ana@acme.test", " ")], &own());
+        assert_eq!(starters[1].sender_name.as_deref(), Some("ana@acme.test"));
     }
 }

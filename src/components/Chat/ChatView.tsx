@@ -108,12 +108,13 @@ export function ChatView({
     }
   };
 
-  const handleSend = async (content: string) => {
+  // `threadId`: a starter about one thread of this account grounds the turn in it.
+  const handleSend = async (content: string, threadId?: string) => {
     // A first message creates its conversation inside the store, after the
     // user's text is already on screen (`chatStore.dispatchTurn`).
     if (!accountId) return;
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
-    await sendMessage(content, null, null, viewContext);
+    await sendMessage(content, threadId ?? null, threadId ? accountId : null, viewContext, accountId);
   };
 
   if (!accountId) {
@@ -166,7 +167,7 @@ export function ChatView({
               <ChatStarters
                 accountId={accountId}
                 disabled={isSending}
-                onSend={(prompt) => void handleSend(prompt)}
+                onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
                 onPrefill={(text) => {
                   setInputPrefillText(text);
                   setInputPrefillNonce((n) => n + 1);
