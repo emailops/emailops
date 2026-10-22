@@ -117,6 +117,7 @@ export function ChatStarters({
             type="button"
             data-testid="chat-starter"
             disabled={disabled}
+            title={label}
             onClick={() => (s.action === 'prefill' ? onPrefill(prompt) : onSend(prompt))}
             className={row}
           >

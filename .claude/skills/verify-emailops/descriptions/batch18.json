@@ -1,0 +1,37 @@
+{
+  "rust": {
+    "src-tauri/src/services/chat/starters.rs::the_executor_suggests_a_recent_correspondent_and_skips_the_owner": "Contra una base en memoria, las sugerencias incluyen al remitente reciente con quien hay conversación y su hilo, y nunca al propio usuario ni correo fuera de la ventana de 30 días.",
+    "src-tauri/src/services/chat/starters.rs::an_empty_mailbox_gets_only_the_fixed_starters": "Sin correo utilizable, el chat vacío sugiere solo las peticiones fijas: hoy, esta semana y redactar un borrador.",
+    "src-tauri/src/services/chat/starters.rs::mailbox_starters_sit_between_today_and_this_week": "Las sugerencias del buzón (remitente e hilo) aparecen entre «Resumen de hoy» y «Esta semana».",
+    "src-tauri/src/services/chat/starters.rs::only_the_draft_starter_prefills": "Solo «Redactar un borrador» rellena el campo de texto; el resto se envía al pulsarlo.",
+    "src-tauri/src/services/chat/starters.rs::the_sender_with_most_threads_is_suggested": "Se sugiere el remitente con más hilos compartidos.",
+    "src-tauri/src/services/chat/starters.rs::a_thread_count_tie_is_broken_by_address_so_the_pick_is_stable": "Con empate de hilos, gana la dirección menor, para que la sugerencia no cambie entre aperturas.",
+    "src-tauri/src/services/chat/starters.rs::the_owner_is_never_suggested_as_a_sender": "El propio usuario nunca aparece como remitente sugerido, aunque cambie mayúsculas en su dirección.",
+    "src-tauri/src/services/chat/starters.rs::automated_senders_are_never_suggested": "Remitentes automáticos (noreply, newsletter…) nunca se sugieren.",
+    "src-tauri/src/services/chat/starters.rs::no_sender_starter_when_every_candidate_is_excluded": "Si todos los remitentes quedan excluidos, no hay sugerencia de remitente.",
+    "src-tauri/src/services/chat/starters.rs::a_sender_without_a_display_name_is_named_by_address": "Un remitente sin nombre visible se muestra por su dirección.",
+    "src-tauri/src/services/chat/starters.rs::the_newest_thread_is_suggested": "Se sugiere el hilo más reciente.",
+    "src-tauri/src/services/chat/starters.rs::threads_from_the_owner_or_automated_senders_are_skipped": "Los hilos cuyo último correo es del usuario o de un remitente automático se saltan.",
+    "src-tauri/src/services/chat/starters.rs::reply_and_forward_prefixes_are_stripped_from_the_subject": "Se quitan prefijos de respuesta y reenvío (Re:, Fwd:, RV:, AW:…) del asunto sugerido.",
+    "src-tauri/src/services/chat/starters.rs::the_thread_comes_from_someone_other_than_the_suggested_sender_when_it_can": "El hilo sugerido es de otra persona distinta al remitente sugerido cuando hay alternativa.",
+    "src-tauri/src/services/chat/starters.rs::the_suggested_sender_s_thread_is_used_when_there_is_no_other": "Si el único hilo es del remitente sugerido, se usa igualmente.",
+    "src-tauri/src/services/chat/starters.rs::a_thread_with_an_empty_subject_is_skipped": "Un hilo con asunto vacío (tras quitar prefijos) se salta.",
+    "src-tauri/src/services/chat/starters.rs::a_long_subject_is_cut_on_a_char_boundary_with_an_ellipsis": "Un asunto largo se corta a 60 caracteres, sin partir caracteres multibyte, y acaba en «…».",
+    "src-tauri/src/db/emails/chat_starters.rs::senders_are_ranked_by_threads_the_owner_also_wrote_in": "Los remitentes se ordenan por hilos en los que el usuario también escribió.",
+    "src-tauri/src/db/emails/chat_starters.rs::a_sender_the_owner_never_wrote_back_to_is_not_a_correspondent": "Un remitente al que el usuario nunca contestó (p. ej. un boletín) no cuenta como interlocutor.",
+    "src-tauri/src/db/emails/chat_starters.rs::senders_outside_the_window_scope_or_inbox_are_ignored": "Se ignoran correos fuera de la ventana, de otras categorías, fuera de la bandeja o borrados.",
+    "src-tauri/src/db/emails/chat_starters.rs::threads_come_newest_first_once_each": "Los hilos salen del más reciente al más antiguo, una vez cada uno.",
+    "src-tauri/src/db/emails/chat_starters.rs::a_thread_the_owner_never_wrote_in_is_skipped": "Un hilo en el que el usuario no participó se salta.",
+    "src-tauri/src/db/emails/chat_starters.rs::no_owner_address_means_no_candidates": "Sin direcciones propias conocidas no hay candidatos del buzón."
+  },
+  "vitest": {
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters lists the mailbox starters the backend returns, then \"something else\"": "Muestra las sugerencias que devuelve el backend y, al final, «Otra cosa…».",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters carries the full label as a tooltip, since a long one is cut": "Cada sugerencia lleva el texto completo como tooltip, porque uno largo se corta.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters keeps the fixed starters when the backend fails, and logs it": "Si el backend falla, se quedan las sugerencias fijas y el error va al panel de Logs.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters sends a mailbox starter with its own prompt": "Pulsar una sugerencia del buzón envía su petición.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters puts the draft stem in the input instead of sending it": "«Redactar un borrador» rellena el campo en vez de enviar.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters \"something else\" hands over to the input": "«Otra cosa…» pasa el control al campo de texto.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters moves between rows with the arrow keys": "Las flechas ↑/↓ mueven el foco entre sugerencias.",
+    "src/components/Chat/ChatInput.test.tsx::ChatInput focusNonce focuses the textarea and keeps what the user already typed": "Al cambiar focusNonce, el campo del chat recibe el foco sin borrar lo ya escrito."
+  }
+}

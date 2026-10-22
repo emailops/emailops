@@ -81,6 +81,12 @@ describe('ChatStarters', () => {
     );
   });
 
+  it('carries the full label as a tooltip, since a long one is cut', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
+    await render();
+    expect(rows()[2].title).toBe('chat:starters.thread.label|Kickoff agenda');
+  });
+
   it('keeps the fixed starters when the backend fails, and logs it', async () => {
     vi.mocked(getChatStarters).mockRejectedValue(new Error('db locked'));
     useLogStore.setState({ entries: [] });
