@@ -80,6 +80,7 @@
     "budgetSettings": "AI settings"
   },
   "processing": {
+    "queued": "Waiting for other AI work to finish…",
     "routing": "Routing…",
     "retrieving": "Retrieving emails…",
     "searchingContacts": "Searching contacts…",

@@ -80,6 +80,7 @@
     "budgetSettings": "Ajustes de IA"
   },
   "processing": {
+    "queued": "Esperando a que termine otra tarea de IA…",
     "routing": "Enrutando…",
     "retrieving": "Recuperando correos…",
     "searchingContacts": "Buscando contactos…",

@@ -670,6 +670,7 @@ export interface ChatSourcesEvent {
  *  "Processing…" status the bubble shows before any answer tokens arrive.
  *  Mirrors the Rust `ChatPhase` enum (camelCase serde). */
 export type ChatPhase =
+  | 'queued'
   | 'routing'
   | 'retrieving'
   | 'searchingContacts'

@@ -1076,3 +1076,56 @@ describe('a first research question', () => {
     await vi.waitFor(() => expect(vi.mocked(api.estimateResearch).mock.calls[0]?.[0]).toBe('conv-new'));
   });
 });
+
+describe('the processing status of a first message', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: 'acct',
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+      isSending: false,
+      researchMode: false,
+      streamingMessageId: null,
+      streamingPhase: null,
+      backgroundTurns: {},
+      earlyStream: {},
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.createChatConversation).mockResolvedValue({
+      id: 'conv-new',
+      accountId: 'acct',
+      title: 'New chat',
+      createdAt: 0,
+      updatedAt: 0,
+    } as never);
+  });
+
+  it('keeps a phase that arrives during the send', async () => {
+    vi.mocked(api.sendChatMessage).mockImplementation(async () => {
+      useChatStore
+        .getState()
+        .handlePhase(phaseEvent({ conversationId: 'conv-new', messageId: 'msg-1', phase: 'retrieving' }));
+      return {
+        userMessage: { ...assistantMessage('user-1'), conversationId: 'conv-new', role: 'user', content: 'hola' },
+        assistantMessage: { ...assistantMessage('msg-1'), conversationId: 'conv-new' },
+      };
+    });
+    await useChatStore.getState().sendMessage('hola');
+    expect(useChatStore.getState().streamingMessageId).toBe('msg-1');
+    expect(useChatStore.getState().streamingPhase).toBe('retrieving');
+  });
+
+  it('shows a phase that arrives after the send returns', async () => {
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: { ...assistantMessage('user-1'), conversationId: 'conv-new', role: 'user', content: 'hola' },
+      assistantMessage: { ...assistantMessage('msg-1'), conversationId: 'conv-new' },
+    });
+    await useChatStore.getState().sendMessage('hola');
+    useChatStore
+      .getState()
+      .handlePhase(phaseEvent({ conversationId: 'conv-new', messageId: 'msg-1', phase: 'runningTools' }));
+    expect(useChatStore.getState().streamingPhase).toBe('runningTools');
+  });
+});

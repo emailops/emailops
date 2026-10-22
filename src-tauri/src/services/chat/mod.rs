@@ -83,7 +83,7 @@ pub(super) fn emit_log(level: &str, message: &str) {
 /// answer tokens stream. Fire-and-forget: a dropped phase event only costs a
 /// less-specific status, never correctness, so we swallow emit errors like the
 /// other one-shot chat events.
-pub(super) fn emit_phase(conversation_id: &str, message_id: &str, phase: ChatPhase) {
+pub(crate) fn emit_phase(conversation_id: &str, message_id: &str, phase: ChatPhase) {
     crate::services::events::emit(
         "chat-phase",
         ChatPhaseEvent {
@@ -92,6 +92,13 @@ pub(super) fn emit_phase(conversation_id: &str, message_id: &str, phase: ChatPha
             phase,
         },
     );
+}
+
+/// Whether a turn submitted now has to wait for a running task: every slot of
+/// the queue is taken. A chat turn goes in at interactive priority, so it skips
+/// whatever is pending and only ever waits for what is already running.
+pub fn turn_waits_in_queue(running: usize, concurrency: usize) -> bool {
+    running >= concurrency
 }
 
 /// Map a tool name to the specific processing phase shown while it runs, so the
@@ -860,6 +867,18 @@ mod tests {
         let zone = |offset| crate::services::clock::FixedClock::with_offset(0, offset);
         assert_eq!(local_day_start_in(day, &zone(0)), utc(2026, 4, 17, 0, 0));
         assert_eq!(local_day_start_in(day, &zone(7_200)), utc(2026, 4, 16, 22, 0));
+    }
+
+    #[test]
+    fn a_turn_waits_when_every_slot_of_the_queue_is_running() {
+        assert!(turn_waits_in_queue(1, 1));
+        assert!(turn_waits_in_queue(2, 2));
+    }
+
+    #[test]
+    fn a_turn_starts_at_once_when_a_slot_is_free() {
+        assert!(!turn_waits_in_queue(0, 1));
+        assert!(!turn_waits_in_queue(1, 2));
     }
 
     #[test]

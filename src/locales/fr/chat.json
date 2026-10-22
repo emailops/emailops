@@ -80,6 +80,7 @@
     "budgetSettings": "Paramètres IA"
   },
   "processing": {
+    "queued": "En attente de la fin d’une autre tâche d’IA…",
     "routing": "Routage…",
     "retrieving": "Récupération des courriels…",
     "searchingContacts": "Recherche de contacts…",

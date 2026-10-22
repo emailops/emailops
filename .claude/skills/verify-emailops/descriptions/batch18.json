@@ -22,7 +22,9 @@
     "src-tauri/src/db/emails/chat_starters.rs::senders_outside_the_window_scope_or_inbox_are_ignored": "Se ignoran correos fuera de la ventana, de otras categorías, fuera de la bandeja o borrados.",
     "src-tauri/src/db/emails/chat_starters.rs::threads_come_newest_first_once_each": "Los hilos salen del más reciente al más antiguo, una vez cada uno.",
     "src-tauri/src/db/emails/chat_starters.rs::a_thread_the_owner_never_wrote_in_is_skipped": "Un hilo en el que el usuario no participó se salta.",
-    "src-tauri/src/db/emails/chat_starters.rs::no_owner_address_means_no_candidates": "Sin direcciones propias conocidas no hay candidatos del buzón."
+    "src-tauri/src/db/emails/chat_starters.rs::no_owner_address_means_no_candidates": "Sin direcciones propias conocidas no hay candidatos del buzón.",
+    "src-tauri/src/services/chat/mod.rs::a_turn_waits_when_every_slot_of_the_queue_is_running": "Un turno de chat espera cuando todos los huecos de la cola de IA están ocupados; entonces se muestra «Esperando a que termine otra tarea de IA…».",
+    "src-tauri/src/services/chat/mod.rs::a_turn_starts_at_once_when_a_slot_is_free": "Con un hueco libre en la cola, el turno empieza ya y no se anuncia ninguna espera."
   },
   "vitest": {
     "src/components/Chat/ChatStarters.test.tsx::ChatStarters lists the mailbox starters the backend returns, then \"something else\"": "Muestra las sugerencias que devuelve el backend y, al final, «Otra cosa…».",
@@ -32,6 +34,13 @@
     "src/components/Chat/ChatStarters.test.tsx::ChatStarters puts the draft stem in the input instead of sending it": "«Redactar un borrador» rellena el campo en vez de enviar.",
     "src/components/Chat/ChatStarters.test.tsx::ChatStarters \"something else\" hands over to the input": "«Otra cosa…» pasa el control al campo de texto.",
     "src/components/Chat/ChatStarters.test.tsx::ChatStarters moves between rows with the arrow keys": "Las flechas ↑/↓ mueven el foco entre sugerencias.",
-    "src/components/Chat/ChatInput.test.tsx::ChatInput focusNonce focuses the textarea and keeps what the user already typed": "Al cambiar focusNonce, el campo del chat recibe el foco sin borrar lo ya escrito."
+    "src/components/Chat/ChatInput.test.tsx::ChatInput focusNonce focuses the textarea and keeps what the user already typed": "Al cambiar focusNonce, el campo del chat recibe el foco sin borrar lo ya escrito.",
+    "src/stores/chatStore.test.ts::a send shows the user text at once puts the user bubble on screen before the backend answers": "Al enviar, el texto del usuario aparece en el acto, antes de que responda el backend.",
+    "src/stores/chatStore.test.ts::a send shows the user text at once swaps the pending bubble for the saved message": "Cuando el backend responde, la burbuja provisional se cambia por el mensaje guardado.",
+    "src/stores/chatStore.test.ts::a send shows the user text at once takes the pending bubble back when the send fails": "Si el envío falla, la burbuja provisional se retira y se muestra el error.",
+    "src/stores/chatStore.test.ts::a send shows the user text at once creates the conversation itself, and a second click meanwhile is ignored": "El primer mensaje crea su conversación detrás de la burbuja; un segundo clic mientras tanto no crea otra.",
+    "src/stores/chatStore.test.ts::a first research question creates its conversation before asking for the estimate": "Una primera pregunta en modo Research crea la conversación antes de pedir la estimación.",
+    "src/stores/chatStore.test.ts::the processing status of a first message keeps a phase that arrives during the send": "La fase de procesamiento que llega durante el envío se conserva en el primer mensaje.",
+    "src/stores/chatStore.test.ts::the processing status of a first message shows a phase that arrives after the send returns": "La fase que llega después del envío se muestra en el primer mensaje."
   }
 }

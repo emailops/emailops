@@ -80,6 +80,7 @@
     "budgetSettings": "KI-Einstellungen"
   },
   "processing": {
+    "queued": "Warte, bis eine andere KI-Aufgabe fertig ist…",
     "routing": "Route bestimmen…",
     "retrieving": "E-Mails abrufen…",
     "searchingContacts": "Kontakte suchen…",

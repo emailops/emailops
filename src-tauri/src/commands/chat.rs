@@ -317,9 +317,20 @@ pub async fn send_chat_message(
     let view_for_task = context_view.clone();
     let correction_for_task = correction.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
+    // The user is watching this turn: it goes ahead of queued classification and
+    // embedding work. If a task is already running it still waits for that one,
+    // so say so instead of leaving a bare placeholder until the turn starts.
+    let queue = state.ai_queue.snapshot();
+    if chat::turn_waits_in_queue(queue.running.len(), queue.concurrency) {
+        chat::emit_phase(
+            &conversation_id,
+            &assistant_message.id,
+            crate::models::ChatPhase::Queued,
+        );
+    }
     state
         .ai_queue
-        .submit_named(&task_label, async move {
+        .submit_priority(&task_label, async move {
             if let Err(e) = chat::run_chat_turn(
                 db,
                 registry,
