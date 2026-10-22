@@ -560,6 +560,38 @@ pub fn warm_token_cache(db: &Arc<Database>) {
     }
 }
 
+/// Debug-build fallback for a missing dev-table row. A debug build pointed at a
+/// data dir the release app also uses finds no dev row for an account the
+/// release app added or re-authenticated: that secret lives only in the
+/// keychain vault. Reading it from there (and letting the caller copy it into
+/// the dev table) avoids asking the user to sign in again in every dev build.
+/// No entry, or a keychain that cannot be read, is still `NeedsReauth`:
+/// signing in again from the dev build fixes both.
+fn dev_secret_from_vault(service: &str, account_id: &str) -> Result<String> {
+    let needs_reauth = || AppError::NeedsReauth {
+        account_id: account_id.to_string(),
+    };
+    match super::secrets_vault::get(service, account_id) {
+        Ok(Some(json)) => {
+            logger::log(
+                "info",
+                "account",
+                format!("[dev] Copied credentials for {account_id} from the keychain into the dev store"),
+            );
+            Ok(json)
+        }
+        Ok(None) => Err(needs_reauth()),
+        Err(e) => {
+            logger::log(
+                "error",
+                "account",
+                format!("[dev] Could not read credentials for {account_id} from the keychain: {e}"),
+            );
+            Err(needs_reauth())
+        }
+    }
+}
+
 pub fn get_tokens(account_id: &str) -> Result<OAuthTokens> {
     // Check cache first
     {
@@ -575,10 +607,14 @@ pub fn get_tokens(account_id: &str) -> Result<OAuthTokens> {
         let db = db_ref
             .as_ref()
             .ok_or_else(|| AppError::KeyringError("DB not initialized for dev token storage".to_string()))?;
-        // Missing dev-token row → user-recoverable: needs re-auth.
-        db.get_dev_tokens(account_id)?.ok_or_else(|| AppError::NeedsReauth {
-            account_id: account_id.to_string(),
-        })?
+        match db.get_dev_tokens(account_id)? {
+            Some(json) => json,
+            None => {
+                let json = dev_secret_from_vault(KEYRING_SERVICE, account_id)?;
+                db.store_dev_tokens(account_id, &json)?;
+                json
+            }
+        }
     } else {
         // Read via the secrets vault (single keychain item → single macOS
         // prompt). `Ok(None)` means the entry is missing (user-recoverable,
@@ -672,11 +708,14 @@ pub fn get_imap_credentials(account_id: &str) -> Result<ImapCredentials> {
         let db = db_ref
             .as_ref()
             .ok_or_else(|| AppError::KeyringError("DB not initialized for dev credential storage".to_string()))?;
-        let json = db
-            .get_dev_imap_creds(account_id)?
-            .ok_or_else(|| AppError::NeedsReauth {
-                account_id: account_id.to_string(),
-            })?;
+        let json = match db.get_dev_imap_creds(account_id)? {
+            Some(json) => json,
+            None => {
+                let json = dev_secret_from_vault(IMAP_KEYRING_PREFIX, account_id)?;
+                db.store_dev_imap_creds(account_id, &json)?;
+                json
+            }
+        };
         return serde_json::from_str(&json).map_err(AppError::JsonError);
     }
     let json = super::secrets_vault::get(IMAP_KEYRING_PREFIX, account_id)?.ok_or_else(|| AppError::NeedsReauth {
@@ -1744,6 +1783,108 @@ mod tests {
         fn delete_password(&self, _service: &str, _account: &str) -> Result<()> {
             Err(AppError::KeyringError("keychain unavailable".into()))
         }
+    }
+
+    // A debug build run on a data dir the release app also uses: the release
+    // app keeps secrets only in the keychain vault, the debug build only in the
+    // dev tables. An account added (or re-authenticated) in the release app had
+    // no dev row, so the debug build asked the user to sign in again for it.
+    fn with_dev_keychain<T>(backend: Arc<dyn Keychain>, f: impl FnOnce() -> T) -> T {
+        keychain::install(backend);
+        secrets_vault::reset_for_testing();
+        let out = f();
+        keychain::install(Arc::new(keychain::InMemoryKeychain::new()));
+        secrets_vault::reset_for_testing();
+        out
+    }
+
+    #[test]
+    fn dev_build_reads_imap_credentials_the_release_app_left_in_the_vault() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let creds = with_dev_keychain(Arc::new(keychain::InMemoryKeychain::new()), || {
+            let json = serde_json::to_string(&imap_creds()).expect("serialize");
+            secrets_vault::set(IMAP_KEYRING_PREFIX, "vault-only-imap", &json).expect("vault set");
+            get_imap_credentials("vault-only-imap")
+        });
+
+        assert_eq!(creds.expect("vault entry must resolve").password, "app-password");
+        assert!(
+            db.get_dev_imap_creds("vault-only-imap")
+                .expect("read dev row")
+                .is_some(),
+            "the vault copy lands in the dev table so the next read skips the keychain"
+        );
+    }
+
+    #[test]
+    fn dev_build_reads_oauth_tokens_the_release_app_left_in_the_vault() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let tokens = with_dev_keychain(Arc::new(keychain::InMemoryKeychain::new()), || {
+            let json = r#"{"access_token":"access","refresh_token":"refresh","expires_at":0}"#;
+            secrets_vault::set(KEYRING_SERVICE, "vault-only-oauth", json).expect("vault set");
+            get_tokens("vault-only-oauth")
+        });
+
+        assert_eq!(tokens.expect("vault entry must resolve").access_token, "access");
+        assert!(
+            db.get_dev_tokens("vault-only-oauth").expect("read dev row").is_some(),
+            "the vault copy lands in the dev table so the next read skips the keychain"
+        );
+    }
+
+    #[test]
+    fn dev_build_still_needs_reauth_when_the_vault_has_no_entry_either() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+
+        let result = with_dev_keychain(Arc::new(keychain::InMemoryKeychain::new()), || {
+            get_imap_credentials("nowhere-imap")
+        });
+
+        assert!(matches!(result, Err(AppError::NeedsReauth { .. })), "got {result:?}");
+    }
+
+    #[test]
+    fn dev_build_logs_a_keychain_failure_and_asks_to_sign_in_again() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+        let logs = logger::install_for_testing();
+
+        let result = with_dev_keychain(Arc::new(FailingKeychain), || get_imap_credentials("locked-imap"));
+
+        assert!(matches!(result, Err(AppError::NeedsReauth { .. })), "got {result:?}");
+        assert!(
+            logs.events()
+                .iter()
+                .any(|e| e.level == "error" && e.message.contains("keychain unavailable")),
+            "the keychain failure must be logged, not swallowed"
+        );
+    }
+
+    #[test]
+    fn dev_build_with_a_dev_row_never_reads_the_keychain() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        bind_credential_db(&db);
+        let json = serde_json::to_string(&imap_creds()).expect("serialize");
+        db.store_dev_imap_creds("dev-row-imap", &json).expect("store dev row");
+
+        let result = with_dev_keychain(Arc::new(FailingKeychain), || get_imap_credentials("dev-row-imap"));
+
+        assert_eq!(result.expect("dev row must resolve").password, "app-password");
     }
 
     /// Run `remove_account` with the keychain path forced on and a failing
