@@ -15,6 +15,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
+import { ChatStarters } from './ChatStarters';
 import { MessageList } from './MessageList';
 import { OtherAccountContextNotice } from './OtherAccountContextNotice';
 import { ThreadContextChip } from './ThreadContextChip';
@@ -71,6 +72,7 @@ export function ChatPanel({
     loadCategoriesPref,
     categoriesLoaded,
     inputPrefill,
+    prefillInput,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
   // What the user has on screen, sent with each turn so "esto" / "aquí"
@@ -81,6 +83,7 @@ export function ChatPanel({
   // thread re-arms it — a dismissal applies to the thread it was made on, not
   // to every thread the user visits afterwards.
   const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
+  const [inputFocusNonce, setInputFocusNonce] = useState<number | undefined>(undefined);
   const contextKey = chatContextKey(context);
   // A conversation seeded via "Chat about this thread" already owns its
   // grounding — the backend ignores ambient context for it, so don't offer any.
@@ -219,8 +222,16 @@ export function ChatPanel({
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {showEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm leading-relaxed text-gray-500">
-            {t('chat:panel.emptyHint')}
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-4 py-4">
+            <p className="text-center text-sm leading-relaxed text-gray-500">{t('chat:panel.emptyHint')}</p>
+            <ChatStarters
+              accountId={accountId}
+              compact
+              disabled={isSending || streamingMessageId !== null}
+              onSend={(prompt) => void handleSend(prompt)}
+              onPrefill={prefillInput}
+              onSomethingElse={() => setInputFocusNonce((n) => (n ?? 0) + 1)}
+            />
           </div>
         ) : isLoadingMessages ? (
           <div className="flex flex-1 items-center justify-center text-xs text-gray-500">
@@ -257,6 +268,7 @@ export function ChatPanel({
         onClear={handleCreate}
         prefillText={inputPrefill?.text}
         prefillNonce={inputPrefill?.nonce}
+        focusNonce={inputFocusNonce}
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={

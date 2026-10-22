@@ -613,6 +613,16 @@ export interface ChatMessageSource {
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
+/** A suggested request for an empty conversation (`get_chat_starters`). The
+ * frontend words it from `kind` + the parameters in the UI language. */
+export interface ChatStarter {
+  kind: 'today' | 'sender' | 'thread' | 'thisWeek' | 'draft';
+  /** `send` sends it on click; `prefill` puts a sentence stem in the input. */
+  action: 'send' | 'prefill';
+  senderName?: string;
+  subject?: string;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;

@@ -47,6 +47,18 @@
       "prompt": "Write a draft for "
     }
   },
+  "starters": {
+    "title": "Suggested requests",
+    "somethingElse": "Something else…",
+    "sender": {
+      "label": "What has {{name}} written to me?",
+      "prompt": "What has {{name}} written to me recently? Summarise each email in one line and cite it."
+    },
+    "thread": {
+      "label": "Summarise “{{subject}}”",
+      "prompt": "Summarise the thread “{{subject}}” and tell me whether anything in it is waiting on me."
+    }
+  },
   "message": {
     "user": "You",
     "assistant": "Assistant",

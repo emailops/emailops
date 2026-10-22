@@ -369,6 +369,7 @@ macro_rules! app_commands {
             commands::chat::cancel_chat_turn,
             commands::chat::confirm_exit,
             commands::chat::prewarm_chat,
+            commands::chat::get_chat_starters,
             commands::memory::list_pending_tasks,
             commands::memory::get_task_counts,
             commands::memory::create_pending_task,

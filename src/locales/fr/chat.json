@@ -47,6 +47,18 @@
       "prompt": "Rédige un brouillon pour "
     }
   },
+  "starters": {
+    "title": "Demandes suggérées",
+    "somethingElse": "Autre chose…",
+    "sender": {
+      "label": "Qu’est-ce que {{name}} m’a écrit ?",
+      "prompt": "Qu’est-ce que {{name}} m’a écrit récemment ? Résume chaque e-mail en une ligne et cite-le."
+    },
+    "thread": {
+      "label": "Résumer « {{subject}} »",
+      "prompt": "Résume le fil « {{subject}} » et dis-moi si quelque chose y attend une action de ma part."
+    }
+  },
   "message": {
     "user": "Vous",
     "assistant": "Assistant",

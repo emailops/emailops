@@ -47,6 +47,18 @@
       "prompt": "Escribe un borrador para "
     }
   },
+  "starters": {
+    "title": "Peticiones sugeridas",
+    "somethingElse": "Otra cosa…",
+    "sender": {
+      "label": "¿Qué me ha escrito {{name}}?",
+      "prompt": "¿Qué me ha escrito {{name}} últimamente? Resume cada correo en una línea y cítalo."
+    },
+    "thread": {
+      "label": "Resume «{{subject}}»",
+      "prompt": "Resume el hilo «{{subject}}» y dime si hay algo pendiente por mi parte."
+    }
+  },
   "message": {
     "user": "Tú",
     "assistant": "Asistente",

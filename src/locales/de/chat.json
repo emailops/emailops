@@ -47,6 +47,18 @@
       "prompt": "Entwirf einen Entwurf für "
     }
   },
+  "starters": {
+    "title": "Vorgeschlagene Anfragen",
+    "somethingElse": "Etwas anderes …",
+    "sender": {
+      "label": "Was hat mir {{name}} geschrieben?",
+      "prompt": "Was hat mir {{name}} in letzter Zeit geschrieben? Fasse jede E-Mail in einer Zeile zusammen und zitiere sie."
+    },
+    "thread": {
+      "label": "„{{subject}}“ zusammenfassen",
+      "prompt": "Fasse den Thread „{{subject}}“ zusammen und sag mir, ob darin etwas auf mich wartet."
+    }
+  },
   "message": {
     "user": "Du",
     "assistant": "Assistent",

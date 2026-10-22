@@ -52,6 +52,17 @@ pub async fn prewarm_chat(state: State<'_, AppState>, account_id: String) -> Res
     Ok(())
 }
 
+/// Starter requests for an empty conversation on `account_id`: fixed ones plus
+/// a recent correspondent and a recent thread from the chat's category scope.
+/// A bounded SQLite read, no model call.
+#[tauri::command]
+pub async fn get_chat_starters(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<chat::starters::ChatStarter>, AppError> {
+    chat::starters::chat_starters(&state.db, &account_id)
+}
+
 // ── Conversations CRUD ─────────────────────────────────────────────────────
 
 #[tauri::command]

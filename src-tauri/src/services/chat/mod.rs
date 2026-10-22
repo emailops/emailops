@@ -33,6 +33,8 @@ mod prewarm;
 pub mod research;
 pub(crate) mod retrieval;
 mod routing;
+// Starter requests shown in an empty conversation. Pure planner + DB reads.
+pub mod starters;
 // The turn's trace as one ordered step list — shared by the reasoning panel,
 // the CLI and the eval report.
 pub mod trace_steps;

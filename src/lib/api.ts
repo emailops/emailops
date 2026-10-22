@@ -25,6 +25,7 @@ import type {
   CatalogModel,
   ChatConversation,
   ChatMessage,
+  ChatStarter,
   ClassificationConfig,
   ClassificationRule,
   CompanyContactsGroup,
@@ -1763,6 +1764,11 @@ export interface ChatViewContext {
  */
 export async function prewarmChat(accountId: string): Promise<void> {
   return invoke('prewarm_chat', { accountId });
+}
+
+/** Suggested requests for an empty conversation on this account (no model call). */
+export async function getChatStarters(accountId: string): Promise<ChatStarter[]> {
+  return invoke('get_chat_starters', { accountId });
 }
 
 // ── Memory subsystem ─────────────────────────────────────────────────────────
