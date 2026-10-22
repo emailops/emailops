@@ -60,6 +60,9 @@ interface ChatInputProps {
    *  lets the parent re-apply the same text (e.g. click the chip twice). */
   prefillText?: string;
   prefillNonce?: number;
+  /** When it changes, focus moves to the textarea and its text is kept —
+   *  the "Something else…" starter hands over to typing this way. */
+  focusNonce?: number;
   /** Tighter padding + single-row floor for the narrow right-hand chat panel. */
   compact?: boolean;
   /** Rendered directly above the textarea — the panel's context chip slot. */
@@ -203,6 +206,7 @@ export function ChatInput({
   placeholder,
   prefillText,
   prefillNonce,
+  focusNonce,
   compact = false,
   contextSlot,
 }: ChatInputProps) {
@@ -256,6 +260,11 @@ export function ChatInput({
       });
     }
   }, [prefillNonce, prefillText]);
+
+  useEffect(() => {
+    if (focusNonce === undefined) return;
+    textareaRef.current?.focus();
+  }, [focusNonce]);
 
   const submit = () => {
     const trimmed = value.trim();

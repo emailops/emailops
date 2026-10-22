@@ -1485,6 +1485,8 @@ pub struct ChatSourcesEvent {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChatPhase {
+    /// Waiting in the AI queue for the task running before it to finish.
+    Queued,
     /// Classifying the route (RAG-first vs tools-first).
     Routing,
     /// Retrieving relevant emails (hybrid vector + FTS).
@@ -1890,6 +1892,7 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(ChatPhase::RunningTools).unwrap(), "runningTools");
         assert_eq!(serde_json::to_value(ChatPhase::Generating).unwrap(), "generating");
+        assert_eq!(serde_json::to_value(ChatPhase::Queued).unwrap(), "queued");
     }
 
     #[test]

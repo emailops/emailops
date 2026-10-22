@@ -47,6 +47,36 @@
       "prompt": "Entwirf einen Entwurf für "
     }
   },
+  "starters": {
+    "title": "Vorgeschlagene Anfragen",
+    "somethingElse": "Etwas anderes …",
+    "reply": {
+      "label": "Unbeantwortet: {{name}} — „{{subject}}“",
+      "prompt": "In „{{subject}}“ hat {{name}} zuletzt geschrieben und ich habe nicht geantwortet. Wird etwas von mir erwartet? Wenn ja, was und bis wann?"
+    },
+    "sender": {
+      "label": "Was hat mir {{name}} geschrieben?",
+      "prompt": "Was hat mir {{name}} in letzter Zeit geschrieben? Fasse jede E-Mail in einer Zeile zusammen und zitiere sie."
+    },
+    "thread": {
+      "label": "„{{subject}}“ zusammenfassen",
+      "prompt": "Fasse den Thread „{{subject}}“ zusammen und sag mir, ob darin etwas auf mich wartet."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Diesen Thread zusammenfassen",
+        "prompt": "Fasse diesen Thread zusammen: wer beteiligt ist, was vereinbart wurde und was noch offen ist."
+      },
+      "asks": {
+        "label": "Was wird hier von mir erwartet?",
+        "prompt": "Was wird in diesem Thread von mir erwartet, und bis wann?"
+      },
+      "reply": {
+        "label": "Antwort entwerfen",
+        "prompt": "Entwirf eine Antwort auf diesen Thread, die "
+      }
+    }
+  },
   "message": {
     "user": "Du",
     "assistant": "Assistent",
@@ -68,6 +98,7 @@
     "budgetSettings": "KI-Einstellungen"
   },
   "processing": {
+    "queued": "Warte, bis eine andere KI-Aufgabe fertig ist…",
     "routing": "Route bestimmen…",
     "retrieving": "E-Mails abrufen…",
     "searchingContacts": "Kontakte suchen…",

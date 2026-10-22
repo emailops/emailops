@@ -978,3 +978,183 @@ describe('tokens that arrive before the send returns the message ids', () => {
     expect(s.error).toBe('No model loaded');
   });
 });
+
+describe('a send shows the user text at once', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  const saved = () => ({
+    userMessage: { ...assistantMessage('user-1'), role: 'user' as const, content: 'hola' },
+    assistantMessage: assistantMessage('msg-1'),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: 'acct',
+      activeConversationId: 'conv-1',
+      conversations: [],
+      streamingMessageId: null,
+      streamingPhase: null,
+      messages: [],
+      isSending: false,
+      researchMode: false,
+      error: null,
+      selectedCategories: ['primary'],
+    });
+  });
+
+  it('puts the user bubble on screen before the backend answers', () => {
+    vi.mocked(api.sendChatMessage).mockReturnValue(new Promise(() => {}));
+    void useChatStore.getState().sendMessage('hola');
+    const { messages, isSending } = useChatStore.getState();
+    expect(messages.map((m) => [m.role, m.content])).toEqual([['user', 'hola']]);
+    expect(isSending).toBe(true);
+  });
+
+  it('swaps the pending bubble for the saved message', async () => {
+    vi.mocked(api.sendChatMessage).mockResolvedValue(saved());
+    await useChatStore.getState().sendMessage('hola');
+    expect(useChatStore.getState().messages.map((m) => m.id)).toEqual(['user-1', 'msg-1']);
+  });
+
+  it('takes the pending bubble back when the send fails', async () => {
+    vi.mocked(api.sendChatMessage).mockRejectedValue(new Error('db busy'));
+    await useChatStore.getState().sendMessage('hola');
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().error).toBeTruthy();
+  });
+
+  it('creates the conversation itself, and a second click meanwhile is ignored', async () => {
+    useChatStore.setState({ activeConversationId: null });
+    const created = deferred<unknown>();
+    vi.mocked(api.createChatConversation).mockReturnValue(created.promise as never);
+    vi.mocked(api.sendChatMessage).mockResolvedValue(saved());
+
+    const first = useChatStore.getState().sendMessage('hola');
+    const second = useChatStore.getState().sendMessage('otra');
+    expect(useChatStore.getState().messages.map((m) => m.content)).toEqual(['hola']);
+
+    created.resolve({ id: 'conv-new', accountId: 'acct', title: 'New chat', createdAt: 0, updatedAt: 0 });
+    await Promise.all([first, second]);
+
+    expect(api.createChatConversation).toHaveBeenCalledTimes(1);
+    expect(api.sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.sendChatMessage).mock.calls[0][0]).toBe('conv-new');
+    expect(useChatStore.getState().activeConversationId).toBe('conv-new');
+  });
+});
+
+describe('a first research question', () => {
+  it('creates its conversation before asking for the estimate', async () => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: 'acct',
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+      isSending: false,
+      researchMode: true,
+      pendingResearch: null,
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.createChatConversation).mockResolvedValue({
+      id: 'conv-new',
+      accountId: 'acct',
+      title: 'New chat',
+      createdAt: 0,
+      updatedAt: 0,
+    } as never);
+    vi.mocked(api.estimateResearch).mockReturnValue(new Promise(() => {}));
+    void useChatStore.getState().sendMessage('todas las facturas de 2025');
+    await vi.waitFor(() => expect(vi.mocked(api.estimateResearch).mock.calls[0]?.[0]).toBe('conv-new'));
+  });
+});
+
+describe('the processing status of a first message', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: 'acct',
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+      isSending: false,
+      researchMode: false,
+      streamingMessageId: null,
+      streamingPhase: null,
+      backgroundTurns: {},
+      earlyStream: {},
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.createChatConversation).mockResolvedValue({
+      id: 'conv-new',
+      accountId: 'acct',
+      title: 'New chat',
+      createdAt: 0,
+      updatedAt: 0,
+    } as never);
+  });
+
+  it('keeps a phase that arrives during the send', async () => {
+    vi.mocked(api.sendChatMessage).mockImplementation(async () => {
+      useChatStore
+        .getState()
+        .handlePhase(phaseEvent({ conversationId: 'conv-new', messageId: 'msg-1', phase: 'retrieving' }));
+      return {
+        userMessage: { ...assistantMessage('user-1'), conversationId: 'conv-new', role: 'user', content: 'hola' },
+        assistantMessage: { ...assistantMessage('msg-1'), conversationId: 'conv-new' },
+      };
+    });
+    await useChatStore.getState().sendMessage('hola');
+    expect(useChatStore.getState().streamingMessageId).toBe('msg-1');
+    expect(useChatStore.getState().streamingPhase).toBe('retrieving');
+  });
+
+  it('shows a phase that arrives after the send returns', async () => {
+    vi.mocked(api.sendChatMessage).mockResolvedValue({
+      userMessage: { ...assistantMessage('user-1'), conversationId: 'conv-new', role: 'user', content: 'hola' },
+      assistantMessage: { ...assistantMessage('msg-1'), conversationId: 'conv-new' },
+    });
+    await useChatStore.getState().sendMessage('hola');
+    useChatStore
+      .getState()
+      .handlePhase(phaseEvent({ conversationId: 'conv-new', messageId: 'msg-1', phase: 'runningTools' }));
+    expect(useChatStore.getState().streamingPhase).toBe('runningTools');
+  });
+});
+
+describe('a first message while the store has no account yet', () => {
+  // Right after an account switch `reset()` clears `currentAccountId` until the
+  // surface's `selectAccount` runs again; a click in that gap must still land.
+  it('creates its conversation on the account the surface passes', async () => {
+    vi.clearAllMocks();
+    useChatStore.setState({
+      currentAccountId: null,
+      activeConversationId: null,
+      conversations: [],
+      messages: [],
+      isSending: false,
+      researchMode: false,
+      error: null,
+      selectedCategories: ['primary'],
+    });
+    vi.mocked(api.createChatConversation).mockResolvedValue({
+      id: 'conv-new',
+      accountId: 'acct',
+      title: 'New chat',
+      createdAt: 0,
+      updatedAt: 0,
+    } as never);
+    vi.mocked(api.sendChatMessage).mockReturnValue(new Promise(() => {}));
+    void useChatStore.getState().sendMessage('hola', null, null, null, 'acct');
+    await vi.waitFor(() => expect(api.createChatConversation).toHaveBeenCalledWith('acct'));
+    expect(useChatStore.getState().error).toBeNull();
+  });
+});

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub mod attachments;
 pub mod autocomplete;
 pub mod batch;
+pub mod chat_starters;
 pub mod contacts;
 pub mod crud;
 pub mod failed;

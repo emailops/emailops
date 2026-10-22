@@ -390,7 +390,8 @@
         "services::forms",
         "services::help_docs",
         "db::help_docs",
-        "services::thread_reader"
+        "services::thread_reader",
+        "db::emails::chat_starters"
       ],
       "vitest": [
         "src/components/Chat",
@@ -415,7 +416,8 @@
       "evals": [
         "demo_",
         "memory_",
-        "thread_"
+        "thread_",
+        "starter_"
       ],
       "integration_names": [
         "chat",

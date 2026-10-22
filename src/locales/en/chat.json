@@ -47,6 +47,36 @@
       "prompt": "Write a draft for "
     }
   },
+  "starters": {
+    "title": "Suggested requests",
+    "somethingElse": "Something else…",
+    "reply": {
+      "label": "Unanswered: {{name}} — “{{subject}}”",
+      "prompt": "In “{{subject}}”, {{name}} wrote last and I haven't answered. Do they need anything from me? If so, what and by when?"
+    },
+    "sender": {
+      "label": "What has {{name}} written to me?",
+      "prompt": "What has {{name}} written to me recently? Summarise each email in one line and cite it."
+    },
+    "thread": {
+      "label": "Summarise “{{subject}}”",
+      "prompt": "Summarise the thread “{{subject}}” and tell me whether anything in it is waiting on me."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Summarise this thread",
+        "prompt": "Summarise this thread: who is involved, what has been agreed and what is still open."
+      },
+      "asks": {
+        "label": "What do they need from me here?",
+        "prompt": "What is being asked of me in this thread, and by when?"
+      },
+      "reply": {
+        "label": "Draft a reply",
+        "prompt": "Draft a reply to this thread that "
+      }
+    }
+  },
   "message": {
     "user": "You",
     "assistant": "Assistant",
@@ -68,6 +98,7 @@
     "budgetSettings": "AI settings"
   },
   "processing": {
+    "queued": "Waiting for other AI work to finish…",
     "routing": "Routing…",
     "retrieving": "Retrieving emails…",
     "searchingContacts": "Searching contacts…",

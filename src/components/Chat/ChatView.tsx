@@ -7,20 +7,9 @@ import { useLogStore } from '@/stores/logStore';
 import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
+import { ChatStarters } from './ChatStarters';
 import { ConversationList } from './ConversationList';
 import { MessageList } from './MessageList';
-
-// Each shortcut chip either auto-sends a fully-formed prompt (action: 'send'
-// — the model picks the right retrieval path and renders a scannable answer)
-// or seeds the chat input with a sentence stem the user finishes themselves
-// (action: 'prefill' — for open-ended starters like "Write a draft for …").
-// Labels + prompts come from the `chat:shortcuts.*` locale keys; only the
-// icon and the dispatch action stay inline.
-const SHORTCUTS = [
-  { id: 'today', icon: '📋', action: 'send' },
-  { id: 'thisWeek', icon: '📅', action: 'send' },
-  { id: 'draft', icon: '✍️', action: 'prefill' },
-] as const;
 
 interface ChatViewProps {
   accountId: string | null;
@@ -70,12 +59,13 @@ export function ChatView({
   // What the user has on screen, sent with each turn so "esto" / "aquí"
   // resolve and an open form can be edited from here.
   const viewContext = useChatViewContext();
-  // Prefill plumbing for shortcut chips that ask the user to finish the
-  // sentence (e.g. "Write a draft for …") instead of auto-sending. The
-  // nonce lets us re-apply the same text after another click — useState
-  // skips re-renders when the literal value is unchanged.
+  // Prefill plumbing for starters that ask the user to finish the sentence
+  // (e.g. "Write a draft for …") instead of auto-sending. The nonce lets us
+  // re-apply the same text after another click — useState skips re-renders
+  // when the literal value is unchanged.
   const [inputPrefillText, setInputPrefillText] = useState<string | undefined>(undefined);
   const [inputPrefillNonce, setInputPrefillNonce] = useState(0);
+  const [inputFocusNonce, setInputFocusNonce] = useState<number | undefined>(undefined);
 
   // Load the persisted category filter once, so the dropdown reflects the
   // user's last choice immediately on mount.
@@ -118,19 +108,13 @@ export function ChatView({
     }
   };
 
-  const handleSend = async (content: string) => {
-    // Auto-create a conversation if none is active (first message in a session).
-    if (!activeConversationId) {
-      if (!accountId) return;
-      try {
-        await createConversation(accountId);
-      } catch (e) {
-        addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
-        return;
-      }
-    }
+  // `threadId`: a starter about one thread of this account grounds the turn in it.
+  const handleSend = async (content: string, threadId?: string) => {
+    // A first message creates its conversation inside the store, after the
+    // user's text is already on screen (`chatStore.dispatchTurn`).
+    if (!accountId) return;
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
-    await sendMessage(content, null, null, viewContext);
+    await sendMessage(content, threadId ?? null, threadId ? accountId : null, viewContext, accountId);
   };
 
   if (!accountId) {
@@ -141,10 +125,10 @@ export function ChatView({
     );
   }
 
-  // Show the intro + shortcut chips whenever the main pane is otherwise empty —
+  // Show the intro + starters whenever the main pane is otherwise empty —
   // either no conversation is selected yet, or the selected conversation has no
   // messages. That way a user who created a fresh "New chat" still gets the
-  // same one-click prompts as the first-ever visit.
+  // same one-click requests as the first-ever visit.
   const showIntro = !activeConversationId || (!isLoadingMessages && messages.length === 0);
 
   return (
@@ -180,30 +164,16 @@ export function ChatView({
                   categories: selectedCategories.length > 0 ? selectedCategories.join(', ') : 'primary',
                 })}
               </div>
-              <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-                {SHORTCUTS.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => {
-                      const prompt = t(`chat:shortcuts.${s.id}.prompt` as const);
-                      if (s.action === 'prefill') {
-                        setInputPrefillText(prompt);
-                        // Bumping the nonce re-fires the prefill effect even
-                        // when the prompt text is unchanged (otherwise a
-                        // second click of the same chip would be a no-op).
-                        setInputPrefillNonce((n) => n + 1);
-                      } else {
-                        void handleSend(prompt);
-                      }
-                    }}
-                    disabled={isSending}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm text-gray-700 hover:border-primary-400 hover:text-primary-700 hover:bg-primary-50 transition-colors shadow-sm disabled:opacity-50"
-                  >
-                    <span>{s.icon}</span>
-                    <span>{t(`chat:shortcuts.${s.id}.label` as const)}</span>
-                  </button>
-                ))}
-              </div>
+              <ChatStarters
+                accountId={accountId}
+                disabled={isSending}
+                onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
+                onPrefill={(text) => {
+                  setInputPrefillText(text);
+                  setInputPrefillNonce((n) => n + 1);
+                }}
+                onSomethingElse={() => setInputFocusNonce((n) => (n ?? 0) + 1)}
+              />
             </div>
             <ChatInput
               onSend={handleSend}
@@ -212,6 +182,7 @@ export function ChatView({
               placeholder={t('chat:input.placeholderEmails')}
               prefillText={inputPrefillText}
               prefillNonce={inputPrefillNonce}
+              focusNonce={inputFocusNonce}
             />
           </>
         ) : (
