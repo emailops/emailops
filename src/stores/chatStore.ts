@@ -508,6 +508,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Research: estimate first, send only once the user confirms. The toggle
       // is spent on this question either way.
       set({ researchMode: false });
+      // The estimate is asked per conversation; a first question creates it.
+      const accountId = get().currentAccountId;
+      if (!get().activeConversationId && accountId) {
+        try {
+          await get().createConversation(accountId);
+        } catch (e) {
+          set({ error: errorText(e) });
+          return;
+        }
+      }
       await holdForEstimate(content, opts);
     },
 
@@ -566,25 +576,62 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { contextThreadId, contextAccountId, contextView, correction } = opts;
       const trimmed = content.trim();
       if (!trimmed) return;
-      const conversationId = get().activeConversationId;
-      if (!conversationId) {
-        set({ error: 'No active conversation' });
-        return;
-      }
       if (get().isSending) return;
+      // The user's text goes on screen at once, before any backend write: on a
+      // busy mailbox creating the conversation and saving the turn can wait
+      // behind sync on the single write connection, and a click with nothing to
+      // show for it reads as a click that did not land. The saved message
+      // replaces this bubble when the command returns.
+      const pendingId = `pending-${Date.now()}`;
+      const pendingBubble: ChatMessage = {
+        id: pendingId,
+        conversationId: get().activeConversationId ?? '',
+        role: 'user',
+        content: trimmed,
+        model: null,
+        tokenCount: null,
+        latencyMs: null,
+        createdAt: Math.floor(Date.now() / 1000),
+        sources: [],
+      };
+      const withoutPending = (messages: ChatMessage[]) => messages.filter((m) => m.id !== pendingId);
       // Clear any stale phase from a previous turn up front. We must NOT clear it
       // again when the command returns: a fast turn (e.g. thread-bound chat) can
       // emit its first phase during the await, and that early phase must survive
       // the streamingMessageId assignment so the status shows instead of bare dots.
       const research = opts.research ?? false;
-      set({
+      set((s) => ({
         isSending: true,
         error: null,
         streamingPhase: null,
         researchProgress: null,
         researchStartedAt: null,
         turnCancelling: false,
-      });
+        messages: [...s.messages, pendingBubble],
+      }));
+
+      // A first message creates its conversation here, behind the bubble and the
+      // isSending lock, so a second click meanwhile cannot start another one.
+      let conversationId = get().activeConversationId;
+      if (!conversationId) {
+        const accountId = get().currentAccountId;
+        if (!accountId) {
+          set((s) => ({ isSending: false, error: 'No active conversation', messages: withoutPending(s.messages) }));
+          return;
+        }
+        try {
+          const conv = await api.createChatConversation(accountId);
+          set((s) => ({
+            conversations: [conv, ...s.conversations],
+            activeConversationId: conv.id,
+            focusInputPending: true,
+          }));
+          conversationId = conv.id;
+        } catch (e) {
+          set((s) => ({ isSending: false, error: errorText(e), messages: withoutPending(s.messages) }));
+          return;
+        }
+      }
 
       try {
         const { userMessage, assistantMessage } = await api.sendChatMessage(
@@ -602,21 +649,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
         // streaming into `backgroundTurns`; the lock must still be released or
         // the conversation now on screen can never send.
         if (get().activeConversationId !== conversationId) {
-          set({ isSending: false, earlyStream: {} });
+          set((s) => ({ isSending: false, earlyStream: {}, messages: withoutPending(s.messages) }));
           return;
         }
         set((s) => {
           const early = s.earlyStream[assistantMessage.id];
           if (!early) {
             return {
-              messages: [...s.messages, userMessage, assistantMessage],
+              messages: [...withoutPending(s.messages), userMessage, assistantMessage],
               streamingMessageId: assistantMessage.id,
               isSending: false,
               earlyStream: {},
             };
           }
           return {
-            messages: [...s.messages, userMessage, { ...assistantMessage, content: early.content }],
+            messages: [...withoutPending(s.messages), userMessage, { ...assistantMessage, content: early.content }],
             streamingMessageId: early.done ? null : assistantMessage.id,
             streamingPhase: early.done ? null : s.streamingPhase,
             researchProgress: early.done ? null : s.researchProgress,
@@ -626,7 +673,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
           };
         });
       } catch (e) {
-        set({ isSending: false, error: errorText(e), streamingMessageId: null, streamingPhase: null, earlyStream: {} });
+        set((s) => ({
+          isSending: false,
+          error: errorText(e),
+          streamingMessageId: null,
+          streamingPhase: null,
+          earlyStream: {},
+          messages: withoutPending(s.messages),
+        }));
       }
     },
 

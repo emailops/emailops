@@ -109,16 +109,9 @@ export function ChatView({
   };
 
   const handleSend = async (content: string) => {
-    // Auto-create a conversation if none is active (first message in a session).
-    if (!activeConversationId) {
-      if (!accountId) return;
-      try {
-        await createConversation(accountId);
-      } catch (e) {
-        addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
-        return;
-      }
-    }
+    // A first message creates its conversation inside the store, after the
+    // user's text is already on screen (`chatStore.dispatchTurn`).
+    if (!accountId) return;
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
     await sendMessage(content, null, null, viewContext);
   };
