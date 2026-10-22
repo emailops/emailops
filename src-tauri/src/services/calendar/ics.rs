@@ -174,6 +174,149 @@ pub fn parse_ics_time(value: &str, params: &[String]) -> Option<(i64, bool)> {
     Some((naive.and_utc().timestamp(), false))
 }
 
+/// Proven fixed VTIMEZONE offsets for non-IANA identifiers. This deliberately
+/// does not interpret seasonal rules, infer a geographic zone, or change the
+/// existing parser's behavior for callers without document context.
+pub(super) fn fixed_ics_zones(
+    ics: &str,
+) -> Option<std::collections::HashMap<String, chrono::FixedOffset>> {
+    use std::collections::{HashMap, HashSet};
+    let mut zones = HashMap::new();
+    let mut seen = HashSet::new();
+    let (mut inside, mut standard, mut unsupported) = (false, false, false);
+    let (mut id, mut from, mut to): (
+        Option<String>,
+        Option<chrono::FixedOffset>,
+        Option<chrono::FixedOffset>,
+    ) = (None, None, None);
+    let (mut observations, mut id_count, mut from_count, mut to_count) = (0, 0, 0, 0);
+    for line in unfold_ics_lines(ics) {
+        let Some((name, _, value)) = split_content_line(&line) else {
+            continue;
+        };
+        if name == "BEGIN" && value.eq_ignore_ascii_case("VTIMEZONE") {
+            if inside {
+                return None;
+            }
+            inside = true;
+            standard = false;
+            unsupported = false;
+            id = None;
+            from = None;
+            to = None;
+            observations = 0;
+            id_count = 0;
+            from_count = 0;
+            to_count = 0;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if name == "END" && value.eq_ignore_ascii_case("VTIMEZONE") {
+            if standard {
+                return None;
+            }
+            let key = id.take()?;
+            if !seen.insert(key.clone()) {
+                return None;
+            }
+            if !unsupported && observations == 1 && from_count == 1 && to_count == 1 {
+                if let (Some(a), Some(b)) = (from, to) {
+                    if a == b {
+                        zones.insert(key, a);
+                    }
+                }
+            }
+            inside = false;
+        } else if name == "BEGIN" {
+            if value.eq_ignore_ascii_case("STANDARD") && !standard {
+                standard = true;
+                observations += 1;
+            } else {
+                unsupported = true;
+            }
+        } else if name == "END" && value.eq_ignore_ascii_case("STANDARD") {
+            if !standard {
+                return None;
+            }
+            standard = false;
+        } else if name == "TZID" {
+            id_count += 1;
+            if standard || id_count != 1 || value.trim().is_empty() {
+                return None;
+            }
+            id = Some(value.trim().trim_matches('"').to_string());
+        } else if name == "RRULE" || name == "RDATE" {
+            unsupported = true;
+        } else if name == "TZOFFSETFROM" || name == "TZOFFSETTO" {
+            if !standard {
+                unsupported = true;
+            }
+            let value = value.trim();
+            let offset = if (value.len() == 5 || value.len() == 7)
+                && matches!(value.as_bytes()[0], b'+' | b'-')
+                && value[1..].bytes().all(|b| b.is_ascii_digit())
+            {
+                let h: i32 = value[1..3].parse().ok()?;
+                let m: i32 = value[3..5].parse().ok()?;
+                let s: i32 = value.get(5..7).unwrap_or("00").parse().ok()?;
+                if h < 24 && m < 60 && s < 60 {
+                    chrono::FixedOffset::east_opt(
+                        (h * 3600 + m * 60 + s) * if value.starts_with('-') { -1 } else { 1 },
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if name == "TZOFFSETFROM" {
+                from_count += 1;
+                from = offset;
+            } else {
+                to_count += 1;
+                to = offset;
+            }
+        }
+    }
+    if inside {
+        None
+    } else {
+        Some(zones)
+    }
+}
+
+/// Parse with an embedded, unambiguous fixed-zone definition when the TZID
+/// is not an IANA zone. Other cases preserve the shared parser's semantics.
+pub(super) fn parse_ics_time_with_fixed_zones(
+    value: &str,
+    params: &[String],
+    zones: &std::collections::HashMap<String, chrono::FixedOffset>,
+) -> Option<(i64, bool)> {
+    let raw = value.trim();
+    let all_day = params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE"))
+        || (raw.len() == 8 && !raw.contains('T'));
+    let tzid = params
+        .iter()
+        .find_map(|p| p.strip_prefix("TZID=").or_else(|| p.strip_prefix("tzid=")));
+    if !all_day && !raw.ends_with('Z') {
+        if let Some(id) = tzid.map(|id| id.trim_matches('"')) {
+            if id.parse::<chrono_tz::Tz>().is_err() {
+                if let Some(offset) = zones.get(id) {
+                    use chrono::TimeZone;
+                    let naive = chrono::NaiveDateTime::parse_from_str(raw, "%Y%m%dT%H%M%S").ok()?;
+                    return offset
+                        .from_local_datetime(&naive)
+                        .single()
+                        .map(|t| (t.timestamp(), false));
+                }
+            }
+        }
+    }
+    parse_ics_time(value, params)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,6 +381,125 @@ mod tests {
         assert_eq!(
             parse_ics_time("20260728", &["VALUE=DATE".to_string()]),
             Some((1_785_196_800, true))
+        );
+    }
+}
+
+#[cfg(test)]
+mod fixed_zone_tests {
+    use super::*;
+    fn zone(from: &str, to: &str, extra: &str) -> String {
+        format!("BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:{from}\r\nTZOFFSETTO:{to}\r\nDTSTART:16010101T000000\r\n{extra}END:STANDARD\r\nEND:VTIMEZONE\r\nEND:VCALENDAR\r\n")
+    }
+    #[test]
+    fn embedded_fixed_offset_resolves_non_iana_wall_clock() {
+        let zones = fixed_ics_zones(&zone("+0200", "+0200", "")).unwrap();
+        let (t, all_day) = parse_ics_time_with_fixed_zones(
+            "20261023T103000",
+            &["TZID=\"Example Fixed Time\"".into()],
+            &zones,
+        )
+        .unwrap();
+        assert_eq!(
+            chrono::DateTime::from_timestamp(t, 0).unwrap().to_rfc3339(),
+            "2026-10-23T08:30:00+00:00"
+        );
+        assert!(!all_day);
+    }
+    #[test]
+    fn negative_offset_including_seconds_preserved() {
+        let zones = fixed_ics_zones(&zone("-033030", "-033030", "")).unwrap();
+        assert_eq!(zones["Example Fixed Time"].local_minus_utc(), -12630);
+    }
+    #[test]
+    fn seasonal_and_conflicting_offsets_are_not_assumed_fixed() {
+        for input in [
+            zone("+0100", "+0200", ""),
+            zone("+0200", "+0200", "RRULE:FREQ=YEARLY\r\n"),
+            zone("+0200", "+0200", "RDATE:20270328T020000\r\n"),
+            zone("+0200", "+0200", "BEGIN:DAYLIGHT\r\nEND:DAYLIGHT\r\n"),
+        ] {
+            assert!(fixed_ics_zones(&input).unwrap().is_empty());
+        }
+    }
+    #[test]
+    fn invalid_offsets_are_not_used() {
+        for offset in ["+2500", "+0260", "-006099", "0200", "+éé"] {
+            assert!(fixed_ics_zones(&zone(offset, offset, ""))
+                .unwrap()
+                .is_empty());
+        }
+    }
+    #[test]
+    fn duplicate_identity_is_ambiguous_even_if_offsets_match() {
+        let input = zone("+0200", "+0200", "");
+        assert!(fixed_ics_zones(&(input.clone() + &input)).is_none());
+        assert!(fixed_ics_zones(&input.replace(
+            "TZID:Example Fixed Time",
+            "TZID:Example Fixed Time\r\nTZID:Another Name"
+        ))
+        .is_none());
+    }
+    #[test]
+    fn unclosed_or_nested_zone_is_not_accepted() {
+        let input = zone("+0200", "+0200", "");
+        assert!(fixed_ics_zones(&input.replace("END:VTIMEZONE\r\n", "")).is_none());
+        assert!(fixed_ics_zones(
+            &input.replace("BEGIN:STANDARD", "BEGIN:VTIMEZONE\r\nBEGIN:STANDARD")
+        )
+        .is_none());
+    }
+    #[test]
+    fn repeated_offsets_or_observances_are_not_guessed() {
+        let input = zone("+0200", "+0200", "TZOFFSETFROM:+0200\r\n");
+        assert!(fixed_ics_zones(&input).unwrap().is_empty());
+        let input = zone("+0200", "+0200", "").replace("END:VTIMEZONE", "BEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nEND:STANDARD\r\nEND:VTIMEZONE");
+        assert!(fixed_ics_zones(&input).unwrap().is_empty());
+    }
+    #[test]
+    fn iana_dst_rules_take_precedence_over_fixed_name_redefinition() {
+        let mut zones = std::collections::HashMap::new();
+        zones.insert(
+            "Europe/Zurich".into(),
+            chrono::FixedOffset::east_opt(0).unwrap(),
+        );
+        let (t, _) = parse_ics_time_with_fixed_zones(
+            "20261026T103000",
+            &["TZID=Europe/Zurich".into()],
+            &zones,
+        )
+        .unwrap();
+        assert_eq!(
+            chrono::DateTime::from_timestamp(t, 0).unwrap().to_rfc3339(),
+            "2026-10-26T09:30:00+00:00"
+        );
+    }
+    #[test]
+    fn utc_and_date_only_keep_existing_semantics() {
+        let zones = fixed_ics_zones(&zone("+0200", "+0200", "")).unwrap();
+        for (value, params) in [
+            ("20261023T103000Z", vec!["TZID=Example Fixed Time".into()]),
+            (
+                "20261023",
+                vec!["VALUE=DATE".into(), "TZID=Example Fixed Time".into()],
+            ),
+        ] {
+            assert_eq!(
+                parse_ics_time_with_fixed_zones(value, &params, &zones),
+                parse_ics_time(value, &params)
+            );
+        }
+    }
+    #[test]
+    fn callers_without_document_context_keep_legacy_unknown_zone_behavior() {
+        let params = vec!["TZID=Unknown/Example".into()];
+        assert_eq!(
+            parse_ics_time_with_fixed_zones(
+                "20261023T103000",
+                &params,
+                &std::collections::HashMap::new()
+            ),
+            parse_ics_time("20261023T103000", &params)
         );
     }
 }

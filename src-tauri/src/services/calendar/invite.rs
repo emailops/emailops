@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::ics::{parse_ics_time, split_content_line, unescape_text, unfold_ics_lines};
+use super::ics::{
+    fixed_ics_zones, parse_ics_time_with_fixed_zones, split_content_line, unescape_text,
+    unfold_ics_lines,
+};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
@@ -40,6 +43,7 @@ pub struct CalendarInvite {
 /// Parse the first VEVENT of an iCalendar document. Returns `None` when there
 /// is no usable event (missing UID or DTSTART).
 pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
+    let fixed_zones = fixed_ics_zones(ics)?;
     let mut method = "REQUEST".to_string();
     let mut in_event = false;
     let mut uid = None;
@@ -70,8 +74,8 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
                     .unwrap_or(value.trim())
                     .to_ascii_lowercase();
             }
-            "DTSTART" => start = parse_ics_time(&value, &params),
-            "DTEND" => end = parse_ics_time(&value, &params),
+            "DTSTART" => start = parse_ics_time_with_fixed_zones(&value, &params, &fixed_zones),
+            "DTEND" => end = parse_ics_time_with_fixed_zones(&value, &params, &fixed_zones),
             "RRULE" => recurrence = Some(value.trim().to_string()),
             _ => {}
         }
@@ -179,6 +183,20 @@ fn decode_ics_base64(b64: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_fixed_timezone_is_used_for_invite_display() {
+        let ics="BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nDTSTART:16010101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:synthetic@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20261023T103000\r\nDTEND;TZID=\"Example Fixed Time\":20261023T113000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let invite = parse_ics_invite(ics).expect("fixed-offset invite");
+        assert_eq!(
+            chrono::DateTime::from_timestamp(invite.start_time, 0)
+                .unwrap()
+                .to_rfc3339(),
+            "2026-10-23T08:30:00+00:00"
+        );
+        assert_eq!(invite.end_time - invite.start_time, 3600);
+    }
+
 
     const SAMPLE_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Madrid:20260728T073000\r\nDTEND;TZID=Europe/Madrid:20260728T083000\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nDTSTAMP:20260723T103000Z\r\nORGANIZER;CN=Organizer:mailto:Organizer@Example.com\r\nUID:abc123DEF@example.com\r\nSUMMARY:Team sync\\, weekly\r\nLOCATION:Room 4\\; floor 2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
