@@ -56,7 +56,7 @@ chrono-tz = "0.10"
 rrule = "0.14"
 # Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
 # impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 # `cli` feature: keyring 4.1 moved `use_native_store` (the OS-store selector our
 # keychain init calls) behind this feature; it provides the native-backend glue.
 keyring = { version = "4", features = ["cli"] }
