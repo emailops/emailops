@@ -21,7 +21,7 @@ const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
 /// Defaults to the local daemon, which is what a desktop install has. Overridable via
 /// `OLLAMA_HOST` (the same variable Ollama's own CLI uses) so the runtime can be pointed
 /// at another Ollama. Requests carry email content, so the URL must pass
-/// `validate_ai_base_url`: plain `http://` only to a loopback host, `https://` otherwise
+/// `normalize_ai_base_url`: plain `http://` only to a loopback host, `https://` otherwise
 /// (DASA 1.1.1).
 fn ollama_base_url() -> Result<String> {
     ollama_base_url_from(std::env::var("OLLAMA_HOST").ok().as_deref())
@@ -29,20 +29,19 @@ fn ollama_base_url() -> Result<String> {
 
 /// [`ollama_base_url`] for a given `OLLAMA_HOST` value.
 fn ollama_base_url_from(ollama_host: Option<&str>) -> Result<String> {
-    let url = ollama_host
-        .map(|raw| raw.trim().trim_end_matches('/').to_string())
-        .filter(|raw| !raw.is_empty())
-        .map(|raw| {
-            // `OLLAMA_HOST` is conventionally bare `host:port`; accept either form.
-            if raw.starts_with("http://") || raw.starts_with("https://") {
-                raw
-            } else {
-                format!("http://{raw}")
-            }
-        })
-        .unwrap_or_else(|| OLLAMA_DEFAULT_BASE_URL.to_string());
-    crate::services::ai::validate_ai_base_url(&url)?;
-    Ok(url)
+    let Some(raw) = ollama_host
+        .map(str::trim)
+        .filter(|raw| !raw.trim_matches('/').is_empty())
+    else {
+        return Ok(OLLAMA_DEFAULT_BASE_URL.to_string());
+    };
+    // `OLLAMA_HOST` is conventionally bare `host:port`; accept either form.
+    let with_scheme = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("http://{raw}")
+    };
+    crate::services::ai::normalize_ai_base_url(&with_scheme)
 }
 const DEFAULT_MODEL: &str = "gemma4:e2b";
 const EMBEDDING_MODEL: &str = "nomic-embed-text";
@@ -1853,6 +1852,16 @@ mod base_url_tests {
     fn refuses_plain_http_to_a_non_loopback_host() {
         // A bare host:port becomes http://, so it is refused off-loopback too.
         for raw in ["ollama:11434", "http://10.0.0.5:11434"] {
+            assert!(
+                matches!(ollama_base_url_from(Some(raw)), Err(AppError::AiError(_))),
+                "{raw} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_every_url_in_the_shared_table() {
+        for raw in crate::services::ai::REFUSED_AI_BASE_URLS {
             assert!(
                 matches!(ollama_base_url_from(Some(raw)), Err(AppError::AiError(_))),
                 "{raw} must be refused"

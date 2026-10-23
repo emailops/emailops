@@ -1146,6 +1146,21 @@ impl AiService {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Normalize a user- or env-supplied AI base URL, then validate it.
+///
+/// Trims surrounding whitespace and trailing slashes (endpoints are built as
+/// `{base}/...`, so a trailing slash would double it) and refuses an empty value
+/// before applying [`validate_ai_base_url`]. Callers store and use the returned
+/// string, never the raw input.
+pub fn normalize_ai_base_url(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_end_matches('/').trim();
+    if trimmed.is_empty() {
+        return Err(AppError::AiError("AI base URL is empty.".to_string()));
+    }
+    validate_ai_base_url(trimmed)?;
+    Ok(trimmed.to_string())
+}
+
 /// Reject AI provider base URLs that would send email content somewhere unsafe.
 ///
 /// Only `http://` and `https://` URLs with a host are accepted: anything else
@@ -1154,13 +1169,22 @@ impl AiService {
 /// through another protocol handler. Plain `http://` is further limited to
 /// loopback hosts (`localhost`, `127.0.0.0/8`, `::1`), where the traffic never
 /// leaves the machine; any other host must use `https://` so prompts built from
-/// email never cross a network in cleartext (DASA 1.1.1).
+/// email never cross a network in cleartext (DASA 1.1.1). URLs carrying
+/// credentials (`user:pass@host`) are refused, and the error never echoes them:
+/// a key belongs in the keychain, not in a URL that ends up in preferences and
+/// logs (DASA 1.10.2).
 pub fn validate_ai_base_url(raw: &str) -> Result<()> {
     let parsed = url::Url::parse(raw).map_err(|e| {
         AppError::AiError(format!(
-            "Invalid AI base URL '{raw}': {e}. Expected an http(s) URL such as http://localhost:8080."
+            "Invalid AI base URL: {e}. Expected an http(s) URL such as http://localhost:8080."
         ))
     })?;
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppError::AiError(
+            "AI base URL must not contain a user name or password. Enter the API key in its own field.".to_string(),
+        ));
+    }
 
     match parsed.scheme() {
         "http" | "https" => {}
@@ -1183,7 +1207,9 @@ pub fn validate_ai_base_url(raw: &str) -> Result<()> {
     if parsed.scheme() == "http" && !loopback {
         return Err(AppError::AiError(format!(
             "AI base URL '{raw}' would send email content unencrypted to another machine. \
-             Use https:// for a remote server, or http:// only with localhost, 127.0.0.1 or ::1."
+             Use https:// for a remote server, or http:// only with localhost, 127.0.0.1 or ::1. \
+             To reach a server on another machine without https, forward it to this one with an \
+             SSH tunnel (ssh -L 8080:localhost:8080 <host>) or Tailscale, then use http://localhost."
         )));
     }
 
@@ -1958,10 +1984,79 @@ mod provider_models_tests {
     }
 }
 
+/// Base URLs every AI base URL caller must refuse: plain `http://` to anything
+/// that is not loopback (LAN, private ranges, `*.local`, bare hostnames) and URLs
+/// carrying credentials. Each caller's tests run this table through its own entry
+/// point so the rule cannot be loosened for one of them by accident.
+#[cfg(test)]
+pub(crate) const REFUSED_AI_BASE_URLS: &[&str] = &[
+    "http://10.0.0.5:11434",
+    "http://192.168.1.20:1234",
+    "http://172.16.0.9:8000",
+    "http://studio.local:1234",
+    "http://ollama:11434",
+    "http://localhost.example.com:11434",
+    "http://[::2]:11434",
+    "http://[fe80::1]:11434",
+    "http://0.0.0.0:11434",
+    "https://user:secret@api.example.com/v1",
+    "http://user@localhost:8080",
+];
+
 #[cfg(test)]
 mod url_validation_tests {
-    use super::validate_ai_base_url;
+    use super::{normalize_ai_base_url, validate_ai_base_url, REFUSED_AI_BASE_URLS};
     use crate::models::error::AppError;
+
+    #[test]
+    fn refuses_the_shared_table() {
+        for refused in REFUSED_AI_BASE_URLS {
+            assert!(
+                matches!(normalize_ai_base_url(refused), Err(AppError::AiError(_))),
+                "{refused} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_credentials_without_echoing_them() {
+        let err = validate_ai_base_url("https://user:secret@api.example.com/v1").expect_err("creds");
+        let msg = err.to_string();
+        assert!(!msg.contains("secret"), "{msg}");
+        assert!(!msg.contains("user:"), "{msg}");
+    }
+
+    #[test]
+    fn the_lan_refusal_points_to_a_way_out() {
+        let msg = validate_ai_base_url("http://192.168.1.20:1234")
+            .expect_err("lan")
+            .to_string();
+        assert!(msg.contains("https://"), "{msg}");
+        assert!(msg.contains("SSH tunnel"), "{msg}");
+        assert!(msg.contains("Tailscale"), "{msg}");
+    }
+
+    #[test]
+    fn normalize_trims_and_strips_trailing_slashes() {
+        assert_eq!(
+            normalize_ai_base_url("  http://localhost:1234/v1/  ").expect("ok"),
+            "http://localhost:1234/v1"
+        );
+        assert_eq!(
+            normalize_ai_base_url("https://api.example.com").expect("ok"),
+            "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_an_empty_value() {
+        for blank in ["", "   ", "/", " // "] {
+            assert!(
+                matches!(normalize_ai_base_url(blank), Err(AppError::AiError(_))),
+                "{blank:?} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn accepts_localhost_and_https_hosts() {

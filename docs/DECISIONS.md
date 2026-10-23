@@ -3793,3 +3793,23 @@ expansion — DST and monthly BYDAY rules are where home-grown code goes wrong. 
 the hand-over is the only way to create from the calendar; the in-app dialog remains the path
 for every writable calendar.
 
+
+## 2026-10-23 — AI base URLs: no LAN over plain http, no credentials in the URL
+
+**Decision:** Every AI base URL (Ollama's `OLLAMA_HOST`, and the OpenAI-compatible server
+that follows) goes through one `normalize_ai_base_url`: trim, strip trailing slashes,
+refuse an empty value, then `validate_ai_base_url`. Plain `http://` stays limited to
+loopback (`localhost`, `127.0.0.0/8`, `::1`); LAN addresses, private ranges, `*.local`
+and bare hostnames need `https://`. A URL with a user name or password is refused and
+the error does not echo it. The refusal tells the user how to reach a LAN machine
+anyway: https, or an SSH tunnel / Tailscale so the server appears on localhost. A shared
+test table of refused URLs runs through every caller's entry point.
+**Context:** The OpenAI-compatible provider request (issue #138) proposed allowing http
+to private ranges so LM Studio or llama-server on another machine works out of the box.
+Prompts carry email content, and DASA 1.1.1 (transport) is part of the CASA AL1 evidence;
+a home or office LAN is not a trusted transport. Credentials in a URL end up in
+preferences and logs (DASA 1.10.2).
+**Rejected:** http to RFC 1918 ranges and `*.local` (cleartext mail on shared networks,
+and a DNS name is not proof of locality); a per-user "allow insecure LAN" toggle (one
+click from cleartext, and it weakens a recorded CASA control); stripping credentials
+from the URL silently (the user would think the key is in use).
