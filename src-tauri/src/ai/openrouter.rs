@@ -223,6 +223,10 @@ fn first_choice_truncated(response: &OpenRouterChatResponse) -> bool {
 #[derive(Debug, Deserialize)]
 struct ChatMessageContent {
     content: serde_json::Value,
+    /// What a server that separates a reasoning model's thinking put there
+    /// (`reasoning_content`: LM Studio, vLLM, llama-server).
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1054,7 +1058,7 @@ impl AIProvider for OpenRouterClient {
         let text = result
             .choices
             .first()
-            .map(|c| strip_reasoning(&openrouter_content_to_text(&c.message.content)))
+            .map(|c| self.completion_text(&c.message, options.json_shape.is_some()))
             .unwrap_or_default();
 
         let prompt_tokens = result.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0);
@@ -1175,6 +1179,26 @@ impl AIProvider for OpenRouterClient {
 /// The assistant turn a finished stream amounts to. When it asks for tools
 /// its prose is dropped — as on the other backends, a tool-call turn
 /// dispatches calls rather than surfacing text.
+impl OpenRouterClient {
+    /// The answer in a completion's `message`, without inline reasoning. A
+    /// compatible server that parses a reasoning model's output can file a
+    /// structured (JSON-schema) reply under `reasoning_content` and leave
+    /// `content` empty — LM Studio does with Qwen 3.x — so for a `structured`
+    /// request that field stands in. A free-text answer never does: there it
+    /// is the model's thinking, not what the user asked for.
+    fn completion_text(&self, message: &ChatMessageContent, structured: bool) -> String {
+        let text = strip_reasoning(&openrouter_content_to_text(&message.content));
+        if !text.is_empty() || !structured || self.endpoint != Endpoint::OpenAiCompatible {
+            return text;
+        }
+        message
+            .reasoning_content
+            .as_deref()
+            .map(strip_reasoning)
+            .unwrap_or_default()
+    }
+}
+
 /// `outcome` with any inline reasoning span removed from its prose.
 fn without_reasoning(mut outcome: StreamOutcome) -> StreamOutcome {
     if !outcome.content.is_empty() {
@@ -2466,6 +2490,51 @@ mod compatible_server_tests {
             .expect("completed");
 
         assert_eq!(result.text, "OK");
+    }
+
+    fn shaped() -> CompletionOptions {
+        CompletionOptions {
+            json_shape: Some(crate::ai::json_shape::JsonShape::object(vec![(
+                "kind",
+                crate::ai::json_shape::JsonShape::one_of(&["search", "other"]),
+            )])),
+            ..CompletionOptions::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_output_filed_as_reasoning_is_still_the_answer() {
+        // LM Studio parses a reasoning model's constrained JSON into
+        // `reasoning_content` and leaves `content` empty.
+        let server = chat_replying(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": { "content": "", "reasoning_content": "{\"kind\": \"search\"}\n" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .await;
+
+        let result = compatible(&server).complete("x", shaped()).await.expect("completed");
+
+        assert_eq!(result.text, "{\"kind\": \"search\"}");
+    }
+
+    #[tokio::test]
+    async fn reasoning_is_never_the_answer_of_a_free_text_completion() {
+        let server = chat_replying(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": { "content": "", "reasoning_content": "the user wants a summary" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .await;
+
+        let result = compatible(&server)
+            .complete("x", CompletionOptions::default())
+            .await
+            .expect("completed");
+
+        assert_eq!(result.text, "");
     }
 
     #[tokio::test]
