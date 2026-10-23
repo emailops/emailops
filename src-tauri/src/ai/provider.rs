@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::error::Result;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
     Ollama,
@@ -210,6 +210,11 @@ pub struct ModelPricing {
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
+    /// The backend that computes this provider's embeddings: the same one,
+    /// except for a [`SplitProvider`].
+    fn embedding_provider_type(&self) -> ProviderType {
+        self.provider_type()
+    }
     fn model_name(&self) -> &str;
     fn embedding_model_name(&self) -> &str;
 
@@ -411,6 +416,10 @@ impl AIProvider for SplitProvider {
         self.chat.provider_type()
     }
 
+    fn embedding_provider_type(&self) -> ProviderType {
+        self.embeddings.embedding_provider_type()
+    }
+
     fn model_name(&self) -> &str {
         self.chat.model_name()
     }
@@ -545,6 +554,8 @@ pub struct FakeAiProvider {
     embedding_cost_usd: f64,
     /// What `embedding_configured` answers (true by default).
     embedding_configured: bool,
+    /// What `provider_type` answers (Ollama by default).
+    provider_type: ProviderType,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -576,6 +587,7 @@ impl FakeAiProvider {
             embedding_dim: 8,
             embedding_cost_usd: 0.0,
             embedding_configured: true,
+            provider_type: ProviderType::Ollama,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -654,6 +666,13 @@ impl FakeAiProvider {
     /// made so far — for tests that act while a run is in flight.
     pub fn on_embed(&self, hook: impl Fn(usize) + Send + Sync + 'static) {
         *self.embed_hook.write().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
+    }
+
+    /// Report `kind` as the backend type, for paths that depend on it (the
+    /// budget meters only OpenRouter).
+    pub fn with_provider_type(mut self, kind: ProviderType) -> Self {
+        self.provider_type = kind;
+        self
     }
 
     /// Report `cost_usd` as charged on every `embed` call.
@@ -787,7 +806,7 @@ impl Default for FakeAiProvider {
 #[async_trait]
 impl AIProvider for FakeAiProvider {
     fn provider_type(&self) -> ProviderType {
-        ProviderType::Ollama // arbitrary — tests typically don't gate on this
+        self.provider_type
     }
 
     async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {

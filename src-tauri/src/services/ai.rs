@@ -7,7 +7,8 @@ const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
 use crate::ai::provider::{
-    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ProviderType,
+    ToolStreamResult,
 };
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
@@ -553,7 +554,7 @@ impl AiService {
         if probe.cost_usd > 0.0 {
             Self::record_provider_call(
                 db,
-                client,
+                client.provider_type(),
                 client.embedding_model_name(),
                 "embed",
                 probe.tokens,
@@ -821,12 +822,19 @@ impl AiService {
     /// reports a call's cost after it has been charged, so the call that
     /// crosses the budget is recorded and its output kept, and the next one is
     /// refused here.
-    fn ensure_budget_remaining(&self) -> Result<()> {
-        Self::ensure_budget(&self.db)
+    ///
+    /// Only OpenRouter charges, so only calls bound for it are refused: a
+    /// user who reached the budget there and moved to a local or self-hosted
+    /// backend must still be able to use it.
+    fn ensure_budget_remaining(&self, destination: ProviderType) -> Result<()> {
+        Self::ensure_budget(&self.db, destination)
     }
 
     /// [`Self::ensure_budget_remaining`] without a service.
-    fn ensure_budget(db: &Database) -> Result<()> {
+    fn ensure_budget(db: &Database, destination: ProviderType) -> Result<()> {
+        if destination != ProviderType::OpenRouter {
+            return Ok(());
+        }
         let config = Self::get_config(db)?;
         if config.monthly_budget_usd <= 0.0 {
             return Ok(());
@@ -905,6 +913,7 @@ impl AiService {
 
     fn record_usage(&self, result: &CompletionResult, operation: &str) -> Result<()> {
         self.record_call(
+            self.provider.provider_type(),
             &result.model,
             operation,
             result.prompt_tokens,
@@ -915,6 +924,7 @@ impl AiService {
 
     fn record_call(
         &self,
+        charged_by: ProviderType,
         model: &str,
         operation: &str,
         prompt_tokens: u32,
@@ -923,7 +933,7 @@ impl AiService {
     ) -> Result<()> {
         Self::record_provider_call(
             &self.db,
-            self.provider.as_ref(),
+            charged_by,
             model,
             operation,
             prompt_tokens,
@@ -932,10 +942,11 @@ impl AiService {
         )
     }
 
-    /// [`Self::record_call`] without a service.
+    /// [`Self::record_call`] without a service. `charged_by` is the backend
+    /// the call went to (for a split provider, the embedding one on `embed`).
     fn record_provider_call(
         db: &Database,
-        provider: &dyn AIProvider,
+        charged_by: ProviderType,
         model: &str,
         operation: &str,
         prompt_tokens: u32,
@@ -948,7 +959,7 @@ impl AiService {
             "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                provider.provider_type().to_string(),
+                charged_by.to_string(),
                 model,
                 operation,
                 prompt_tokens,
@@ -961,7 +972,7 @@ impl AiService {
         crate::services::events::emit(
             "ai_log",
             &AiLogEvent {
-                provider: provider.provider_type().to_string(),
+                provider: charged_by.to_string(),
                 model: model.to_string(),
                 operation: operation.to_string(),
                 prompt_tokens,
@@ -990,7 +1001,7 @@ impl AiService {
         };
         Self::record_provider_call(
             db,
-            provider,
+            provider.provider_type(),
             provider.model_name(),
             operation,
             prompt_tokens.unwrap_or(0),
@@ -1010,7 +1021,7 @@ impl AiService {
         tools: Vec<serde_json::Value>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_stream_with_tools(messages, tools, on_token).await?;
         Self::record_stream_usage(
             db,
@@ -1032,7 +1043,7 @@ impl AiService {
         tools: &[serde_json::Value],
         operation: &str,
     ) -> Result<AiMessage> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_with_tools_metered(messages, tools).await?;
         Self::record_stream_usage(
             db,
@@ -1053,7 +1064,7 @@ impl AiService {
         messages: Vec<AiMessage>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_stream(messages, on_token).await?;
         Self::record_stream_usage(
             db,
@@ -1089,7 +1100,7 @@ impl AiService {
                 opts.think = Some(false);
             }
         }
-        self.ensure_budget_remaining()?;
+        self.ensure_budget_remaining(self.provider.provider_type())?;
         let t = std::time::Instant::now();
         let result = if prefix.is_empty() {
             self.provider.complete(suffix, opts).await?
@@ -1114,13 +1125,14 @@ impl AiService {
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.ensure_budget_remaining()?;
+        self.ensure_budget_remaining(self.provider.embedding_provider_type())?;
         let result = self.provider.embed(text).await?;
         // Only charged embeddings get a usage row: a local provider embeds
         // every chunk of every email for free, and a row (plus a log event)
         // per chunk would flood the usage table without informing the budget.
         if result.cost_usd > 0.0 {
             self.record_call(
+                self.provider.embedding_provider_type(),
                 self.provider.embedding_model_name(),
                 "embed",
                 result.tokens,
@@ -1479,7 +1491,7 @@ mod provider_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
-    use crate::ai::provider::FakeAiProvider;
+    use crate::ai::provider::{FakeAiProvider, ProviderType, SplitProvider};
 
     fn service_with_budget(budget: &str, fake: FakeAiProvider) -> (AiService, Arc<FakeAiProvider>) {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
@@ -1501,7 +1513,10 @@ mod budget_tests {
     /// recorded and its output returned, not thrown away unrecorded.
     #[tokio::test]
     async fn a_completion_that_crosses_the_budget_is_recorded_and_returned() {
-        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter),
+        );
         fake.push_completion_result(paid_completion("answer", 1.5));
 
         let text = svc.complete("q", "test", None).await.expect("paid output is kept");
@@ -1516,7 +1531,10 @@ mod budget_tests {
     /// refused before it reaches the provider.
     #[tokio::test]
     async fn a_completion_is_refused_before_the_call_once_the_budget_is_spent() {
-        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter),
+        );
         fake.push_completion_result(paid_completion("first", 1.0));
         svc.complete("q1", "test", None).await.unwrap();
 
@@ -1528,7 +1546,12 @@ mod budget_tests {
 
     #[tokio::test]
     async fn a_paid_embedding_is_recorded() {
-        let (svc, _fake) = service_with_budget("1.0", FakeAiProvider::new().with_embedding_cost(0.25));
+        let (svc, _fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.25),
+        );
 
         svc.embed("text").await.unwrap();
 
@@ -1539,7 +1562,12 @@ mod budget_tests {
 
     #[tokio::test]
     async fn an_embedding_is_refused_before_the_call_once_the_budget_is_spent() {
-        let (svc, fake) = service_with_budget("0.5", FakeAiProvider::new().with_embedding_cost(0.5));
+        let (svc, fake) = service_with_budget(
+            "0.5",
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.5),
+        );
         svc.embed("a").await.unwrap();
 
         assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
@@ -1675,7 +1703,7 @@ mod budget_tests {
     /// No budget (0) never refuses, whatever was spent.
     #[tokio::test]
     async fn no_budget_never_refuses() {
-        let (svc, fake) = service_with_budget("0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget("0", FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter));
         fake.push_completion_result(paid_completion("a", 5.0));
         svc.complete("q1", "test", None).await.unwrap();
         assert!(svc.complete("q2", "test", None).await.is_ok());
@@ -1796,6 +1824,69 @@ mod budget_tests {
             .unwrap();
 
         assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
+    }
+
+    /// Charge `cost_usd` to the current period, as an earlier OpenRouter call would.
+    fn spend(db: &Database, cost_usd: f64) {
+        db.connection()
+            .execute(
+                "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
+                 VALUES ('openrouter', 'vendor/model', 'chat', 0, 0, ?1, ?2)",
+                rusqlite::params![cost_usd, chrono::Utc::now().timestamp() + 1],
+            )
+            .unwrap();
+    }
+
+    /// The budget is OpenRouter's spend: a user who hit it and moved to a free
+    /// local or self-hosted backend must not be refused by it.
+    #[tokio::test]
+    async fn a_spent_budget_never_refuses_a_backend_that_is_not_openrouter() {
+        for kind in [
+            ProviderType::Ollama,
+            ProviderType::LlamaCpp,
+            ProviderType::OpenAiCompatible,
+        ] {
+            let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new().with_provider_type(kind));
+            spend(&svc.db, 2.0);
+            fake.push_chat_response("local answer");
+
+            svc.complete("q", "test", None).await.expect("completion");
+            svc.embed("text").await.expect("embedding");
+            AiService::chat_stream(&svc.db, fake.as_ref(), question(), Box::new(|_| true))
+                .await
+                .expect("chat");
+        }
+    }
+
+    /// Server chat with OpenRouter embeddings: only the OpenRouter side is
+    /// metered, refused and recorded.
+    #[tokio::test]
+    async fn openrouter_embeddings_beside_a_server_chat_are_metered_on_their_own() {
+        let chat = Arc::new(FakeAiProvider::new().with_provider_type(ProviderType::OpenAiCompatible));
+        let embeddings = Arc::new(
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.5),
+        );
+        let db = Arc::new(db_with_budget("0.5"));
+        let svc = AiService::with_provider(db, Arc::new(SplitProvider::new(chat.clone(), embeddings.clone())));
+
+        svc.embed("a").await.expect("first embedding");
+        let second = svc.embed("b").await;
+        svc.complete("q", "test", None)
+            .await
+            .expect("server chat is not metered");
+
+        assert!(matches!(second, Err(AppError::BudgetExceeded(_))), "got {second:?}");
+        assert_eq!(embeddings.embed_calls().len(), 1);
+        let provider: String = svc
+            .db
+            .reader()
+            .query_row("SELECT provider FROM ai_usage WHERE operation = 'embed'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(provider, "openrouter", "the row names who charged for it");
     }
 }
 

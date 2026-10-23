@@ -1172,7 +1172,7 @@ mod tests {
             ),
         ];
         for (provider, model, rw_pref, rr_pref, want_rw, want_rr, label) in cases {
-            let plan = plan_aux_llm(provider.clone(), model, *rw_pref, *rr_pref);
+            let plan = plan_aux_llm(*provider, model, *rw_pref, *rr_pref);
             assert_eq!(plan.rewrite, *want_rw, "rewrite mismatch: {label}");
             assert_eq!(plan.rerank, *want_rr, "rerank mismatch: {label}");
         }
