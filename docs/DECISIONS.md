@@ -3813,3 +3813,26 @@ preferences and logs (DASA 1.10.2).
 and a DNS name is not proof of locality); a per-user "allow insecure LAN" toggle (one
 click from cleartext, and it weakens a recorded CASA control); stripping credentials
 from the URL silently (the user would think the key is in use).
+
+## 2026-10-23 — OpenAI-compatible provider: one destination by default, disclosure for remote hosts
+
+**Decision:** The fourth AI provider, an OpenAI-compatible server at a base URL the user
+enters (LM Studio, vLLM, `llama-server`, LiteLLM, a proxy), runs chat and, by default, the
+email index on that same server, so mail goes to one destination; the in-app embedding model
+(only where the embedded runtime runs) and OpenRouter stay as explicit alternatives. A server
+on this machine needs no extra step. Saving a server on another host requires an explicit
+confirmation that email content goes there and that EmailOps cannot control what it keeps or
+trains on; the confirmed host is stored, and a URL on any other host asks again. The backend
+enforces it (`services::ai_server::plan_server_settings`), not only the dialog. The client
+follows no redirects, sends the stored key only to the saved server's origin, keeps the key in
+the secrets vault apart from the OpenRouter key, and shows a failed request as its status plus
+a trimmed message, never the raw body. The monthly budget meters OpenRouter traffic only.
+**Context:** Issue #138 and its review. OpenRouter requests always carry
+`data_collection = "deny"` (recorded for Google's Gmail data policy); an arbitrary server gives
+no equivalent guarantee, and a proxy may forward mail elsewhere. CASA AL1 / DASA 1.1.1
+(transport), 1.8.1 (no internals in errors) and 1.10.2 (sensitive data) apply.
+**Rejected:** In-app embeddings as the default for this provider (two destinations for mail,
+and unavailable on Intel Macs); following redirects that stay on https (the check on the base
+URL would no longer describe where mail goes); a disclosure shown once per install rather than
+per host (moving the URL to another provider would inherit consent given for a different one);
+showing the server's error body in the UI (servers return HTML pages and stack traces there).

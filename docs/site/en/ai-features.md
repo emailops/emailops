@@ -4,6 +4,7 @@ description: 'Chat with your mailbox, generate replies, classify mail, extract t
 weight: 40
 nav:
   choosing-a-backend: settings/ai
+  openai-compatible-server: settings/ai
   the-model-catalog: settings/ai
   performance-knobs: settings/ai
   chat-with-your-mailbox: view/chat
@@ -39,6 +40,47 @@ your machine.
   cap, and sends email content to a third party — so it stays off unless you enable it. Its
   panel shows what the current period has spent against that cap, with **Start a new period**
   to reset the count. <!-- claim:ai-choosing-backend-4 -->
+- **OpenAI-compatible** — a server you already run that speaks the OpenAI API: LM Studio,
+  vLLM, llama.cpp's `llama-server`, LiteLLM or a proxy. Chat goes to that server and, unless
+  you choose otherwise, so does the email index; see
+  [an OpenAI-compatible server](#openai-compatible-server). <!-- claim:ai-choosing-backend-5 -->
+
+### An OpenAI-compatible server {#openai-compatible-server}
+
+<!-- claim:ai-openai-compatible-1 -->
+Enter the **Server URL** — for example `http://localhost:1234/v1` for LM Studio or
+`http://localhost:8080/v1` for `llama-server` — and an API key only if the server asks for
+one. **Load models** lists the models the server serves; you can also type a model id.
+**Test** sends one short request to the server you typed before anything is saved. The key is
+kept in the system keychain, apart from the OpenRouter key, and **Remove the saved key**
+deletes it.
+
+<!-- claim:ai-openai-compatible-2 -->
+Plain `http://` is accepted only for this computer (`localhost`, `127.0.0.1`, `::1`). A server
+on another machine needs `https://`, even on your home or office network, and a URL with a
+user name or password in it is refused. To reach a machine on your network without https,
+forward its port with an SSH tunnel (`ssh -L 8080:localhost:8080 <host>`) or reach it over
+Tailscale, so it appears on `localhost`, and use the `http://localhost` URL.
+
+<!-- claim:ai-openai-compatible-3 -->
+Saving a server that is not on this computer first asks you to confirm that the text of your
+emails, your chat questions and your drafts will be sent to it, and that EmailOps cannot control
+what that server keeps or trains on. It asks again whenever the URL moves to another host.
+
+<!-- claim:ai-openai-compatible-4 -->
+**Email index (Embeddings)** picks where semantic search computes the Embeddings of your mail:
+**This server** (the default, so your mail goes to one place), the
+**In-app model (on this computer)** (offered only where the in-app backend can run) or
+**OpenRouter**, which brings back the monthly budget and
+**Zero data retention only** controls for it. An embedding model on the server is checked when
+you save, and one that returns no vectors the index can hold is refused. Changing it rebuilds
+the index, after asking.
+
+<!-- claim:ai-openai-compatible-5 -->
+**Context size (tokens)** tells EmailOps how much the model can read at once. Leave it at 0 to
+use what the server reports (vLLM does); otherwise set the size the model runs with, or chat
+assumes 8192. Replies wait up to five minutes for their first word while a local server reads a
+long prompt, and reasoning that a model writes inline is left out of the answer.
 
 ### The model catalog {#the-model-catalog}
 
@@ -235,7 +277,8 @@ you remember and EmailOps finds it. This also powers the retrieval step in chat.
 changing the embedding model, in **Settings → AI Search**.
 
 <!-- claim:ai-semantic-search-2 -->
-With the two local backends, embedding happens on your machine. With OpenRouter it happens
+With the two local backends, embedding happens on your machine. With an OpenAI-compatible
+server it happens where its **Email index (Embeddings)** setting says. With OpenRouter it happens
 only if you pick an **Embedding Model** in its panel: the text of every email that gets
 indexed, and of every search and chat question, is then sent to OpenRouter and counts against
 the monthly budget. With none picked, semantic search is off and search is keyword-only. The

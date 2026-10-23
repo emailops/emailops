@@ -61,12 +61,19 @@ sind:
 | Ihr E-Mail-Anbieter (Gmail, Microsoft Graph, Ihr IMAP/SMTP-Server) | Bei jeder Synchronisierung und jedem Versand | Ja — es ist Ihr Postfach |
 | Ihr Kalenderanbieter (Google, Outlook) | Kalendersynchronisierung, falls aktiviert | Nur Kalenderdaten |
 | Hugging Face | Nur während des Downloads eines von Ihnen gewählten KI-Modells | Nein |
+| Ihr OpenAI-kompatibler Server | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 | OpenRouter | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 
 <!-- claim:priv-there-no-2 -->
-Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
+Abgesehen von einem Server, den Sie selbst betreiben, ist die letzte Zeile der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
 **Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
+
+<!-- claim:priv-there-no-5 -->
+Ein OpenAI-kompatibler Server auf diesem Computer behält Ihre Post dort. Einer auf einem anderen
+Rechner muss https verwenden, und beim Speichern bestätigen Sie für seinen Host, dass Ihre Post
+dorthin gesendet wird und dass EmailOps nicht steuern kann, was er aufbewahrt; siehe
+[ein OpenAI-kompatibler Server](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 Wenn Sie ihn aktivieren, weist jede Anfrage OpenRouter an, nur Anbieter zu verwenden, die das
@@ -127,7 +134,8 @@ Embeddings, Chat sowie Aufgaben- und Gedächtnis-Extraktion laufen alle dort.
 
 <!-- claim:priv-local-ai-2 -->
 Der Wechsel zu Ollama hält die Inferenz ebenfalls lokal, nur in einem eigenen Prozess auf
-Ihrer Maschine. Nur OpenRouter sendet Inhalte vom Gerät weg. Siehe
+Ihrer Maschine. Nur OpenRouter und ein OpenAI-kompatibler Server auf einem anderen Rechner senden Inhalte vom
+Gerät weg. Siehe
 [Backend wählen](../ai-features/#choosing-a-backend).
 
 ## Schutz vor den E-Mails selbst {#protection-from-the-mail-itself}

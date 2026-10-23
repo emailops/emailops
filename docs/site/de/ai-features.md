@@ -4,6 +4,7 @@ description: 'Mit dem Postfach chatten, Antworten erzeugen, E-Mails klassifizier
 weight: 40
 nav:
   choosing-a-backend: settings/ai
+  openai-compatible-server: settings/ai
   the-model-catalog: settings/ai
   performance-knobs: settings/ai
   chat-with-your-mailbox: view/chat
@@ -40,6 +41,50 @@ keine E-Mail jemals Ihre Maschine.
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
   bleibt sie aus, bis Sie sie aktivieren. Ihr Bereich zeigt die Ausgaben des laufenden
   Zeitraums gegenüber diesem Limit, mit **Neuen Zeitraum starten** zum Zurücksetzen. <!-- claim:ai-choosing-backend-4 -->
+- **OpenAI-kompatibel** — ein Server, den Sie bereits betreiben und der die OpenAI-API spricht:
+  LM Studio, vLLM, `llama-server` von llama.cpp, LiteLLM oder ein Proxy. Der Chat geht an diesen
+  Server und, sofern Sie nichts anderes wählen, auch der E-Mail-Index; siehe
+  [ein OpenAI-kompatibler Server](#openai-compatible-server). <!-- claim:ai-choosing-backend-5 -->
+
+### Ein OpenAI-kompatibler Server {#openai-compatible-server}
+
+<!-- claim:ai-openai-compatible-1 -->
+Geben Sie die **Server-URL** ein — zum Beispiel `http://localhost:1234/v1` für LM Studio oder
+`http://localhost:8080/v1` für `llama-server` — und einen API-Schlüssel nur, wenn der Server einen
+verlangt. **Modelle laden** listet die Modelle auf, die der Server bereitstellt; Sie können auch
+eine Modell-ID eingeben. **Testen** sendet eine kurze Anfrage an den eingegebenen Server, bevor
+etwas gespeichert wird. Der Schlüssel liegt im Schlüsselbund des Systems, getrennt vom
+OpenRouter-Schlüssel, und **Gespeicherten Schlüssel entfernen** löscht ihn.
+
+<!-- claim:ai-openai-compatible-2 -->
+Unverschlüsseltes `http://` wird nur für diesen Computer akzeptiert (`localhost`, `127.0.0.1`,
+`::1`). Ein Server auf einem anderen Rechner braucht `https://`, auch im Heim- oder Büronetz, und
+eine URL mit Benutzername oder Passwort wird abgelehnt. Um einen Rechner in Ihrem Netz ohne https
+zu erreichen, leiten Sie seinen Port über einen SSH-Tunnel weiter
+(`ssh -L 8080:localhost:8080 <host>`) oder verbinden sich über Tailscale, sodass er unter
+`localhost` erscheint, und verwenden die URL `http://localhost`.
+
+<!-- claim:ai-openai-compatible-3 -->
+Wenn Sie einen Server speichern, der nicht auf diesem Computer läuft, bestätigen Sie zuerst, dass
+der Text Ihrer E-Mails, Ihre Chat-Fragen und Ihre Entwürfe an ihn gesendet werden und dass
+EmailOps nicht steuern kann, was dieser Server aufbewahrt oder ob er damit trainiert. Die Frage
+kommt erneut, sobald die URL auf einen anderen Host wechselt.
+
+<!-- claim:ai-openai-compatible-4 -->
+**E-Mail-Index (Embeddings)** legt fest, wo die semantische Suche die Embeddings Ihrer Post
+berechnet: **Dieser Server** (Standard, damit Ihre Post an nur einen Ort geht), das
+**App-Modell (auf diesem Computer)** (nur angeboten, wo das In-App-Backend laufen kann) oder
+**OpenRouter**, womit das monatliche Budget und **Nur ohne Datenspeicherung** dafür
+zurückkommen. Ein Embedding-Modell auf dem Server wird beim Speichern geprüft, und eines, das
+keine passenden Vektoren für den Index liefert, wird abgelehnt. Eine Änderung baut den Index nach
+Rückfrage neu auf.
+
+<!-- claim:ai-openai-compatible-5 -->
+**Kontextgröße (Tokens)** sagt EmailOps, wie viel das Modell auf einmal lesen kann. Lassen Sie
+0 stehen, um den Wert zu nutzen, den der Server meldet (vLLM tut das); sonst geben Sie die Größe
+an, mit der das Modell läuft, andernfalls nimmt der Chat 8192 an. Antworten warten bis zu fünf
+Minuten auf ihr erstes Wort, während ein lokaler Server einen langen Prompt liest, und
+Überlegungen, die ein Modell in den Text schreibt, werden aus der Antwort entfernt.
 
 ### Der Modellkatalog {#the-model-catalog}
 
@@ -247,7 +292,9 @@ trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das
 nach einem Wechsel des Embedding-Modells von Grund auf neu.
 
 <!-- claim:ai-semantic-search-2 -->
-Mit den beiden lokalen Backends erfolgt das Einbetten auf Ihrem Rechner. Mit OpenRouter
+Mit den beiden lokalen Backends erfolgt das Einbetten auf Ihrem Rechner. Mit einem
+OpenAI-kompatiblen Server erfolgt es dort, wo seine Einstellung **E-Mail-Index (Embeddings)**
+es festlegt. Mit OpenRouter
 geschieht es nur, wenn Sie in dessen Bereich ein **Embedding-Modell** wählen: Der Text jeder
 indizierten E-Mail sowie jeder Suche und Chat-Frage wird dann an OpenRouter gesendet und zählt
 zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern
