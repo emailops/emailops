@@ -9,6 +9,11 @@ pub enum ProviderType {
     Ollama,
     OpenRouter,
     LlamaCpp,
+    /// A user-configured OpenAI-compatible server (LM Studio, vLLM,
+    /// llama-server, LiteLLM, a local proxy…), driven by the OpenRouter client
+    /// without OpenRouter's routing object and headers.
+    #[serde(rename = "openai_compatible")]
+    OpenAiCompatible,
 }
 
 impl std::fmt::Display for ProviderType {
@@ -17,6 +22,7 @@ impl std::fmt::Display for ProviderType {
             ProviderType::Ollama => write!(f, "ollama"),
             ProviderType::OpenRouter => write!(f, "openrouter"),
             ProviderType::LlamaCpp => write!(f, "llamacpp"),
+            ProviderType::OpenAiCompatible => write!(f, "openai_compatible"),
         }
     }
 }
@@ -374,6 +380,138 @@ pub trait AIProvider: Send + Sync {
     /// swallowed at the call site.
     async fn prewarm_chat_prefix(&self, _messages: Vec<AiMessage>) -> Result<()> {
         Ok(())
+    }
+}
+
+// ── Split provider: chat from one backend, embeddings from another ─────────
+
+/// Chat from one provider and embeddings from another. Used for an
+/// OpenAI-compatible server, which usually serves chat only: its turns go to
+/// the server, while the email index is built by the in-app embedding model
+/// or by OpenRouter, whichever the user picked.
+///
+/// Every method is forwarded to `chat` except the embedding ones, which go to
+/// `embeddings`. Forwarding is explicit for each trait method — including the
+/// ones with default bodies — so a backend's own streaming, metering, context
+/// window and warm-up are never silently replaced by the trait's fallbacks.
+pub struct SplitProvider {
+    chat: std::sync::Arc<dyn AIProvider>,
+    embeddings: std::sync::Arc<dyn AIProvider>,
+}
+
+impl SplitProvider {
+    pub fn new(chat: std::sync::Arc<dyn AIProvider>, embeddings: std::sync::Arc<dyn AIProvider>) -> Self {
+        Self { chat, embeddings }
+    }
+}
+
+#[async_trait]
+impl AIProvider for SplitProvider {
+    fn provider_type(&self) -> ProviderType {
+        self.chat.provider_type()
+    }
+
+    fn model_name(&self) -> &str {
+        self.chat.model_name()
+    }
+
+    fn embedding_model_name(&self) -> &str {
+        self.embeddings.embedding_model_name()
+    }
+
+    async fn is_available(&self) -> bool {
+        self.chat.is_available().await
+    }
+
+    async fn is_embedding_available(&self) -> bool {
+        self.embeddings.is_embedding_available().await
+    }
+
+    fn embedding_configured(&self) -> bool {
+        self.embeddings.embedding_configured()
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        self.chat.list_models().await
+    }
+
+    async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>> {
+        self.embeddings.list_embedding_models().await
+    }
+
+    async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
+        self.chat.complete(prompt, options).await
+    }
+
+    async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+    ) -> Result<CompletionResult> {
+        self.chat.complete_with_prefix(prefix, suffix, options).await
+    }
+
+    fn context_window(&self) -> Option<u32> {
+        self.chat.context_window()
+    }
+
+    async fn resolve_context_window(&self) -> Option<u32> {
+        self.chat.resolve_context_window().await
+    }
+
+    async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
+        self.embeddings.embed(text).await
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>> {
+        self.embeddings.embed_batch(texts).await
+    }
+
+    async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+        self.chat.chat_with_tools(messages, tools).await
+    }
+
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        self.chat.chat_with_tools_metered(messages, tools).await
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: Vec<AiMessage>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ChatStreamResult> {
+        self.chat.chat_stream(messages, on_token).await
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        self.chat.chat_stream_with_tools(messages, tools, on_token).await
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            embeddings: self.embeddings.capabilities().embeddings,
+            ..self.chat.capabilities()
+        }
+    }
+
+    /// Warms the chat backend only: the embedding model loads with the first
+    /// indexing batch, as it does for the in-app runtime on its own.
+    async fn warmup(&self) -> Result<()> {
+        self.chat.warmup().await
+    }
+
+    async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
+        self.chat.prewarm_chat_prefix(messages).await
     }
 }
 
@@ -825,6 +963,61 @@ impl Clone for FakeAiProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SplitProvider ────────────────────────────────────────────────────
+
+    fn split() -> (
+        std::sync::Arc<FakeAiProvider>,
+        std::sync::Arc<FakeAiProvider>,
+        SplitProvider,
+    ) {
+        let chat = std::sync::Arc::new(FakeAiProvider::new().with_model("server-chat"));
+        let embeddings = std::sync::Arc::new(FakeAiProvider::new().with_model("local"));
+        let provider = SplitProvider::new(chat.clone(), embeddings.clone());
+        (chat, embeddings, provider)
+    }
+
+    #[tokio::test]
+    async fn split_provider_chats_with_one_backend_and_embeds_with_the_other() {
+        let (chat, embeddings, provider) = split();
+        chat.push_completion("from the server");
+        let reply = provider.complete("hi", CompletionOptions::default()).await.unwrap();
+        assert_eq!(reply.text, "from the server");
+        assert_eq!(chat.completion_calls(), vec!["hi"]);
+        assert!(
+            embeddings.completion_calls().is_empty(),
+            "no chat reaches the embedding backend"
+        );
+
+        provider.embed("mail text").await.unwrap();
+        provider.embed_batch(&["a".into(), "b".into()]).await.unwrap();
+        assert_eq!(embeddings.embed_calls(), vec!["mail text", "a", "b"]);
+        assert!(chat.embed_calls().is_empty(), "no mail is embedded by the chat server");
+    }
+
+    #[tokio::test]
+    async fn split_provider_names_each_side_and_streams_from_the_chat_backend() {
+        let (chat, _embeddings, provider) = split();
+        assert_eq!(provider.model_name(), "server-chat");
+        assert_eq!(provider.embedding_model_name(), "fake-embed-model");
+        chat.push_chat_response("streamed");
+        let result = provider.chat_stream(vec![], Box::new(|_| true)).await.unwrap();
+        assert_eq!(result.content, "streamed");
+        assert_eq!(chat.chat_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn split_provider_reports_the_embedding_backend_setup() {
+        let chat = std::sync::Arc::new(FakeAiProvider::new());
+        let unset = std::sync::Arc::new(FakeAiProvider::new().without_embedding_model());
+        let provider = SplitProvider::new(chat.clone(), unset);
+        assert!(
+            !provider.embedding_configured(),
+            "follows the embedding backend, not the chat one"
+        );
+        chat.set_available(false);
+        assert!(!provider.is_available().await, "availability is the chat server's");
+    }
 
     #[tokio::test]
     async fn complete_returns_canned_then_default() {

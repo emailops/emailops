@@ -100,7 +100,10 @@ pub(crate) fn plan_n_ctx(
     use crate::ai::provider::ProviderType;
     let reported = reported.filter(|n| *n > 0);
     match provider {
-        ProviderType::OpenRouter => reported.unwrap_or(DEFAULT_N_CTX).min(remote_budget),
+        // Remote servers: what the model reports, within the user's budget.
+        ProviderType::OpenRouter | ProviderType::OpenAiCompatible => {
+            reported.unwrap_or(DEFAULT_N_CTX).min(remote_budget)
+        }
         _ if reported.is_some() => reported.unwrap_or(DEFAULT_N_CTX),
         ProviderType::LlamaCpp if n_ctx_override > 0 => n_ctx_override,
         ProviderType::LlamaCpp => auto_tier,
@@ -1251,6 +1254,12 @@ mod tests {
             DEFAULT_N_CTX
         );
         assert_eq!(plan_n_ctx(None, ProviderType::OpenRouter, 0, 16384, 4096), 4096);
+        // An OpenAI-compatible server is budgeted like OpenRouter.
+        assert_eq!(
+            plan_n_ctx(Some(200_000), ProviderType::OpenAiCompatible, 0, 16384, 32768),
+            32768
+        );
+        assert_eq!(plan_n_ctx(None, ProviderType::OpenAiCompatible, 0, 16384, 4096), 4096);
     }
 
     #[test]
