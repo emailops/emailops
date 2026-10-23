@@ -20,6 +20,11 @@ pub fn build_mock_app() -> EvalResult<AppHandle> {
 /// Env var names recognised by `apply_eval_model_override_from_env`.
 pub const EVAL_MODEL_ENV: &str = "EMAILOPS_EVAL_MODEL";
 pub const EVAL_PROVIDER_ENV: &str = "EMAILOPS_EVAL_PROVIDER";
+/// Base URL of the server when `EMAILOPS_EVAL_PROVIDER=openai_compatible`.
+pub const EVAL_BASE_URL_ENV: &str = "EMAILOPS_EVAL_BASE_URL";
+/// Where that server's runs compute embeddings (`inapp` by default, the model
+/// the demo index was built with; `server` or `openrouter` otherwise).
+pub const EVAL_EMBEDDING_SOURCE_ENV: &str = "EMAILOPS_EVAL_EMBEDDING_SOURCE";
 
 /// Default model evals run against when neither an env override nor a per-case
 /// `model:` is set. Matches the app's catalog default (local llama.cpp GGUF).
@@ -43,6 +48,9 @@ pub fn apply_eval_model_override_from_env(db: &Database) -> EvalResult<Option<(S
         return Ok(None);
     };
     let provider = read_non_empty_env(EVAL_PROVIDER_ENV).unwrap_or_else(|| "llamacpp".to_string());
+    if provider == crate::services::ai_server::PROVIDER_ID {
+        apply_eval_server_from_env(db)?;
+    }
     db.set_preference("ai_provider", &provider)?;
     db.set_preference("ai_model", &model)?;
     eprintln!(
@@ -50,6 +58,36 @@ pub fn apply_eval_model_override_from_env(db: &Database) -> EvalResult<Option<(S
         provider, model
     );
     Ok(Some((provider, model)))
+}
+
+/// Point the eval DB at the OpenAI-compatible server named by
+/// [`EVAL_BASE_URL_ENV`], through the same checks a save from Settings runs.
+/// Only a loopback server is accepted: an environment variable is not the
+/// confirmation a remote server's disclosure needs.
+fn apply_eval_server_from_env(db: &Database) -> EvalResult<()> {
+    use crate::services::ai_server::{self, EmbeddingSource, ServerSettingsInput};
+    let base_url = read_non_empty_env(EVAL_BASE_URL_ENV)
+        .ok_or_else(|| EvalError::Config(format!("{EVAL_BASE_URL_ENV} is required for an OpenAI-compatible run")))?;
+    let embedding_source = match read_non_empty_env(EVAL_EMBEDDING_SOURCE_ENV).as_deref() {
+        None | Some("inapp") => EmbeddingSource::InApp,
+        Some("server") => EmbeddingSource::Server,
+        Some("openrouter") => EmbeddingSource::OpenRouter,
+        Some(other) => {
+            return Err(EvalError::Config(format!(
+                "{EVAL_EMBEDDING_SOURCE_ENV}={other}: expected inapp, server or openrouter"
+            )))
+        }
+    };
+    let input = ServerSettingsInput {
+        base_url,
+        embedding_source,
+        ..Default::default()
+    };
+    // `true`: the eval binaries are built with the embedded runtime.
+    let plan = ai_server::plan_server_settings(&input, None, true)
+        .map_err(|e| EvalError::Config(format!("{EVAL_BASE_URL_ENV}: {e}")))?;
+    ai_server::store_server_settings(db, &plan)?;
+    Ok(())
 }
 
 /// Pin the (already copied) eval DB to a provider+model for the duration of an
@@ -180,6 +218,58 @@ mod tests {
     fn clear_eval_env() {
         std::env::remove_var(EVAL_MODEL_ENV);
         std::env::remove_var(EVAL_PROVIDER_ENV);
+        std::env::remove_var(EVAL_BASE_URL_ENV);
+        std::env::remove_var(EVAL_EMBEDDING_SOURCE_ENV);
+    }
+
+    #[test]
+    fn an_openai_compatible_override_points_the_eval_db_at_the_server() {
+        let _g = env_lock();
+        clear_eval_env();
+        std::env::set_var(EVAL_PROVIDER_ENV, "openai_compatible");
+        std::env::set_var(EVAL_MODEL_ENV, "served-model");
+        std::env::set_var(EVAL_BASE_URL_ENV, "http://127.0.0.1:8080/v1/");
+        let db = fresh_db();
+
+        let applied = apply_eval_model_override_from_env(&db).expect("ok");
+        clear_eval_env();
+
+        assert_eq!(
+            applied,
+            Some(("openai_compatible".to_string(), "served-model".to_string()))
+        );
+        let server = crate::services::ai_server::load_server_settings(&db).expect("settings");
+        assert_eq!(server.base_url.as_deref(), Some("http://127.0.0.1:8080/v1"));
+        // The demo index was built in-app: keep querying it with that model.
+        assert_eq!(
+            server.embedding_source,
+            crate::services::ai_server::EmbeddingSource::InApp
+        );
+    }
+
+    #[test]
+    fn an_openai_compatible_override_needs_a_loopback_base_url() {
+        let _g = env_lock();
+        clear_eval_env();
+        std::env::set_var(EVAL_PROVIDER_ENV, "openai_compatible");
+        std::env::set_var(EVAL_MODEL_ENV, "served-model");
+        let db = fresh_db();
+
+        let missing = apply_eval_model_override_from_env(&db);
+        std::env::set_var(EVAL_BASE_URL_ENV, "https://llm.example.com/v1");
+        let remote = apply_eval_model_override_from_env(&db);
+        clear_eval_env();
+
+        assert!(missing.is_err(), "{missing:?}");
+        assert!(remote.is_err(), "an env var is not a confirmed disclosure: {remote:?}");
+    }
+
+    #[test]
+    fn a_server_has_no_local_file_to_check() {
+        assert_eq!(
+            plan_model_preflight("openai_compatible", None, false),
+            ModelPreflight::NotLocal
+        );
     }
 
     #[test]

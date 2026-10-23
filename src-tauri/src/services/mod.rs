@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod agent_search;
 pub mod ai;
 pub mod ai_activity;
+pub mod ai_server;
 pub mod app_handle;
 pub mod attachment_safety;
 pub mod attachment_suggestions;

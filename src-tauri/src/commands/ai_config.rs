@@ -5,8 +5,9 @@ use tauri::{AppHandle, Emitter, State};
 use crate::models::error::AppError;
 use crate::models::AiUsageSummary;
 use crate::services;
-use crate::services::ai::AiService;
+use crate::services::ai::{AiService, AiSettingsInput};
 use crate::services::ai_activity::{self, AiWorkItem, AiWorkKind};
+use crate::services::ai_server::ServerSettingsInput;
 use crate::services::embeddings::EmbeddingsConfig;
 use crate::AppState;
 
@@ -40,6 +41,7 @@ pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Val
         "hasApiKey": has_api_key,
         "thinkingEnabled": config.thinking_enabled,
         "zeroDataRetention": config.zero_data_retention,
+        "server": services::ai_server::load_server_settings(&state.db)?,
     }))
 }
 
@@ -91,53 +93,64 @@ pub async fn set_ai_config(
     monthly_budget_usd: f64,
     thinking_enabled: Option<bool>,
     zero_data_retention: Option<bool>,
+    server: Option<ServerSettingsInput>,
 ) -> Result<(), AppError> {
-    // If no API key is being written, keychain is not touched — safe to call directly.
-    let result = if api_key.is_none() {
-        services::ai::AiService::save_config(
-            &state.db,
-            &provider,
-            &model,
-            embedding_model.as_deref(),
-            None,
-            monthly_budget_usd,
-            thinking_enabled,
-            zero_data_retention,
-        )
-    } else {
-        // Keychain writes can block on a macOS permission prompt; use a dedicated
-        // blocking thread so the async runtime is never stalled.
-        let db = state.db.clone();
-        let task = tauri::async_runtime::spawn_blocking(move || {
-            services::ai::AiService::save_config(
-                &db,
-                &provider,
-                &model,
-                embedding_model.as_deref(),
-                api_key.as_deref(),
-                monthly_budget_usd,
-                thinking_enabled,
-                zero_data_retention,
-            )
-        });
+    let input = AiSettingsInput {
+        provider,
+        model,
+        embedding_model,
+        api_key,
+        monthly_budget_usd,
+        thinking_enabled,
+        zero_data_retention,
+        server,
+    };
+    // Everything is checked (and a new server embedding model probed) before
+    // anything is written.
+    let prepared = AiService::prepare_ai_settings(&state.db, input).await?;
 
-        match tokio::time::timeout(Duration::from_secs(8), task).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(join_error)) => Err(AppError::AiError(format!("AI config save task failed: {}", join_error))),
-            Err(_) => Err(AppError::AiError(
-                "Saving AI config timed out. Check for a macOS Keychain permission prompt.".to_string(),
-            )),
-        }
+    // Keychain writes can block on a macOS permission prompt; use a dedicated
+    // blocking thread so the async runtime is never stalled.
+    let db = state.db.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || AiService::apply_ai_settings(&db, prepared));
+    let result = match tokio::time::timeout(Duration::from_secs(8), task).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(join_error)) => Err(AppError::AiError(format!("AI config save task failed: {}", join_error))),
+        Err(_) => Err(AppError::AiError(
+            "Saving AI config timed out. Check for a macOS Keychain permission prompt.".to_string(),
+        )),
     };
 
     // Notify the rest of the app (LogPanel selectors, AI Settings, etc.) so
     // they re-read the new provider/model immediately. Background tasks always
     // resolve the provider on execution, so they pick up changes too.
     if result.is_ok() {
-        let _ = app.emit("ai-config-updated", serde_json::Value::Null);
+        if let Err(e) = app.emit("ai-config-updated", serde_json::Value::Null) {
+            emit_log(
+                &app,
+                "warn",
+                "ai",
+                &format!("Could not announce the new AI config: {e}"),
+            );
+        }
     }
 
     result
+}
+
+/// Models listed by an OpenAI-compatible server at `base_url`, which Settings
+/// may not have saved yet. `api_key` is the key typed with it, if any.
+#[tauri::command]
+pub async fn list_openai_compatible_models(
+    state: State<'_, AppState>,
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let models = AiService::list_server_models(&state.db, &base_url, api_key.as_deref()).await?;
+    Ok(models
+        .into_iter()
+        .map(|m| serde_json::json!({ "id": m.id, "name": m.name }))
+        .collect())
 }
 
 #[tauri::command]
@@ -183,8 +196,22 @@ pub async fn list_ai_embedding_models(
     provider: Option<String>,
 ) -> Result<Vec<serde_json::Value>, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
+    let provider = provider.as_deref().unwrap_or(&config.provider);
 
-    if provider.as_deref().unwrap_or(&config.provider) == "openrouter" {
+    if provider == services::ai_server::PROVIDER_ID {
+        // The server lists every model it serves; the probe on save refuses
+        // one that returns no vectors.
+        let base_url = services::ai_server::load_server_settings(&state.db)?
+            .base_url
+            .ok_or_else(|| AppError::InvalidInput("Save the server URL first".to_string()))?;
+        let models = AiService::list_server_models(&state.db, &base_url, None).await?;
+        return Ok(models
+            .into_iter()
+            .map(|m| serde_json::json!({ "id": m.id, "name": m.name, "pricing": { "prompt": 0.0, "completion": 0.0, "request": 0.0 } }))
+            .collect());
+    }
+
+    if provider == "openrouter" {
         let key = AiService::load_openrouter_api_key(&state.db)?;
         let client =
             crate::ai::openrouter::OpenRouterClient::new(key, config.model.clone(), config.embedding_model.clone());
@@ -317,10 +344,19 @@ pub async fn test_ai_provider(
     provider: String,
     model: String,
     api_key: Option<String>,
+    base_url: Option<String>,
 ) -> Result<String, AppError> {
     emit_log(&app, "info", "ai", &format!("Testing {provider} ({model})..."));
 
-    let prov: Arc<dyn crate::ai::provider::AIProvider> = if provider == "openrouter" {
+    let prov: Arc<dyn crate::ai::provider::AIProvider> = if provider == services::ai_server::PROVIDER_ID {
+        let base_url = base_url.ok_or_else(|| AppError::InvalidInput("No server URL was given".to_string()))?;
+        Arc::new(AiService::server_client_for(
+            &state.db,
+            &base_url,
+            api_key.as_deref(),
+            &model,
+        )?)
+    } else if provider == "openrouter" {
         let key = match api_key {
             Some(key) if !key.is_empty() => key,
             _ => AiService::load_openrouter_api_key(&state.db)?,
