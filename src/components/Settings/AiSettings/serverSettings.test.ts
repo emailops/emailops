@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { disclosureHost, sendsIndexToOpenRouter } from './serverSettings';
+import { aiRunsRemotely, disclosureHost, sendsIndexToOpenRouter } from './serverSettings';
 
 describe('disclosureHost', () => {
   it('asks nothing for a server on this machine', () => {
@@ -31,5 +31,19 @@ describe('sendsIndexToOpenRouter', () => {
     expect(sendsIndexToOpenRouter('openai_compatible', 'server')).toBe(false);
     expect(sendsIndexToOpenRouter('openai_compatible', 'inapp')).toBe(false);
     expect(sendsIndexToOpenRouter('llamacpp', undefined)).toBe(false);
+  });
+});
+
+describe('aiRunsRemotely', () => {
+  it('is false for the local backends and for a server on this machine', () => {
+    expect(aiRunsRemotely(null, null)).toBe(false);
+    expect(aiRunsRemotely('llamacpp', null)).toBe(false);
+    expect(aiRunsRemotely('ollama', null)).toBe(false);
+    expect(aiRunsRemotely('openai_compatible', 'http://localhost:1234/v1')).toBe(false);
+  });
+
+  it('is true for OpenRouter and for a server on another machine', () => {
+    expect(aiRunsRemotely('openrouter', null)).toBe(true);
+    expect(aiRunsRemotely('openai_compatible', 'https://llm.example.com/v1')).toBe(true);
   });
 });

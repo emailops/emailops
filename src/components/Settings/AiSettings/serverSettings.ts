@@ -35,3 +35,14 @@ export function sendsIndexToOpenRouter(
 ): boolean {
   return provider === 'openrouter' || (provider === 'openai_compatible' && embeddingSource === 'openrouter');
 }
+
+/**
+ * Whether AI requests leave this machine with `provider`: OpenRouter, or an
+ * OpenAI-compatible server whose saved `serverBaseUrl` is not on this machine.
+ * Unset (the in-app default) and Ollama run here.
+ */
+export function aiRunsRemotely(provider: string | null, serverBaseUrl: string | null): boolean {
+  if (provider === 'openrouter') return true;
+  if (provider !== 'openai_compatible') return false;
+  return serverBaseUrl != null && disclosureHost(serverBaseUrl, null) != null;
+}

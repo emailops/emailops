@@ -55,7 +55,6 @@ import { ModelSelector } from './LogPanel';
 
 const config = {
   provider: 'ollama',
-  embeddingProvider: 'ollama',
   model: 'llama-small',
   embeddingModel: 'embed-small',
   openRouterValidatedEmbeddingModel: null,
@@ -122,6 +121,19 @@ describe('LogPanel ModelSelector', () => {
     expect(backendLabel()).toBe('OpenRouter');
     expect(container.querySelector('[data-select="dashboard:log.aiModel"]')).toBeNull();
     expect(api.setAiConfig).not.toHaveBeenCalled();
+  });
+
+  it('names an OpenAI-compatible server and offers no model list for it', async () => {
+    vi.mocked(api.getAiConfig).mockResolvedValue({
+      ...config,
+      provider: 'openai_compatible',
+      model: 'served',
+    } as never);
+    await mount();
+
+    expect(backendLabel()).toBe('OpenAI-compatible');
+    expect(container.querySelector('[data-select="dashboard:log.aiModel"]')).toBeNull();
+    expect(api.listOllamaModels).not.toHaveBeenCalled();
   });
 
   // ── Work in progress ───────────────────────────────────────────────────
