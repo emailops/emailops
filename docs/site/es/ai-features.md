@@ -81,7 +81,10 @@ vectores que quepan en el índice. Cambiarlo reconstruye el índice, tras pregun
 en 0 para usar lo que informa el servidor (vLLM lo hace); si no, pon el tamaño con el que se
 ejecuta el modelo, o el chat supone 8192. Las respuestas esperan hasta cinco minutos su primera
 palabra mientras un servidor local lee un prompt largo, y el razonamiento que un modelo escribe
-dentro del texto se deja fuera de la respuesta.
+dentro del texto se deja fuera de la respuesta. EmailOps pide al servidor que se salte el
+razonamiento de un modelo que razona en sus llamadas internas cortas; vLLM y `llama-server` lo
+respetan y LM Studio no, así que con un modelo que razona desactiva allí su razonamiento en los
+ajustes del modelo.
 
 ### El catálogo de modelos {#the-model-catalog}
 

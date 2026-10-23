@@ -66,6 +66,11 @@ struct OpenRouterChatRequest {
     /// OpenRouter only; omitted for a plain OpenAI-compatible server.
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<ProviderPreferences>,
+    /// OpenAI-compatible servers only: variables for the model's chat
+    /// template. `enable_thinking: false` turns off a reasoning model's
+    /// thinking where the server honours it (vLLM, llama-server).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Value>,
 }
 
 /// OpenRouter routing constraints sent with every request that carries mail
@@ -621,6 +626,8 @@ impl OpenRouterClient {
             response_format: response_format(options.json_shape.as_ref()),
             tools: None,
             provider: self.provider_preferences(),
+            chat_template_kwargs: (self.endpoint == Endpoint::OpenAiCompatible && options.think == Some(false))
+                .then(|| serde_json::json!({ "enable_thinking": false })),
         }
     }
 
@@ -636,6 +643,7 @@ impl OpenRouterClient {
             response_format: None,
             tools: (!tools.is_empty()).then(|| tools.to_vec()),
             provider: self.provider_preferences(),
+            chat_template_kwargs: None,
         }
     }
 
@@ -2535,6 +2543,30 @@ mod compatible_server_tests {
             .expect("completed");
 
         assert_eq!(result.text, "");
+    }
+
+    #[test]
+    fn a_no_thinking_call_asks_the_server_template_to_skip_reasoning() {
+        let server_client =
+            OpenRouterClient::openai_compatible("http://127.0.0.1:1", String::new(), "m".into(), String::new());
+        let no_think = CompletionOptions {
+            think: Some(false),
+            ..CompletionOptions::default()
+        };
+
+        let body = serde_json::to_value(server_client.chat_request("x", &no_think)).expect("json");
+        assert_eq!(body["chat_template_kwargs"], json!({ "enable_thinking": false }));
+
+        let default =
+            serde_json::to_value(server_client.chat_request("x", &CompletionOptions::default())).expect("json");
+        assert!(default.get("chat_template_kwargs").is_none(), "left to the server");
+
+        let openrouter = OpenRouterClient::new("k".into(), "vendor/m".into(), String::new());
+        let body = serde_json::to_value(openrouter.chat_request("x", &no_think)).expect("json");
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "OpenRouter does not take it"
+        );
     }
 
     #[tokio::test]

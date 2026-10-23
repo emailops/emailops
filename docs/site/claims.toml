@@ -961,7 +961,8 @@ checks = [
   { tests = ['ai::openrouter::compatible_server_tests::the_context_window_comes_from_max_model_len', 'ai::openrouter::compatible_server_tests::a_configured_context_window_wins_over_the_server', 'services::ai::server_provider_tests::the_configured_context_window_reaches_the_provider', 'services::chat::research::tests::a_remote_model_with_an_unknown_window_gets_the_safe_default'] },
   { tests = ['ai::openrouter::compatible_server_tests::the_first_token_may_take_longer_than_the_idle_window'], covers = ["Replies wait up to five minutes for their first word while a local server reads a long prompt"] },
   { tests = ['ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_the_stream', 'ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_a_completion'], covers = ["reasoning that a model writes inline is left out of the answer."] },
-  { manual = 'Which servers report their context size (vLLM does) was checked by hand against their /models responses.' },
+  { tests = ['ai::openrouter::compatible_server_tests::a_no_thinking_call_asks_the_server_template_to_skip_reasoning'], covers = ["EmailOps asks the server to skip a reasoning model's thinking on its short internal calls"] },
+  { manual = 'Which servers report their context size (vLLM does), and which honour enable_thinking (LM Studio ignored it with Qwen 3.6, checked on 23/10/2026), was checked by hand.' },
 ]
 [ai-choosing-backend-model-catalog-1]
 checks = [

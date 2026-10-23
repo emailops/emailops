@@ -86,7 +86,10 @@ l'index, après confirmation.
 0 pour utiliser ce que le serveur annonce (vLLM le fait) ; sinon, indiquez la taille avec laquelle
 le modèle tourne, faute de quoi le chat suppose 8192. Les réponses attendent jusqu'à cinq minutes
 leur premier mot pendant qu'un serveur local lit un long prompt, et le raisonnement qu'un modèle
-écrit dans le texte est retiré de la réponse.
+écrit dans le texte est retiré de la réponse. EmailOps demande au serveur de sauter le
+raisonnement d'un modèle qui raisonne lors de ses appels internes courts ; vLLM et `llama-server`
+le respectent, LM Studio non : avec un tel modèle, désactivez-y son raisonnement dans les réglages
+du modèle.
 
 ### Le catalogue de modèles {#the-model-catalog}
 

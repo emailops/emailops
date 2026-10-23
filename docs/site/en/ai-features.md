@@ -80,7 +80,9 @@ the index, after asking.
 **Context size (tokens)** tells EmailOps how much the model can read at once. Leave it at 0 to
 use what the server reports (vLLM does); otherwise set the size the model runs with, or chat
 assumes 8192. Replies wait up to five minutes for their first word while a local server reads a
-long prompt, and reasoning that a model writes inline is left out of the answer.
+long prompt, and reasoning that a model writes inline is left out of the answer. EmailOps asks the server to skip a
+reasoning model's thinking on its short internal calls; vLLM and `llama-server` honour that, LM
+Studio does not, so with a reasoning model there turn its thinking off in the model's settings.
 
 ### The model catalog {#the-model-catalog}
 
