@@ -109,7 +109,7 @@ export function AiWorkInProgressDialog({
             </li>
           ))}
         </ul>
-        {sendsMailToOpenRouter(activity.provider, work) && (
+        {sendsMailToOpenRouter(activity, work) && (
           <p className="text-sm text-amber-700 mb-3">{t('settings:aiWork.openRouter')}</p>
         )}
         <p className="text-sm text-gray-500">

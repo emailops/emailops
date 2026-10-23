@@ -378,7 +378,7 @@ export interface Attachment {
 }
 
 export interface AiConfig {
-  provider: 'ollama' | 'openrouter' | 'llamacpp';
+  provider: 'ollama' | 'openrouter' | 'llamacpp' | 'openai_compatible';
   model: string;
   embeddingModel: string;
   /** The OpenRouter embedding model that passed the dimension check, if any. */
@@ -392,6 +392,14 @@ export interface AiConfig {
   hasApiKey: boolean;
   thinkingEnabled: boolean;
   zeroDataRetention: boolean;
+  /** The OpenAI-compatible server's saved settings. */
+  server: {
+    baseUrl: string | null;
+    hasApiKey: boolean;
+    embeddingSource: 'server' | 'inapp' | 'openrouter';
+    contextWindow: number;
+    disclosedHost: string | null;
+  };
 }
 
 /** A kind of AI background work that uses the configured provider
@@ -419,6 +427,9 @@ export interface AiWorkItem {
 export interface AiProviderActivity {
   /** The provider in use (the saved one). */
   provider: string;
+  /** Where embedding work sends mail: `provider`, or the OpenAI-compatible
+   *  server's embedding source. */
+  embeddingProvider: string;
   items: AiWorkItem[];
 }
 

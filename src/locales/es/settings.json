@@ -173,7 +173,9 @@
     "test": "Probar",
     "testing": "Probando…",
     "useThisModelTitle": "Usar este modelo",
-    "deleteModelFileTitle": "Eliminar el archivo del modelo"
+    "deleteModelFileTitle": "Eliminar el archivo del modelo",
+    "providerServerLabel": "Compatible con OpenAI",
+    "providerServerDesc": "Tu propio servidor"
   },
   "confirmDisable": {
     "title": "¿Desactivar las funciones de IA?",
@@ -210,6 +212,37 @@
     "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
     "embeddingZdrBlocked": "No se ha guardado nada: ningún proveedor del modelo de Embeddings {{model}} cumple el ajuste de retención cero. Desactiva «Solo retención cero» en Ajustes → IA → OpenRouter, o no uses ningún modelo de Embeddings (solo búsqueda por palabras clave).",
     "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
+  },
+  "server": {
+    "baseUrl": "URL del servidor",
+    "baseUrlHelp": "Por ejemplo http://localhost:1234/v1 (LM Studio), http://localhost:8080/v1 (llama-server) o http://localhost:8000/v1 (vLLM). http:// sin cifrar solo funciona con este ordenador; un servidor en otra máquina necesita https://, o un túnel SSH o Tailscale para que aparezca en localhost.",
+    "baseUrlRequired": "Introduce la URL del servidor.",
+    "apiKey": "Clave de API (opcional)",
+    "apiKeyPlaceholder": "Solo si el servidor la pide",
+    "removeKey": "Eliminar la clave guardada",
+    "keyWillBeRemoved": "La clave guardada se borrará al guardar.",
+    "keepKey": "Mantenerla",
+    "chatModelPlaceholder": "Id del modelo, tal como lo lista el servidor",
+    "loadModels": "Cargar modelos",
+    "chatModelHelp": "Carga los modelos que lista el servidor o escribe un id.",
+    "chatModelRequired": "Elige un modelo de chat para el servidor.",
+    "modelListFailed": "No se pudieron listar los modelos del servidor: {{error}}",
+    "contextWindow": "Tamaño de contexto (tokens)",
+    "contextWindowHelp": "0 lo lee del servidor cuando lo indica (vLLM). Si no, pon el tamaño con el que se ejecuta el modelo.",
+    "embeddingSource": "Índice de correo (Embeddings)",
+    "embeddingSourceServer": "Este servidor",
+    "embeddingSourceInApp": "Modelo de la app (en este ordenador)",
+    "embeddingSourceOpenRouter": "OpenRouter",
+    "embeddingSourceHelp": "Dónde calcula la búsqueda semántica los Embeddings de tus correos. Con este servidor, tu correo va a un único sitio.",
+    "embeddingModelPlaceholder": "Id del modelo de Embeddings, o vacío para buscar por palabras clave",
+    "embeddingModelHelp": "Se comprueba al guardar: se rechaza un modelo que no devuelve vectores que quepan en el índice de correo.",
+    "openRouterNeedsKey": "Guarda tu clave de API de OpenRouter en la pestaña OpenRouter para usar sus modelos de Embeddings.",
+    "privacyNotice": "El contenido de los correos del chat, los borradores y las demás funciones de IA se envía a este servidor. EmailOps no puede ver qué conserva el servidor.",
+    "disclosureTitle": "¿Enviar contenido de tus correos a otro ordenador?",
+    "disclosureBody": "Con este servidor, el texto de tus correos, tus preguntas al chat y los borradores que pidas se envían a {{host}}.",
+    "disclosureRetention": "EmailOps no puede controlar si ese servidor, o un servicio detrás de él, conserva este contenido o entrena modelos con él. Continúa solo si confías en el servidor.",
+    "disclosureLocalHint": "Para que el correo no salga de una red que controlas, accede al servidor por un túnel SSH o Tailscale y usa http://localhost.",
+    "disclosureConfirm": "Enviar a este servidor"
   },
   "confirmReindex": {
     "title": "¿Regenerar todos los Embeddings?",

@@ -1016,6 +1016,14 @@ impl AiService {
         )))
     }
 
+    /// The backend the email index is sent to with the saved config: the
+    /// provider itself, or the OpenAI-compatible server's embedding source.
+    pub fn embedding_provider(db: &Database) -> Result<String> {
+        let provider = Self::get_config(db)?.provider;
+        let source = ai_server::load_server_settings(db)?.embedding_source;
+        Ok(embedding_backend(&provider, source).to_string())
+    }
+
     /// A client for a server typed in Settings and maybe not saved yet, for
     /// listing its models or testing it. `api_key` is the key typed with it;
     /// without one the stored key is used, but only for the saved server's
@@ -2806,6 +2814,23 @@ mod server_provider_tests {
                 "{refused}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_embedding_provider_names_where_the_index_is_sent() {
+        let server = MockServer::start().await;
+        let db = db();
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "llamacpp");
+
+        save(&db, settings(&server, "", EmbeddingSource::OpenRouter))
+            .await
+            .expect("saved");
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "openrouter");
+
+        save(&db, settings(&server, "", EmbeddingSource::Server))
+            .await
+            .expect("saved");
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "openai_compatible");
     }
 
     #[tokio::test]

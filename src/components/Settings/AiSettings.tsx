@@ -26,6 +26,9 @@ import {
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
+import { ServerDisclosureDialog } from './AiSettings/ServerDisclosureDialog';
+import { ServerPanel } from './AiSettings/ServerPanel';
+import { disclosureHost, sendsIndexToOpenRouter } from './AiSettings/serverSettings';
 import { type AiConfigState, DEFAULT_ROUTING_MODE, isRoutingMode, type RoutingMode } from './AiSettings/types';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -54,6 +57,16 @@ export function AiSettings() {
   const [ollamaEmbedModels, setOllamaEmbedModels] = useState<string[]>([]);
   const [openRouterEmbedModels, setOpenRouterEmbedModels] = useState<AiModelInfo[]>([]);
   const [apiKey, setApiKey] = useState('');
+  // OpenAI-compatible server: a new key typed in (empty keeps the saved one),
+  // whether the saved key is to be deleted, and the models the server listed.
+  const [serverApiKey, setServerApiKey] = useState('');
+  const [clearServerKey, setClearServerKey] = useState(false);
+  const [serverModels, setServerModels] = useState<string[]>([]);
+  const [loadingServerModels, setLoadingServerModels] = useState(false);
+  // Save is waiting for the user to confirm that mail goes to this remote host.
+  const [disclosure, setDisclosure] = useState<string | null>(null);
+  // The remote host confirmed for the save in progress.
+  const acceptedHostRef = useRef<string | null>(null);
   const [routingMode, setRoutingMode] = useState<RoutingMode>(DEFAULT_ROUTING_MODE);
   const [aiOutputLanguage, setAiOutputLanguage] = useState<string>('Spanish');
   const { enabled: helpDocsEnabled, setEnabled: setHelpDocsEnabled } = useHelpDocsEnabledStore();
@@ -160,7 +173,8 @@ export function AiSettings() {
 
   // OpenRouter's embedding models, once the OpenRouter tab is open and a key
   // is saved to ask with. A failed listing leaves the saved model selectable.
-  const openRouterListable = config?.provider === 'openrouter' && config.hasApiKey;
+  const openRouterListable =
+    config != null && sendsIndexToOpenRouter(config.provider, config.server?.embeddingSource) && config.hasApiKey;
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload only when the tab or the saved key changes
   useEffect(() => {
     if (!openRouterListable) return;
@@ -202,6 +216,13 @@ export function AiSettings() {
         hasApiKey: cfg.hasApiKey,
         thinkingEnabled: cfg.thinkingEnabled,
         zeroDataRetention: cfg.zeroDataRetention,
+        server: {
+          baseUrl: cfg.server.baseUrl ?? '',
+          embeddingSource: cfg.server.embeddingSource,
+          contextWindow: cfg.server.contextWindow,
+          hasApiKey: cfg.server.hasApiKey,
+          disclosedHost: cfg.server.disclosedHost,
+        },
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
       savedBackendRef.current = { provider: cfg.provider, model: cfg.model };
@@ -419,6 +440,23 @@ export function AiSettings() {
       setError(t('settings:openRouter.chatModelRequired'));
       return;
     }
+    acceptedHostRef.current = null;
+    if (config.provider === 'openai_compatible' && config.server) {
+      if (config.server.baseUrl.trim() === '') {
+        setError(t('settings:server.baseUrlRequired'));
+        return;
+      }
+      if (config.model.trim() === '') {
+        setError(t('settings:server.chatModelRequired'));
+        return;
+      }
+      // Mail is about to go to another machine: say so before anything else.
+      const host = disclosureHost(config.server.baseUrl, config.server.disclosedHost);
+      if (host) {
+        setDisclosure(host);
+        return;
+      }
+    }
     void saveUnlessWorkInProgress();
   };
 
@@ -468,6 +506,17 @@ export function AiSettings() {
       const prevEmbedModel = savedEmbedModelRef.current;
       const wantsApiKey = config.provider === 'openrouter';
       const key = wantsApiKey && apiKey ? apiKey : null;
+      const server =
+        config.provider === 'openai_compatible' && config.server
+          ? {
+              baseUrl: config.server.baseUrl.trim(),
+              apiKey: serverApiKey.trim() || null,
+              clearApiKey: clearServerKey,
+              embeddingSource: config.server.embeddingSource,
+              contextWindow: config.server.contextWindow,
+              disclosureAcceptedHost: acceptedHostRef.current,
+            }
+          : undefined;
 
       // An OpenRouter embedding model must fit the email index before it is
       // saved: nothing is written when the check fails.
@@ -492,8 +541,11 @@ export function AiSettings() {
         config.monthlyBudgetUsd,
         config.thinkingEnabled,
         config.zeroDataRetention,
+        server,
       );
       savedEmbedModelRef.current = config.embeddingModel;
+      setServerApiKey('');
+      setClearServerKey(false);
 
       // Save AI output language. We write the typed v2 key; the empty string
       // is the "Same as UI" sentinel and is accepted by the preferences
@@ -585,14 +637,38 @@ export function AiSettings() {
     setError(null);
     setSuccess(null);
     try {
-      const wantsApiKey = config.provider === 'openrouter';
-      const key = wantsApiKey && apiKey ? apiKey : null;
-      const result = await api.testAiProvider(config.provider, config.model, key);
+      const result =
+        config.provider === 'openai_compatible'
+          ? await api.testAiProvider(
+              config.provider,
+              config.model,
+              serverApiKey.trim() || null,
+              config.server?.baseUrl.trim() ?? '',
+            )
+          : await api.testAiProvider(
+              config.provider,
+              config.model,
+              config.provider === 'openrouter' && apiKey ? apiKey : null,
+            );
       setSuccess(t('settings:ai.testPassed', { result: result.substring(0, 120) }));
     } catch (err) {
       setError(t('settings:ai.testFailed', { error: errorText(err) }));
     } finally {
       setTesting(false);
+    }
+  };
+
+  const loadServerModels = async () => {
+    if (!config?.server) return;
+    setLoadingServerModels(true);
+    setError(null);
+    try {
+      const models = await api.listOpenAiCompatibleModels(config.server.baseUrl.trim(), serverApiKey.trim() || null);
+      setServerModels(models.map((m) => m.id));
+    } catch (err) {
+      setError(t('settings:server.modelListFailed', { error: errorText(err) }));
+    } finally {
+      setLoadingServerModels(false);
     }
   };
 
@@ -711,6 +787,12 @@ export function AiSettings() {
                   description={t('settings:ai.providerOpenRouterDesc')}
                   onClick={() => handleProviderChange('openrouter')}
                 />
+                <ProviderTab
+                  active={config.provider === 'openai_compatible'}
+                  label={t('settings:ai.providerServerLabel')}
+                  description={t('settings:ai.providerServerDesc')}
+                  onClick={() => handleProviderChange('openai_compatible')}
+                />
               </div>
             </div>
 
@@ -749,13 +831,32 @@ export function AiSettings() {
               />
             )}
 
+            {config.provider === 'openai_compatible' && config.server && (
+              <ServerPanel
+                config={config}
+                server={config.server}
+                setConfig={setConfig}
+                apiKey={serverApiKey}
+                setApiKey={setServerApiKey}
+                clearApiKey={clearServerKey}
+                setClearApiKey={setClearServerKey}
+                serverModels={serverModels}
+                onLoadModels={() => void loadServerModels()}
+                loadingModels={loadingServerModels}
+                embeddedAvailable={embeddedAvailable}
+                catalog={catalog}
+                openRouterEmbeddingModels={openRouterEmbedModels}
+                embeddingNeedsCheck={needsEmbeddingProbe(config, validatedEmbedModelRef.current)}
+              />
+            )}
+
             {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
             <AiSharedPreferences
               routingMode={routingMode}
               onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
               keepAliveMinutes={keepAliveMinutes}
               onKeepAliveChange={setKeepAliveMinutes}
-              showKeepAlive={config.provider !== 'openrouter'}
+              showKeepAlive={config.provider !== 'openrouter' && config.provider !== 'openai_compatible'}
               aiMaxEmailCount={aiMaxEmailCount}
               onMaxEmailCountChange={setAiMaxEmailCount}
               aiMaxEmailAgeDays={aiMaxEmailAgeDays}
@@ -789,12 +890,23 @@ export function AiSettings() {
       )}
       {confirmReindex && (
         <ConfirmReindexDialog
-          provider={config.provider}
           embeddingModel={config.embeddingModel}
+          sendsToOpenRouter={sendsIndexToOpenRouter(config.provider, config.server?.embeddingSource)}
           onCancel={() => setConfirmReindex(false)}
           onConfirm={() => {
             setConfirmReindex(false);
             void save();
+          }}
+        />
+      )}
+      {disclosure && (
+        <ServerDisclosureDialog
+          host={disclosure}
+          onCancel={() => setDisclosure(null)}
+          onConfirm={() => {
+            acceptedHostRef.current = disclosure;
+            setDisclosure(null);
+            void saveUnlessWorkInProgress();
           }}
         />
       )}

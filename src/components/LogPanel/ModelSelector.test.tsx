@@ -55,6 +55,7 @@ import { ModelSelector } from './LogPanel';
 
 const config = {
   provider: 'ollama',
+  embeddingProvider: 'ollama',
   model: 'llama-small',
   embeddingModel: 'embed-small',
   openRouterValidatedEmbeddingModel: null,
@@ -81,7 +82,11 @@ beforeEach(() => {
   root = createRoot(container);
   vi.mocked(api.getAiConfig).mockResolvedValue(config as never);
   vi.mocked(api.detectAiCapability).mockResolvedValue({ embeddedAiAvailable: true } as never);
-  vi.mocked(api.getAiProviderActivity).mockResolvedValue({ provider: 'ollama', items: [] });
+  vi.mocked(api.getAiProviderActivity).mockResolvedValue({
+    provider: 'ollama',
+    embeddingProvider: 'ollama',
+    items: [],
+  });
   useLogStore.setState({ entries: [] });
 });
 
@@ -128,6 +133,7 @@ describe('LogPanel ModelSelector', () => {
     Array.from(container.querySelectorAll('button')).find((b) => b.textContent === label);
   const CLASSIFYING = {
     provider: 'ollama',
+    embeddingProvider: 'ollama',
     items: [{ kind: 'classification' as const, running: true, stopping: false, progress: null }],
   };
 
@@ -159,7 +165,7 @@ describe('LogPanel ModelSelector', () => {
     vi.mocked(api.listOllamaModels).mockResolvedValue(['llama-small', 'llama-big']);
     vi.mocked(api.getAiProviderActivity)
       .mockResolvedValueOnce(CLASSIFYING)
-      .mockResolvedValue({ provider: 'ollama', items: [] });
+      .mockResolvedValue({ provider: 'ollama', embeddingProvider: 'ollama', items: [] });
     await mount();
     await act(async () => modelOption('llama-big')?.click());
     await act(async () => dialogButton('settings:aiWork.stop')?.click());

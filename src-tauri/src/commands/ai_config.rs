@@ -51,6 +51,9 @@ pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Val
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderActivity {
     pub provider: String,
+    /// Where embedding work sends mail: `provider`, or the OpenAI-compatible
+    /// server's embedding source.
+    pub embedding_provider: String,
     pub items: Vec<AiWorkItem>,
 }
 
@@ -58,6 +61,7 @@ pub struct AiProviderActivity {
 pub async fn get_ai_provider_activity(state: State<'_, AppState>) -> Result<AiProviderActivity, AppError> {
     Ok(AiProviderActivity {
         provider: AiService::get_config(&state.db)?.provider,
+        embedding_provider: AiService::embedding_provider(&state.db)?,
         items: ai_activity::provider_work(&state.ai_background.snapshot()),
     })
 }

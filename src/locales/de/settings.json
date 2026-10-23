@@ -173,7 +173,9 @@
     "test": "Testen",
     "testing": "Wird getestet…",
     "useThisModelTitle": "Dieses Modell verwenden",
-    "deleteModelFileTitle": "Modelldatei löschen"
+    "deleteModelFileTitle": "Modelldatei löschen",
+    "providerServerLabel": "OpenAI-kompatibel",
+    "providerServerDesc": "Dein eigener Server"
   },
   "confirmDisable": {
     "title": "KI-Funktionen deaktivieren?",
@@ -210,6 +212,37 @@
     "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
     "embeddingZdrBlocked": "Es wurde nichts gespeichert – kein Anbieter des Embeddings-Modells {{model}} erfüllt die Einstellung ohne Datenspeicherung. Schalte „Nur ohne Datenspeicherung“ unter Einstellungen → KI → OpenRouter aus oder verwende kein Embeddings-Modell (nur Stichwortsuche).",
     "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
+  },
+  "server": {
+    "baseUrl": "Server-URL",
+    "baseUrlHelp": "Zum Beispiel http://localhost:1234/v1 (LM Studio), http://localhost:8080/v1 (llama-server) oder http://localhost:8000/v1 (vLLM). Unverschlüsseltes http:// funktioniert nur mit diesem Computer; ein Server auf einem anderen Rechner braucht https:// oder einen SSH-Tunnel bzw. Tailscale, damit er unter localhost erscheint.",
+    "baseUrlRequired": "Gib die Server-URL ein.",
+    "apiKey": "API-Schlüssel (optional)",
+    "apiKeyPlaceholder": "Nur wenn der Server einen verlangt",
+    "removeKey": "Gespeicherten Schlüssel entfernen",
+    "keyWillBeRemoved": "Der gespeicherte Schlüssel wird beim Speichern gelöscht.",
+    "keepKey": "Behalten",
+    "chatModelPlaceholder": "Modell-ID, wie der Server sie auflistet",
+    "loadModels": "Modelle laden",
+    "chatModelHelp": "Lade die Modelle, die der Server auflistet, oder gib eine ID ein.",
+    "chatModelRequired": "Wähle ein Chat-Modell für den Server.",
+    "modelListFailed": "Die Modelle des Servers konnten nicht aufgelistet werden: {{error}}",
+    "contextWindow": "Kontextgröße (Tokens)",
+    "contextWindowHelp": "0 liest sie vom Server, wo er sie angibt (vLLM). Sonst gib die Größe an, mit der das Modell läuft.",
+    "embeddingSource": "E-Mail-Index (Embeddings)",
+    "embeddingSourceServer": "Dieser Server",
+    "embeddingSourceInApp": "App-Modell (auf diesem Computer)",
+    "embeddingSourceOpenRouter": "OpenRouter",
+    "embeddingSourceHelp": "Wo die semantische Suche die Embeddings deiner E-Mails berechnet. Mit diesem Server geht deine Post an nur einen Ort.",
+    "embeddingModelPlaceholder": "ID des Embeddings-Modells, oder leer für die Stichwortsuche",
+    "embeddingModelHelp": "Wird beim Speichern geprüft: Ein Modell, das keine Vektoren für den E-Mail-Index liefert, wird abgelehnt.",
+    "openRouterNeedsKey": "Speichere deinen OpenRouter-API-Schlüssel im Tab OpenRouter, um seine Embeddings-Modelle zu nutzen.",
+    "privacyNotice": "E-Mail-Inhalte aus Chat, Entwürfen und den anderen KI-Funktionen werden an diesen Server gesendet. EmailOps kann nicht sehen, was der Server aufbewahrt.",
+    "disclosureTitle": "E-Mail-Inhalte an einen anderen Computer senden?",
+    "disclosureBody": "Mit diesem Server werden der Text deiner E-Mails, deine Chat-Fragen und die Entwürfe, die du anforderst, an {{host}} gesendet.",
+    "disclosureRetention": "EmailOps kann nicht steuern, ob dieser Server oder ein Dienst dahinter diese Inhalte aufbewahrt oder Modelle damit trainiert. Fahre nur fort, wenn du dem Server vertraust.",
+    "disclosureLocalHint": "Damit deine Post in einem Netzwerk bleibt, das du kontrollierst, erreiche den Server über einen SSH-Tunnel oder Tailscale und nutze http://localhost.",
+    "disclosureConfirm": "An diesen Server senden"
   },
   "confirmReindex": {
     "title": "Alle Embeddings neu erzeugen?",
