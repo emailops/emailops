@@ -81,13 +81,22 @@ Rückfrage neu auf.
 
 <!-- claim:ai-openai-compatible-5 -->
 **Kontextgröße (Tokens)** sagt EmailOps, wie viel das Modell auf einmal lesen kann. Lassen Sie
-0 stehen, um den Wert zu nutzen, den der Server meldet (vLLM tut das); sonst geben Sie die Größe
-an, mit der das Modell läuft, andernfalls nimmt der Chat 8192 an. Antworten warten bis zu fünf
+0 stehen, um den Wert zu nutzen, den der Server meldet: vLLM, LM Studio und `llama-server` geben
+an, mit wie viel Kontext sie das Modell geladen haben. Eine hier gesetzte Größe wird auf die
+gemeldete begrenzt; meldet der Server nichts, nutzt der Chat die hier gesetzte Größe oder nimmt
+8192 an. Antworten warten bis zu fünf
 Minuten auf ihr erstes Wort, während ein lokaler Server einen langen Prompt liest, und
 Überlegungen, die ein Modell in den Text schreibt, werden aus der Antwort entfernt. EmailOps bittet
 den Server, bei seinen kurzen internen Aufrufen das Nachdenken eines Reasoning-Modells zu
 überspringen; vLLM und `llama-server` halten sich daran, LM Studio nicht. Schalten Sie dort bei
 einem Reasoning-Modell das Nachdenken in den Modelleinstellungen aus.
+
+<!-- claim:ai-openai-compatible-6 -->
+Testen und Speichern zeigen, welche Kontextgröße der Chat verwendet und woher sie kommt, und
+warnen, wenn sie unter 16384 Tokens liegt, wo der Chat eingeschränkt arbeitet. LM Studio lädt ein
+Modell bei Bedarf mit der für dieses Modell gespeicherten Kontextlänge; erhöhen Sie sie also dort,
+nicht nur hier. Eine Anfrage, die trotzdem länger ist, als der Server annimmt, schlägt mit einer
+Meldung fehl, die das sagt.
 
 ### Der Modellkatalog {#the-model-catalog}
 

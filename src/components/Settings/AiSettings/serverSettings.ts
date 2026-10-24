@@ -3,6 +3,7 @@
 // (`services::ai_server::plan_server_settings`) applies the same rules and
 // refuses a save that skipped the disclosure.
 
+import type { ServerContextReport } from '@/lib/api';
 import type { AiConfigState, EmbeddingSource } from './types';
 
 /** Whether `host` (as `URL.hostname` gives it) is this machine. */
@@ -45,4 +46,37 @@ export function aiRunsRemotely(provider: string | null, serverBaseUrl: string | 
   if (provider === 'openrouter') return true;
   if (provider !== 'openai_compatible') return false;
   return serverBaseUrl != null && disclosureHost(serverBaseUrl, null) != null;
+}
+
+/** One line of the context report under the context field. */
+export interface ContextReportLine {
+  key: string;
+  params: Record<string, number>;
+  warning: boolean;
+}
+
+/** What Settings says about the context window chat uses with the server. Pure. */
+export function contextReportLines(report: ServerContextReport): ContextReportLine[] {
+  const { window, configured, served } = report;
+  const line = (key: string, params: Record<string, number>, warning = false) => ({
+    key: `settings:server.${key}`,
+    params,
+    warning,
+  });
+  const lines: ContextReportLine[] = [];
+  if (report.source === 'server') {
+    lines.push(configured > window ? line('contextCapped', { window, configured }) : line('contextLoaded', { window }));
+  } else if (report.source === 'configured') {
+    lines.push(served != null ? line('contextConfigured', { window, served }) : line('contextNotReported', { window }));
+  } else {
+    lines.push(line('contextAssumed', { window }));
+  }
+  if (report.belowRecommended) lines.push(line('contextBelowRecommended', { recommended: report.recommended }, true));
+  return lines;
+}
+
+/** What a context report was measured for: the server, chat model and window
+ *  set in Settings. A report for another key is out of date. */
+export function contextKey(config: AiConfigState): string {
+  return [config.server?.baseUrl.trim() ?? '', config.model, config.server?.contextWindow ?? 0].join('|');
 }

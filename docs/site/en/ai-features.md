@@ -78,11 +78,18 @@ the index, after asking.
 
 <!-- claim:ai-openai-compatible-5 -->
 **Context size (tokens)** tells EmailOps how much the model can read at once. Leave it at 0 to
-use what the server reports (vLLM does); otherwise set the size the model runs with, or chat
-assumes 8192. Replies wait up to five minutes for their first word while a local server reads a
+use what the server reports: vLLM, LM Studio and `llama-server` say how much context they loaded
+the model with. A size set here is capped by the one the server reports; when the server says
+nothing, chat uses the size set here, or assumes 8192. Replies wait up to five minutes for their first word while a local server reads a
 long prompt, and reasoning that a model writes inline is left out of the answer. EmailOps asks the server to skip a
 reasoning model's thinking on its short internal calls; vLLM and `llama-server` honour that, LM
 Studio does not, so with a reasoning model there turn its thinking off in the model's settings.
+
+<!-- claim:ai-openai-compatible-6 -->
+Test and Save show the context size chat will use and where it comes from, and warn when it is
+below 16384 tokens, where chat works cut down. LM Studio loads a model on demand with the context
+length saved for that model, so raise it there, not only here. A request that is still longer
+than the server accepts fails with a message that says so.
 
 ### The model catalog {#the-model-catalog}
 

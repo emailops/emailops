@@ -958,11 +958,18 @@ checks = [
 
 [ai-openai-compatible-5]
 checks = [
-  { tests = ['ai::openrouter::compatible_server_tests::the_context_window_comes_from_max_model_len', 'ai::openrouter::compatible_server_tests::a_configured_context_window_wins_over_the_server', 'services::ai::server_provider_tests::the_configured_context_window_reaches_the_provider', 'services::chat::research::tests::a_remote_model_with_an_unknown_window_gets_the_safe_default'] },
+  { tests = ['ai::openrouter::compatible_server_tests::the_context_window_comes_from_max_model_len', 'ai::openrouter::compatible_server_tests::a_configured_window_is_capped_by_the_one_the_server_loaded', 'ai::openrouter::compatible_server_tests::a_configured_window_stands_when_the_server_says_nothing', 'ai::openrouter::compatible_server_tests::the_loaded_window_comes_from_lm_studio_when_models_says_nothing', 'ai::openrouter::compatible_server_tests::the_window_comes_from_llama_server_props', 'services::ai::server_provider_tests::the_configured_context_window_reaches_the_provider', 'services::chat::research::tests::a_remote_model_with_an_unknown_window_gets_the_safe_default'] },
   { tests = ['ai::openrouter::compatible_server_tests::the_first_token_may_take_longer_than_the_idle_window'], covers = ["Replies wait up to five minutes for their first word while a local server reads a long prompt"] },
   { tests = ['ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_the_stream', 'ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_a_completion'], covers = ["reasoning that a model writes inline is left out of the answer."] },
   { tests = ['ai::openrouter::compatible_server_tests::a_no_thinking_call_asks_the_server_template_to_skip_reasoning'], covers = ["EmailOps asks the server to skip a reasoning model's thinking on its short internal calls"] },
-  { manual = 'Which servers report their context size (vLLM does), and which honour enable_thinking (LM Studio ignored it with Qwen 3.6, checked on 23/10/2026), was checked by hand.' },
+  { manual = 'Which servers report their context size (vLLM in /models, LM Studio in /api/v0/models, llama-server in /props; LM Studio checked by hand on 24/10/2026), and which honour enable_thinking (LM Studio ignored it with Qwen 3.6, checked on 23/10/2026), was checked by hand.' },
+]
+[ai-openai-compatible-6]
+checks = [
+  { tests = ['services::ai_server::context_report_tests::a_configured_window_larger_than_the_loaded_one_is_capped', 'services::ai_server::context_report_tests::a_silent_server_falls_back_to_the_configured_window_or_the_default', 'services::ai::server_provider_tests::settings_are_told_the_window_the_server_has_loaded'], covers = ["warn when it is"] },
+  { tests = ['ai::openrouter::compatible_server_tests::a_reloaded_model_is_seen_with_its_new_window'], covers = ["LM Studio loads a model on demand"] },
+  { tests = ['ai::openrouter::compatible_server_tests::a_prompt_longer_than_the_loaded_window_is_named', 'ai::openrouter::data_policy_tests::a_context_overflow_is_told_apart_from_other_refusals'], covers = ["fails with a message that says so."] },
+  { manual = 'Showing the report on Test and Save is covered by AiSettings.server.test.tsx and serverSettings.test.ts (vitest).' },
 ]
 [ai-choosing-backend-model-catalog-1]
 checks = [

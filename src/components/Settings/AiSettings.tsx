@@ -28,7 +28,7 @@ import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
 import { ServerDisclosureDialog } from './AiSettings/ServerDisclosureDialog';
 import { ServerPanel } from './AiSettings/ServerPanel';
-import { disclosureHost, sendsIndexToOpenRouter } from './AiSettings/serverSettings';
+import { contextKey, disclosureHost, sendsIndexToOpenRouter } from './AiSettings/serverSettings';
 import { type AiConfigState, DEFAULT_ROUTING_MODE, isRoutingMode, type RoutingMode } from './AiSettings/types';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -63,6 +63,9 @@ export function AiSettings() {
   const [clearServerKey, setClearServerKey] = useState(false);
   const [serverModels, setServerModels] = useState<string[]>([]);
   const [loadingServerModels, setLoadingServerModels] = useState(false);
+  // The context window the server reported on the last Test or Save, for the
+  // server, model and window it was measured with (see `contextKey`).
+  const [serverContext, setServerContext] = useState<{ key: string; report: api.ServerContextReport } | null>(null);
   // Save is waiting for the user to confirm that mail goes to this remote host.
   const [disclosure, setDisclosure] = useState<string | null>(null);
   // The remote host confirmed for the save in progress.
@@ -624,6 +627,7 @@ export function AiSettings() {
       addLog('success', 'ai', t('settings:ai.backendSet', { provider: config.provider, model: config.model }));
       if (apiKey) setApiKey('');
       void loadAll();
+      void checkServerContext(config);
     } catch (err) {
       setError(t('settings:ai.saveFailed', { error: errorText(err) }));
     } finally {
@@ -651,10 +655,28 @@ export function AiSettings() {
               config.provider === 'openrouter' && apiKey ? apiKey : null,
             );
       setSuccess(t('settings:ai.testPassed', { result: result.substring(0, 120) }));
+      await checkServerContext(config);
     } catch (err) {
       setError(t('settings:ai.testFailed', { error: errorText(err) }));
     } finally {
       setTesting(false);
+    }
+  };
+
+  const checkServerContext = async (checked: AiConfigState) => {
+    if (checked.provider !== 'openai_compatible' || !checked.server) return;
+    const { baseUrl, contextWindow } = checked.server;
+    try {
+      const report = await api.checkOpenAiCompatibleContext(
+        baseUrl.trim(),
+        serverApiKey.trim() || null,
+        checked.model,
+        contextWindow,
+      );
+      setServerContext({ key: contextKey(checked), report });
+    } catch (err) {
+      setServerContext(null);
+      addLog('error', 'ai', t('settings:server.contextCheckFailed', { error: errorText(err) }));
     }
   };
 
@@ -847,6 +869,7 @@ export function AiSettings() {
                 catalog={catalog}
                 openRouterEmbeddingModels={openRouterEmbedModels}
                 embeddingNeedsCheck={needsEmbeddingProbe(config, validatedEmbedModelRef.current)}
+                contextReport={serverContext?.key === contextKey(config) ? serverContext.report : null}
               />
             )}
 

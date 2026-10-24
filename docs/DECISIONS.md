@@ -3836,3 +3836,23 @@ and unavailable on Intel Macs); following redirects that stay on https (the chec
 URL would no longer describe where mail goes); a disclosure shown once per install rather than
 per host (moving the URL to another provider would inherit consent given for a different one);
 showing the server's error body in the UI (servers return HTML pages and stack traces there).
+
+## 2026-10-24 — OpenAI-compatible server: the loaded context window caps the setting
+
+**Decision:** Chat with an OpenAI-compatible server sizes prompts to the smaller of the
+context window set in Settings and the one the server reports it has the model loaded with,
+read on every turn from `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+`/api/v0/models` (`loaded_context_length` of a loaded model) or `llama-server`'s `/props`
+(`n_ctx`). With neither, it assumes 8192. Test and Save in Settings show the window chat will
+use and where it comes from, and warn below 16384 tokens (the auxiliary planner's floor). A
+request the server still refuses for its length is a typed error
+(`AppError::AiContextExceeded`) telling the user to raise the context on the server.
+**Context:** The OpenAI protocol has no field to set the context window; whoever loads the
+model decides it. LM Studio loads a model on demand with the context length saved for it,
+which was seen to differ from the one it last ran with (64000 against 32768), so a size typed
+in Settings alone overflowed or under-used the server.
+**Rejected:** Loading or reloading the model from EmailOps with a vendor API (`lms load`,
+LM Studio's load endpoint): it ties a generic provider to one server and changes the user's
+server without asking. Refusing to save below 16384 tokens: chat still works there, cut down.
+Remembering the reported window for the process (as for OpenRouter's catalogue): a reload
+on the server changes it.

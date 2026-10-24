@@ -1059,6 +1059,22 @@ impl AiService {
         ))
     }
 
+    /// The context window chat would use with the server typed in Settings,
+    /// and the window the server says it has loaded.
+    pub async fn server_context(
+        db: &Database,
+        base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        configured: u32,
+    ) -> Result<ai_server::ContextReport> {
+        let client = Self::server_client_for(db, base_url, api_key, model)?;
+        Ok(ai_server::plan_context_report(
+            configured,
+            client.served_context_window().await,
+        ))
+    }
+
     /// The models a server lists at `GET {base_url}/models`.
     pub async fn list_server_models(db: &Database, base_url: &str, api_key: Option<&str>) -> Result<Vec<ModelInfo>> {
         Self::server_client_for(db, base_url, api_key, "")?.list_models().await
@@ -2726,6 +2742,35 @@ mod server_provider_tests {
             matches!(&err, AppError::InvalidInput(m) if m.contains("in-app")),
             "{err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn settings_are_told_the_window_the_server_has_loaded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "id": "local-chat", "state": "loaded", "loaded_context_length": 4096 }]
+            })))
+            .mount(&server)
+            .await;
+
+        let report = AiService::server_context(&db(), &server.uri(), None, "local-chat", 32_768)
+            .await
+            .expect("report");
+
+        assert_eq!(report.served, Some(4096));
+        assert_eq!(report.window, 4096);
+        assert!(report.below_recommended);
+    }
+
+    #[tokio::test]
+    async fn the_server_window_is_not_read_from_a_refused_url() {
+        let err = AiService::server_context(&db(), "http://192.168.1.20:1234/v1", None, "m", 0)
+            .await
+            .expect_err("plain http to the LAN");
+
+        assert!(matches!(err, AppError::AiError(_)), "{err:?}");
     }
 
     #[tokio::test]

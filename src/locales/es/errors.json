@@ -54,6 +54,7 @@
     "ai": "Error de IA: {{detail}}",
     "ai_disabled": "La IA está desactivada. Actívala en Ajustes.",
     "ai_data_policy": "El modelo {{model}} no está disponible con la política de datos de EmailOps. Elige otro modelo en Ajustes → IA.",
+    "ai_context_exceeded": "La petición es más larga que el contexto con el que está cargado el modelo. Carga el modelo con más contexto en el servidor o reduce el tamaño de contexto en Ajustes → IA.",
     "io": "Error de archivo. Consulta el panel de salida.",
     "budget_exceeded": "Presupuesto de IA superado: {{detail}}",
     "cancelled": "Cancelado.",

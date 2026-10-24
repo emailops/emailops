@@ -82,6 +82,16 @@ const api = vi.hoisted(() => ({
     ]),
   ),
   testAiProvider: vi.fn(() => Promise.resolve('OK')),
+  checkOpenAiCompatibleContext: vi.fn(() =>
+    Promise.resolve({
+      window: 4096,
+      source: 'server',
+      served: 4096,
+      configured: 32768,
+      recommended: 16384,
+      belowRecommended: true,
+    }),
+  ),
   getAutoNCtx: vi.fn(() => Promise.resolve(8192)),
   getPref: vi.fn(() => Promise.resolve(null)),
   setPref: vi.fn(() => Promise.resolve()),
@@ -340,5 +350,34 @@ describe('AiSettings — OpenAI-compatible server', () => {
       'sk-typed',
       'http://127.0.0.1:8080/v1',
     );
+  });
+
+  it('reports the context the server loaded when tested, and warns below the recommended size', async () => {
+    await mount({ contextWindow: 32768 });
+    await click('settings:ai.test');
+
+    expect(api.checkOpenAiCompatibleContext).toHaveBeenCalledWith(
+      'http://localhost:1234/v1',
+      null,
+      'served-chat',
+      32768,
+    );
+    expect(container.textContent).toContain('settings:server.contextCapped');
+    expect(container.textContent).toContain('settings:server.contextBelowRecommended');
+  });
+
+  it('drops the context report once the window it was measured for changes', async () => {
+    await mount({ contextWindow: 32768 });
+    await click('settings:ai.test');
+    await type('settings:server.contextWindow', '16384');
+
+    expect(container.textContent).not.toContain('settings:server.contextCapped');
+  });
+
+  it('checks the context again after a save', async () => {
+    await mount();
+    await click('common:actions.save');
+
+    expect(api.checkOpenAiCompatibleContext).toHaveBeenCalledWith('http://localhost:1234/v1', null, 'served-chat', 0);
   });
 });

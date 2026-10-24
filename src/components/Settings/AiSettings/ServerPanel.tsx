@@ -1,8 +1,10 @@
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
+import type { ServerContextReport } from '@/lib/api';
 import type { AiModelInfo, CatalogModel } from '@/types';
 import { OpenRouterSpendControls } from './OpenRouterSpendControls';
 import { openRouterEmbeddingSelectOptions } from './openRouterEmbeddingOptions';
+import { contextReportLines } from './serverSettings';
 import { ThinkingToggle } from './ThinkingToggle';
 import type { AiConfigState, EmbeddingSource, ServerState } from './types';
 
@@ -27,6 +29,9 @@ interface ServerPanelProps {
   openRouterEmbeddingModels: AiModelInfo[];
   /** The OpenRouter embedding model will be checked on Save. */
   embeddingNeedsCheck: boolean;
+  /** The context window the server reported for what is typed here; null
+   *  until Test or Save asks, or once the server, model or window changes. */
+  contextReport: ServerContextReport | null;
 }
 
 const INPUT_CLASS =
@@ -66,6 +71,7 @@ export function ServerPanel({
   catalog,
   openRouterEmbeddingModels,
   embeddingNeedsCheck,
+  contextReport,
 }: ServerPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
   const setServer = (next: Partial<ServerState>) => setConfig({ ...config, server: { ...server, ...next } });
@@ -172,6 +178,12 @@ export function ServerPanel({
           className="w-32 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
         />
         <p className="text-xs text-gray-500 mt-1">{t('settings:server.contextWindowHelp')}</p>
+        {contextReport &&
+          contextReportLines(contextReport).map((line) => (
+            <p key={line.key} className={`text-xs mt-1 ${line.warning ? 'text-amber-600' : 'text-gray-600'}`}>
+              {t(line.key as 'settings:server.contextLoaded', line.params)}
+            </p>
+          ))}
       </div>
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:server.embeddingSource')}</label>

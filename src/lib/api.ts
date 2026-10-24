@@ -1190,6 +1190,28 @@ export async function listOpenAiCompatibleModels(
   return invoke('list_openai_compatible_models', { baseUrl, apiKey });
 }
 
+/** The context window chat uses with a server (`services::ai_server::ContextReport`). */
+export interface ServerContextReport {
+  window: number;
+  /** Reported by the server, set in Settings, or the default assumed. */
+  source: 'server' | 'configured' | 'assumed';
+  /** What the server reported; null when it did not say. */
+  served: number | null;
+  /** What Settings holds; 0 reads it from the server. */
+  configured: number;
+  recommended: number;
+  belowRecommended: boolean;
+}
+
+export async function checkOpenAiCompatibleContext(
+  baseUrl: string,
+  apiKey: string | null,
+  model: string,
+  contextWindow: number,
+): Promise<ServerContextReport> {
+  return invoke('check_openai_compatible_context', { baseUrl, apiKey, model, contextWindow });
+}
+
 export async function getAiUsage(): Promise<AiUsageSummary> {
   return invoke('get_ai_usage');
 }

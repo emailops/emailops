@@ -78,13 +78,21 @@ vectores que quepan en el índice. Cambiarlo reconstruye el índice, tras pregun
 
 <!-- claim:ai-openai-compatible-5 -->
 **Tamaño de contexto (tokens)** le dice a EmailOps cuánto puede leer el modelo de una vez. Déjalo
-en 0 para usar lo que informa el servidor (vLLM lo hace); si no, pon el tamaño con el que se
-ejecuta el modelo, o el chat supone 8192. Las respuestas esperan hasta cinco minutos su primera
+en 0 para usar lo que informa el servidor: vLLM, LM Studio y `llama-server` dicen con cuánto
+contexto cargaron el modelo. Un tamaño puesto aquí se limita al que informa el servidor; si el
+servidor no dice nada, el chat usa el tamaño puesto aquí, o supone 8192. Las respuestas esperan hasta cinco minutos su primera
 palabra mientras un servidor local lee un prompt largo, y el razonamiento que un modelo escribe
 dentro del texto se deja fuera de la respuesta. EmailOps pide al servidor que se salte el
 razonamiento de un modelo que razona en sus llamadas internas cortas; vLLM y `llama-server` lo
 respetan y LM Studio no, así que con un modelo que razona desactiva allí su razonamiento en los
 ajustes del modelo.
+
+<!-- claim:ai-openai-compatible-6 -->
+Probar y Guardar muestran el tamaño de contexto que usará el chat y de dónde sale, y avisan cuando
+queda por debajo de 16384 tokens, donde el chat funciona recortado. LM Studio carga un modelo bajo
+demanda con la longitud de contexto guardada para ese modelo, así que súbela allí y no solo aquí.
+Una petición que aun así sea más larga de lo que admite el servidor falla con un mensaje que lo
+dice.
 
 ### El catálogo de modelos {#the-model-catalog}
 

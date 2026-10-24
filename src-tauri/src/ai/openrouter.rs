@@ -155,10 +155,32 @@ fn request_error(status: u16, body: &str, model: &str, context: &str) -> AppErro
         logged.truncate(cut);
     }
     crate::services::logger::log("debug", "ai", format!("{context}: {logged}"));
+    if is_context_overflow(status, body) {
+        return AppError::AiContextExceeded;
+    }
     match summarize_error_body(body) {
         Some(summary) => AppError::AiError(format!("{context}: {summary}")),
         None => AppError::AiError(context.to_string()),
     }
+}
+
+/// Whether a refused request was refused for being longer than the context
+/// window the model is loaded with. Pure.
+fn is_context_overflow(status: u16, body: &str) -> bool {
+    // vLLM/OpenAI: code `context_length_exceeded`; llama-server: type
+    // `exceed_context_size_error`; LM Studio: only a message naming the
+    // context length.
+    const MARKERS: [&str; 4] = [
+        "context_length_exceeded",
+        "exceed_context_size",
+        "context length",
+        "context size",
+    ];
+    if !(400..500).contains(&status) {
+        return false;
+    }
+    let body = body.to_lowercase();
+    MARKERS.iter().any(|m| body.contains(m))
 }
 
 /// Whether `model` has the shape of an OpenRouter model id (`vendor/model`).
@@ -309,6 +331,20 @@ fn model_context_length(models: &[OpenRouterModelInfo], model_id: &str) -> Optio
         .flatten()
         .filter(|n| *n > 0)
         .min()
+}
+
+/// The window LM Studio loaded `model_id` with, from its `/api/v0/models`;
+/// `None` when the model is not loaded. Pure.
+fn lm_studio_loaded_window(body: &serde_json::Value, model_id: &str) -> Option<u32> {
+    body.get("data")?
+        .as_array()?
+        .iter()
+        .find(|m| m.get("id").and_then(serde_json::Value::as_str) == Some(model_id))
+        .filter(|m| m.get("state").and_then(serde_json::Value::as_str) == Some("loaded"))?
+        .get("loaded_context_length")?
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -906,6 +942,71 @@ impl OpenRouterClient {
         Ok(body.data)
     }
 
+    /// The context window the server says the model is loaded with: from
+    /// `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+    /// `/api/v0/models` (`loaded_context_length` of a loaded model) or
+    /// llama-server's `/props` (`n_ctx`). `None` when none of them says, or
+    /// the model is not loaded yet. Read on every call: LM Studio reloads a
+    /// model on demand with the window saved for it, not the last one.
+    pub async fn served_context_window(&self) -> Option<u32> {
+        match self.fetch_model_catalogue().await {
+            Ok(models) => {
+                if let Some(window) = model_context_length(&models, &self.model) {
+                    return Some(window);
+                }
+            }
+            Err(e) => crate::services::logger::log(
+                "warn",
+                "ai",
+                format!(
+                    "{}: could not read the context window of {}: {e}",
+                    self.server_name(),
+                    self.model
+                ),
+            ),
+        }
+        let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+        if let Some(window) = self
+            .get_json(&format!("{root}/api/v0/models"))
+            .await
+            .and_then(|body| lm_studio_loaded_window(&body, &self.model))
+        {
+            return Some(window);
+        }
+        self.get_json(&format!("{root}/props"))
+            .await?
+            .pointer("/default_generation_settings/n_ctx")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n > 0)
+    }
+
+    /// `GET url` as JSON; `None` when the server has no such route or the
+    /// body is not JSON.
+    async fn get_json(&self, url: &str) -> Option<serde_json::Value> {
+        let response = match self
+            .authorized(self.client.get(url))
+            .timeout(CONNECT_TIMEOUT)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                crate::services::logger::log("debug", "ai", format!("GET {url}: HTTP {}", response.status()));
+                return None;
+            }
+            Err(e) => {
+                crate::services::logger::log("debug", "ai", format!("GET {url}: {e}"));
+                return None;
+            }
+        };
+        response
+            .json()
+            .await
+            .map_err(|e| crate::services::logger::log("debug", "ai", format!("GET {url}: not JSON: {e}")))
+            .ok()
+    }
+
     pub async fn list_embedding_models_from_api(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/embeddings/models", self.base_url);
         let response = self
@@ -968,7 +1069,16 @@ impl AIProvider for OpenRouterClient {
     /// every turn to the window — costs one catalogue request per model, not
     /// one per turn. An unreadable catalogue leaves it unknown (and is asked
     /// again next time); the caller sizes to its safe default.
+    ///
+    /// A compatible server is asked every time (see
+    /// [`OpenRouterClient::served_context_window`]), and the window set in
+    /// Settings is capped by the one it reports, so a prompt is never sized
+    /// past what the server accepts.
     async fn resolve_context_window(&self) -> Option<u32> {
+        if self.endpoint == Endpoint::OpenAiCompatible {
+            let served = self.served_context_window().await;
+            return [self.context_window, served].into_iter().flatten().min();
+        }
         if self.context_window.is_some() {
             return self.context_window;
         }
@@ -1362,6 +1472,33 @@ mod data_policy_tests {
         assert!(matches!(
             stream_request_error(404, policy, "vendor/model", "OpenRouter"),
             AppError::AiDataPolicy { .. }
+        ));
+    }
+
+    #[test]
+    fn a_context_overflow_is_told_apart_from_other_refusals() {
+        let overflows = [
+            // vLLM / OpenAI
+            r#"{"error":{"message":"This model's maximum context length is 4096 tokens. However, you requested 9000 tokens.","code":"context_length_exceeded"}}"#,
+            // llama-server
+            r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}"#,
+            // LM Studio
+            r#"{"error":"Trying to keep the first 9000 tokens when context the overflows. However, the model is loaded with context length of only 4096 tokens, which is not enough."}"#,
+        ];
+        for body in overflows {
+            assert!(is_context_overflow(400, body), "{body}");
+        }
+        assert!(!is_context_overflow(
+            400,
+            r#"{"error":{"message":"invalid temperature"}}"#
+        ));
+        assert!(
+            !is_context_overflow(500, overflows[0]),
+            "a server failure is not an overflow"
+        );
+        assert!(matches!(
+            request_error(400, overflows[1], "m", "chat (HTTP 400)"),
+            AppError::AiContextExceeded
         ));
     }
 
@@ -2609,13 +2746,124 @@ mod compatible_server_tests {
         assert_eq!(compatible(&server).resolve_context_window().await, Some(32768));
     }
 
+    /// A server whose `/models` names the model but not its window.
+    async fn silent_models(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [{ "id": "local-model" }] })))
+            .mount(server)
+            .await;
+    }
+
+    fn lm_studio_models(state: &str, loaded: Option<u32>) -> serde_json::Value {
+        json!({ "data": [
+            { "id": "other-model", "state": "loaded", "loaded_context_length": 131072 },
+            { "id": "local-model", "state": state, "loaded_context_length": loaded, "max_context_length": 262144 }
+        ] })
+    }
+
     #[tokio::test]
-    async fn a_configured_context_window_wins_over_the_server() {
+    async fn the_loaded_window_comes_from_lm_studio_when_models_says_nothing() {
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(4096))))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, Some(4096));
+    }
+
+    #[tokio::test]
+    async fn a_model_lm_studio_has_not_loaded_has_no_known_window() {
+        // The trained maximum is not the window the model will be loaded with.
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("not-loaded", None)))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, None);
+    }
+
+    #[tokio::test]
+    async fn the_window_comes_from_llama_server_props() {
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/props"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "default_generation_settings": { "n_ctx": 8192 }
+            })))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, Some(8192));
+    }
+
+    #[tokio::test]
+    async fn a_reloaded_model_is_seen_with_its_new_window() {
+        // LM Studio reloads a model on demand with its own default window, so
+        // the window is read again rather than remembered.
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(4096))))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(64_000))))
+            .mount(&server)
+            .await;
+        let client = compatible(&server);
+
+        assert_eq!(client.resolve_context_window().await, Some(4096));
+        assert_eq!(client.resolve_context_window().await, Some(64_000));
+    }
+
+    #[tokio::test]
+    async fn a_configured_window_is_capped_by_the_one_the_server_loaded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "id": "local-model", "max_model_len": 4096 }]
+            })))
+            .mount(&server)
+            .await;
+        let client = compatible(&server).with_context_window(Some(32_768));
+
+        assert_eq!(client.resolve_context_window().await, Some(4096));
+    }
+
+    #[tokio::test]
+    async fn a_configured_window_stands_when_the_server_says_nothing() {
         let server = MockServer::start().await;
         let client = compatible(&server).with_context_window(Some(16_384));
 
         assert_eq!(client.resolve_context_window().await, Some(16_384));
-        assert!(server.received_requests().await.expect("recording").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_prompt_longer_than_the_loaded_window_is_named() {
+        let server = chat_replying(ResponseTemplate::new(400).set_body_json(json!({
+            "error": { "code": 400, "type": "exceed_context_size_error",
+                       "message": "the request exceeds the available context size, try increasing it" }
+        })))
+        .await;
+
+        let err = compatible(&server)
+            .chat_stream(vec![user("x")], Box::new(|_| true))
+            .await
+            .expect_err("refused");
+
+        assert!(matches!(err, AppError::AiContextExceeded), "{err:?}");
     }
 
     #[tokio::test]

@@ -38,6 +38,57 @@ const MIN_CONTEXT_WINDOW: u32 = 2_048;
 /// Largest context window a user may set.
 const MAX_CONTEXT_WINDOW: u32 = 1_048_576;
 
+/// Window below which chat runs cut down: the auxiliary query planner needs
+/// 16k (`AUX_MIN_N_CTX` in the embedded runtime's planner), and long threads
+/// are trimmed to fit.
+pub const RECOMMENDED_CONTEXT_WINDOW: u32 = 16_384;
+
+/// Where the context window chat uses comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextSource {
+    /// The window the server reports it has loaded.
+    Server,
+    /// The window set in Settings.
+    Configured,
+    /// Neither is known: the default every unreported backend is assumed to have.
+    Assumed,
+}
+
+/// The context window chat will use with a server, for Settings to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReport {
+    pub window: u32,
+    pub source: ContextSource,
+    /// What the server reported; `None` when it did not say.
+    pub served: Option<u32>,
+    /// What Settings holds; `0` = read it from the server.
+    pub configured: u32,
+    pub recommended: u32,
+    pub below_recommended: bool,
+}
+
+/// The window chat uses: the configured one, capped by the one the server has
+/// loaded, so a prompt is never sized past what the server accepts. Pure.
+pub fn plan_context_report(configured: u32, served: Option<u32>) -> ContextReport {
+    let served = served.filter(|n| *n > 0);
+    let (window, source) = match ((configured > 0).then_some(configured), served) {
+        (Some(set), Some(loaded)) if loaded < set => (loaded, ContextSource::Server),
+        (Some(set), _) => (set, ContextSource::Configured),
+        (None, Some(loaded)) => (loaded, ContextSource::Server),
+        (None, None) => (crate::services::chat::research::DEFAULT_N_CTX, ContextSource::Assumed),
+    };
+    ContextReport {
+        window,
+        source,
+        served,
+        configured,
+        recommended: RECOMMENDED_CONTEXT_WINDOW,
+        below_recommended: window < RECOMMENDED_CONTEXT_WINDOW,
+    }
+}
+
 /// Where the email index is computed when chat runs on the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -255,6 +306,53 @@ pub(crate) fn load_api_key_from(db: &Database, dev: bool) -> Result<String> {
         crate::services::secrets_vault::get(KEYRING_SERVICE, KEY_ID)?
     };
     Ok(key.unwrap_or_default())
+}
+
+#[cfg(test)]
+mod context_report_tests {
+    use super::*;
+
+    #[test]
+    fn the_window_the_server_loaded_is_used_when_nothing_is_configured() {
+        let report = plan_context_report(0, Some(64_000));
+
+        assert_eq!(report.window, 64_000);
+        assert_eq!(report.source, ContextSource::Server);
+        assert!(!report.below_recommended);
+    }
+
+    #[test]
+    fn a_configured_window_larger_than_the_loaded_one_is_capped() {
+        let report = plan_context_report(32_768, Some(4096));
+
+        assert_eq!(report.window, 4096);
+        assert_eq!(report.source, ContextSource::Server);
+        assert_eq!(report.configured, 32_768);
+        assert!(report.below_recommended);
+    }
+
+    #[test]
+    fn a_configured_window_within_the_loaded_one_stands() {
+        let report = plan_context_report(16_384, Some(64_000));
+
+        assert_eq!(report.window, 16_384);
+        assert_eq!(report.source, ContextSource::Configured);
+        assert!(!report.below_recommended);
+    }
+
+    #[test]
+    fn a_silent_server_falls_back_to_the_configured_window_or_the_default() {
+        let configured = plan_context_report(32_768, None);
+        assert_eq!(
+            (configured.window, configured.source),
+            (32_768, ContextSource::Configured)
+        );
+
+        let assumed = plan_context_report(0, None);
+        assert_eq!(assumed.source, ContextSource::Assumed);
+        assert_eq!(assumed.window, crate::services::chat::research::DEFAULT_N_CTX);
+        assert!(assumed.below_recommended, "the assumed 8k is under the recommendation");
+    }
 }
 
 #[cfg(test)]

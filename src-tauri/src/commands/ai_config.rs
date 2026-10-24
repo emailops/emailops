@@ -157,6 +157,20 @@ pub async fn list_openai_compatible_models(
         .collect())
 }
 
+/// The context window chat would use with the server typed in Settings, and
+/// whether it is below the recommended size. `context_window` is the one set
+/// in Settings (`0` = read it from the server).
+#[tauri::command]
+pub async fn check_openai_compatible_context(
+    state: State<'_, AppState>,
+    base_url: String,
+    api_key: Option<String>,
+    model: String,
+    context_window: u32,
+) -> Result<services::ai_server::ContextReport, AppError> {
+    AiService::server_context(&state.db, &base_url, api_key.as_deref(), &model, context_window).await
+}
+
 #[tauri::command]
 pub async fn get_ai_usage(state: State<'_, AppState>) -> Result<AiUsageSummary, AppError> {
     // Straight to the database: reading a spend counter must not build a

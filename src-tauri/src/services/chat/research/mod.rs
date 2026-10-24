@@ -62,7 +62,7 @@ use crate::models::{Email, LlmCallTrace, ReportMode, ResearchEstimate, ResearchT
 
 /// Ollama's default `num_ctx` (see `ai::ollama`), and the window every other
 /// backend is assumed to have.
-const DEFAULT_N_CTX: u32 = 8192;
+pub(crate) const DEFAULT_N_CTX: u32 = 8192;
 
 /// What a remote model is sized to when its own window is larger: every
 /// prompt token is paid for and leaves the machine, so the model's window is
