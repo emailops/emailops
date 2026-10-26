@@ -1,9 +1,9 @@
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::models::{Account, SyncStatus};
+use crate::models::{Account, AccountColor, SyncStatus};
 use rusqlite::{params, OptionalExtension};
 
-const ACCOUNT_COLUMNS: &str = "id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp";
+const ACCOUNT_COLUMNS: &str = "id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp, color";
 
 /// `(imap_host, imap_port, imap_username, smtp_host, smtp_port)` as stored in
 /// `imap_account_settings`. Aliased so the `get_imap_settings` return type
@@ -20,6 +20,20 @@ fn row_to_account(row: &rusqlite::Row) -> rusqlite::Result<Account> {
         sort_order: row.get(5)?,
         enabled: row.get::<_, i32>(6)? != 0,
         sync_from_timestamp: row.get(7)?,
+        color: parse_account_color(row, 8)?,
+    })
+}
+
+/// `accounts.color` is CHECK-constrained to the palette, so an unknown value
+/// means a newer build wrote it; fail the read rather than guess a colour.
+fn parse_account_color(row: &rusqlite::Row, idx: usize) -> rusqlite::Result<AccountColor> {
+    let raw: String = row.get(idx)?;
+    AccountColor::parse(&raw).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            idx,
+            rusqlite::types::Type::Text,
+            format!("unknown account colour '{raw}'").into(),
+        )
     })
 }
 
@@ -27,8 +41,8 @@ impl Database {
     pub fn insert_account(&self, account: &Account) -> Result<()> {
         let conn = self.connection();
         conn.execute(
-            "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp, color)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 account.id,
                 account.provider,
@@ -38,9 +52,32 @@ impl Database {
                 account.sort_order,
                 account.enabled as i32,
                 account.sync_from_timestamp,
+                account.color.as_str(),
             ],
         )?;
         Ok(())
+    }
+
+    /// The colour a newly added account should take, given the colours the
+    /// existing accounts already use (see [`AccountColor::next_free`]).
+    pub fn next_account_color(&self) -> Result<AccountColor> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT color FROM accounts")?;
+        let used = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let used: Vec<AccountColor> = used.iter().filter_map(|c| AccountColor::parse(c)).collect();
+        Ok(AccountColor::next_free(&used))
+    }
+
+    /// Returns false when no account has that id.
+    pub fn set_account_color(&self, account_id: &str, color: AccountColor) -> Result<bool> {
+        let conn = self.connection();
+        let changed = conn.execute(
+            "UPDATE accounts SET color = ?2 WHERE id = ?1",
+            params![account_id, color.as_str()],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn get_account(&self, id: &str) -> Result<Option<Account>> {
@@ -454,5 +491,55 @@ mod user_address_tests {
             db.user_addresses("a").unwrap(),
             vec!["me@mail.example".to_string(), "me@work.example".to_string()]
         );
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use crate::db::Database;
+    use crate::models::{Account, AccountColor};
+
+    fn account(id: &str, color: AccountColor) -> Account {
+        Account {
+            id: id.to_string(),
+            provider: "gmail".to_string(),
+            email: format!("{id}@mail.example"),
+            name: String::new(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+            color,
+        }
+    }
+
+    #[test]
+    fn an_account_keeps_the_colour_it_was_inserted_with() {
+        let db = Database::new_for_testing().unwrap();
+        db.insert_account(&account("a", AccountColor::Rose)).unwrap();
+        assert_eq!(db.get_account("a").unwrap().unwrap().color, AccountColor::Rose);
+    }
+
+    #[test]
+    fn the_next_account_colour_skips_the_ones_in_use() {
+        let db = Database::new_for_testing().unwrap();
+        assert_eq!(db.next_account_color().unwrap(), AccountColor::Blue);
+        db.insert_account(&account("a", AccountColor::Blue)).unwrap();
+        db.insert_account(&account("b", AccountColor::Emerald)).unwrap();
+        assert_eq!(db.next_account_color().unwrap(), AccountColor::Amber);
+    }
+
+    #[test]
+    fn setting_an_account_colour_persists_it() {
+        let db = Database::new_for_testing().unwrap();
+        db.insert_account(&account("a", AccountColor::Blue)).unwrap();
+        assert!(db.set_account_color("a", AccountColor::Cyan).unwrap());
+        assert_eq!(db.get_account("a").unwrap().unwrap().color, AccountColor::Cyan);
+    }
+
+    #[test]
+    fn setting_the_colour_of_a_missing_account_reports_it() {
+        let db = Database::new_for_testing().unwrap();
+        assert!(!db.set_account_color("missing", AccountColor::Cyan).unwrap());
     }
 }

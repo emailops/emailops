@@ -1223,6 +1223,45 @@ mod schema_parity_tests {
         }
     }
 
+    /// V040: accounts that predate the colour column get one palette slot
+    /// each, in sidebar order (sort_order, then newest first).
+    #[test]
+    fn existing_accounts_are_backfilled_with_distinct_colours_in_sidebar_order() {
+        // Registers sqlite-vec for the raw connection below (vec0 tables).
+        Database::new_for_testing().expect("create test db");
+        let mut conn = Connection::open_in_memory().expect("open");
+        embedded::migrations::runner()
+            .set_target(refinery::Target::Version(39))
+            .run(&mut conn)
+            .expect("migrate to V039");
+        conn.execute_batch(
+            "INSERT INTO accounts (id, provider, email, name, created_at, sort_order) VALUES
+             ('second', 'gmail', 'b@x.example', '', 10, 1),
+             ('first', 'gmail', 'a@x.example', '', 20, 0),
+             ('third', 'gmail', 'c@x.example', '', 5, 1);",
+        )
+        .expect("seed accounts");
+        embedded::migrations::runner()
+            .run(&mut conn)
+            .expect("migrate to latest");
+        let mut stmt = conn
+            .prepare("SELECT id, color FROM accounts ORDER BY sort_order, created_at DESC")
+            .expect("prepare");
+        let colours: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        assert_eq!(
+            colours,
+            vec![
+                ("first".to_string(), "blue".to_string()),
+                ("second".to_string(), "emerald".to_string()),
+                ("third".to_string(), "amber".to_string()),
+            ]
+        );
+    }
+
     /// Every child column that references `emails(id)` needs its own index:
     /// SQLite looks the child rows up by that column on each parent delete, so
     /// without one an account deletion full-scans the child table once per

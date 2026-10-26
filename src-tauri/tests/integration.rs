@@ -17,7 +17,7 @@ use emailops_lib::ai::provider::FakeAiProvider;
 use emailops_lib::db::Database;
 use emailops_lib::models::error::AppError;
 use emailops_lib::models::lens::{CreateLensInput, LensColumn, LensColumnType, LensSchema, LensScope};
-use emailops_lib::models::{Account, Email, SaveDraftRequest};
+use emailops_lib::models::{Account, AccountColor, Email, SaveDraftRequest};
 use emailops_lib::services::background_tasks::{BackgroundTask, FakeDispatcher, TaskDispatcher};
 use emailops_lib::services::emails::{compose_draft, pull_provider_drafts, ComposeInput};
 use emailops_lib::services::task_queue::TaskQueue;
@@ -43,6 +43,7 @@ fn make_account(id: &str, email: &str) -> Account {
         sort_order: 0,
         enabled: true,
         sync_from_timestamp: None,
+        color: AccountColor::Blue,
     }
 }
 
@@ -3932,6 +3933,7 @@ fn re_add_same_email_after_account_delete_succeeds() {
         sort_order: 0,
         enabled: true,
         sync_from_timestamp: None,
+        color: AccountColor::Blue,
     };
     db.insert_account(&new_acc).unwrap();
 

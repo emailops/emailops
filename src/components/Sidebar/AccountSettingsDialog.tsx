@@ -2,9 +2,10 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { ACCOUNT_COLORS, accountColorSwatchClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { useOverlay } from '@/stores/overlayStore';
-import type { Account } from '@/types';
+import type { Account, AccountColor } from '@/types';
 
 // Microsoft has no per-app revocation, so removing an Outlook account cannot
 // revoke EmailOps' access the way Google's endpoint does. These are the pages
@@ -106,6 +107,7 @@ export function AccountSettingsDialog({
   // without a display name stores its address there, which means "no name".
   const initialSenderName = account.name.trim().toLowerCase() === account.email.toLowerCase() ? '' : account.name;
   const [senderName, setSenderName] = useState(initialSenderName);
+  const [color, setColor] = useState<AccountColor>(account.color);
 
   const [syncEnabled, setSyncEnabled] = useState(account.enabled);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
@@ -288,6 +290,9 @@ export function AccountSettingsDialog({
       if (senderName.trim() !== initialSenderName.trim()) {
         await api.updateAccountName(account.id, senderName);
       }
+      if (color !== account.color) {
+        await api.setAccountColor(account.id, color);
+      }
       await api.updateAccountSyncFrom(account.id, syncFromTimestamp);
       onSaved();
     } catch (e) {
@@ -310,6 +315,8 @@ export function AccountSettingsDialog({
     smtpPort,
     senderName,
     initialSenderName,
+    color,
+    account.color,
     syncFromTimestamp,
     onSaved,
   ]);
@@ -351,6 +358,27 @@ export function AccountSettingsDialog({
                   placeholder={t('modal:accountSettings.senderNamePlaceholder')}
                   className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                 />
+              </section>
+
+              <section>
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">{t('modal:accountSettings.colorHeading')}</h3>
+                <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.colorHint')}</p>
+                <div role="radiogroup" aria-label={t('modal:accountSettings.colorHeading')} className="flex gap-2">
+                  {ACCOUNT_COLORS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={color === option}
+                      aria-label={t(`modal:accountSettings.colors.${option}` as const)}
+                      title={t(`modal:accountSettings.colors.${option}` as const)}
+                      onClick={() => setColor(option)}
+                      className={`w-6 h-6 rounded-full ${accountColorSwatchClass(option)} ${
+                        color === option ? 'ring-2 ring-offset-2 ring-gray-500' : 'hover:opacity-80'
+                      }`}
+                    />
+                  ))}
+                </div>
               </section>
 
               <section>

@@ -9,7 +9,11 @@ export interface Account {
   sortOrder: number;
   enabled: boolean;
   syncFromTimestamp: number | null;
+  /** Identifies the account wherever accounts are mixed (sidebar, unified inbox, calendar). */
+  color: AccountColor;
 }
+
+export type AccountColor = 'blue' | 'emerald' | 'amber' | 'purple' | 'rose' | 'cyan' | 'indigo' | 'orange';
 
 export interface AccountSettings {
   gmailCategories: string[];

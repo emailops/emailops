@@ -1,7 +1,8 @@
 import { accountColorClass } from '@/lib/colors';
+import { useAccountStore } from '@/stores/accountStore';
 
 interface AccountScopeChipProps {
-  /** Account the view is bound to — drives the deterministic color. */
+  /** Account the view is bound to — drives the colour dot. */
   accountId: string;
   /** Account address shown in the chip. */
   email: string;
@@ -15,13 +16,17 @@ interface AccountScopeChipProps {
  *  visible at a glance. The color dot matches the account's indicator color
  *  in the unified inbox rows. */
 export function AccountScopeChip({ accountId, email, hint }: AccountScopeChipProps) {
+  const accounts = useAccountStore((s) => s.accounts);
   return (
     <div className="flex items-center justify-center px-4 py-2 border-b border-gray-100 bg-gray-50/70">
       <span
         className="inline-flex items-center gap-2 max-w-full px-4 py-1 rounded-full border border-gray-200 bg-white text-sm text-gray-700 shadow-sm"
         title={hint}
       >
-        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${accountColorClass(accountId)}`} aria-hidden="true" />
+        <span
+          className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${accountColorClass(accounts, accountId)}`}
+          aria-hidden="true"
+        />
         <span className="truncate">{email}</span>
       </span>
     </div>

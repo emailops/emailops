@@ -29,8 +29,8 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
-import { resetCalendarAccountDefaultForTests } from '@/hooks/useCalendarAccount';
 import * as api from '@/lib/api';
+import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import { calendarEnabledPrefKey, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import type { Account, CalendarEvent } from '@/types';
 import { CalendarView } from './CalendarView';
@@ -81,10 +81,9 @@ function makeEvent(id: string, accountId: string, title: string): CalendarEvent 
 
 let container: HTMLDivElement;
 let root: Root;
+const onOpenSettings = vi.fn();
 
 beforeEach(() => {
-  // The hook remembers the last sidebar account across mounts (by design); forget it between tests.
-  resetCalendarAccountDefaultForTests();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -109,7 +108,9 @@ afterEach(() => {
 async function mount(accounts: Account[], enabledIds: string[], defaultAccountId: string | null) {
   useCalendarIntegrationStore.setState({ enabledIds: new Set(enabledIds), isLoaded: true });
   await act(async () => {
-    root.render(<CalendarView accounts={accounts} defaultAccountId={defaultAccountId} />);
+    root.render(
+      <CalendarView accounts={accounts} defaultAccountId={defaultAccountId} onOpenSettings={onOpenSettings} />,
+    );
   });
   await act(async () => {}); // flush pref/event loads
 }
@@ -231,13 +232,18 @@ describe('CalendarView selector follows the current account', () => {
     expect(selectedAccountId()).toBe('g-other');
   });
 
-  it('keeps the persisted selection when the current account has no enabled calendar', async () => {
+  it('prompts to set up a feed for an IMAP account without one, instead of showing another account', async () => {
     vi.mocked(api.getPref).mockImplementation(async (key: string) =>
-      key === 'calendar_selected_account' ? 'g-on' : null,
+      key === 'calendar_selected_account' ? ALL_ACCOUNTS_ID : null,
     );
     await mount([gmailOn, gmailOther, makeAccount('i', 'imap')], ['g-on', 'g-other'], 'i');
 
-    expect(selectedAccountId()).toBe('g-on');
+    expect(container.textContent).toContain('calendar:panel.setupTitle');
+    const button = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('calendar:panel.setupButton'),
+    );
+    await act(async () => button?.click());
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   it('a late sync for the previously selected account cannot overwrite the events', async () => {

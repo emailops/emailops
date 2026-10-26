@@ -32,6 +32,9 @@ export function htmlToPlainText(html: string): string {
 interface EventDetailDialogProps {
   event: CalendarEvent;
   accountId: string;
+  /** The event's account address, shown in "All accounts" where one grid
+   *  mixes accounts; omitted for a single-account calendar. */
+  accountEmail?: string;
   /** Provider of the calendar account ('gmail' | 'outlook' | 'imap'). Drives
    *  the delete-confirm notify affordances. */
   provider: string;
@@ -52,6 +55,7 @@ interface EventDetailDialogProps {
 export function EventDetailDialog({
   event,
   accountId,
+  accountEmail,
   provider,
   readOnly = false,
   onClose,
@@ -196,6 +200,11 @@ export function EventDetailDialog({
         )}
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
+          {accountEmail && (
+            <DetailRow label={t('calendar:detail.account')}>
+              <span className="text-gray-800 break-all">{accountEmail}</span>
+            </DetailRow>
+          )}
           {event.location && (
             <DetailRow label={t('calendar:detail.location')}>
               <span className="text-gray-800 break-words">{event.location}</span>

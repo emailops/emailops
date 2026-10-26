@@ -175,6 +175,7 @@ fn seed_case(db: &Database, case: &DraftCase) -> EvalResult<Option<String>> {
         sort_order: 0,
         enabled: true,
         sync_from_timestamp: None,
+        color: crate::models::AccountColor::Blue,
     })?;
     if let Some(sig) = &case.signature {
         db.upsert_account_signature(EVAL_ACCOUNT_ID, &sig.html, sig.use_for_new, sig.use_for_replies, 0)?;

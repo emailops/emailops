@@ -3793,3 +3793,25 @@ expansion — DST and monthly BYDAY rules are where home-grown code goes wrong. 
 the hand-over is the only way to create from the calendar; the in-app dialog remains the path
 for every writable calendar.
 
+
+## 2026-10-26 — Calendar offers "All accounts"; every account has a colour
+
+**Decision:** The Calendar screen and the docked agenda offer "All accounts" once two
+accounts have a calendar enabled, and follow the sidebar into it. It shows every calendar
+account's events on one grid, each in its account's colour, with the legend grouped by
+account. Every account has a stored colour (`accounts.color`, V040). It is assigned from
+a palette when the account is added (the least-used colour first), can be changed in the
+account's settings, and marks the account in the sidebar and the unified inbox rows too.
+Supersedes "Calendar is per-account only" (2026-07-22).
+**Context:** The concerns that deferred a combined view were handled as follows.
+Overlapping events: a meeting in two accounts shows once per account, since rows carry no
+iCalUID to match them. Per-account colours: the stored account colour. Duplicated
+notifications: reminders come from the backend for every account whatever the view
+shows, so a combined view adds none. The "All accounts" view is frontend-only: it fans
+out the per-account commands, so the backend keeps no cross-account calendar read path.
+A new event in "All accounts" asks which account it goes to. A Proton account (a
+read-only feed) is a hand-over to Proton Calendar.
+**Rejected:** Deduplicating a meeting shared between accounts (needs the iCalUID stored
+and a migration, for a rare case). An `AccountScope::AllEnabled` calendar command (the
+fan-out already gives per-account error and re-auth handling). Hash-derived account
+colours (they collided and could not be changed).

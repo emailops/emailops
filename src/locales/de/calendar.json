@@ -10,8 +10,10 @@
   "integrationDisabled": "Der Kalender ist für {{email}} deaktiviert.",
   "enableCalendarButton": "Kalender aktivieren",
   "selectAccount": "Kalenderkonto",
+  "allAccounts": "Alle Konten",
   "syncError": "Kalenderfehler: {{message}}",
   "reauthNeeded": "EmailOps hat noch keine Berechtigung, den Kalender dieses Kontos zu lesen. Melde dich erneut an, um Kalenderzugriff zu gewähren.",
+  "reauthNeededAccount": "{{email}} muss neu verbunden werden, damit sein Kalender angezeigt wird.",
   "reauthButton": "Erneut anmelden",
   "reauthInProgress": "Warten auf Google/Microsoft…",
   "viewModes": {
@@ -43,7 +45,10 @@
     "meetNote": "Ein Google-Meet-Link wird automatisch hinzugefügt.",
     "createButton": "Erstellen",
     "creating": "Erstelle…",
-    "error": "Der Termin konnte nicht erstellt werden: {{message}}"
+    "error": "Der Termin konnte nicht erstellt werden: {{message}}",
+    "account": "Konto",
+    "protonHint": "Proton Calendar bietet keine API, um hier Termine anzulegen. Sein eigenes Formular öffnet sich an diesem Tag; der Termin erscheint hier bei der nächsten Feed-Aktualisierung.",
+    "openProton": "In Proton Calendar erstellen"
   },
   "detail": {
     "tentative": "Vorläufig",
@@ -74,7 +79,8 @@
     "cancellationMessage": "Notiz zur Absage hinzufügen",
     "cancellationMessagePlaceholder": "Optionale Nachricht an die Teilnehmer",
     "googleCancellationHint": "Google sendet seine Standard-Absage-E-Mail an die Eingeladenen.",
-    "deleteError": "Der Termin konnte nicht gelöscht werden: {{message}}"
+    "deleteError": "Der Termin konnte nicht gelöscht werden: {{message}}",
+    "account": "Konto"
   },
   "reminder": {
     "title": "Anstehendes Meeting",

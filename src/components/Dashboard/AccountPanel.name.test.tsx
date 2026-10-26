@@ -23,6 +23,7 @@ function dashboard(name: string): AccountDashboard {
       sortOrder: 0,
       enabled: true,
       syncFromTimestamp: null,
+      color: 'blue',
     },
     sync: { accountId: 'acct-1', status: 'idle', lastSyncAt: null, error: null },
     syncedSince: null,
