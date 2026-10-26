@@ -90,6 +90,8 @@ run_gate() {
     #   - reqwest  (--ignore):  oauth2 5.x's AsyncHttpClient is wired against
     #                           reqwest 0.12. Reporting is hidden but the
     #                           scratch resolver still sees the constraint.
+    #   - rusqlite (--ignore):  refinery 0.10 caps its rusqlite range at <=0.40,
+    #                           and both must link the same libsqlite3-sys.
     #
     # sysinfo (0.39) and reedline (0.51) were un-ignored once both were bumped:
     # they need rustc 1.95, which CI already has (`dtolnay/rust-toolchain@stable`),
@@ -99,7 +101,7 @@ run_gate() {
     # A scratch resolve that fails outright ("failed to select a version",
     # e.g. every release a dependency accepts is yanked) cannot be fixed here,
     # so the loop below reports it as a warning instead of failing the gate.
-    outdated)       cargo outdated --manifest-path src-tauri/Cargo.toml --root-deps-only --exit-code 1 --ignore reqwest ;;
+    outdated)       cargo outdated --manifest-path src-tauri/Cargo.toml --root-deps-only --exit-code 1 --ignore reqwest --ignore rusqlite ;;
     biome)          PATH="$NODE_BIN:$PATH" ./node_modules/.bin/biome check src/ ;;
     tsc)            PATH="$NODE_BIN:$PATH" ./node_modules/.bin/tsc --noEmit ;;
     vitest)         PATH="$NODE_BIN:$PATH" ./node_modules/.bin/vitest run ;;

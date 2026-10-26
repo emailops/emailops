@@ -44,8 +44,8 @@ tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
-# Still on 0.39: `refinery` 0.9 capped its rusqlite range at <=0.39. Since
-# refinery 0.10 allows <=0.40, the rusqlite bump is unblocked but not done yet.
+# Held at 0.40: `refinery` 0.10 caps its rusqlite range at <=0.40 and both
+# must link the same libsqlite3-sys (ignored by the `outdated` gate until then).
 rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = "2"
