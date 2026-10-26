@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
+import { accountColorSwatchClass } from '@/lib/colors';
 import { isEmailDrag, planEmailDrop, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
@@ -1184,7 +1185,7 @@ export function Sidebar({
   );
 }
 
-function AccountItem({
+export function AccountItem({
   account,
   isActive,
   isFirst,
@@ -1219,7 +1220,12 @@ function AccountItem({
               : 'text-gray-500 hover:bg-gray-100 opacity-50'
         }`}
       >
-        <button onClick={onSelect} className="flex-1 text-left px-3 py-1.5 min-w-0">
+        <button onClick={onSelect} className="flex-1 text-left px-3 py-1.5 min-w-0 flex items-center gap-1.5">
+          <span
+            data-testid="account-color-dot"
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${accountColorSwatchClass(account.color)}`}
+            aria-hidden="true"
+          />
           <span className="block truncate text-xs">
             {account.email}
             {!account.enabled && (

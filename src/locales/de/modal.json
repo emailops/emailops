@@ -50,6 +50,18 @@
     "senderNameHeading": "Absendername",
     "senderNameHint": "Wird als Absender der von diesem Konto gesendeten E-Mails angezeigt. Leer lassen, um nur mit der Adresse zu senden.",
     "senderNamePlaceholder": "Name",
+    "colorHeading": "Farbe",
+    "colorHint": "Kennzeichnet dieses Konto in der Seitenleiste, im gemeinsamen Posteingang und im Kalender „Alle Konten“.",
+    "colors": {
+      "blue": "Blau",
+      "emerald": "Smaragd",
+      "amber": "Bernstein",
+      "purple": "Lila",
+      "rose": "Rosé",
+      "cyan": "Cyan",
+      "indigo": "Indigo",
+      "orange": "Orange"
+    },
     "syncHeading": "Synchronisierung",
     "categoriesHeading": "Zu synchronisierende Kategorien",
     "autoDownloadHeading": "Anhänge automatisch herunterladen",

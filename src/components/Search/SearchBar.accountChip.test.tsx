@@ -31,6 +31,7 @@ function account(id: string, email: string): Account {
     sortOrder: 0,
     enabled: true,
     syncFromTimestamp: null,
+    color: 'blue',
   };
 }
 

@@ -2007,14 +2007,18 @@ def pick_timestamp_within_days(days: int) -> int:
     return now - delta
 
 
+# Palette order of `accounts.color` (V040): one colour per demo account.
+ACCOUNT_COLORS = ("blue", "emerald", "amber", "purple", "rose", "cyan", "indigo", "orange")
+
+
 def insert_accounts(conn: sqlite3.Connection, locale: Locale) -> None:
     now = now_s()
     for i, acct in enumerate(demo_accounts(locale)):
         conn.execute(
             """INSERT INTO accounts
-               (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, 1, NULL)""",
-            (acct.id, acct.provider, acct.email, acct.name, now - 90 * 86400, i),
+               (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp, color)
+               VALUES (?, ?, ?, ?, ?, ?, 1, NULL, ?)""",
+            (acct.id, acct.provider, acct.email, acct.name, now - 90 * 86400, i, ACCOUNT_COLORS[i % len(ACCOUNT_COLORS)]),
         )
         conn.execute(
             """INSERT INTO sync_state

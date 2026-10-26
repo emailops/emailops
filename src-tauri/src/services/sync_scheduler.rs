@@ -1176,6 +1176,7 @@ mod tests {
             sort_order: 0,
             enabled,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 

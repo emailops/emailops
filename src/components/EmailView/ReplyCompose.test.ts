@@ -50,6 +50,7 @@ const accounts: Account[] = [
     sortOrder: 0,
     enabled: true,
     syncFromTimestamp: null,
+    color: 'blue',
   },
 ];
 const selfEmails = accounts.map((a) => a.email.toLowerCase());

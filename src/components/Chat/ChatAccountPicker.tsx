@@ -53,7 +53,10 @@ export function ChatAccountPicker({ accountId, onChange, compact = false }: Chat
   // The colour dot matches the account's indicator in the unified inbox rows,
   // so the chat's scope is recognisable at the same glance as a mail row's.
   const dot = accountId ? (
-    <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(accountId)}`} aria-hidden="true" />
+    <span
+      className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(accounts, accountId)}`}
+      aria-hidden="true"
+    />
   ) : null;
 
   if (compact) {
