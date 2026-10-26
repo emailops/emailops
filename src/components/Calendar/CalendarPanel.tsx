@@ -67,6 +67,7 @@ export function CalendarPanel({
     calendarAccounts,
     disabledCurrentAccount,
     selectedAccountId,
+    handOffSelection,
     isAllAccounts,
     followsAllAccounts,
     handleSelectAccount,
@@ -135,7 +136,11 @@ export function CalendarPanel({
         </span>
         <button
           type="button"
-          onClick={onOpenFullCalendar}
+          onClick={() => {
+            // The full view opens on what this agenda's selector shows.
+            handOffSelection();
+            onOpenFullCalendar();
+          }}
           title={t('calendar:panel.openFull')}
           aria-label={t('calendar:panel.openFull')}
           className={iconButton}

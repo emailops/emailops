@@ -123,4 +123,43 @@ describe('useCalendarAccount', () => {
     await act(async () => root.render(<Probe defaultAccountId="g1" />));
     expect(latest?.disabledCurrentAccount).toBeNull();
   });
+
+  it('maximizing hands the pick over to the full view', async () => {
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    await act(async () => latest?.handleSelectAccount('g2'));
+    act(() => latest?.handOffSelection());
+
+    // The agenda closes and the full view opens: a fresh mount of the hook.
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+
+    expect(container.textContent).toBe('g2');
+  });
+
+  it('a handed-over pick gives way to a sidebar account changed in between', async () => {
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    await act(async () => latest?.handleSelectAccount('g2'));
+    act(() => latest?.handOffSelection());
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<Probe defaultAccountId="g3" />));
+
+    expect(container.textContent).toBe('g3');
+  });
+
+  it('a hand-over is used once: opening again later follows the sidebar', async () => {
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    await act(async () => latest?.handleSelectAccount('g2'));
+    act(() => latest?.handOffSelection());
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    act(() => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+
+    expect(container.textContent).toBe('g1');
+  });
 });
