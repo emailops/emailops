@@ -117,19 +117,31 @@ export function eventChipStyle(color: string): Record<string, string> {
 /** Minimal shape `calendarColorMap` / `hiddenCalendarIds` need — keeps these
  *  helpers testable without building a whole `Calendar`. */
 export interface CalendarColorSource {
+  accountId: string;
   providerCalendarId: string;
   color: string;
   isVisible: boolean;
 }
 
-/** Resolved colour per calendar id, for the grids' `colorFor` lookup. */
-export function calendarColorMap(calendars: readonly CalendarColorSource[]): Map<string, string> {
-  return new Map(calendars.map((c) => [c.providerCalendarId, calendarColor(c.color, c.providerCalendarId)]));
+/** One calendar of one account. Provider calendar ids are only unique within
+ *  an account, and "All accounts" shows several accounts' calendars at once. */
+export function calendarKey(accountId: string, calendarId: string): string {
+  return `${accountId}\n${calendarId}`;
 }
 
-/** Ids of the calendars the user switched off in Settings → Calendar. */
+/** Resolved colour per calendar (`calendarKey`), for the grids' colour lookup. */
+export function calendarColorMap(calendars: readonly CalendarColorSource[]): Map<string, string> {
+  return new Map(
+    calendars.map((c) => [
+      calendarKey(c.accountId, c.providerCalendarId),
+      calendarColor(c.color, c.providerCalendarId),
+    ]),
+  );
+}
+
+/** Keys (`calendarKey`) of the calendars the user switched off. */
 export function hiddenCalendarIds(calendars: readonly CalendarColorSource[]): Set<string> {
-  return new Set(calendars.filter((c) => !c.isVisible).map((c) => c.providerCalendarId));
+  return new Set(calendars.filter((c) => !c.isVisible).map((c) => calendarKey(c.accountId, c.providerCalendarId)));
 }
 
 /**
@@ -139,10 +151,10 @@ export function hiddenCalendarIds(calendars: readonly CalendarColorSource[]): Se
  * hides them — and it makes re-showing a calendar instant instead of waiting
  * for the next sync.
  */
-export function visibleEvents<T extends { calendarId: string }>(
+export function visibleEvents<T extends { accountId: string; calendarId: string }>(
   events: readonly T[],
   hidden: ReadonlySet<string>,
 ): T[] {
   if (hidden.size === 0) return events as T[];
-  return events.filter((e) => !hidden.has(e.calendarId));
+  return events.filter((e) => !hidden.has(calendarKey(e.accountId, e.calendarId)));
 }

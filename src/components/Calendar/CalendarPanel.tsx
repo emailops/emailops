@@ -4,8 +4,15 @@ import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useCalendarAccount } from '@/hooks/useCalendarAccount';
 import { useCalendarData } from '@/hooks/useCalendarData';
+import {
+  type CreateAccountChoice,
+  calendarAccountOptions,
+  calendarSelectionIds,
+  createAccountChoices,
+  eventColorFor,
+} from '@/lib/calendarAccounts';
 import { eventsAfterDelete } from '@/lib/calendarEvent';
-import { isReadOnlyCalendar, planCreateSlot } from '@/lib/calendarFeeds';
+import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, startOfDay } from '@/lib/calendarGrid';
 import { errorText } from '@/lib/errors';
 import { calendarPanelState, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -60,7 +67,7 @@ export function CalendarPanel({
     calendarAccounts,
     disabledCurrentAccount,
     selectedAccountId,
-    selectedAccount,
+    isAllAccounts,
     handleSelectAccount,
     enableCurrentCalendar,
     isEnabling,
@@ -69,28 +76,40 @@ export function CalendarPanel({
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
   const rangeStart = toSec(anchor);
   const rangeEnd = toSec(addDays(anchor, 1));
+  // The current account's feed setup only matters when it alone is shown.
+  const needsSetup = panelState === 'setup' && !isAllAccounts;
   // No data traffic while the current account still has nothing to show.
-  const activeAccountId = panelState === 'setup' ? null : selectedAccountId;
-  const data = useCalendarData(activeAccountId, rangeStart, rangeEnd);
+  const shownAccountIds = needsSetup ? [] : calendarSelectionIds(selectedAccountId, calendarAccounts);
+  const data = useCalendarData(shownAccountIds, rangeStart, rangeEnd);
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const colorFor = useMemo(
+    () => eventColorFor(isAllAccounts, calendarAccounts, data.colorFor),
+    [isAllAccounts, calendarAccounts, data.colorFor],
+  );
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  /** Proposed slot for the "New event" dialog (double-clicked grid position). */
-  const [createSlot, setCreateSlot] = useState<{ start: number; end: number } | null>(null);
+  /** Proposed slot for the "New event" dialog (double-clicked grid position)
+   *  and the accounts it can go to. */
+  const [createSlot, setCreateSlot] = useState<{ start: number; end: number; choices: CreateAccountChoice[] } | null>(
+    null,
+  );
 
-  // Same rule as the full view: in-app dialog for a writable calendar, a
-  // hand-over to Proton Calendar for Proton feeds, nothing otherwise.
+  // Same rule as the full view: the in-app dialog for the accounts that can
+  // take the event, a lone Proton account straight to Proton Calendar.
   const openCreateSlot = useCallback(
     (start: number, end: number) => {
-      const plan = planCreateSlot(data.calendars, start);
-      if (plan.kind === 'dialog') {
-        setCreateSlot({ start, end });
-      } else if (plan.kind === 'proton') {
+      const shown = calendarAccounts.filter((a) => shownAccountIds.includes(a.id));
+      const choices = createAccountChoices(shown, data.calendars, start);
+      const only = choices.length === 1 ? choices[0] : null;
+      if (only?.plan.kind === 'proton') {
         addLog('info', 'system', t('calendar:createInProton'));
-        openExternal(plan.url).catch((err) => {
+        openExternal(only.plan.url).catch((err) => {
           addLog('error', 'system', `Failed to open Proton Calendar: ${err}`);
         });
+      } else if (choices.length > 0) {
+        setCreateSlot({ start, end, choices });
       }
     },
-    [data.calendars, addLog, t],
+    [calendarAccounts, shownAccountIds, data.calendars, addLog, t],
   );
 
   const dayLabel = useMemo(
@@ -137,7 +156,7 @@ export function CalendarPanel({
         </button>
       </div>
 
-      {panelState === 'setup' && currentAccount ? (
+      {needsSetup && currentAccount ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center">
           <p className="text-sm font-medium text-gray-900">{t('calendar:panel.setupTitle')}</p>
           <p className="text-xs text-gray-500 break-words">{currentAccount.email}</p>
@@ -175,7 +194,7 @@ export function CalendarPanel({
             <div className="border-b border-gray-100 px-2 py-1.5">
               <Select
                 value={selectedAccountId}
-                options={calendarAccounts.map((a) => ({ value: a.id, label: a.email }))}
+                options={calendarAccountOptions(calendarAccounts, t('calendar:allAccounts'))}
                 onChange={handleSelectAccount}
                 ariaLabel={t('calendar:selectAccount')}
                 size="xs"
@@ -216,29 +235,48 @@ export function CalendarPanel({
             </button>
           </div>
 
-          {data.needsReauth && (
-            <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              <span className="min-w-0 flex-1 break-words">{t('calendar:reauthNeeded')}</span>
+          {data.reauthAccountIds.map((reauthId) => (
+            <div
+              key={reauthId}
+              className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            >
+              <span className="min-w-0 flex-1 break-words">
+                {isAllAccounts
+                  ? t('calendar:reauthNeededAccount', { email: accountById.get(reauthId)?.email ?? reauthId })
+                  : t('calendar:reauthNeeded')}
+              </span>
               <button
                 type="button"
-                onClick={() => void data.runReauth()}
-                disabled={data.isReauthing}
+                onClick={() => void data.runReauth(reauthId)}
+                disabled={data.reauthingAccountId !== null}
                 className="flex-shrink-0 rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-60"
               >
-                {data.isReauthing ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
+                {data.reauthingAccountId === reauthId ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
               </button>
             </div>
-          )}
+          ))}
           {data.error && (
             <div className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 break-words">
               {t('calendar:syncError', { message: data.error })}
             </div>
           )}
+          {data.syncErrors.map((e) => (
+            <div
+              key={e.accountId}
+              className="border-b border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 break-words"
+            >
+              {t('calendar:syncError', {
+                message: isAllAccounts
+                  ? `${accountById.get(e.accountId)?.email ?? e.accountId}: ${e.message}`
+                  : e.message,
+              })}
+            </div>
+          ))}
 
           <TimeGrid
             days={days}
             events={data.shownEvents}
-            colorFor={data.colorFor}
+            colorFor={colorFor}
             onSelectEvent={setSelectedEvent}
             onCreateSlot={openCreateSlot}
           />
@@ -249,9 +287,13 @@ export function CalendarPanel({
         <EventDetailDialog
           event={selectedEvent}
           accountId={selectedEvent.accountId}
-          provider={accounts.find((a) => a.id === selectedEvent.accountId)?.provider ?? ''}
+          accountEmail={isAllAccounts ? accountById.get(selectedEvent.accountId)?.email : undefined}
+          provider={accountById.get(selectedEvent.accountId)?.provider ?? ''}
           readOnly={data.calendars.some(
-            (c) => c.providerCalendarId === selectedEvent.calendarId && isReadOnlyCalendar(c),
+            (c) =>
+              c.accountId === selectedEvent.accountId &&
+              c.providerCalendarId === selectedEvent.calendarId &&
+              isReadOnlyCalendar(c),
           )}
           onClose={() => setSelectedEvent(null)}
           onDeleted={(eventId, scope, recurringEventId, startTime) => {
@@ -260,29 +302,28 @@ export function CalendarPanel({
           }}
           onAuthError={() => {
             setSelectedEvent(null);
-            data.setNeedsReauth(true);
+            data.markNeedsReauth(selectedEvent.accountId);
           }}
         />
       )}
 
-      {createSlot && selectedAccountId && (
+      {createSlot && (
         <NewEventDialog
-          accountId={selectedAccountId}
-          isGmail={selectedAccount?.provider === 'gmail'}
+          choices={createSlot.choices}
           initialStart={createSlot.start}
           initialEnd={createSlot.end}
           onClose={() => setCreateSlot(null)}
           onCreated={(created, recurrence) => {
             setCreateSlot(null);
             if (recurrence !== 'none') {
-              void data.runSync(selectedAccountId);
+              void data.runSync();
             } else {
               data.setEvents((prev) => [...prev.filter((e) => e.id !== created.id), created]);
             }
           }}
-          onAuthError={() => {
+          onAuthError={(accountId) => {
             setCreateSlot(null);
-            data.setNeedsReauth(true);
+            data.markNeedsReauth(accountId);
           }}
         />
       )}

@@ -5,6 +5,7 @@
 // anchor date / "now" as explicit parameters — no hidden clock reads.
 // Timestamps follow the app's DB convention: unix **seconds**.
 
+import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import type { CalendarEvent } from '@/types';
 
 /** One cell of the 6×7 month grid. */
@@ -298,15 +299,17 @@ export function startsIn(startTimeSec: number, nowSec: number): StartsIn {
 /**
  * Pick the calendar's account: the persisted selection if it still names an
  * enabled account, else the caller's preferred (effective) account, else the
- * first enabled account, else null.
+ * first enabled account, else null. "All accounts" (`ALL_ACCOUNTS_ID`) is a
+ * candidate only while two or more accounts have a calendar.
  */
 export function resolveCalendarAccountId(
   accounts: ReadonlyArray<{ id: string; enabled: boolean }>,
   persistedId: string | null,
   preferredId: string | null,
 ): string | null {
+  const canCombine = accounts.filter((a) => a.enabled).length >= 2;
   const isCandidate = (id: string | null): id is string =>
-    id !== null && accounts.some((a) => a.id === id && a.enabled);
+    id !== null && (id === ALL_ACCOUNTS_ID ? canCombine : accounts.some((a) => a.id === id && a.enabled));
   if (isCandidate(persistedId)) return persistedId;
   if (isCandidate(preferredId)) return preferredId;
   return accounts.find((a) => a.enabled)?.id ?? null;

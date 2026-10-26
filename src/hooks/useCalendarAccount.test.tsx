@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
+import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import type { Account } from '@/types';
 import { resetCalendarAccountDefaultForTests, useCalendarAccount } from './useCalendarAccount';
@@ -49,6 +50,7 @@ describe('useCalendarAccount', () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     prefs.stored = {};
     resetCalendarAccountDefaultForTests();
+    useAccountStore.setState({ activeAccountId: 'g1' });
     useCalendarIntegrationStore.setState({
       isLoaded: true,
       enabledIds: new Set(['g1', 'g2', 'g3']),
@@ -87,5 +89,33 @@ describe('useCalendarAccount', () => {
     await act(async () => latest?.handleSelectAccount('g2'));
     await act(async () => root.render(<Probe defaultAccountId="g3" />));
     expect(container.textContent).toBe('g3');
+  });
+
+  it('follows the sidebar into "All accounts"', async () => {
+    useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    expect(container.textContent).toBe(ALL_ACCOUNTS_ID);
+    expect(latest?.isAllAccounts).toBe(true);
+    expect(latest?.selectedAccount).toBeNull();
+  });
+
+  it('can be switched to "All accounts" from the selector', async () => {
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    await act(async () => latest?.handleSelectAccount(ALL_ACCOUNTS_ID));
+    expect(container.textContent).toBe(ALL_ACCOUNTS_ID);
+  });
+
+  it('shows the single account when only one has a calendar, even in "All accounts"', async () => {
+    useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
+    useCalendarIntegrationStore.setState({ enabledIds: new Set(['g2']) });
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    expect(container.textContent).toBe('g2');
+  });
+
+  it('does not offer to enable the first account\'s calendar when the sidebar is on "All accounts"', async () => {
+    useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
+    useCalendarIntegrationStore.setState({ enabledIds: new Set(['g2', 'g3']) });
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    expect(latest?.disabledCurrentAccount).toBeNull();
   });
 });

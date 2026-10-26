@@ -46,8 +46,22 @@ function renderDialog() {
   act(() => {
     root.render(
       <NewEventDialog
-        accountId="acct-1"
-        isGmail
+        choices={[
+          {
+            account: {
+              id: 'acct-1',
+              provider: 'gmail',
+              email: 'a@mail.example',
+              name: '',
+              createdAt: 0,
+              sortOrder: 0,
+              enabled: true,
+              syncFromTimestamp: null,
+              color: 'blue',
+            },
+            plan: { kind: 'dialog' },
+          },
+        ]}
         initialStart={start}
         initialEnd={start + 3600}
         onClose={() => {}}

@@ -3,7 +3,11 @@
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Stores the sidebar imports subscribe to backend events at module load.
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
 import { initI18n } from '@/i18n';
 import type { Account } from '@/types';
 import { AccountItem } from './Sidebar';
