@@ -29,7 +29,6 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
-import { resetCalendarAccountDefaultForTests } from '@/hooks/useCalendarAccount';
 import * as api from '@/lib/api';
 import { calendarEnabledPrefKey, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import type { Account, CalendarEvent } from '@/types';
@@ -83,8 +82,6 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  // The hook remembers the last sidebar account across mounts (by design); forget it between tests.
-  resetCalendarAccountDefaultForTests();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);

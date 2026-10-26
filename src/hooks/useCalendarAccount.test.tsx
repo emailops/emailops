@@ -1,7 +1,6 @@
-// The calendar's account selection follows the sidebar account when a surface
-// opens, but a manual pick in the selector must survive moving between the
-// docked agenda and the full view (two mounts of the same hook) until the
-// sidebar account changes again.
+// The calendar's account selection follows the sidebar selection whenever a
+// calendar surface opens; a manual pick in the selector lasts while that
+// surface stays open, or until the sidebar selection changes.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -19,7 +18,7 @@ vi.mock('@/lib/api', () => ({
 import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import type { Account } from '@/types';
-import { resetCalendarAccountDefaultForTests, useCalendarAccount } from './useCalendarAccount';
+import { useCalendarAccount } from './useCalendarAccount';
 
 function makeAccount(id: string): Account {
   return {
@@ -49,7 +48,6 @@ describe('useCalendarAccount', () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     prefs.stored = {};
-    resetCalendarAccountDefaultForTests();
     useAccountStore.setState({ activeAccountId: 'g1' });
     useCalendarIntegrationStore.setState({
       isLoaded: true,
@@ -71,16 +69,23 @@ describe('useCalendarAccount', () => {
     expect(container.textContent).toBe('g1');
   });
 
-  it('keeps a manual pick across a remount with the same sidebar account', async () => {
+  it('reopening the calendar shows the sidebar account again, not an earlier manual pick', async () => {
     await act(async () => root.render(<Probe defaultAccountId="g1" />));
-    await act(async () => latest?.handleSelectAccount('g2'));
-    expect(container.textContent).toBe('g2');
+    await act(async () => latest?.handleSelectAccount(ALL_ACCOUNTS_ID));
+    expect(container.textContent).toBe(ALL_ACCOUNTS_ID);
 
-    // The panel closes and the full view opens: a fresh mount of the hook.
+    // The calendar closes and opens again: a fresh mount of the hook.
     act(() => root.unmount());
     root = createRoot(container);
     await act(async () => root.render(<Probe defaultAccountId="g1" />));
 
+    expect(container.textContent).toBe('g1');
+  });
+
+  it('keeps a manual pick while the calendar stays open', async () => {
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
+    await act(async () => latest?.handleSelectAccount('g2'));
+    await act(async () => root.render(<Probe defaultAccountId="g1" />));
     expect(container.textContent).toBe('g2');
   });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '@/lib/api';
 import { resolveCalendarAccountId } from '@/lib/calendarGrid';
 import { errorText } from '@/lib/errors';
@@ -15,26 +15,14 @@ import type { Account } from '@/types';
 const ACCOUNT_PREF_KEY = 'calendar_selected_account';
 
 /**
- * The sidebar account (or `ALL_ACCOUNTS_ID`) the calendar last snapped to. Module-level on purpose:
- * the docked agenda and the full view are separate mounts of this hook, and
- * a manual pick in one must survive opening the other — only a *change* of
- * the sidebar account snaps the selection again.
- */
-let appliedDefaultAccountId: string | null = null;
-
-/** Test seam: forget the last applied sidebar account between tests. */
-export function resetCalendarAccountDefaultForTests(): void {
-  appliedDefaultAccountId = null;
-}
-
-/**
  * Which account the calendar surfaces (full view, day-agenda panel) show: one
  * account, or `ALL_ACCOUNTS_ID` for every calendar account together (offered
  * once two have a calendar). Follows the sidebar — the account the user is
  * "in" (`defaultAccountId`) when it has an enabled calendar, "All accounts"
- * when the sidebar is there; a manual pick in the selector wins afterwards,
- * until the sidebar selection changes again. Persisted under
- * `calendar_selected_account`.
+ * when the sidebar is there — every time a surface opens. A manual pick in the
+ * selector wins while that surface stays open, until the sidebar selection
+ * changes; it is persisted under `calendar_selected_account`, the fallback
+ * when the sidebar account has no calendar.
  */
 export function useCalendarAccount(accounts: Account[], defaultAccountId: string | null) {
   const addLog = useLogStore((s) => s.addLog);
@@ -90,16 +78,19 @@ export function useCalendarAccount(accounts: Account[], defaultAccountId: string
 
   // Gated on both loads so the override is never undone by the async pref
   // read landing late.
+  // The sidebar selection this mount last snapped to: null on open, so
+  // opening a calendar surface always shows the sidebar's selection.
+  const appliedFollowIdRef = useRef<string | null>(null);
   const followAccountId = sidebarIsUnified ? ALL_ACCOUNTS_ID : defaultAccountId;
   useEffect(() => {
     if (!prefLoaded || !integrationLoaded || !followAccountId) return;
-    if (appliedDefaultAccountId === followAccountId) return;
+    if (appliedFollowIdRef.current === followAccountId) return;
     const followable =
       followAccountId === ALL_ACCOUNTS_ID
         ? calendarAccounts.length >= 2
         : calendarAccounts.some((a) => a.id === followAccountId);
     if (!followable) return;
-    appliedDefaultAccountId = followAccountId;
+    appliedFollowIdRef.current = followAccountId;
     setPersistedAccountId(followAccountId);
   }, [prefLoaded, integrationLoaded, followAccountId, calendarAccounts]);
 

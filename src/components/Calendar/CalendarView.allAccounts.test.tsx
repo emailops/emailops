@@ -26,7 +26,6 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
-import { resetCalendarAccountDefaultForTests } from '@/hooks/useCalendarAccount';
 import * as api from '@/lib/api';
 import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -74,7 +73,6 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  resetCalendarAccountDefaultForTests();
   useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
   container = document.createElement('div');
   document.body.appendChild(container);

@@ -24,7 +24,6 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
-import { resetCalendarAccountDefaultForTests } from '@/hooks/useCalendarAccount';
 import * as api from '@/lib/api';
 import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
@@ -86,8 +85,6 @@ describe('CalendarPanel', () => {
   const onClose = vi.fn();
 
   beforeEach(() => {
-    // The hook remembers the last sidebar account across mounts (by design); forget it between tests.
-    resetCalendarAccountDefaultForTests();
     useAccountStore.setState({ activeAccountId: null });
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     onOpenSettings.mockClear();
