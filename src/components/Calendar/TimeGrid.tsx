@@ -31,7 +31,7 @@ interface TimeGridProps {
   events: CalendarEvent[];
   /** Resolved colour per `calendarId`, so each calendar's events are tinted
    *  with the colour the provider shows them in. */
-  colorFor: (calendarId: string) => string;
+  colorFor: (event: CalendarEvent) => string;
   onSelectEvent: (event: CalendarEvent) => void;
   /** Double-click on an empty slot → propose a new event `[start, end)` (unix seconds). */
   onCreateSlot: (start: number, end: number) => void;
@@ -160,7 +160,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                     left: `calc(${(startIndex / days.length) * 100}% + 2px)`,
                     width: `calc(${((endIndex - startIndex + 1) / days.length) * 100}% - 4px)`,
                     height: SPAN_LANE_PX - 2,
-                    ...eventChipStyle(colorFor(event.calendarId)),
+                    ...eventChipStyle(colorFor(event)),
                   }}
                 >
                   {continuesBefore && <span aria-hidden="true">‹</span>}
@@ -184,7 +184,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                     onClick={() => onSelectEvent(event)}
                     title={`${event.title} · ${t('calendar:allDay')}`}
                     className="w-full text-left px-1.5 py-0.5 rounded text-[11px] leading-tight truncate transition-opacity hover:opacity-80"
-                    style={eventChipStyle(colorFor(event.calendarId))}
+                    style={eventChipStyle(colorFor(event))}
                   >
                     {event.title || '—'}
                   </button>
@@ -260,7 +260,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                         height,
                         left: `${leftPct}%`,
                         width: `calc(${widthPct}% - 2px)`,
-                        ...eventBlockStyle(colorFor(event.calendarId), event.status === 'tentative'),
+                        ...eventBlockStyle(colorFor(event), event.status === 'tentative'),
                       }}
                     >
                       {textMode === 'two-lines' && (

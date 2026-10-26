@@ -44,9 +44,9 @@ tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
-# Held at 0.40: `refinery` 0.10 caps its rusqlite range at <=0.40 and both
-# must link the same libsqlite3-sys (ignored by the `outdated` gate until then).
-rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+# Must stay within the rusqlite range `refinery-core` accepts (one rusqlite /
+# libsqlite3-sys in the tree); refinery-core 0.10.1 accepts 0.41.
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }

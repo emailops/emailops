@@ -50,6 +50,18 @@
     "senderNameHeading": "Sender name",
     "senderNameHint": "Shown as the sender of the emails you send from this account. Leave it empty to send with the address only.",
     "senderNamePlaceholder": "Your name",
+    "colorHeading": "Colour",
+    "colorHint": "Marks this account in the sidebar, the unified inbox and the \"All accounts\" calendar.",
+    "colors": {
+      "blue": "Blue",
+      "emerald": "Emerald",
+      "amber": "Amber",
+      "purple": "Purple",
+      "rose": "Rose",
+      "cyan": "Cyan",
+      "indigo": "Indigo",
+      "orange": "Orange"
+    },
     "syncHeading": "Sync",
     "categoriesHeading": "Categories to sync",
     "autoDownloadHeading": "Auto-download attachments",

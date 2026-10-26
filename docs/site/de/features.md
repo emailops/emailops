@@ -175,7 +175,8 @@ mit einer Schaltfläche darunter für den Rest.
 ## Kalender {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Monats-, Wochen- und Tagesansichten je Konto für Google Kalender und Outlook. Sie erhalten vor
+Monats-, Wochen- und Tagesansichten für Google Kalender und Outlook, für ein Konto oder für
+**Alle Konten** zusammen, wobei jeder Termin die Farbe seines Kontos trägt. Sie erhalten vor
 jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Teilnehmen** für Meet-, Teams-, Webex-
 und Zoom-Links. Die Kalendersynchronisierung ist für Gmail- und Outlook-Konten standardmäßig
 aktiv und lässt sich je Konto abschalten — ebenso die Vorlaufzeit der Benachrichtigung — unter

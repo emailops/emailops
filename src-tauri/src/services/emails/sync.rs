@@ -3431,6 +3431,7 @@ mod extra_mailbox_window_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: sync_from,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4156,6 +4157,7 @@ mod sync_anchor_tests {
             enabled: true,
             // "All mail" — the preference the sync watermark used to destroy.
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4294,6 +4296,7 @@ mod backfill_watermark_persistence_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None, // "All mail"
+            color: crate::models::AccountColor::Blue,
         };
         db.connection()
             .execute(
@@ -4367,6 +4370,7 @@ mod inbox_gap_repair_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4587,6 +4591,7 @@ mod spam_reconcile_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 

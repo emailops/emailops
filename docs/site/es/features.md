@@ -169,7 +169,8 @@ más usados, con un botón debajo para ver el resto.
 ## Calendario {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Vistas de mes, semana y día por cuenta para Google Calendar y Outlook. Recibes recordatorios
+Vistas de mes, semana y día para Google Calendar y Outlook, de una cuenta o de **Todas las
+cuentas** juntas, donde cada evento lleva el color de su cuenta. Recibes recordatorios
 antes de cada evento con un botón **Unirse** de un clic para enlaces de Meet, Teams, Webex y
 Zoom. La sincronización de calendario está activada por defecto en las cuentas de Gmail y
 Outlook y puede desactivarse por cuenta, junto con la antelación del aviso, en

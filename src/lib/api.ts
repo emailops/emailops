@@ -4,6 +4,7 @@ import { arch as osArch, platform as osPlatform, version as osVersion } from '@t
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
 import type {
   Account,
+  AccountColor,
   AccountDashboard,
   AccountSettings,
   AccountSignature,
@@ -223,6 +224,10 @@ export async function updateAccountSyncFrom(accountId: string, syncFromTimestamp
  *  blank name falls back to the address. */
 export async function updateAccountName(accountId: string, name: string): Promise<Account> {
   return invoke('update_account_name', { accountId, name });
+}
+
+export async function setAccountColor(accountId: string, color: AccountColor): Promise<Account> {
+  return invoke('set_account_color', { accountId, color });
 }
 
 export async function getAccountSettings(accountId: string): Promise<AccountSettings> {

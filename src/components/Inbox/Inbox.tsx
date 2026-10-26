@@ -249,7 +249,7 @@ export function Inbox({
     if (!isUnified) return undefined;
     const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
-      colorClass: accountColorClass(email.accountId),
+      colorClass: accountColorClass(allAccounts, email.accountId),
       label: emailById.get(email.accountId) ?? email.accountId,
       chip: showAccountChip,
     });

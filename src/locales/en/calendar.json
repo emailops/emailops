@@ -10,8 +10,10 @@
   "integrationDisabled": "Calendar is turned off for {{email}}.",
   "enableCalendarButton": "Enable calendar",
   "selectAccount": "Calendar account",
+  "allAccounts": "All accounts",
   "syncError": "Calendar error: {{message}}",
   "reauthNeeded": "EmailOps doesn't have permission to read this account's calendar yet. Sign in again to grant calendar access.",
+  "reauthNeededAccount": "{{email}} needs to be reconnected to show its calendar.",
   "reauthButton": "Sign in again",
   "reauthInProgress": "Waiting for Google/Microsoft…",
   "viewModes": {
@@ -43,7 +45,10 @@
     "meetNote": "A Google Meet link will be added automatically.",
     "createButton": "Create",
     "creating": "Creating…",
-    "error": "Couldn't create the event: {{message}}"
+    "error": "Couldn't create the event: {{message}}",
+    "account": "Account",
+    "protonHint": "Proton Calendar has no API to create events from here. Its own form opens on this day; the event shows up here at the next feed refresh.",
+    "openProton": "Create in Proton Calendar"
   },
   "detail": {
     "tentative": "Tentative",
@@ -74,7 +79,8 @@
     "cancellationMessage": "Add a note to the cancellation",
     "cancellationMessagePlaceholder": "Optional message to attendees",
     "googleCancellationHint": "Google sends its standard cancellation email to invitees.",
-    "deleteError": "Couldn't delete the event: {{message}}"
+    "deleteError": "Couldn't delete the event: {{message}}",
+    "account": "Account"
   },
   "reminder": {
     "title": "Upcoming meeting",

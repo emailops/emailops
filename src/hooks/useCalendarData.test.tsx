@@ -46,8 +46,8 @@ function makeEvent(id: string, accountId: string): CalendarEvent {
 }
 
 let latest: ReturnType<typeof useCalendarData> | null = null;
-function Probe({ accountId }: { accountId: string | null }) {
-  latest = useCalendarData(accountId, 0, 10_000);
+function Probe({ accountId, accountIds }: { accountId?: string | null; accountIds?: string[] }) {
+  latest = useCalendarData(accountIds ?? (accountId ? [accountId] : []), 0, 10_000);
   return <div data-testid="titles">{latest.events.map((e) => e.title).join(',')}</div>;
 }
 
@@ -112,7 +112,61 @@ describe('useCalendarData', () => {
 
     await act(async () => root.render(<Probe accountId="a" />));
 
-    expect(latest?.needsReauth).toBe(true);
+    expect(latest?.reauthAccountIds).toEqual(['a']);
     expect(latest?.error).toBeNull();
+  });
+
+  it('"All accounts" syncs and shows every account\'s events together', async () => {
+    vi.mocked(api.syncCalendarNow).mockResolvedValue(1);
+    vi.mocked(api.getCalendarEvents).mockImplementation(async (accountId: string) => [
+      makeEvent(`${accountId}-event`, accountId),
+    ]);
+
+    await act(async () => root.render(<Probe accountIds={['a', 'b']} />));
+
+    expect(api.syncCalendarNow).toHaveBeenCalledWith('a');
+    expect(api.syncCalendarNow).toHaveBeenCalledWith('b');
+    expect(container.textContent).toBe('a-event,b-event');
+  });
+
+  it('one account needing re-auth is named, and the others still show', async () => {
+    vi.mocked(api.syncCalendarNow).mockImplementation((accountId: string) =>
+      accountId === 'a' ? Promise.reject(new Error('Authentication required for account a')) : Promise.resolve(1),
+    );
+    vi.mocked(api.getCalendarEvents).mockImplementation(async (accountId: string) => [
+      makeEvent(`${accountId}-event`, accountId),
+    ]);
+
+    await act(async () => root.render(<Probe accountIds={['a', 'b']} />));
+
+    expect(latest?.reauthAccountIds).toEqual(['a']);
+    expect(container.textContent).toBe('a-event,b-event');
+  });
+
+  it('one account failing to sync is reported against that account', async () => {
+    vi.mocked(api.syncCalendarNow).mockImplementation((accountId: string) =>
+      accountId === 'b' ? Promise.reject(new Error('provider down')) : Promise.resolve(1),
+    );
+    vi.mocked(api.getCalendarEvents).mockImplementation(async (accountId: string) => [
+      makeEvent(`${accountId}-event`, accountId),
+    ]);
+
+    await act(async () => root.render(<Probe accountIds={['a', 'b']} />));
+
+    expect(latest?.syncErrors).toEqual([{ accountId: 'b', message: 'provider down' }]);
+    expect(container.textContent).toBe('a-event,b-event');
+  });
+
+  it("an account whose events fail to load does not hide the others'", async () => {
+    vi.mocked(api.syncCalendarNow).mockResolvedValue(1);
+    vi.mocked(api.getCalendarEvents).mockImplementation(async (accountId: string) => {
+      if (accountId === 'a') throw new Error('db busy');
+      return [makeEvent(`${accountId}-event`, accountId)];
+    });
+
+    await act(async () => root.render(<Probe accountIds={['a', 'b']} />));
+
+    expect(container.textContent).toBe('b-event');
+    expect(latest?.error).toBe('db busy');
   });
 });

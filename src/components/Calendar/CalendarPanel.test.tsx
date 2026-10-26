@@ -24,8 +24,8 @@ vi.mock('@/lib/api', () => ({
   currentPlatform: vi.fn(() => ''),
 }));
 
-import { resetCalendarAccountDefaultForTests } from '@/hooks/useCalendarAccount';
 import * as api from '@/lib/api';
+import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import type { Account, CalendarEvent, CalendarFeed } from '@/types';
 import { CalendarPanel } from './CalendarPanel';
@@ -85,8 +85,7 @@ describe('CalendarPanel', () => {
   const onClose = vi.fn();
 
   beforeEach(() => {
-    // The hook remembers the last sidebar account across mounts (by design); forget it between tests.
-    resetCalendarAccountDefaultForTests();
+    useAccountStore.setState({ activeAccountId: null });
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     onOpenSettings.mockClear();
     onOpenFullCalendar.mockClear();
@@ -154,5 +153,23 @@ describe('CalendarPanel', () => {
     expect(expand).not.toBeNull();
     await act(async () => expand?.click());
     expect(onOpenFullCalendar).toHaveBeenCalledTimes(1);
+  });
+
+  it('in "All accounts" shows every calendar account\'s day, even when the first account has no feed', async () => {
+    useAccountStore.setState({ activeAccountId: ALL_ACCOUNTS_ID });
+    vi.mocked(api.getCalendarEvents).mockImplementation(async (accountId: string) => [
+      { ...makeEvent(`${accountId}-1`, `${accountId} sync`, 9), accountId },
+    ]);
+    await mount('i-none');
+    expect(container.textContent).not.toContain('calendar:panel.setupTitle');
+    const titles = [...container.querySelectorAll('button[title]')].map((b) => b.getAttribute('title') ?? '');
+    expect(titles.some((t) => t.startsWith('g sync'))).toBe(true);
+    expect(titles.some((t) => t.startsWith('i-feed sync'))).toBe(true);
+  });
+
+  it('prompts to set up the feed for the sidebar account even after "All accounts" was picked', async () => {
+    vi.mocked(api.getPref).mockResolvedValueOnce(ALL_ACCOUNTS_ID);
+    await mount('i-none');
+    expect(container.textContent).toContain('calendar:panel.setupTitle');
   });
 });

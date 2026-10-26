@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::{Account, AccountSettings, AccountSignature, SignatureInput};
+use crate::models::{Account, AccountColor, AccountSettings, AccountSignature, SignatureInput};
 use crate::services;
 use crate::sync::imap::ImapCredentials;
 use crate::AppState;
@@ -240,6 +240,16 @@ pub async fn update_account_name(
     name: String,
 ) -> Result<Account, AppError> {
     services::accounts::update_account_name(&state.db, &account_id, &name)
+}
+
+/// Recolour an account (sidebar dot, unified-inbox marker, calendar events).
+#[tauri::command]
+pub async fn set_account_color(
+    state: State<'_, AppState>,
+    account_id: String,
+    color: AccountColor,
+) -> Result<Account, AppError> {
+    services::accounts::set_account_color(&state.db, &account_id, color)
 }
 
 #[tauri::command]

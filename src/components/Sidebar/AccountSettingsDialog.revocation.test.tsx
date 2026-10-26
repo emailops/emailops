@@ -27,6 +27,7 @@ function accountFor(provider: Account['provider']): Account {
     sortOrder: 0,
     enabled: true,
     syncFromTimestamp: null,
+    color: 'blue',
   };
 }
 

@@ -176,7 +176,8 @@ utilisées, avec un bouton en dessous pour voir le reste.
 ## Calendrier {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Vues mois, semaine et jour par compte pour Google Agenda et Outlook. Vous recevez des rappels
+Vues mois, semaine et jour pour Google Agenda et Outlook, d'un compte ou de **Tous les
+comptes** ensemble, où chaque événement prend la couleur de son compte. Vous recevez des rappels
 avant chaque événement, avec un bouton **Rejoindre** en un clic pour les liens Meet, Teams,
 Webex et Zoom. La synchronisation du calendrier est active par défaut pour les comptes Gmail
 et Outlook et peut être désactivée compte par compte, tout comme le délai de notification,

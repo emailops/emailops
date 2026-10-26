@@ -160,7 +160,8 @@ with a button under the group for the rest.
 ## Calendar {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Per-account month, week and day views for Google Calendar and Outlook. You get meeting
+Month, week and day views for Google Calendar and Outlook, for one account or for **All
+accounts** together, where each event takes its account's colour. You get meeting
 reminders ahead of each event with a one-click **Join** button for Meet, Teams, Webex and
 Zoom links. Calendar sync is on by default for Gmail and Outlook accounts and can be
 switched off per account, along with the notification lead time, in **Settings → Calendar**.

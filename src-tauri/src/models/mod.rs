@@ -23,6 +23,67 @@ pub struct Account {
     pub sort_order: i32,
     pub enabled: bool,
     pub sync_from_timestamp: Option<i64>,
+    pub color: AccountColor,
+}
+
+/// The colour that identifies an account wherever accounts are mixed (sidebar,
+/// unified inbox, "All accounts" calendar). Stored as its wire name in
+/// `accounts.color` (V040, CHECK-constrained to this set); the frontend maps
+/// each key to its own classes and hex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "lowercase")]
+pub enum AccountColor {
+    Blue,
+    Emerald,
+    Amber,
+    Purple,
+    Rose,
+    Cyan,
+    Indigo,
+    Orange,
+}
+
+impl AccountColor {
+    /// Palette order: new accounts take the first colour no account uses yet.
+    pub const ALL: [AccountColor; 8] = [
+        Self::Blue,
+        Self::Emerald,
+        Self::Amber,
+        Self::Purple,
+        Self::Rose,
+        Self::Cyan,
+        Self::Indigo,
+        Self::Orange,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Emerald => "emerald",
+            Self::Amber => "amber",
+            Self::Purple => "purple",
+            Self::Rose => "rose",
+            Self::Cyan => "cyan",
+            Self::Indigo => "indigo",
+            Self::Orange => "orange",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// The colour for a new account: the least used one among `used` (the
+    /// existing accounts' colours), earliest in palette order on a tie — so
+    /// the first eight accounts never share a colour.
+    pub fn next_free(used: &[AccountColor]) -> AccountColor {
+        let uses = |color: AccountColor| used.iter().filter(|&&c| c == color).count();
+        Self::ALL
+            .into_iter()
+            .min_by_key(|&color| uses(color))
+            .unwrap_or(Self::Blue)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1853,6 +1914,31 @@ pub struct CreateTaskRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_account_gets_the_first_palette_colour_no_account_uses() {
+        assert_eq!(AccountColor::next_free(&[]), AccountColor::Blue);
+        assert_eq!(
+            AccountColor::next_free(&[AccountColor::Blue, AccountColor::Amber]),
+            AccountColor::Emerald
+        );
+    }
+
+    #[test]
+    fn once_every_colour_is_taken_the_least_used_one_comes_next() {
+        let mut used = AccountColor::ALL.to_vec();
+        used.push(AccountColor::Blue);
+        assert_eq!(AccountColor::next_free(&used), AccountColor::Emerald);
+    }
+
+    #[test]
+    fn account_colour_round_trips_through_its_wire_name() {
+        for color in AccountColor::ALL {
+            assert_eq!(AccountColor::parse(color.as_str()), Some(color));
+            assert_eq!(serde_json::to_value(color).unwrap(), color.as_str());
+        }
+        assert_eq!(AccountColor::parse("teal"), None);
+    }
 
     /// The demo mailbox seeds a saved chat whose trace is this fixture
     /// (`scripts/generate_demo_db.py`); the docs check opens its reasoning

@@ -157,6 +157,7 @@ macro_rules! app_commands {
             commands::accounts::set_account_enabled,
             commands::accounts::update_account_sync_from,
             commands::accounts::update_account_name,
+            commands::accounts::set_account_color,
             commands::accounts::get_account_settings,
             commands::accounts::set_account_settings,
             commands::accounts::get_account_signature,

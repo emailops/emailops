@@ -1786,9 +1786,13 @@ function AppInner() {
           ) : viewMode === 'dashboard' ? (
             <Dashboard accounts={accounts} onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)} />
           ) : viewMode === 'calendar' ? (
-            // Calendar is per-account only (docs/DECISIONS.md) — it renders its
-            // own compact account selector, so no UnifiedScopeBar here.
-            <CalendarView accounts={accounts} defaultAccountId={effectiveAccountId} />
+            // The calendar renders its own account selector (with "All
+            // accounts"), so no UnifiedScopeBar here.
+            <CalendarView
+              accounts={accounts}
+              defaultAccountId={effectiveAccountId}
+              onOpenSettings={() => setSettingsTab('calendar')}
+            />
           ) : isEmailListView(viewMode) ? (
             // biome-ignore lint/complexity/noUselessFragments: IIFE result needs a fragment wrapper for the ternary
             <>
