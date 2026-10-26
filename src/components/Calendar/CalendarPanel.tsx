@@ -68,6 +68,7 @@ export function CalendarPanel({
     disabledCurrentAccount,
     selectedAccountId,
     isAllAccounts,
+    followsAllAccounts,
     handleSelectAccount,
     enableCurrentCalendar,
     isEnabling,
@@ -76,8 +77,9 @@ export function CalendarPanel({
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
   const rangeStart = toSec(anchor);
   const rangeEnd = toSec(addDays(anchor, 1));
-  // The current account's feed setup only matters when it alone is shown.
-  const needsSetup = panelState === 'setup' && !isAllAccounts;
+  // The account the user is in needs a feed first — unless the sidebar is on
+  // "All accounts", where the user is in no single account.
+  const needsSetup = panelState === 'setup' && !followsAllAccounts;
   // No data traffic while the current account still has nothing to show.
   const shownAccountIds = needsSetup ? [] : calendarSelectionIds(selectedAccountId, calendarAccounts);
   const data = useCalendarData(shownAccountIds, rangeStart, rangeEnd);

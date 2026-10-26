@@ -140,6 +140,8 @@ export function useCalendarAccount(accounts: Account[], defaultAccountId: string
     selectedAccountId,
     selectedAccount,
     isAllAccounts,
+    /** The sidebar is on "All accounts": the user is in no single account. */
+    followsAllAccounts: sidebarIsUnified,
     handleSelectAccount,
     enableCurrentCalendar,
     isEnabling,

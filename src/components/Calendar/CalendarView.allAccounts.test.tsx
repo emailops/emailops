@@ -98,7 +98,7 @@ afterEach(() => {
 async function mount() {
   useCalendarIntegrationStore.setState({ enabledIds: new Set(['work', 'home']), isLoaded: true, feedsByAccount: {} });
   await act(async () => {
-    root.render(<CalendarView accounts={[work, home]} defaultAccountId="work" />);
+    root.render(<CalendarView accounts={[work, home]} defaultAccountId="work" onOpenSettings={() => {}} />);
   });
   await act(async () => {});
 }

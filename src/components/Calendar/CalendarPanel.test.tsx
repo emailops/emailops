@@ -166,4 +166,10 @@ describe('CalendarPanel', () => {
     expect(titles.some((t) => t.startsWith('g sync'))).toBe(true);
     expect(titles.some((t) => t.startsWith('i-feed sync'))).toBe(true);
   });
+
+  it('prompts to set up the feed for the sidebar account even after "All accounts" was picked', async () => {
+    vi.mocked(api.getPref).mockResolvedValueOnce(ALL_ACCOUNTS_ID);
+    await mount('i-none');
+    expect(container.textContent).toContain('calendar:panel.setupTitle');
+  });
 });

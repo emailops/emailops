@@ -17,6 +17,7 @@ import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, monthGrid, startOfDay, weekDays } from '@/lib/calendarGrid';
 import { accountColorHex } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
+import { calendarPanelState, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Account, Calendar, CalendarEvent } from '@/types';
 import { EventDetailDialog } from './EventDetailDialog';
@@ -34,6 +35,8 @@ interface CalendarViewProps {
   accounts: Account[];
   /** Concrete fallback account (effective account — never the unified sentinel). */
   defaultAccountId: string | null;
+  /** Open Settings → Calendar (to subscribe an IMAP account to a feed). */
+  onOpenSettings: () => void;
 }
 
 /**
@@ -42,7 +45,7 @@ interface CalendarViewProps {
  * Month / Week / Day views over `get_calendar_events`, with an on-open /
  * on-switch `sync_calendar_now` refresh.
  */
-export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) {
+export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: CalendarViewProps) {
   const { t, i18n } = useTranslation(['calendar', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
@@ -51,12 +54,21 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
     disabledCurrentAccount,
     selectedAccountId,
     isAllAccounts,
+    followsAllAccounts,
     handleSelectAccount,
     enableCurrentCalendar,
     isEnabling,
   } = useCalendarAccount(accounts, defaultAccountId);
-  const shownAccountIds = calendarSelectionIds(selectedAccountId, calendarAccounts);
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  // The account the user is in is IMAP without a feed: say how to get one
+  // rather than showing another account's calendar (unless the sidebar is on
+  // "All accounts", where the user is in no single account).
+  const enabledIds = useCalendarIntegrationStore((s) => s.enabledIds);
+  const feedsByAccount = useCalendarIntegrationStore((s) => s.feedsByAccount);
+  const currentAccount = accountById.get(defaultAccountId ?? '') ?? null;
+  const needsSetup = !followsAllAccounts && calendarPanelState(currentAccount, enabledIds, feedsByAccount) === 'setup';
+  // No data traffic while the current account still has nothing to show.
+  const shownAccountIds = needsSetup ? [] : calendarSelectionIds(selectedAccountId, calendarAccounts);
 
   // View state
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
@@ -234,6 +246,23 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
       </button>
     </div>
   );
+
+  if (needsSetup && currentAccount) {
+    return (
+      <div className="relative flex flex-col flex-1 min-h-0 items-center justify-center gap-3 px-5 text-center bg-white">
+        <p className="text-sm font-medium text-gray-900">{t('calendar:panel.setupTitle')}</p>
+        <p className="text-xs text-gray-500 break-words">{currentAccount.email}</p>
+        <p className="text-xs text-gray-600">{t('calendar:panel.setupBody')}</p>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="px-3 py-1.5 rounded-md bg-primary-600 text-white text-xs font-medium hover:bg-primary-700"
+        >
+          {t('calendar:panel.setupButton')}
+        </button>
+      </div>
+    );
+  }
 
   if (calendarAccounts.length === 0) {
     return (
