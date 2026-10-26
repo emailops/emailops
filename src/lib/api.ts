@@ -1156,6 +1156,8 @@ export async function setAiConfig(
   thinkingEnabled?: boolean,
   // Omitted keeps the stored choice (the backend treats a missing value as "unchanged").
   zeroDataRetention?: boolean,
+  /** Required when `provider` is the OpenAI-compatible server. */
+  server?: ServerSettingsInput,
 ): Promise<void> {
   return invoke('set_ai_config', {
     provider,
@@ -1165,7 +1167,54 @@ export async function setAiConfig(
     monthlyBudgetUsd: monthlyBudgetUsd ?? 0,
     thinkingEnabled: thinkingEnabled ?? false,
     zeroDataRetention,
+    server,
   });
+}
+
+/** What Settings sends for the OpenAI-compatible server
+ *  (`services::ai_server::ServerSettingsInput`). */
+export interface ServerSettingsInput {
+  baseUrl: string;
+  /** A new key; null keeps the stored one. */
+  apiKey: string | null;
+  /** Delete the stored key. */
+  clearApiKey: boolean;
+  embeddingSource: 'server' | 'inapp' | 'openrouter';
+  /** Tokens; 0 reads it from the server. */
+  contextWindow: number;
+  /** The remote host whose disclosure the user just confirmed. */
+  disclosureAcceptedHost: string | null;
+}
+
+/** Models an OpenAI-compatible server lists at `GET {baseUrl}/models`. The
+ *  server may not be saved yet; `apiKey` is the key typed with it. */
+export async function listOpenAiCompatibleModels(
+  baseUrl: string,
+  apiKey?: string | null,
+): Promise<{ id: string; name: string }[]> {
+  return invoke('list_openai_compatible_models', { baseUrl, apiKey });
+}
+
+/** The context window chat uses with a server (`services::ai_server::ContextReport`). */
+export interface ServerContextReport {
+  window: number;
+  /** Reported by the server, set in Settings, or the default assumed. */
+  source: 'server' | 'configured' | 'assumed';
+  /** What the server reported; null when it did not say. */
+  served: number | null;
+  /** What Settings holds; 0 reads it from the server. */
+  configured: number;
+  recommended: number;
+  belowRecommended: boolean;
+}
+
+export async function checkOpenAiCompatibleContext(
+  baseUrl: string,
+  apiKey: string | null,
+  model: string,
+  contextWindow: number,
+): Promise<ServerContextReport> {
+  return invoke('check_openai_compatible_context', { baseUrl, apiKey, model, contextWindow });
 }
 
 export async function getAiUsage(): Promise<AiUsageSummary> {
@@ -1198,8 +1247,14 @@ export async function validateOpenRouterEmbeddingModel(
   return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
-export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {
-  return invoke('test_ai_provider', { provider, model, apiKey });
+/** `baseUrl` is the OpenAI-compatible server to test, which may not be saved yet. */
+export async function testAiProvider(
+  provider: string,
+  model: string,
+  apiKey?: string | null,
+  baseUrl?: string,
+): Promise<string> {
+  return invoke('test_ai_provider', { provider, model, apiKey, baseUrl });
 }
 
 export async function getEmbeddingsConfig(accountId: string): Promise<EmbeddingsConfig> {

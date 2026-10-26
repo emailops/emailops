@@ -54,6 +54,7 @@
     "ai": "KI-Fehler: {{detail}}",
     "ai_disabled": "Die KI ist deaktiviert. Aktiviere sie in den Einstellungen.",
     "ai_data_policy": "Das Modell {{model}} ist mit der Datenrichtlinie von EmailOps nicht verfügbar. Wähle in den Einstellungen → KI ein anderes Modell.",
+    "ai_context_exceeded": "Die Anfrage ist länger als das Kontextfenster, mit dem das Modell geladen ist. Lade das Modell auf dem Server mit mehr Kontext oder verringere das Kontextfenster in Einstellungen → KI.",
     "io": "Dateifehler. Siehe Ausgabebereich.",
     "budget_exceeded": "KI-Budget überschritten: {{detail}}",
     "cancelled": "Abgebrochen.",

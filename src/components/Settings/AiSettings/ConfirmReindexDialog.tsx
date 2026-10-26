@@ -3,17 +3,23 @@
 
 import { useTranslation } from 'react-i18next';
 import { useOverlay } from '@/stores/overlayStore';
-import type { AiConfigState } from './types';
 
 interface ConfirmReindexDialogProps {
-  /** The provider and embedding model about to be saved. */
-  provider: AiConfigState['provider'];
+  /** The embedding model about to be saved. */
   embeddingModel: string;
+  /** OpenRouter computes the index with it: the OpenRouter tab, or an
+   *  OpenAI-compatible server whose index OpenRouter computes. */
+  sendsToOpenRouter: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
-export function ConfirmReindexDialog({ provider, embeddingModel, onCancel, onConfirm }: ConfirmReindexDialogProps) {
+export function ConfirmReindexDialog({
+  embeddingModel,
+  sendsToOpenRouter,
+  onCancel,
+  onConfirm,
+}: ConfirmReindexDialogProps) {
   useOverlay();
   const { t } = useTranslation(['common', 'settings']);
   const none = embeddingModel === '';
@@ -24,7 +30,7 @@ export function ConfirmReindexDialog({ provider, embeddingModel, onCancel, onCon
         <p className="text-sm text-gray-700 mb-3">
           {none ? t('settings:confirmReindex.bodyNone') : t('settings:confirmReindex.body')}
         </p>
-        {provider === 'openrouter' && !none && (
+        {sendsToOpenRouter && !none && (
           <p className="text-sm text-amber-700 mb-3">{t('settings:confirmReindex.openRouter')}</p>
         )}
         <div className="flex gap-2 justify-end mt-5">

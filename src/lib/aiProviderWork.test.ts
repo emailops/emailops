@@ -74,11 +74,21 @@ describe('summarizeWork', () => {
 });
 
 describe('sendsMailToOpenRouter', () => {
-  it('is true only for Embeddings work while OpenRouter is the provider in use', () => {
-    expect(sendsMailToOpenRouter('openrouter', [item('embeddingsRebuild')])).toBe(true);
-    expect(sendsMailToOpenRouter('openrouter', [item('embeddingsGeneration')])).toBe(true);
-    expect(sendsMailToOpenRouter('openrouter', [item('classification')])).toBe(false);
-    expect(sendsMailToOpenRouter('ollama', [item('embeddingsRebuild')])).toBe(false);
-    expect(sendsMailToOpenRouter('openrouter', [])).toBe(false);
+  const on = (provider: string, embeddingProvider = provider) => ({ provider, embeddingProvider, items: [] });
+
+  it('is true only for Embeddings work while OpenRouter computes the index', () => {
+    expect(sendsMailToOpenRouter(on('openrouter'), [item('embeddingsRebuild')])).toBe(true);
+    expect(sendsMailToOpenRouter(on('openrouter'), [item('embeddingsGeneration')])).toBe(true);
+    expect(sendsMailToOpenRouter(on('openrouter'), [item('classification')])).toBe(false);
+    expect(sendsMailToOpenRouter(on('ollama'), [item('embeddingsRebuild')])).toBe(false);
+    expect(sendsMailToOpenRouter(on('openrouter'), [])).toBe(false);
+  });
+
+  it('follows the embedding backend, not the chat one', () => {
+    // A self-hosted server chatting, OpenRouter computing the email index.
+    expect(sendsMailToOpenRouter(on('openai_compatible', 'openrouter'), [item('embeddingsRebuild')])).toBe(true);
+    expect(sendsMailToOpenRouter(on('openai_compatible', 'openai_compatible'), [item('embeddingsRebuild')])).toBe(
+      false,
+    );
   });
 });

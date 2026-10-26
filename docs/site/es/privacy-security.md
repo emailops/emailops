@@ -60,12 +60,19 @@ estos destinos, todos identificables:
 | Tu proveedor de correo (Gmail, Microsoft Graph, tu servidor IMAP/SMTP) | En cada sincronización y envío | Sí — es tu buzón |
 | Tu proveedor de calendario (Google, Outlook) | Sincronización de calendario, si está activada | Solo datos de calendario |
 | Hugging Face | Solo mientras descargas un modelo de IA que hayas elegido | No |
+| Tu servidor compatible con OpenAI | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 | OpenRouter | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 
 <!-- claim:priv-there-no-2 -->
-La última fila es la única vía por la que tu correo puede llegar a un tercero, está desactivada
+Salvo un servidor que ejecutes tú, la última fila es la única vía por la que tu correo puede llegar a un tercero, está desactivada
 por defecto y requiere un cambio deliberado en **Ajustes → IA: backend y modelos** más tu
 propia clave de API.
+
+<!-- claim:priv-there-no-5 -->
+Un servidor compatible con OpenAI en este ordenador mantiene tu correo en él. Uno en otra máquina
+debe usar https, y al guardarlo te pide confirmar, para su host, que tu correo se enviará allí y que
+EmailOps no puede controlar qué conserva; consulta
+[un servidor compatible con OpenAI](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 Si la activas, cada petición indica a OpenRouter que use solo proveedores que no guarden lo que
@@ -125,7 +132,8 @@ extracción de tareas y memoria se ejecutan ahí.
 
 <!-- claim:priv-local-ai-2 -->
 Cambiar a Ollama también mantiene la inferencia local, solo que en otro proceso de tu máquina.
-Solo OpenRouter envía contenido fuera del dispositivo. Consulta
+Solo OpenRouter, y un servidor compatible con OpenAI en otra máquina, envían contenido fuera del
+dispositivo. Consulta
 [elegir un backend](../ai-features/#choosing-a-backend).
 
 ## Protección frente al propio correo {#protection-from-the-mail-itself}

@@ -3794,6 +3794,69 @@ the hand-over is the only way to create from the calendar; the in-app dialog rem
 for every writable calendar.
 
 
+## 2026-10-23 — AI base URLs: no LAN over plain http, no credentials in the URL
+
+**Decision:** Every AI base URL (Ollama's `OLLAMA_HOST`, and the OpenAI-compatible server
+that follows) goes through one `normalize_ai_base_url`: trim, strip trailing slashes,
+refuse an empty value, then `validate_ai_base_url`. Plain `http://` stays limited to
+loopback (`localhost`, `127.0.0.0/8`, `::1`); LAN addresses, private ranges, `*.local`
+and bare hostnames need `https://`. A URL with a user name or password is refused and
+the error does not echo it. The refusal tells the user how to reach a LAN machine
+anyway: https, or an SSH tunnel / Tailscale so the server appears on localhost. A shared
+test table of refused URLs runs through every caller's entry point.
+**Context:** The OpenAI-compatible provider request (issue #138) proposed allowing http
+to private ranges so LM Studio or llama-server on another machine works out of the box.
+Prompts carry email content, and DASA 1.1.1 (transport) is part of the CASA AL1 evidence;
+a home or office LAN is not a trusted transport. Credentials in a URL end up in
+preferences and logs (DASA 1.10.2).
+**Rejected:** http to RFC 1918 ranges and `*.local` (cleartext mail on shared networks,
+and a DNS name is not proof of locality); a per-user "allow insecure LAN" toggle (one
+click from cleartext, and it weakens a recorded CASA control); stripping credentials
+from the URL silently (the user would think the key is in use).
+
+## 2026-10-23 — OpenAI-compatible provider: one destination by default, disclosure for remote hosts
+
+**Decision:** The fourth AI provider, an OpenAI-compatible server at a base URL the user
+enters (LM Studio, vLLM, `llama-server`, LiteLLM, a proxy), runs chat and, by default, the
+email index on that same server, so mail goes to one destination; the in-app embedding model
+(only where the embedded runtime runs) and OpenRouter stay as explicit alternatives. A server
+on this machine needs no extra step. Saving a server on another host requires an explicit
+confirmation that email content goes there and that EmailOps cannot control what it keeps or
+trains on; the confirmed host is stored, and a URL on any other host asks again. The backend
+enforces it (`services::ai_server::plan_server_settings`), not only the dialog. The client
+follows no redirects, sends the stored key only to the saved server's origin, keeps the key in
+the secrets vault apart from the OpenRouter key, and shows a failed request as its status plus
+a trimmed message, never the raw body. The monthly budget meters OpenRouter traffic only.
+**Context:** Issue #138 and its review. OpenRouter requests always carry
+`data_collection = "deny"` (recorded for Google's Gmail data policy); an arbitrary server gives
+no equivalent guarantee, and a proxy may forward mail elsewhere. CASA AL1 / DASA 1.1.1
+(transport), 1.8.1 (no internals in errors) and 1.10.2 (sensitive data) apply.
+**Rejected:** In-app embeddings as the default for this provider (two destinations for mail,
+and unavailable on Intel Macs); following redirects that stay on https (the check on the base
+URL would no longer describe where mail goes); a disclosure shown once per install rather than
+per host (moving the URL to another provider would inherit consent given for a different one);
+showing the server's error body in the UI (servers return HTML pages and stack traces there).
+
+## 2026-10-24 — OpenAI-compatible server: the loaded context window caps the setting
+
+**Decision:** Chat with an OpenAI-compatible server sizes prompts to the smaller of the
+context window set in Settings and the one the server reports it has the model loaded with,
+read on every turn from `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+`/api/v0/models` (`loaded_context_length` of a loaded model) or `llama-server`'s `/props`
+(`n_ctx`). With neither, it assumes 8192. Test and Save in Settings show the window chat will
+use and where it comes from, and warn below 16384 tokens (the auxiliary planner's floor). A
+request the server still refuses for its length is a typed error
+(`AppError::AiContextExceeded`) telling the user to raise the context on the server.
+**Context:** The OpenAI protocol has no field to set the context window; whoever loads the
+model decides it. LM Studio loads a model on demand with the context length saved for it,
+which was seen to differ from the one it last ran with (64000 against 32768), so a size typed
+in Settings alone overflowed or under-used the server.
+**Rejected:** Loading or reloading the model from EmailOps with a vendor API (`lms load`,
+LM Studio's load endpoint): it ties a generic provider to one server and changes the user's
+server without asking. Refusing to save below 16384 tokens: chat still works there, cut down.
+Remembering the reported window for the process (as for OpenRouter's catalogue): a reload
+on the server changes it.
+
 ## 2026-10-26 — Calendar offers "All accounts"; every account has a colour
 
 **Decision:** The Calendar screen and the docked agenda offer "All accounts" once two

@@ -58,12 +58,19 @@ these hosts, all of which you can name:
 | Your mail provider (Gmail, Microsoft Graph, your IMAP/SMTP server) | Every sync and send | Yes — it is your mailbox |
 | Your calendar provider (Google, Outlook) | Calendar sync, if enabled | Calendar data only |
 | Hugging Face | Only while downloading an AI model you picked | No |
+| Your OpenAI-compatible server | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 | OpenRouter | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 
 <!-- claim:priv-there-no-2 -->
-The last row is the only path by which your mail can reach a third party, it is off by
-default, and it takes a deliberate change in **Settings → AI Backend & Models** plus your own
-API key to enable.
+Apart from a server you run yourself, the last row is the only path by which your mail can
+reach a third party, it is off by default, and it takes a deliberate change in
+**Settings → AI Backend & Models** plus your own API key to enable.
+
+<!-- claim:priv-there-no-5 -->
+An OpenAI-compatible server on this computer keeps your mail on it. One on another machine must
+use https, and saving it asks you to confirm, for its host, that your mail will be sent there and
+that EmailOps cannot control what it keeps; see
+[an OpenAI-compatible server](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 When you do enable it, every request tells OpenRouter to use only providers that neither store
@@ -123,7 +130,8 @@ there.
 
 <!-- claim:priv-local-ai-2 -->
 Switching to Ollama keeps inference local too, just in a separate process on your machine.
-Only OpenRouter sends content off the device. See
+Only OpenRouter, and an OpenAI-compatible server on another machine, send content off the
+device. See
 [choosing a backend](../ai-features/#choosing-a-backend).
 
 ## Protection from the mail itself {#protection-from-the-mail-itself}

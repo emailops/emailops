@@ -4,6 +4,7 @@ description: 'Chatea con tu buzón, genera respuestas, clasifica correo, extrae 
 weight: 40
 nav:
   choosing-a-backend: settings/ai
+  openai-compatible-server: settings/ai
   the-model-catalog: settings/ai
   performance-knobs: settings/ai
   chat-with-your-mailbox: view/chat
@@ -39,6 +40,59 @@ ningún correo sale nunca de tu máquina.
   tope de gasto mensual y envía el contenido del correo a un tercero — así que permanece
   desactivado salvo que lo actives. Su panel muestra lo gastado en el periodo actual frente a
   ese tope, con **Iniciar un periodo nuevo** para poner la cuenta a cero. <!-- claim:ai-choosing-backend-4 -->
+- **Compatible con OpenAI** — un servidor que ya ejecutas y que habla la API de OpenAI: LM
+  Studio, vLLM, `llama-server` de llama.cpp, LiteLLM o un proxy. El chat va a ese servidor y,
+  salvo que elijas otra cosa, también el índice de correo; consulta
+  [un servidor compatible con OpenAI](#openai-compatible-server). <!-- claim:ai-choosing-backend-5 -->
+
+### Un servidor compatible con OpenAI {#openai-compatible-server}
+
+<!-- claim:ai-openai-compatible-1 -->
+Escribe la **URL del servidor** —por ejemplo `http://localhost:1234/v1` para LM Studio o
+`http://localhost:8080/v1` para `llama-server`— y una clave de API solo si el servidor la pide.
+**Cargar modelos** lista los modelos que sirve el servidor; también puedes escribir un id de
+modelo. **Probar** envía una petición corta al servidor que has escrito antes de guardar nada.
+La clave se guarda en el llavero del sistema, separada de la de OpenRouter, y
+**Eliminar la clave guardada** la borra.
+
+<!-- claim:ai-openai-compatible-2 -->
+El `http://` sin cifrar solo se acepta para este ordenador (`localhost`, `127.0.0.1`, `::1`). Un
+servidor en otra máquina necesita `https://`, aunque esté en la red de tu casa o tu oficina, y se
+rechaza una URL que lleve usuario o contraseña. Para llegar sin https a una máquina de tu red,
+reenvía su puerto con un túnel SSH (`ssh -L 8080:localhost:8080 <host>`) o accede por
+Tailscale, para que aparezca en `localhost`, y usa la URL `http://localhost`.
+
+<!-- claim:ai-openai-compatible-3 -->
+Al guardar un servidor que no está en este ordenador, primero te pide confirmar que el texto de
+tus correos, tus preguntas al chat y tus borradores se enviarán a él, y que EmailOps no puede
+controlar qué conserva ese servidor ni si entrena con ello. Vuelve a preguntar cada vez que la URL
+pasa a otro host.
+
+<!-- claim:ai-openai-compatible-4 -->
+**Índice de correo (Embeddings)** elige dónde calcula la búsqueda semántica los Embeddings de tu
+correo: **Este servidor** (por defecto, así tu correo va a un único sitio), el
+**Modelo de la app (en este ordenador)** (solo se ofrece donde el backend In-app puede ejecutarse)
+u **OpenRouter**, que recupera para él el presupuesto mensual y **Solo retención cero**. Un
+modelo de embeddings del servidor se comprueba al guardar, y se rechaza uno que no devuelve
+vectores que quepan en el índice. Cambiarlo reconstruye el índice, tras preguntar.
+
+<!-- claim:ai-openai-compatible-5 -->
+**Tamaño de contexto (tokens)** le dice a EmailOps cuánto puede leer el modelo de una vez. Déjalo
+en 0 para usar lo que informa el servidor: vLLM, LM Studio y `llama-server` dicen con cuánto
+contexto cargaron el modelo. Un tamaño puesto aquí se limita al que informa el servidor; si el
+servidor no dice nada, el chat usa el tamaño puesto aquí, o supone 8192. Las respuestas esperan hasta cinco minutos su primera
+palabra mientras un servidor local lee un prompt largo, y el razonamiento que un modelo escribe
+dentro del texto se deja fuera de la respuesta. EmailOps pide al servidor que se salte el
+razonamiento de un modelo que razona en sus llamadas internas cortas; vLLM y `llama-server` lo
+respetan y LM Studio no, así que con un modelo que razona desactiva allí su razonamiento en los
+ajustes del modelo.
+
+<!-- claim:ai-openai-compatible-6 -->
+Probar y Guardar muestran el tamaño de contexto que usará el chat y de dónde sale, y avisan cuando
+queda por debajo de 16384 tokens, donde el chat funciona recortado. LM Studio carga un modelo bajo
+demanda con la longitud de contexto guardada para ese modelo, así que súbela allí y no solo aquí.
+Una petición que aun así sea más larga de lo que admite el servidor falla con un mensaje que lo
+dice.
 
 ### El catálogo de modelos {#the-model-catalog}
 
@@ -245,7 +299,8 @@ reconstruye el índice desde cero tras cambiar el modelo de embeddings, en
 **Ajustes → Búsqueda con IA**.
 
 <!-- claim:ai-semantic-search-2 -->
-Con los dos backends locales, la indexación se hace en tu equipo. Con OpenRouter solo se hace
+Con los dos backends locales, la indexación se hace en tu equipo. Con un servidor compatible
+con OpenAI se hace donde diga su ajuste **Índice de correo (Embeddings)**. Con OpenRouter solo se hace
 si eliges un **Modelo de embeddings** en su panel: el texto de cada correo que se indexa, y de
 cada búsqueda y pregunta del chat, se envía entonces a OpenRouter y cuenta para el presupuesto
 mensual. Sin ninguno, la búsqueda semántica está desactivada y solo se busca por palabras

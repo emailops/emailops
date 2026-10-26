@@ -54,6 +54,7 @@
     "ai": "AI error: {{detail}}",
     "ai_disabled": "AI is disabled. Enable it in Settings.",
     "ai_data_policy": "The model {{model}} is not available under EmailOps' data policy. Choose another model in Settings → AI.",
+    "ai_context_exceeded": "The request is longer than the context window the model is loaded with. Load the model with more context on the server, or lower the context window in Settings → AI.",
     "io": "File error. See the Output panel.",
     "budget_exceeded": "AI budget exceeded: {{detail}}",
     "cancelled": "Cancelled.",
