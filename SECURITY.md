@@ -52,14 +52,20 @@ A few invariants are worth knowing before reporting:
 - **OAuth tokens** live in the OS keychain (`keyring` crate) in release
   builds. Plaintext SQLite token storage is gated behind
   `cfg!(debug_assertions)` and only used during local development.
-- **Email HTML** is rendered inside a `sandbox="allow-scripts allow-popups"`
-  iframe with **no `allow-same-origin`**. The null origin means scripts
-  inside the iframe cannot reach the parent DOM, cookies, or storage.
+- **All secrets share one keychain item** (service `emailops`, account
+  `vault`): OAuth tokens, IMAP passwords and remote-AI API keys. This is
+  deliberate — macOS asks for authorization per item, so one item means one
+  prompt instead of one per account — and it means a single keychain approval
+  releases every secret the app holds.
+- **Email HTML** is rendered inside a `sandbox="allow-scripts"` iframe with
+  **no `allow-same-origin`** and no `allow-popups`. The null origin means
+  scripts inside the iframe cannot reach the parent DOM, cookies, or storage,
+  and every link goes through the app's safe-scheme check and confirmation.
 - **Remote content** in email HTML is gated per-sender. Images and CSS
   `url(...)` references are stripped until the user explicitly trusts the
   sender via the "Load images" banner.
 - **CSP** is enabled in `src-tauri/tauri.conf.json` and restricts script
-  / connect / frame sources to a known allowlist.
+  / connect / frame sources to a known allowlist; `object-src` is `'none'`.
 
 ## Disclosure Policy
 
