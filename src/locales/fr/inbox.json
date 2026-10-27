@@ -165,6 +165,11 @@
     "truncatedNotice": "L'e-mail était trop long : seul le début a été traduit.",
     "failed": "Échec de la traduction : {{error}}"
   },
+  "aiMarkup": {
+    "title": "Ce message contient des instructions destinées à votre assistant IA",
+    "detail": "Quelqu'un l'a écrit pour manipuler l'assistant. EmailOps le traite comme du contenu, jamais comme votre demande.",
+    "checkFailed": "Impossible de vérifier si le message contient des instructions pour l'assistant"
+  },
   "junk": {
     "kind": {
       "phishing": "Ce message usurpe peut-être une identité",
@@ -185,7 +190,9 @@
       "credential_solicitation": "Vous demande de ressaisir votre mot de passe ou vos informations de compte",
       "display_name_contains_address": "Le nom de l'expéditeur est écrit pour ressembler à une autre adresse",
       "server_spam_flag": "Votre serveur de messagerie a marqué ce message comme spam",
-      "mixed_script_display_name": "Le nom de l'expéditeur mélange des alphabets pour se déguiser"
+      "mixed_script_display_name": "Le nom de l'expéditeur mélange des alphabets pour se déguiser",
+      "ai_control_markup": "Contient du texte adressé à un assistant IA",
+      "markdown_remote_image": "Intègre une image distante qu'un chat IA chargerait"
     },
     "isJunkHint": "Le classe aussi dans le dossier Indésirables du serveur pour que son filtre apprenne",
     "confirmedAndFiled": "Confirmé comme indésirable et classé dans le dossier du serveur",

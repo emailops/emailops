@@ -230,6 +230,12 @@ export function MarkdownContent({
             </a>
           );
         },
+        // Images render as their alt text. The reply can echo text from
+        // received mail, and an `<img>` fetches its URL on render with no
+        // click, so nothing in a chat bubble may load a remote resource.
+        img({ alt }) {
+          return <>{alt}</>;
+        },
         // Table styling
         table({ children }) {
           return (

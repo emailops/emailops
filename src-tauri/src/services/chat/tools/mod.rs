@@ -283,6 +283,13 @@ pub trait Tool: Send + Sync {
     /// small models pick tools off this list, so it must be precise but
     /// short. The rich `description()` still flows through
     /// `parameters_schema()` to the LLM's function-calling menu.
+    /// True when `execute` fences the mailbox text in its own output (with
+    /// `prompt_guard::frame_untrusted_email`) and keeps its notes to the model
+    /// outside the fence, so the chat must not fence the whole result again.
+    fn fences_its_output(&self) -> bool {
+        false
+    }
+
     fn prompt_summary(&self) -> &'static str {
         self.description()
     }

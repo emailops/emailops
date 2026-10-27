@@ -3897,3 +3897,52 @@ delete the pointer too and open an empty mailbox. Repointing without copying —
 to move a live SQLite database by hand. Deleting the old copy automatically — the copy is the
 only rollback if the new disk misbehaves. Creating a missing chosen folder — on an unplugged
 disk that writes an empty database under the mount point.
+
+## 2026-10-27 — Mailbox text reaches the chat model fenced as data; chat bubbles show no images
+
+**Decision:** Every chat tool result (except our own refusal notes), the Sources block,
+the open email, the thread of a thread-bound chat and the research prompts' emails and
+notes reach the model inside `<UNTRUSTED_EMAIL>` … `</UNTRUSTED_EMAIL>`, and the prompts
+say the text inside is data, never instructions. `remember` and `create_task` run only
+when the user's own message asks for them (or confirms an offer), the same gate
+`generate_email_draft` already had. Any copy of the delimiter inside email text is broken with a zero-width
+space before it is fenced, in the chat and in the classification, task and memory
+prompts. Turn markers of the common chat templates are broken the same way in all text
+sent to Ollama and OpenAI-compatible/OpenRouter servers, which render the template
+themselves. Chat markdown renders an image as its alt text and never loads it. Around
+that, the app CSP sets `object-src 'none'` (both attachment viewers draw PDFs in an
+iframe), the email frame drops `allow-popups`, and one-click unsubscribe reaches only
+public addresses (literal IPs checked, names resolved through a resolver that drops
+non-public addresses, redirects checked the same way).
+**Context:** The chat model reads text that other people wrote and can call tools, and
+whatever its reply contains is rendered in the bubble. The extraction prompts already
+fenced the email, but the chat path, the one with tools, did not, and nothing stopped a
+field from closing the fence. An `<img>` in the bubble fetches its URL on render, with
+no click. The embedded runtime already broke control tokens from the model's own
+vocabulary. The remote backends have no vocabulary to read, so they use a fixed list.
+**Rejected:** Allowing images from `data:` / `asset:` only — no chat answer needs an
+image, and alt text is simpler to reason about. Tightening the app CSP `img-src` instead
+— the email viewer relies on it, and gating per surface is clearer. Fencing only the
+tools that return email bodies — every tool result carries mailbox text in some form,
+and per-tool lists drift. Removing `remember` / `create_task` from turns that carry email
+text — almost every turn does, so it would remove them altogether.
+
+## 2026-10-27 — A message carrying text for the AI assistant gets a warning, junk detection or not
+
+**Decision:** Opening a message whose subject or body carries a chat-template turn marker
+or the `<UNTRUSTED_EMAIL>` tag shows a red banner ("This message contains instructions
+aimed at your AI assistant"). The backend checks the body when the message opens
+(`junk::has_ai_control_markup`), with no stored state and no setting, so the warning
+reaches every install. The same check, plus a Markdown image on a remote host, is also
+junk evidence on the phishing axis (`ai_control_markup` at 0.70, enough to flag alone;
+`markdown_remote_image` at 0.35, never alone), for installs that opted into the detector.
+**Context:** Junk detection is off by default and its phishing axis has a second opt-in,
+because impersonation evidence is weak. These markers are the opposite: no message
+written for a person carries them, so hiding them behind both switches would hide them
+from nearly everyone. A newsletter about language models can still quote one; compliant
+bulk-mail markers damp it below the badge, and the open-time banner is a warning, not a
+verdict that fades or hides the row.
+**Rejected:** Phrase lists ("ignore previous instructions") — keyword rules, and the
+assistant prompts already treat mail as data. A model classifier — a model call per
+message, and the classifier reads the same text the attack is written for. Scoring the
+markers on the phishing axis only — invisible with the defaults.

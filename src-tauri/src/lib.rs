@@ -307,6 +307,7 @@ macro_rules! app_commands {
             commands::classification::update_classification_rule,
             commands::classification::delete_classification_rule,
             commands::junk::get_junk_verdicts,
+            commands::junk::has_ai_control_markup,
             commands::junk::set_junk_feedback,
             commands::junk::backfill_junk_scores,
             commands::junk::report_junk_to_provider,

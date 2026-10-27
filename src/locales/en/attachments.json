@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Select an attachment to preview",
-    "pdfUnsupported": "PDF preview not supported in this browser",
     "previewUnavailable": "Preview not available for this file type",
     "loadFailed": "Failed to load attachment.",
     "imageLoadFailed": "Failed to load image.",
