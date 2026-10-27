@@ -20,6 +20,7 @@
 //! see DECISIONS 2026-10-01 "One-click unsubscribe contacts the sender only
 //! when the user asks".
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -198,7 +199,54 @@ fn parse_https(uri: &str) -> Option<Url> {
     let url = Url::parse(&compact).ok()?;
     let has_host = url.host_str().is_some_and(|h| !h.is_empty());
     let has_credentials = !url.username().is_empty() || url.password().is_some();
-    (url.scheme() == "https" && has_host && !has_credentials).then_some(url)
+    (url.scheme() == "https" && has_host && !has_credentials && host_may_be_public(&url)).then_some(url)
+}
+
+/// False when the URL names a non-public IP literal. A domain name passes
+/// here; [`PublicOnlyResolver`] refuses it at connect time if it resolves
+/// only to non-public addresses.
+fn host_may_be_public(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => is_public_ip(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => is_public_ip(IpAddr::V6(ip)),
+        Some(url::Host::Domain(_)) => true,
+        None => false,
+    }
+}
+
+/// Whether a one-click POST may reach `ip`: a public unicast address, not
+/// loopback, private, link-local, shared (CGNAT), multicast, reserved or
+/// unspecified. A header from any sender must not make the app POST to the
+/// user's router, a local service or a cloud metadata endpoint.
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19))
+                || a >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+                || (first == 0x2001 && v6.segments()[1] == 0x0db8))
+        }
+    }
 }
 
 /// `addr?subject=…&body=…` (after `mailto:`). Exactly one address; header
@@ -283,19 +331,50 @@ const ONE_CLICK_USER_AGENT: &str = "EmailOps";
 /// [`ONE_CLICK_MAX_REDIRECTS`]).
 pub fn one_click_client() -> Result<reqwest::Client> {
     let policy = reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= ONE_CLICK_MAX_REDIRECTS || attempt.url().scheme() != "https" {
-            attempt.stop()
-        } else {
+        if redirect_allowed(attempt.url(), attempt.previous().len()) {
             attempt.follow()
+        } else {
+            attempt.stop()
         }
     });
     reqwest::Client::builder()
         .connect_timeout(ONE_CLICK_CONNECT_TIMEOUT)
         .timeout(ONE_CLICK_TIMEOUT)
         .redirect(policy)
+        .dns_resolver(Arc::new(PublicOnlyResolver))
         .user_agent(ONE_CLICK_USER_AGENT)
         .build()
         .map_err(|e| AppError::IoError(format!("could not build the unsubscribe HTTP client: {e}")))
+}
+
+/// Whether a one-click POST may follow a redirect to `url` after `followed`
+/// earlier ones: https, not a non-public IP literal, within the limit.
+fn redirect_allowed(url: &Url, followed: usize) -> bool {
+    followed < ONE_CLICK_MAX_REDIRECTS && url.scheme() == "https" && host_may_be_public(url)
+}
+
+/// Resolves names like the system resolver but keeps only public addresses,
+/// so a list domain that points at a private or loopback address is not
+/// reached (including on a redirect).
+struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let public = public_addrs(resolved);
+            if public.is_empty() {
+                return Err(format!("{host} resolves only to non-public addresses").into());
+            }
+            Ok(Box::new(public.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// The public addresses among `addrs`, in order.
+fn public_addrs(addrs: impl IntoIterator<Item = std::net::SocketAddr>) -> Vec<std::net::SocketAddr> {
+    addrs.into_iter().filter(|a| is_public_ip(a.ip())).collect()
 }
 
 /// RFC 8058: POST `List-Unsubscribe=One-Click` as a form to `url`. Any 2xx
@@ -842,5 +921,90 @@ mod parser_tests {
                 url: Some("https://news.example.org/leave".into())
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::*;
+    use std::net::{IpAddr, SocketAddr};
+
+    #[test]
+    fn only_public_unicast_addresses_are_reachable() {
+        for private in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.5.4",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "224.0.0.1",
+            "198.18.0.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+        ] {
+            let ip: IpAddr = private.parse().unwrap();
+            assert!(!is_public_ip(ip), "{private} must be refused");
+        }
+        for public in ["93.184.216.34", "1.1.1.1", "2606:4700::1111", "::ffff:93.184.216.34"] {
+            let ip: IpAddr = public.parse().unwrap();
+            assert!(is_public_ip(ip), "{public} must be allowed");
+        }
+    }
+
+    #[test]
+    fn a_header_url_on_a_private_address_is_not_one_click() {
+        for header in [
+            "<https://127.0.0.1/u>",
+            "<https://[::1]/u>",
+            "<https://192.168.1.10/u>",
+            "<https://169.254.169.254/latest>",
+        ] {
+            assert_eq!(
+                parse_unsubscribe(Some(header), Some("List-Unsubscribe=One-Click")),
+                None,
+                "{header}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_redirect_to_a_private_address_is_not_followed() {
+        let ok = Url::parse("https://lists.example.com/done").unwrap();
+        assert!(redirect_allowed(&ok, 0));
+        assert!(!redirect_allowed(&Url::parse("https://10.0.0.5/admin").unwrap(), 0));
+        assert!(!redirect_allowed(
+            &Url::parse("http://lists.example.com/done").unwrap(),
+            0
+        ));
+        assert!(!redirect_allowed(&ok, ONE_CLICK_MAX_REDIRECTS));
+    }
+
+    #[test]
+    fn resolved_addresses_keep_only_the_public_ones() {
+        let addrs: Vec<SocketAddr> = vec![
+            "127.0.0.1:443".parse().unwrap(),
+            "93.184.216.34:443".parse().unwrap(),
+            "[fe80::1]:443".parse().unwrap(),
+        ];
+        assert_eq!(
+            public_addrs(addrs),
+            vec!["93.184.216.34:443".parse::<SocketAddr>().unwrap()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_name_that_resolves_only_to_loopback_is_refused() {
+        use reqwest::dns::Resolve;
+        let name: reqwest::dns::Name = "localhost".parse().unwrap();
+        assert!(PublicOnlyResolver.resolve(name).await.is_err());
     }
 }
