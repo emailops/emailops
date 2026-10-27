@@ -122,4 +122,23 @@ describe('dark theme palette (src/index.css)', () => {
     }
     expect([...missing].sort()).toEqual([]);
   });
+
+  // `!bg-primary-50` compiles to its own `!important` rule, which the dark
+  // override for `.bg-primary-50` neither matches nor outranks: the light tint
+  // stays behind the dark theme's light text.
+  it('never forces a pale accent class with the important modifier', () => {
+    const pale = new RegExp(`^(?:${OVERRIDDEN.source})$`);
+    const IMPORTANT =
+      /(?<![\w-])!((?:bg|text|border|ring)-[a-z]+-[0-9]+(?:\/[0-9]+)?)|\b((?:bg|text|border|ring)-[a-z]+-[0-9]+(?:\/[0-9]+)?)!/g;
+    const forced: string[] = [];
+    for (const file of tsxFiles(join(ROOT, 'components'))) {
+      for (const m of readFileSync(file, 'utf8').matchAll(IMPORTANT)) {
+        const cls = m[1] ?? m[2];
+        if (pale.test(cls) && !NOT_ACCENTS.has(cls.split('-')[1])) {
+          forced.push(`${file.slice(ROOT.length + 1)}: ${m[0]}`);
+        }
+      }
+    }
+    expect([...new Set(forced)].sort()).toEqual([]);
+  });
 });

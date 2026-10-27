@@ -179,9 +179,13 @@ export function EmailRow({
         role="button"
         tabIndex={0}
         className={`@container group relative hover:z-10 w-full text-left px-4 py-2 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-          isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-        } ${!email.isRead && !isSelected ? 'bg-blue-50/40' : ''} ${junkTag && !isSelected ? 'opacity-55' : ''} ${
-          isChecked ? '!bg-primary-50' : ''
+          isChecked
+            ? 'bg-primary-50'
+            : isSelected
+              ? 'bg-primary-50/70'
+              : `hover:bg-gray-50 ${email.isRead ? '' : 'bg-blue-50/40'}`
+        } ${isSelected ? 'shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : ''} ${
+          junkTag && !isSelected ? 'opacity-55' : ''
         }`}
         onClick={handleClick}
         onMouseDown={handleMouseDown}
@@ -275,8 +279,12 @@ export function EmailRow({
       role="button"
       tabIndex={0}
       className={`group relative hover:z-10 w-full text-left px-4 py-3 border-b border-gray-100 transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500 ${
-        isSelected ? 'bg-primary-50/70 shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : 'hover:bg-gray-50'
-      } ${!email.isRead && !isSelected ? 'bg-blue-50/50' : ''} ${isChecked ? '!bg-primary-50' : ''}`}
+        isChecked
+          ? 'bg-primary-50'
+          : isSelected
+            ? 'bg-primary-50/70'
+            : `hover:bg-gray-50 ${email.isRead ? '' : 'bg-blue-50/50'}`
+      } ${isSelected ? 'shadow-[inset_3px_0_0_0_theme(colors.primary.600)]' : ''}`}
       onClick={handleClick}
       onMouseDown={handleMouseDown}
       onKeyDown={(e) => {
