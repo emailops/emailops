@@ -1407,6 +1407,11 @@ export async function getJunkVerdicts(emailIds: string[]): Promise<Record<string
   return invoke('get_junk_verdicts', { emailIds });
 }
 
+/** Whether the message carries text addressed to the AI assistant. Works with junk detection off. */
+export async function hasAiControlMarkup(accountId: string, emailId: string): Promise<boolean> {
+  return invoke('has_ai_control_markup', { accountId, emailId });
+}
+
 /**
  * Record the user's correction. `isJunk: false` is permanent — it survives
  * re-scoring, model bumps and backfills.
