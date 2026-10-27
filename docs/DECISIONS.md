@@ -3881,14 +3881,20 @@ colours (they collided and could not be changed).
 
 ## 2026-10-27 — Mailbox text reaches the chat model fenced as data; chat bubbles show no images
 
-**Decision:** Every chat tool result (except our own refusal notes), the Sources block
-and the open email reach the model inside `<UNTRUSTED_EMAIL>` … `</UNTRUSTED_EMAIL>`,
-and `chat.system` / `chat.system_compact` say the text inside is data, never
-instructions. Any copy of the delimiter inside email text is broken with a zero-width
+**Decision:** Every chat tool result (except our own refusal notes), the Sources block,
+the open email, the thread of a thread-bound chat and the research prompts' emails and
+notes reach the model inside `<UNTRUSTED_EMAIL>` … `</UNTRUSTED_EMAIL>`, and the prompts
+say the text inside is data, never instructions. `remember` and `create_task` run only
+when the user's own message asks for them (or confirms an offer), the same gate
+`generate_email_draft` already had. Any copy of the delimiter inside email text is broken with a zero-width
 space before it is fenced, in the chat and in the classification, task and memory
 prompts. Turn markers of the common chat templates are broken the same way in all text
 sent to Ollama and OpenAI-compatible/OpenRouter servers, which render the template
-themselves. Chat markdown renders an image as its alt text and never loads it.
+themselves. Chat markdown renders an image as its alt text and never loads it. Around
+that, the app CSP sets `object-src 'none'` (both attachment viewers draw PDFs in an
+iframe), the email frame drops `allow-popups`, and one-click unsubscribe reaches only
+public addresses (literal IPs checked, names resolved through a resolver that drops
+non-public addresses, redirects checked the same way).
 **Context:** The chat model reads text that other people wrote and can call tools, and
 whatever its reply contains is rendered in the bubble. The extraction prompts already
 fenced the email, but the chat path, the one with tools, did not, and nothing stopped a
@@ -3899,4 +3905,5 @@ vocabulary. The remote backends have no vocabulary to read, so they use a fixed 
 image, and alt text is simpler to reason about. Tightening the app CSP `img-src` instead
 — the email viewer relies on it, and gating per surface is clearer. Fencing only the
 tools that return email bodies — every tool result carries mailbox text in some form,
-and per-tool lists drift.
+and per-tool lists drift. Removing `remember` / `create_task` from turns that carry email
+text — almost every turn does, so it would remove them altogether.
