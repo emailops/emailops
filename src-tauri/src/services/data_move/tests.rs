@@ -258,6 +258,82 @@ fn a_refused_move_writes_nothing() {
     assert!(!d.target.join("emailops.db").exists());
 }
 
+/// A model adopted with "Use existing file…": a link into the models folder
+/// to a GGUF the user keeps elsewhere.
+#[cfg(unix)]
+fn link_a_model(data_dir: &Path, own_file: &Path) -> PathBuf {
+    let link = data_dir.join("models/chat/linked.gguf");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(own_file, &link).unwrap();
+    link
+}
+
+#[cfg(unix)]
+#[test]
+fn moving_keeps_a_linked_model_a_link() {
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+    let own_file = d._scratch.path().join("Downloads/linked.gguf");
+    std::fs::create_dir_all(own_file.parent().unwrap()).unwrap();
+    std::fs::write(&own_file, vec![3u8; 2048]).unwrap();
+    link_a_model(&d.current, &own_file);
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let moved = d.target.join("models/chat/linked.gguf");
+    assert!(std::fs::symlink_metadata(&moved).unwrap().file_type().is_symlink());
+    assert_eq!(std::fs::read_link(&moved).unwrap(), own_file);
+    assert_eq!(std::fs::read(&own_file).unwrap(), vec![3u8; 2048]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_model_does_not_count_toward_the_bytes_needed() {
+    let d = dirs();
+    let _db = seeded_data_dir(&d.current);
+    let without = check_move(&d.current, &d.target).unwrap();
+    let own_file = d._scratch.path().join("Downloads/linked.gguf");
+    std::fs::create_dir_all(own_file.parent().unwrap()).unwrap();
+    std::fs::write(&own_file, vec![3u8; 2048]).unwrap();
+    link_a_model(&d.current, &own_file);
+
+    assert_eq!(check_move(&d.current, &d.target).unwrap(), without);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_link_does_not_stop_the_move() {
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+    let gone = d._scratch.path().join("Downloads/deleted.gguf");
+    link_a_model(&d.current, &gone);
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let moved = d.target.join("models/chat/linked.gguf");
+    assert_eq!(std::fs::read_link(&moved).unwrap(), gone);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_relative_link_still_reaches_its_file_from_the_new_folder() {
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+    let own_file = d.current.join("own.gguf");
+    std::fs::write(&own_file, vec![5u8; 64]).unwrap();
+    let link = d.current.join("models/chat/linked.gguf");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink("../../own.gguf", &link).unwrap();
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let moved = d.target.join("models/chat/linked.gguf");
+    assert_eq!(
+        std::fs::read_link(&moved).unwrap(),
+        d.current.join("models/chat/../../own.gguf")
+    );
+}
+
 #[test]
 fn checking_a_move_reports_the_bytes_it_needs() {
     let d = dirs();

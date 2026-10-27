@@ -228,9 +228,18 @@ fn normalize(path: &Path) -> PathBuf {
     }
 }
 
-/// Every file to copy, relative to `root`, with its size.
-fn files_to_copy(root: &Path) -> Result<Vec<(PathBuf, u64)>> {
+/// A file relative to the data folder, with its size.
+type File = (PathBuf, u64);
+/// A link relative to the data folder, with the absolute path it points to.
+type Link = (PathBuf, PathBuf);
+
+/// Every file to copy, relative to `root`, with its size, and every link with
+/// what it points to. A link is a model adopted with "Use existing file…"
+/// (`model_manager::link_local_model`): it moves as a link to the same file,
+/// never as a copy of it, and a dangling one moves as it is.
+fn files_to_copy(root: &Path) -> Result<(Vec<File>, Vec<Link>)> {
     let mut files = Vec::new();
+    let mut links = Vec::new();
     let mut stack = vec![PathBuf::new()];
     while let Some(rel) = stack.pop() {
         let dir = root.join(&rel);
@@ -243,16 +252,21 @@ fn files_to_copy(root: &Path) -> Result<Vec<(PathBuf, u64)>> {
                 continue;
             }
             let path = entry.path();
-            let meta = std::fs::metadata(&path)
+            let meta = std::fs::symlink_metadata(&path)
                 .map_err(|e| AppError::IoError(format!("metadata({}): {e}", path.display())))?;
-            if meta.is_dir() {
+            if meta.file_type().is_symlink() {
+                let points_to = std::fs::read_link(&path)
+                    .map_err(|e| AppError::IoError(format!("read_link({}): {e}", path.display())))?;
+                // A relative link would point somewhere else from the new folder.
+                links.push((rel.join(&name), dir.join(points_to)));
+            } else if meta.is_dir() {
                 stack.push(rel.join(&name));
             } else if meta.is_file() {
                 files.push((rel.join(&name), meta.len()));
             }
         }
     }
-    Ok(files)
+    Ok((files, links))
 }
 
 fn file_len(path: &Path) -> u64 {
@@ -263,16 +277,22 @@ fn file_len(path: &Path) -> u64 {
 struct CopyPlan {
     /// Every file besides the database, relative to the folder, with its size.
     files: Vec<(PathBuf, u64)>,
+    links: Vec<Link>,
     /// The database's own bytes: the file plus its WAL.
     db_bytes: u64,
     total: u64,
 }
 
 fn measure(current: &Path) -> Result<CopyPlan> {
-    let files = files_to_copy(current)?;
+    let (files, links) = files_to_copy(current)?;
     let db_bytes = file_len(&current.join(DB_FILE)) + file_len(&current.join("emailops.db-wal"));
     let total = db_bytes + files.iter().map(|(_, len)| len).sum::<u64>();
-    Ok(CopyPlan { files, db_bytes, total })
+    Ok(CopyPlan {
+        files,
+        links,
+        db_bytes,
+        total,
+    })
 }
 
 /// Check that the data may move from `current` to `target` without copying
@@ -316,7 +336,12 @@ fn copy_and_verify(
     plan: &CopyPlan,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<()> {
-    let CopyPlan { files, db_bytes, total } = plan;
+    let CopyPlan {
+        files,
+        links,
+        db_bytes,
+        total,
+    } = plan;
     let (db_bytes, total) = (*db_bytes, *total);
     let io = |what: &str, path: &Path, e: std::io::Error| AppError::IoError(format!("{what}({}): {e}", path.display()));
     std::fs::create_dir_all(target).map_err(|e| io("create_dir_all", target, e))?;
@@ -344,6 +369,13 @@ fn copy_and_verify(
         done += len;
         progress(done, total);
     }
+    for (rel, points_to) in links {
+        let to = target.join(rel);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| io("create_dir_all", parent, e))?;
+        }
+        crate::util::fs_link::link_file(points_to, &to).map_err(|e| io("link", &to, e))?;
+    }
 
     let mismatch = |detail: String| MoveProblem::CopyMismatch {
         path: target.to_path_buf(),
@@ -353,6 +385,14 @@ fn copy_and_verify(
         let copied = file_len(&target.join(rel));
         if copied != *len {
             return Err(mismatch(format!("{} has {copied} of {len} bytes", rel.display())).into());
+        }
+    }
+    for (rel, points_to) in links {
+        // `link_file` may fall back to a hard link on Windows, which has no target to read.
+        if let Ok(copied) = std::fs::read_link(target.join(rel)) {
+            if copied != *points_to {
+                return Err(mismatch(format!("{} points to {}", rel.display(), copied.display())).into());
+            }
         }
     }
     let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
