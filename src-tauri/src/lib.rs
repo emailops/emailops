@@ -821,7 +821,7 @@ pub fn run() {
             // returns and any cleanup written after `run(...)` is dead code —
             // this callback is the last point we control.
             if matches!(event, tauri::RunEvent::Exit) {
-                on_exit();
+                on_exit(_app_handle);
             }
         });
 }
@@ -855,7 +855,16 @@ fn emit_research_exit_requested() {
 /// only renamed on success), and no other shutdown work is registered via
 /// `atexit`.
 #[cfg(feature = "desktop")]
-fn on_exit() {
+fn on_exit(app: &tauri::AppHandle) {
+    if util::relaunch::requested() {
+        // Release the model first, so the new copy does not start while this
+        // one still holds its memory; then start it just before exiting.
+        services::ai::shutdown_local_ai();
+        let spawned = tauri::process::current_binary(&app.env()).and_then(|bin| util::relaunch::spawn(&bin));
+        if let Err(e) = spawned {
+            eprintln!("[exit] could not start EmailOps again: {e}");
+        }
+    }
     services::ai::shutdown_and_exit(0)
 }
 

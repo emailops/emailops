@@ -570,7 +570,7 @@
       "setByEnv": "Esta carpeta la fija la variable de entorno EMAILOPS_DATA_DIR. Quítala para elegir una carpeta aquí.",
       "change": "Cambiar…",
       "restoreDefault": "Volver a la carpeta predeterminada",
-      "previousCopy": "Los datos se copiaron aquí. La copia anterior sigue en esta carpeta; bórrala para liberar el espacio cuando hayas comprobado que todo está en su sitio:",
+      "previousCopy": "Los datos se copiaron aquí. La copia anterior sigue en la carpeta de abajo; bórrala para liberar el espacio cuando hayas comprobado que todo está en su sitio:",
       "dismissPrevious": "Entendido",
       "confirmTitle": "¿Mover tus datos?",
       "confirmBody": "EmailOps copiará todos sus datos ({{size}}) a:",

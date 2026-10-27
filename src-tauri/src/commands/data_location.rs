@@ -122,8 +122,8 @@ pub async fn pick_data_folder(
 
 /// Move the data to the folder last picked, or back to the default when
 /// `to_default` is set, then restart into it. Progress arrives as
-/// `data-move-progress` events. On success the app restarts and this never
-/// returns; on failure nothing was changed and the error comes back.
+/// `data-move-progress` events. On success the app exits and starts again;
+/// on failure nothing was changed and the error comes back.
 #[tauri::command]
 pub async fn move_data_location(
     app: AppHandle,
@@ -171,7 +171,12 @@ pub async fn move_data_location(
         return Err(e);
     }
     crate::services::logger::log("success", "system", "Data folder moved; restarting".to_string());
-    app.restart()
+    // Not `app.restart()`: from a command thread it relaunches after
+    // `RunEvent::Exit`, which our exit handler never returns from. That
+    // handler relaunches instead (`util::relaunch`).
+    crate::util::relaunch::request();
+    app.exit(0);
+    Ok(())
 }
 
 fn move_with_progress(db: &crate::db::Database, current: &Path, target: &Path, default_dir: &Path) -> Result<()> {

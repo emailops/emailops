@@ -570,7 +570,7 @@
       "setByEnv": "Dieser Ordner wird durch die Umgebungsvariable EMAILOPS_DATA_DIR festgelegt. Entferne sie, um hier einen Ordner zu wählen.",
       "change": "Ändern…",
       "restoreDefault": "Zurück zum Standardordner",
-      "previousCopy": "Die Daten wurden hierher kopiert. Die alte Kopie liegt noch in diesem Ordner; lösche sie, um Platz freizugeben, sobald du geprüft hast, dass alles da ist:",
+      "previousCopy": "Die Daten wurden hierher kopiert. Die alte Kopie liegt noch im Ordner unten; lösche sie, um Platz freizugeben, sobald du geprüft hast, dass alles da ist:",
       "dismissPrevious": "Verstanden",
       "confirmTitle": "Daten verschieben?",
       "confirmBody": "EmailOps kopiert alle seine Daten ({{size}}) nach:",
