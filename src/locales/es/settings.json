@@ -562,6 +562,26 @@
       "mismatchError": "Las contraseñas no coinciden.",
       "saving": "Guardando...",
       "removeButton": "Quitar contraseña"
+    },
+    "dataLocation": {
+      "title": "Ubicación de los datos",
+      "help": "La carpeta que guarda tu correo, ajustes, adjuntos y modelos de IA. Muévela a otro disco, por ejemplo uno externo, si en este falta espacio.",
+      "size": "Ocupa {{size}}",
+      "setByEnv": "Esta carpeta la fija la variable de entorno EMAILOPS_DATA_DIR. Quítala para elegir una carpeta aquí.",
+      "change": "Cambiar…",
+      "restoreDefault": "Volver a la carpeta predeterminada",
+      "previousCopy": "Los datos se copiaron aquí. La copia anterior sigue en la carpeta de abajo; bórrala para liberar el espacio cuando hayas comprobado que todo está en su sitio:",
+      "dismissPrevious": "Entendido",
+      "confirmTitle": "¿Mover tus datos?",
+      "confirmBody": "EmailOps copiará todos sus datos ({{size}}) a:",
+      "confirmRestart": "EmailOps se reinicia al terminar la copia. Mantén el disco conectado: sin él EmailOps no puede abrirse.",
+      "confirmOldCopy": "No se borra nada de la carpeta actual. Cuando hayas comprobado que todo se ha copiado, bórrala tú para liberar el espacio.",
+      "confirmEncryption": "EmailOps no cifra tus datos: se apoya en el cifrado del propio disco (FileVault en un Mac). Si el disco que has elegido no está cifrado, cualquiera que lo tenga puede leer tu correo.",
+      "moveButton": "Mover y reiniciar",
+      "moving": "Moviendo…",
+      "progress": "{{copied}} de {{total}} copiados",
+      "starting": "Empezando la copia…",
+      "onboardingLine": "Tus datos se guardan en"
     }
   },
   "calendar": {

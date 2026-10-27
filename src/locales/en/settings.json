@@ -562,6 +562,26 @@
       "mismatchError": "Passwords do not match.",
       "saving": "Saving...",
       "removeButton": "Remove password"
+    },
+    "dataLocation": {
+      "title": "Data location",
+      "help": "The folder that holds your mail, settings, attachments and AI models. Move it to another disk, such as an external one, if this one is short of space.",
+      "size": "Using {{size}}",
+      "setByEnv": "This folder is set by the EMAILOPS_DATA_DIR environment variable. Unset it to choose a folder here.",
+      "change": "Change…",
+      "restoreDefault": "Move back to the default folder",
+      "previousCopy": "The data was copied here. The old copy is still in the folder below; delete it to free the space once you have checked that everything is in place:",
+      "dismissPrevious": "Got it",
+      "confirmTitle": "Move your data?",
+      "confirmBody": "EmailOps will copy all its data ({{size}}) to:",
+      "confirmRestart": "EmailOps restarts when the copy is done. Keep the disk connected: without it EmailOps cannot open.",
+      "confirmOldCopy": "Nothing is deleted from the current folder. Once you have checked that everything was copied, delete it yourself to free the space.",
+      "confirmEncryption": "EmailOps does not encrypt your data: it relies on the disk's own encryption (FileVault on a Mac). If the disk you chose is not encrypted, anyone who has it can read your mail.",
+      "moveButton": "Move and restart",
+      "moving": "Moving…",
+      "progress": "{{copied}} of {{total}} copied",
+      "starting": "Starting the copy…",
+      "onboardingLine": "Your data is kept in"
     }
   },
   "calendar": {

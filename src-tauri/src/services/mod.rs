@@ -15,6 +15,7 @@ pub mod clock;
 pub mod connectivity;
 pub mod contacts;
 pub mod dashboard;
+pub mod data_move;
 pub mod email_company;
 pub mod emails;
 pub mod embeddings;

@@ -33,8 +33,14 @@ Tout réside dans le répertoire de données applicatives de votre système :
 - **Un dossier `models/`** — les modèles d'IA que vous avez téléchargés. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Pointez `EMAILOPS_DATA_DIR` ailleurs avant le lancement pour utiliser un autre emplacement —
-un second profil, ou un volume chiffré.
+Pour le conserver ailleurs — un disque externe ou un volume chiffré — utilisez **Paramètres →
+Confidentialité et sécurité → Emplacement des données**, ou le lien au bas de la première étape de
+l'accueil. EmailOps y copie tout, redémarre et laisse l'ancien dossier, que vous supprimez
+vous-même. Si ce disque n'est pas branché au démarrage, EmailOps le signale et se ferme au lieu
+d'ouvrir une boîte vide. Un modèle ajouté avec **Utiliser un fichier existant…** n'est pas
+copié : le nouveau dossier pointe vers le même fichier. EmailOps ne chiffre pas les données : choisissez un disque
+chiffré ; le dossier qu'il y crée n'est lisible que par votre utilisateur. Définir `EMAILOPS_DATA_DIR` avant le lancement (pour un second profil)
+l'emporte sur ce choix.
 
 <!-- claim:priv-where-data-6 -->
 **Les identifiants ne s'y trouvent pas.** Les jetons OAuth et les mots de passe IMAP vont dans

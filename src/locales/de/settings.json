@@ -562,6 +562,26 @@
       "mismatchError": "Die Passwörter stimmen nicht überein.",
       "saving": "Speichern...",
       "removeButton": "Passwort entfernen"
+    },
+    "dataLocation": {
+      "title": "Speicherort der Daten",
+      "help": "Der Ordner mit deinen E-Mails, Einstellungen, Anhängen und KI-Modellen. Verschiebe ihn auf ein anderes Laufwerk, etwa ein externes, wenn hier der Platz knapp wird.",
+      "size": "Belegt {{size}}",
+      "setByEnv": "Dieser Ordner wird durch die Umgebungsvariable EMAILOPS_DATA_DIR festgelegt. Entferne sie, um hier einen Ordner zu wählen.",
+      "change": "Ändern…",
+      "restoreDefault": "Zurück zum Standardordner",
+      "previousCopy": "Die Daten wurden hierher kopiert. Die alte Kopie liegt noch im Ordner unten; lösche sie, um Platz freizugeben, sobald du geprüft hast, dass alles da ist:",
+      "dismissPrevious": "Verstanden",
+      "confirmTitle": "Daten verschieben?",
+      "confirmBody": "EmailOps kopiert alle seine Daten ({{size}}) nach:",
+      "confirmRestart": "EmailOps startet neu, wenn die Kopie fertig ist. Lass das Laufwerk angeschlossen: ohne es kann EmailOps nicht starten.",
+      "confirmOldCopy": "Aus dem bisherigen Ordner wird nichts gelöscht. Sobald du geprüft hast, dass alles kopiert wurde, lösche ihn selbst, um Platz freizugeben.",
+      "confirmEncryption": "EmailOps verschlüsselt deine Daten nicht, sondern verlässt sich auf die Verschlüsselung des Laufwerks (FileVault auf einem Mac). Ist das gewählte Laufwerk nicht verschlüsselt, kann jeder, der es hat, deine E-Mails lesen.",
+      "moveButton": "Verschieben und neu starten",
+      "moving": "Wird verschoben…",
+      "progress": "{{copied}} von {{total}} kopiert",
+      "starting": "Kopie wird gestartet…",
+      "onboardingLine": "Deine Daten liegen in"
     }
   },
   "calendar": {

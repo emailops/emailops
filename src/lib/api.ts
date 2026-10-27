@@ -2094,6 +2094,55 @@ export async function getStorageStats(): Promise<StorageStats> {
   return invoke('get_storage_stats');
 }
 
+// ── Data location ────────────────────────────────────────────────────────────
+
+/** Where EmailOps keeps its data folder (`commands/data_location.rs`). */
+export interface DataLocationInfo {
+  /** False on mobile, whose sandbox decides where app data lives. */
+  supported: boolean;
+  path: string;
+  defaultPath: string;
+  isDefault: boolean;
+  /** `EMAILOPS_DATA_DIR` decides the folder; it cannot be moved from the app. */
+  setByEnv: boolean;
+  /** The folder the data was moved from, until the user dismisses the note. */
+  previousPath: string | null;
+  sizeBytes: number;
+}
+
+/** The folder the data would move to, checked and remembered by the backend. */
+export interface PickedDataFolder {
+  path: string;
+  neededBytes: number;
+}
+
+/** Payload of the `data-move-progress` event. */
+export interface DataMoveProgress {
+  copiedBytes: number;
+  totalBytes: number;
+}
+
+export async function getDataLocation(): Promise<DataLocationInfo> {
+  return invoke('get_data_location');
+}
+
+export async function dismissPreviousDataLocation(): Promise<void> {
+  return invoke('dismiss_previous_data_location');
+}
+
+/** Open the native folder dialog; `null` when cancelled. */
+export async function pickDataFolder(): Promise<PickedDataFolder | null> {
+  return invoke('pick_data_folder');
+}
+
+/**
+ * Move the data to the folder last picked (or back to the default) and
+ * restart the app. Only returns on failure, which rejects.
+ */
+export async function moveDataLocation(toDefault: boolean): Promise<void> {
+  return invoke('move_data_location', { toDefault });
+}
+
 // ── Lenses ───────────────────────────────────────────────────────────────────
 
 export async function listLenses(): Promise<LensSummary[]> {

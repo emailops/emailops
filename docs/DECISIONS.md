@@ -3879,6 +3879,25 @@ and a migration, for a rare case). An `AccountScope::AllEnabled` calendar comman
 fan-out already gives per-account error and re-auth handling). Hash-derived account
 colours (they collided and could not be changed).
 
+## 2026-10-27 — The data folder can be moved from the app; a pointer beside the default finds it
+
+**Decision:** Users choose where EmailOps keeps its data folder from Settings → Privacy &
+Security → Data location, and from one line at the foot of the first onboarding step (no extra
+wizard screen). Choosing a folder copies the whole data folder there (the database as an SQLite
+online-backup snapshot), verifies the copy, writes a pointer file and restarts; the old folder
+is kept for the user to delete. The pointer lives *beside* the platform default folder
+(`com.emailops.app.data-location.json`), not inside it. Resolution order for the app and the
+CLI: `--data-dir` → `EMAILOPS_DATA_DIR` → pointer → default. A chosen folder that is missing at
+launch stops the app with a dialog naming it; it is never created on the fly.
+**Context:** A user wanted mail and AI models on an external disk; the only way was the
+`EMAILOPS_DATA_DIR` environment variable. The location has to be known before the database is
+opened, so it cannot be a preference. Most users never need it, hence no onboarding screen.
+**Rejected:** Pointer inside the default folder — deleting "the old copy" as instructed would
+delete the pointer too and open an empty mailbox. Repointing without copying — leaves the user
+to move a live SQLite database by hand. Deleting the old copy automatically — the copy is the
+only rollback if the new disk misbehaves. Creating a missing chosen folder — on an unplugged
+disk that writes an empty database under the mount point.
+
 ## 2026-10-27 — Mailbox text reaches the chat model fenced as data; chat bubbles show no images
 
 **Decision:** Every chat tool result (except our own refusal notes), the Sources block,

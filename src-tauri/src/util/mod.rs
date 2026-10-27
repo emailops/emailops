@@ -1,4 +1,5 @@
 pub mod colrv1_fonts;
+pub mod data_location;
 pub mod dll_search;
 pub mod email_addr;
 pub mod fs_link;
@@ -6,6 +7,7 @@ pub mod html;
 pub mod instance_lock;
 pub mod owner_only;
 pub mod private_eval_db;
+pub mod relaunch;
 pub mod startup_dialog;
 pub mod system;
 pub mod text;
