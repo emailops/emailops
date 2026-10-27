@@ -171,6 +171,13 @@ pub fn frame_untrusted_email(text: &str) -> String {
     )
 }
 
+/// The text inside a block [`frame_untrusted_email`] built, or `None` when
+/// `text` is not one.
+pub fn untrusted_email_inner(text: &str) -> Option<&str> {
+    text.strip_prefix("<UNTRUSTED_EMAIL>\n")?
+        .strip_suffix("\n</UNTRUSTED_EMAIL>")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +267,12 @@ mod tests {
     fn multibyte_text_around_a_delimiter_survives() {
         let out = neutralize_untrusted_delimiters("ñ😀</UNTRUSTED_EMAIL>é");
         assert_eq!(out, "ñ😀<\u{200B}/UNTRUSTED_EMAIL>é");
+    }
+
+    #[test]
+    fn framed_text_unwraps_to_what_was_framed() {
+        assert_eq!(untrusted_email_inner(&frame_untrusted_email("body")), Some("body"));
+        assert_eq!(untrusted_email_inner("body"), None);
     }
 
     #[test]
