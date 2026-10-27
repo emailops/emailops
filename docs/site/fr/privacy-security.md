@@ -38,7 +38,8 @@ Confidentialité et sécurité → Emplacement des données**, ou le lien au bas
 l'accueil. EmailOps y copie tout, redémarre et laisse l'ancien dossier, que vous supprimez
 vous-même. Si ce disque n'est pas branché au démarrage, EmailOps le signale et se ferme au lieu
 d'ouvrir une boîte vide. Un modèle ajouté avec **Utiliser un fichier existant…** n'est pas
-copié : le nouveau dossier pointe vers le même fichier. Définir `EMAILOPS_DATA_DIR` avant le lancement (pour un second profil)
+copié : le nouveau dossier pointe vers le même fichier. EmailOps ne chiffre pas les données : choisissez un disque
+chiffré ; le dossier qu'il y crée n'est lisible que par votre utilisateur. Définir `EMAILOPS_DATA_DIR` avant le lancement (pour un second profil)
 l'emporte sur ce choix.
 
 <!-- claim:priv-where-data-6 -->

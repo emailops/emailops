@@ -38,7 +38,8 @@ Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del pri
 EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
 disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
 vacío. Un modelo que añadiste con **Usar archivo existente…** no se copia: la carpeta nueva
-apunta al mismo archivo. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
+apunta al mismo archivo. EmailOps no cifra los datos, así que elige un disco cifrado; la
+carpeta que crea allí solo la puede leer tu usuario. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
 sobre esa elección.
 
 <!-- claim:priv-where-data-6 -->

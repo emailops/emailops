@@ -38,7 +38,8 @@ nutzen Sie **Einstellungen → Datenschutz & Sicherheit → Speicherort der Date
 ersten Schritt der Einrichtung. EmailOps kopiert alles dorthin, startet neu und lässt den alten
 Ordner liegen, damit Sie ihn selbst löschen. Ist das Laufwerk beim Start nicht angeschlossen,
 meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Ein mit **Vorhandene Datei verwenden…** hinzugefügtes
-Modell wird nicht kopiert: Der neue Ordner verweist auf dieselbe Datei. Eine vor dem Start
+Modell wird nicht kopiert: Der neue Ordner verweist auf dieselbe Datei. EmailOps verschlüsselt die Daten nicht, wählen Sie also ein
+verschlüsseltes Laufwerk; den Ordner, den es dort anlegt, kann nur Ihr Benutzer lesen. Eine vor dem Start
 gesetzte `EMAILOPS_DATA_DIR` (für ein zweites Profil) hat Vorrang vor dieser Wahl.
 
 <!-- claim:priv-where-data-6 -->

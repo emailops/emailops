@@ -80,6 +80,16 @@ describe('DataLocationSection', () => {
     expect(api.moveDataLocation).not.toHaveBeenCalled();
   });
 
+  it('warns before moving that the data is not encrypted by EmailOps and the old copy stays', async () => {
+    vi.mocked(api.pickDataFolder).mockResolvedValue({ path: '/media/ext/EmailOps', neededBytes: 1024 });
+    await mount(atDefault);
+
+    await click('data-location-change');
+
+    expect(document.body.textContent).toContain('settings:privacy.dataLocation.confirmEncryption');
+    expect(document.body.textContent).toContain('settings:privacy.dataLocation.confirmOldCopy');
+  });
+
   it('moves to the picked folder once confirmed', async () => {
     vi.mocked(api.pickDataFolder).mockResolvedValue({ path: '/media/ext/EmailOps', neededBytes: 1024 });
     vi.mocked(api.moveDataLocation).mockReturnValue(new Promise(() => {}));

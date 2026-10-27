@@ -345,6 +345,14 @@ fn copy_and_verify(
     let (db_bytes, total) = (*db_bytes, *total);
     let io = |what: &str, path: &Path, e: std::io::Error| AppError::IoError(format!("{what}({}): {e}", path.display()));
     std::fs::create_dir_all(target).map_err(|e| io("create_dir_all", target, e))?;
+    // The default folder sits in the user's private Library; on another disk
+    // nothing else keeps other users of this machine out of the mail.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| io("set_permissions", target, e))?;
+    }
 
     let db_copy = target.join(DB_FILE);
     db.snapshot_to(&db_copy, &mut |pages, of| {

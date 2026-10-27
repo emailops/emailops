@@ -60,6 +60,10 @@ export function DataMoveDialog({ state, onConfirm, onCancel }: DataMoveDialogPro
         {t('settings:privacy.dataLocation.confirmBody', { size: formatBytes(state.neededBytes, i18n.language) })}
       </p>
       <p className="mt-2 break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-800">{state.target}</p>
+      <p className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800" role="note">
+        {t('settings:privacy.dataLocation.confirmEncryption')}
+      </p>
+      <p className="mt-2 text-xs text-gray-500">{t('settings:privacy.dataLocation.confirmOldCopy')}</p>
       <p className="mt-2 text-xs text-gray-500">{t('settings:privacy.dataLocation.confirmRestart')}</p>
       {moving && (
         <div className="mt-4">

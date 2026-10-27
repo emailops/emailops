@@ -37,6 +37,8 @@ Privacy & Security → Data location**, or the link at the foot of the first onb
 copies everything there, restarts, and leaves the old folder for you to delete. If that disk is
 not connected when EmailOps starts, it says so and quits rather than opening an empty mailbox.
 A model you added with **Use existing file…** is not copied: the new folder points to the same file.
+EmailOps does not encrypt the data, so pick an encrypted disk; the folder it creates there is
+readable only by your user.
 Setting `EMAILOPS_DATA_DIR` before launching (for a second profile) overrides that choice.
 
 <!-- claim:priv-where-data-6 -->

@@ -334,6 +334,34 @@ fn a_relative_link_still_reaches_its_file_from_the_new_folder() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn the_new_folder_is_readable_only_by_the_user() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let mode = std::fs::metadata(&d.target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_empty_folder_is_locked_down_too() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+    std::fs::create_dir_all(&d.target).unwrap();
+    std::fs::set_permissions(&d.target, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let mode = std::fs::metadata(&d.target).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
 #[test]
 fn checking_a_move_reports_the_bytes_it_needs() {
     let d = dirs();
