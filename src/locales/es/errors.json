@@ -76,6 +76,13 @@
     "no_archive_folder": "Esta cuenta no tiene carpeta de archivo. Crea una carpeta llamada «Archive» para archivar correo.",
     "outbox_not_pending": "Este mensaje ya se está enviando y no se puede cambiar.",
     "no_spam_folder": "Esta cuenta no tiene carpeta de correo no deseado donde archivar el spam.",
-    "file_not_downloaded": "«{{filename}}» sigue en iCloud (u otra carpeta en la nube) y no se descargó a tiempo. Descárgalo desde el Finder y vuelve a intentarlo."
+    "file_not_downloaded": "«{{filename}}» sigue en iCloud (u otra carpeta en la nube) y no se descargó a tiempo. Descárgalo desde el Finder y vuelve a intentarlo.",
+    "data_move_env_override": "La carpeta de datos la fija EMAILOPS_DATA_DIR. Quita esa variable para elegir una carpeta desde la app.",
+    "data_move_same_folder": "EmailOps ya guarda sus datos ahí.",
+    "data_move_inside_current": "La carpeta nueva no puede estar dentro de la carpeta de datos actual.",
+    "data_move_not_empty": "{{path}} ya contiene archivos. Elige una carpeta vacía o borra antes la copia anterior que hay ahí.",
+    "data_move_not_writable": "EmailOps no puede escribir en {{path}}.",
+    "data_move_not_enough_space": "No hay espacio libre suficiente: hacen falta {{needed}} y hay {{available}}.",
+    "data_move_copy_mismatch": "La copia en {{path}} no coincide con el original ({{detail}}). No se ha cambiado nada."
   }
 }

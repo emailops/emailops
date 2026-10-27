@@ -210,6 +210,7 @@ pub fn exit_code(err: &AppError) -> u8 {
     match err {
         AppError::InvalidInput(_)
         | AppError::Skill(_)
+        | AppError::DataMove(_)
         | AppError::AttachmentConfirmationRequired { .. }
         | AppError::OutboxNotPending
         | AppError::ReadOnlyCalendar => 2,

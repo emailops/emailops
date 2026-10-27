@@ -116,6 +116,11 @@ pub enum AppError {
     /// carries its own translation code (`skill_*`) and params.
     #[error("{0}")]
     Skill(#[from] crate::services::skills::SkillProblem),
+
+    /// The data folder could not be moved; the problem carries its own
+    /// translation code (`data_move_*`) and params.
+    #[error("{0}")]
+    DataMove(#[from] crate::services::data_move::MoveProblem),
 }
 
 impl AppError {
@@ -150,6 +155,7 @@ impl AppError {
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::FileNotDownloaded { .. } => "file_not_downloaded",
             AppError::Skill(problem) => problem.code(),
+            AppError::DataMove(problem) => problem.code(),
         }
     }
 
@@ -201,6 +207,9 @@ impl AppError {
                 p.insert("kind", (*kind).to_string());
             }
             AppError::Skill(problem) => {
+                p = problem.params();
+            }
+            AppError::DataMove(problem) => {
                 p = problem.params();
             }
         }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DataLocationLine } from '@/components/DataLocation/DataLocationLine';
 import * as api from '@/lib/api';
 import { useAiStore } from '@/stores/aiStore';
 
@@ -102,11 +103,12 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
 
       <p className="text-xs text-gray-500">{t('auth:onboarding.aiChoice.reversible')}</p>
 
-      <div className="flex justify-end">
+      <div className="flex items-end justify-between gap-4">
+        <DataLocationLine />
         <button
           onClick={() => void handleContinue()}
           disabled={!choice || submitting}
-          className="px-5 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="shrink-0 px-5 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? t('auth:onboarding.aiChoice.saving') : t('auth:onboarding.aiChoice.continue')}
         </button>

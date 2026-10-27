@@ -10,6 +10,7 @@ vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn(async () => {}) }));
+vi.mock('@/components/DataLocation/DataLocationSection', () => ({ DataLocationSection: () => null }));
 vi.mock('./TrustedSendersSection', () => ({ TrustedSendersSection: () => null }));
 vi.mock('@/lib/api', () => ({
   hasMainPassword: vi.fn(async () => false),

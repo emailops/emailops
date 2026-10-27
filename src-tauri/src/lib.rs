@@ -24,8 +24,6 @@
 #[cfg(feature = "desktop")]
 use std::collections::HashMap;
 #[cfg(feature = "desktop")]
-use std::path::PathBuf;
-#[cfg(feature = "desktop")]
 use std::sync::atomic::AtomicBool;
 #[cfg(feature = "desktop")]
 use std::sync::{Arc, Mutex};
@@ -401,6 +399,10 @@ macro_rules! app_commands {
             commands::dashboard::refresh_server_total,
             commands::dashboard::get_queue_state,
             commands::dashboard::get_storage_stats,
+            commands::data_location::get_data_location,
+            commands::data_location::dismiss_previous_data_location,
+            commands::data_location::pick_data_folder,
+            commands::data_location::move_data_location,
             commands::system::detect_ai_capability,
             commands::system::is_rosetta_translated,
             commands::system::get_gpu_runtime_notice,
@@ -493,20 +495,32 @@ pub fn run() {
             }
 
             let t = std::time::Instant::now();
-            // `EMAILOPS_DATA_DIR` overrides Tauri's default `app_data_dir`.
-            // Makefile dev workflows set it to an ignored repo-local directory;
-            // when unset, fall back to the platform default for this app id.
-            let app_data_dir = match std::env::var("EMAILOPS_DATA_DIR") {
-                Ok(dir) if !dir.trim().is_empty() => {
-                    let p = PathBuf::from(dir.trim());
-                    eprintln!("[startup] using EMAILOPS_DATA_DIR override: {}", p.display());
-                    p
-                }
-                _ => match app.path().app_data_dir() {
-                    Ok(dir) => dir,
-                    Err(e) => fatal_startup_error("locate its data directory", &e.to_string(), None),
-                },
+            // `EMAILOPS_DATA_DIR` (Makefile dev workflows) wins over a folder
+            // the user chose in the app, which wins over the platform default
+            // for this app id. See `util::data_location`.
+            let default_data_dir = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(e) => fatal_startup_error("locate its data directory", &e.to_string(), None),
             };
+            let pointer = match util::data_location::read_pointer(&default_data_dir) {
+                Ok(pointer) => pointer,
+                Err(e) => fatal_startup_error("locate its data directory", &e.to_string(), None),
+            };
+            let resolved = util::data_location::resolve(
+                None,
+                std::env::var("EMAILOPS_DATA_DIR").ok(),
+                pointer,
+                default_data_dir.clone(),
+            );
+            if let Some(dir) = util::data_location::unavailable_chosen_dir(&resolved) {
+                exit_with_startup_message(format_unavailable_data_dir(dir), None);
+            }
+            eprintln!("[startup] data dir source: {:?}", resolved.source);
+            app.manage(commands::data_location::DataLocationState::new(
+                resolved.source,
+                default_data_dir.clone(),
+            ));
+            let app_data_dir = resolved.path;
             eprintln!(
                 "[startup] [{:.0}ms] app_data_dir resolved: {}",
                 t.elapsed().as_secs_f64() * 1000.0,
@@ -807,7 +821,7 @@ pub fn run() {
             // returns and any cleanup written after `run(...)` is dead code —
             // this callback is the last point we control.
             if matches!(event, tauri::RunEvent::Exit) {
-                on_exit();
+                on_exit(_app_handle);
             }
         });
 }
@@ -841,7 +855,16 @@ fn emit_research_exit_requested() {
 /// only renamed on success), and no other shutdown work is registered via
 /// `atexit`.
 #[cfg(feature = "desktop")]
-fn on_exit() {
+fn on_exit(app: &tauri::AppHandle) {
+    if util::relaunch::requested() {
+        // Release the model first, so the new copy does not start while this
+        // one still holds its memory; then start it just before exiting.
+        services::ai::shutdown_local_ai();
+        let spawned = tauri::process::current_binary(&app.env()).and_then(|bin| util::relaunch::spawn(&bin));
+        if let Err(e) = spawned {
+            eprintln!("[exit] could not start EmailOps again: {e}");
+        }
+    }
     services::ai::shutdown_and_exit(0)
 }
 
@@ -917,7 +940,22 @@ fn format_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::pa
 /// system temp directory — see `util::startup_dialog`.
 #[cfg(feature = "desktop")]
 fn fatal_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::path::Path>) -> ! {
-    let message = format_startup_error(stage, detail, app_data_dir);
+    exit_with_startup_message(format_startup_error(stage, detail, app_data_dir), app_data_dir)
+}
+
+/// The user moved the data folder somewhere that is not there now — most
+/// often an external disk that is not connected.
+#[cfg(feature = "desktop")]
+fn format_unavailable_data_dir(dir: &std::path::Path) -> String {
+    format!(
+        "EmailOps keeps its data in a folder that is not available right now:\n{}\n\n\
+         If it is on an external disk, connect the disk and open EmailOps again.",
+        dir.display()
+    )
+}
+
+#[cfg(feature = "desktop")]
+fn exit_with_startup_message(message: String, app_data_dir: Option<&std::path::Path>) -> ! {
     eprintln!("[startup][fatal] {message}");
     // The frontend window is never shown on this path, so the logger emission
     // is mostly for parity; the dialog and crash report are what the user
@@ -930,8 +968,18 @@ fn fatal_startup_error(stage: &str, detail: &str, app_data_dir: Option<&std::pat
 #[cfg(test)]
 #[cfg(feature = "desktop")]
 mod startup_error_tests {
-    use super::{classify_startup_failure, format_startup_error, StartupRemedy};
+    use super::{classify_startup_failure, format_startup_error, format_unavailable_data_dir, StartupRemedy};
     use std::path::Path;
+
+    #[test]
+    fn unavailable_chosen_folder_names_the_path_and_the_disk() {
+        let msg = format_unavailable_data_dir(Path::new("/Volumes/External/EmailOps"));
+        assert!(
+            msg.contains("/Volumes/External/EmailOps"),
+            "the path must be named: {msg}"
+        );
+        assert!(msg.contains("connect the disk"), "the remedy must be actionable: {msg}");
+    }
 
     #[test]
     fn message_names_the_stage_and_includes_details() {
