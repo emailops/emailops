@@ -37,7 +37,8 @@ Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa *
 Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
 EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
 disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
-vacío. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
+vacío. Un modelo que añadiste con **Usar archivo existente…** no se copia: la carpeta nueva
+apunta al mismo archivo. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
 sobre esa elección.
 
 <!-- claim:priv-where-data-6 -->

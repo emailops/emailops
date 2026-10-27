@@ -1297,6 +1297,7 @@ checks = [
 [priv-where-data-5]
 checks = [
   { app = true },
+  { tests = ['services::data_move::tests::moving_keeps_a_linked_model_a_link', 'services::data_move::tests::a_linked_model_does_not_count_toward_the_bytes_needed'], covers = ["A model you added with Use existing file… is not copied: the new folder points to the same file."] },
 ]
 
 [priv-where-data-6]

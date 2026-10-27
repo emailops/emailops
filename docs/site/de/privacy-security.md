@@ -37,7 +37,8 @@ Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschl
 nutzen Sie **Einstellungen → Datenschutz & Sicherheit → Speicherort der Daten** oder den Link unten im
 ersten Schritt der Einrichtung. EmailOps kopiert alles dorthin, startet neu und lässt den alten
 Ordner liegen, damit Sie ihn selbst löschen. Ist das Laufwerk beim Start nicht angeschlossen,
-meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Eine vor dem Start
+meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Ein mit **Vorhandene Datei verwenden…** hinzugefügtes
+Modell wird nicht kopiert: Der neue Ordner verweist auf dieselbe Datei. Eine vor dem Start
 gesetzte `EMAILOPS_DATA_DIR` (für ein zweites Profil) hat Vorrang vor dieser Wahl.
 
 <!-- claim:priv-where-data-6 -->
