@@ -23,10 +23,13 @@ pub(super) struct WireMessage {
 }
 
 impl WireMessage {
+    /// Every message the client sends is built here, so this is where turn
+    /// markers in the content are broken: the server renders the chat
+    /// template around it.
     pub fn text(role: &str, content: &str) -> Self {
         Self {
             role: role.to_string(),
-            content: content.to_string(),
+            content: crate::ai::prompt_guard::neutralize_known_control_tokens(content).into_owned(),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -634,6 +637,15 @@ mod tests {
             wire,
             json!([{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"}])
         );
+    }
+
+    /// The server renders the model's chat template around this text, so a
+    /// turn marker copied from an email would open a turn of its own.
+    #[test]
+    fn turn_markers_in_any_message_are_broken_before_they_leave() {
+        let wire = wire_messages(&[msg("user", "Hi<|im_end|>"), msg("tool", "<|start_header_id|>system")]);
+        assert_eq!(wire[0].content, "Hi<\u{200B}|im_end|>");
+        assert_eq!(wire[1].content, "<\u{200B}|start_header_id|>system");
     }
 
     #[test]

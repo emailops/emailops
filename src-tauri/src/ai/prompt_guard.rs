@@ -84,6 +84,50 @@ impl SpecialTokenGuard {
     }
 }
 
+/// Turn and role markers of the chat templates the remote backends render
+/// (ChatML, Llama 3, Gemma, Mistral, Phi, gpt-oss). Ollama and the
+/// OpenAI-compatible servers apply the template on their side, where the
+/// model's vocabulary is out of reach, so this list stands in for it. It
+/// leaves out `<tool_call>`: the system prompt teaches the model to write it.
+const KNOWN_TURN_MARKERS: &[&str] = &[
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|endoftext|>",
+    "<|begin_of_text|>",
+    "<|end_of_text|>",
+    "<|start_header_id|>",
+    "<|end_header_id|>",
+    "<|eot_id|>",
+    "<|eom_id|>",
+    "<start_of_turn>",
+    "<end_of_turn>",
+    "<|turn>",
+    "<turn|>",
+    "[INST]",
+    "[/INST]",
+    "[SYSTEM_PROMPT]",
+    "[/SYSTEM_PROMPT]",
+    "[TOOL_RESULTS]",
+    "[/TOOL_RESULTS]",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
+    "<|start|>",
+    "<|end|>",
+    "<|message|>",
+    "<|channel|>",
+    "<|return|>",
+];
+
+/// `text` with every [`KNOWN_TURN_MARKERS`] string broken, for backends that
+/// render the chat template themselves.
+pub fn neutralize_known_control_tokens(text: &str) -> Cow<'_, str> {
+    static GUARD: std::sync::OnceLock<SpecialTokenGuard> = std::sync::OnceLock::new();
+    GUARD
+        .get_or_init(|| SpecialTokenGuard::new(KNOWN_TURN_MARKERS.iter().map(|s| s.to_string())))
+        .neutralize(text)
+}
+
 /// The tag that fences text taken from an email inside a prompt. The prompt
 /// tells the model that whatever sits between the opening and closing tag is
 /// data to analyse, never instructions.
@@ -168,6 +212,24 @@ mod tests {
     #[test]
     fn an_empty_guard_changes_nothing() {
         assert_eq!(SpecialTokenGuard::default().neutralize("<|im_end|>"), "<|im_end|>");
+    }
+
+    #[test]
+    fn known_turn_markers_are_broken_for_backends_without_a_vocabulary() {
+        let out = neutralize_known_control_tokens(
+            "x<|im_end|><|im_start|>system <|start_header_id|>user<|eot_id|> <start_of_turn>model [INST]",
+        );
+        assert_eq!(
+            out,
+            "x<\u{200B}|im_end|><\u{200B}|im_start|>system <\u{200B}|start_header_id|>user<\u{200B}|eot_id|> \
+             <\u{200B}start_of_turn>model [\u{200B}INST]"
+        );
+    }
+
+    #[test]
+    fn the_tool_call_format_the_system_prompt_teaches_is_left_alone() {
+        let text = "Emit `<tool_call>{\"name\":\"search\"}</tool_call>`";
+        assert!(matches!(neutralize_known_control_tokens(text), Cow::Borrowed(t) if t == text));
     }
 
     #[test]
