@@ -329,6 +329,12 @@ impl Tool for SearchEmailsTool {
         "search_emails"
     }
 
+    /// The result rows are fenced by `format_search_emails_output*`; the
+    /// page and coverage notes ahead of them are ours.
+    fn fences_its_output(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &'static str {
         "Search the user's emails. Returns a list of matching emails with id, thread_id, subject, sender, date, category and a short snippet — THE SNIPPET DOES NOT INCLUDE ATTACHMENT FILENAMES. Results are grouped by Gmail category in priority order: Primary first (real people / direct mail), then Updates (receipts, shipping, automated notifications), then Other (social, forums, promotions). Keep that ordering when you summarise the results to the user. Combine filters to narrow results. Use `from` when the user asks about mail RECEIVED from someone ('de alice', 'from bob'); use `to` when they ask about mail SENT to someone ('enviada a emailops', 'para maria'). When the user keeps narrowing keywords (e.g. 'factura de emailops'), keep BOTH `query='factura'` AND `from/to='...emailops...'` — never drop the keyword. A date-bounded lookup is much more precise than a bare keyword query. At least one of query / from / to / subject / since / until / intent / topic / priority must be non-empty. `intent` / `topic` / `priority` reach the classifier's tags — the way to find a KIND of mail the question describes (their meanings are listed on the parameters); `mode='semantic'` ranks by meaning when wording varies. Spam and phishing flagged by the junk detector are never returned. When more emails match than the page shows, the result starts with '(showing N of M matching threads …)' — M is the real total; use it for 'how many' questions instead of counting rows. An `intent`/`topic` filter RANKS rather than excludes: each email stores one intent and one topic, so the tagged rows come first and the other matches follow, and the result says how many carry the tag — count those for a 'how many of this kind', and treat the rest as what else matched. `priority` EXCLUDES: only mail at that level is returned, and it combines with intent/topic (one email can be both urgent and a promotion). REQUIRED CHAIN: if the user asked about invoices / facturas / recibos / PDFs / attached documents, you MUST call `get_attachments(email_id)` on the top matching email before writing your final answer — the snippet alone is not enough to name the attached file."
     }
