@@ -32,8 +32,11 @@ Inside it:
 - **A `models/` folder** — the AI models you downloaded. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Point `EMAILOPS_DATA_DIR` somewhere else before launching to use a different location — a
-second profile, or an encrypted volume.
+To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →
+Privacy & Security → Data location**, or the link at the foot of the first onboarding step. EmailOps
+copies everything there, restarts, and leaves the old folder for you to delete. If that disk is
+not connected when EmailOps starts, it says so and quits rather than opening an empty mailbox.
+Setting `EMAILOPS_DATA_DIR` before launching (for a second profile) overrides that choice.
 
 <!-- claim:priv-where-data-6 -->
 **Credentials are not in there.** OAuth tokens and IMAP passwords go to the system credential

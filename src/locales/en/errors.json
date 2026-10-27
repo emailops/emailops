@@ -76,6 +76,13 @@
     "no_archive_folder": "This account has no Archive folder. Create a folder named “Archive” to archive mail.",
     "outbox_not_pending": "This message is already being sent and can no longer be changed.",
     "no_spam_folder": "This account has no Junk folder to file spam in.",
-    "file_not_downloaded": "“{{filename}}” is still in iCloud (or another cloud folder) and did not download in time. Download it in Finder and try again."
+    "file_not_downloaded": "“{{filename}}” is still in iCloud (or another cloud folder) and did not download in time. Download it in Finder and try again.",
+    "data_move_env_override": "The data folder is set by EMAILOPS_DATA_DIR. Unset it to choose a folder in the app.",
+    "data_move_same_folder": "EmailOps already keeps its data there.",
+    "data_move_inside_current": "The new folder cannot be inside the current data folder.",
+    "data_move_not_empty": "{{path}} already has files in it. Choose an empty folder, or delete the old copy there first.",
+    "data_move_not_writable": "EmailOps cannot write to {{path}}.",
+    "data_move_not_enough_space": "Not enough free space there: {{needed}} needed, {{available}} available.",
+    "data_move_copy_mismatch": "The copy in {{path}} does not match the original ({{detail}}). Nothing was changed."
   }
 }

@@ -562,6 +562,24 @@
       "mismatchError": "Les mots de passe ne correspondent pas.",
       "saving": "Enregistrement...",
       "removeButton": "Supprimer le mot de passe"
+    },
+    "dataLocation": {
+      "title": "Emplacement des données",
+      "help": "Le dossier qui contient vos e-mails, réglages, pièces jointes et modèles d’IA. Déplacez-le vers un autre disque, par exemple externe, si celui-ci manque de place.",
+      "size": "Occupe {{size}}",
+      "setByEnv": "Ce dossier est fixé par la variable d’environnement EMAILOPS_DATA_DIR. Supprimez-la pour choisir un dossier ici.",
+      "change": "Modifier…",
+      "restoreDefault": "Revenir au dossier par défaut",
+      "previousCopy": "Les données ont été copiées ici. L’ancienne copie se trouve toujours dans ce dossier ; supprimez-la pour libérer l’espace après avoir vérifié que tout est en place :",
+      "dismissPrevious": "Compris",
+      "confirmTitle": "Déplacer vos données ?",
+      "confirmBody": "EmailOps copiera toutes ses données ({{size}}) vers :",
+      "confirmRestart": "EmailOps redémarre une fois la copie terminée. Le dossier actuel reste en place jusqu’à ce que vous le supprimiez. Gardez le disque branché : sans lui, EmailOps ne peut pas s’ouvrir.",
+      "moveButton": "Déplacer et redémarrer",
+      "moving": "Déplacement…",
+      "progress": "{{copied}} sur {{total}} copiés",
+      "starting": "Début de la copie…",
+      "onboardingLine": "Vos données sont conservées dans"
     }
   },
   "calendar": {

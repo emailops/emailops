@@ -33,8 +33,12 @@ Darin:
 - **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Zeigen Sie `EMAILOPS_DATA_DIR` vor dem Start woanders hin, um einen anderen Ort zu verwenden —
-ein zweites Profil oder ein verschlüsseltes Volume.
+Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschlüsselten Volume —
+nutzen Sie **Einstellungen → Datenschutz & Sicherheit → Speicherort der Daten** oder den Link unten im
+ersten Schritt der Einrichtung. EmailOps kopiert alles dorthin, startet neu und lässt den alten
+Ordner liegen, damit Sie ihn selbst löschen. Ist das Laufwerk beim Start nicht angeschlossen,
+meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Eine vor dem Start
+gesetzte `EMAILOPS_DATA_DIR` (für ein zweites Profil) hat Vorrang vor dieser Wahl.
 
 <!-- claim:priv-where-data-6 -->
 **Zugangsdaten liegen nicht dort.** OAuth-Tokens und IMAP-Passwörter gehen in den

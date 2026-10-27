@@ -537,6 +537,36 @@ impl Database {
         Ok(dest_path)
     }
 
+    /// Write a consistent copy of the live database to `dest` with SQLite's
+    /// online backup API, which a plain file copy of a WAL database is not.
+    /// `progress(done, of)` reports the fraction copied, in pages.
+    ///
+    /// Unlike `backup`, it copies without pausing between steps: it serves a
+    /// move the user is waiting on, and WAL mode keeps the app's writers
+    /// unblocked meanwhile.
+    pub fn snapshot_to(&self, dest: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<()> {
+        use rusqlite::backup::StepResult;
+        /// 16 MB at the default 4 KB page size: a progress tick per step.
+        const PAGES_PER_STEP: std::os::raw::c_int = 4096;
+        // Open a fresh source connection — avoids holding either mutex during the copy.
+        let src = Connection::open(&self.db_path)?;
+        let mut dst = Connection::open(dest)?;
+        let backup = rusqlite::backup::Backup::new(&src, &mut dst)?;
+        loop {
+            let step = backup.step(PAGES_PER_STEP)?;
+            let p = backup.progress();
+            let of = u64::try_from(p.pagecount).unwrap_or(0);
+            progress(of.saturating_sub(u64::try_from(p.remaining).unwrap_or(0)), of);
+            match step {
+                StepResult::Done => return Ok(()),
+                StepResult::More => {}
+                StepResult::Busy | StepResult::Locked => std::thread::sleep(std::time::Duration::from_millis(50)),
+                // `StepResult` is non-exhaustive.
+                _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+    }
+
     /// Remove a backup temp file plus any SQLite sidecar journals it may have
     /// left behind. Best-effort — a missing file (or a directory occupying the
     /// path in tests) is fine.

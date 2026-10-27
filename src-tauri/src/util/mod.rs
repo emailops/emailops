@@ -1,4 +1,5 @@
 pub mod colrv1_fonts;
+pub mod data_location;
 pub mod dll_search;
 pub mod email_addr;
 pub mod fs_link;

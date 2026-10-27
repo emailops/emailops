@@ -562,6 +562,24 @@
       "mismatchError": "Las contraseñas no coinciden.",
       "saving": "Guardando...",
       "removeButton": "Quitar contraseña"
+    },
+    "dataLocation": {
+      "title": "Ubicación de los datos",
+      "help": "La carpeta que guarda tu correo, ajustes, adjuntos y modelos de IA. Muévela a otro disco, por ejemplo uno externo, si en este falta espacio.",
+      "size": "Ocupa {{size}}",
+      "setByEnv": "Esta carpeta la fija la variable de entorno EMAILOPS_DATA_DIR. Quítala para elegir una carpeta aquí.",
+      "change": "Cambiar…",
+      "restoreDefault": "Volver a la carpeta predeterminada",
+      "previousCopy": "Los datos se copiaron aquí. La copia anterior sigue en esta carpeta; bórrala para liberar el espacio cuando hayas comprobado que todo está en su sitio:",
+      "dismissPrevious": "Entendido",
+      "confirmTitle": "¿Mover tus datos?",
+      "confirmBody": "EmailOps copiará todos sus datos ({{size}}) a:",
+      "confirmRestart": "EmailOps se reinicia al terminar la copia. La carpeta actual se queda donde está hasta que la borres. Mantén el disco conectado: sin él EmailOps no puede abrirse.",
+      "moveButton": "Mover y reiniciar",
+      "moving": "Moviendo…",
+      "progress": "{{copied}} de {{total}} copiados",
+      "starting": "Empezando la copia…",
+      "onboardingLine": "Tus datos se guardan en"
     }
   },
   "calendar": {

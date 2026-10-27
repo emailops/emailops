@@ -33,8 +33,12 @@ Dentro:
 - **Una carpeta `models/`** — los modelos de IA que hayas descargado. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Apunta `EMAILOPS_DATA_DIR` a otro sitio antes de arrancar para usar otra ubicación — un
-segundo perfil, o un volumen cifrado.
+Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →
+Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
+EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
+disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
+vacío. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
+sobre esa elección.
 
 <!-- claim:priv-where-data-6 -->
 **Las credenciales no están ahí.** Los tokens OAuth y las contraseñas IMAP van al almacén de
