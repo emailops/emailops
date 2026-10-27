@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Sélectionnez une pièce jointe à prévisualiser",
-    "pdfUnsupported": "L'aperçu PDF n'est pas pris en charge dans ce navigateur",
     "previewUnavailable": "Aperçu indisponible pour ce type de fichier",
     "loadFailed": "Échec du chargement de la pièce jointe.",
     "imageLoadFailed": "Échec du chargement de l'image.",

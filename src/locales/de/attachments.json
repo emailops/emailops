@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Wähle einen Anhang zur Vorschau aus",
-    "pdfUnsupported": "PDF-Vorschau wird in diesem Browser nicht unterstützt",
     "previewUnavailable": "Vorschau für diesen Dateityp nicht verfügbar",
     "loadFailed": "Anhang konnte nicht geladen werden.",
     "imageLoadFailed": "Bild konnte nicht geladen werden.",
