@@ -768,13 +768,14 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
             .map(|a| a.id),
         None => None,
     };
-    // `--attachment` likewise grounds under the account that owns the PDF.
+    // `--attachment` likewise grounds under the account that owns the PDF: an
+    // email's attachment, or a file an attachment rule saved.
     let ambient_account = match attachment.as_deref() {
-        Some(attachment_id) => session
-            .db
-            .get_email_attachment_metas_by_id(attachment_id)?
-            .map(|meta| meta.account_id)
-            .or(ambient_account),
+        Some(attachment_id) => match session.db.get_email_attachment_metas_by_id(attachment_id)? {
+            Some(meta) => Some(meta.account_id),
+            None => session.db.get_attachment(attachment_id)?.map(|a| a.account_id),
+        }
+        .or(ambient_account),
         None => ambient_account,
     };
 

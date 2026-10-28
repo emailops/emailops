@@ -1453,12 +1453,12 @@ function AppInner() {
     [setSelectedCategories],
   );
 
-  // What the right-hand chat panel offers as ambient context: the thread the
-  // main view is currently showing, or null everywhere else. Pure derivation —
+  // What the right-hand chat panel offers as ambient context: the thread or
+  // PDF the main view is currently showing, or null everywhere else. Pure derivation —
   // see `deriveChatContext` for the precedence rules.
   const chatPanelContext = useMemo(
-    () => deriveChatContext({ viewMode, activeTab, selectedEmail }),
-    [viewMode, activeTab, selectedEmail],
+    () => deriveChatContext({ viewMode, activeTab, selectedEmail, selectedAttachment }),
+    [viewMode, activeTab, selectedEmail, selectedAttachment],
   );
 
   // Header new-chat icon: start a fresh conversation and dock the panel in one

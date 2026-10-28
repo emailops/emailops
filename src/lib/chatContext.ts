@@ -1,7 +1,7 @@
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { isEmailListView } from '@/lib/viewNavigation';
 import type { EmailTab } from '@/stores/emailStore';
-import type { ChatMessage, Email } from '@/types';
+import type { Attachment, ChatMessage, Email } from '@/types';
 
 /**
  * What the chat panel offers as ambient context — i.e. what the user is
@@ -28,6 +28,8 @@ export interface ChatContextInput {
   viewMode: ViewMode;
   activeTab: EmailTab | null;
   selectedEmail: Email | null;
+  /** The file selected in the Attachments view (one an attachment rule saved). */
+  selectedAttachment?: Attachment | null;
 }
 
 /**
@@ -43,11 +45,26 @@ export interface ChatContextInput {
  * Compose tabs and non-PDF attachment tabs fall through to the selected email
  * rather than blanking the context.
  *
- * Only mailbox-backed views (inbox/sent/spam/deleted/folders) produce context.
- * In calendar, contacts, tasks, memory, lenses or the dashboard there is no
- * thread on screen, even though `selectedEmail` may still be set underneath.
+ * Only mailbox-backed views (inbox/sent/spam/deleted/folders) produce thread
+ * context. The Attachments view offers the PDF selected in its viewer. In
+ * calendar, contacts, tasks, memory, lenses or the dashboard there is nothing
+ * on screen to read, even though `selectedEmail` may still be set underneath.
  */
-export function deriveChatContext({ viewMode, activeTab, selectedEmail }: ChatContextInput): ChatContext | null {
+export function deriveChatContext({
+  viewMode,
+  activeTab,
+  selectedEmail,
+  selectedAttachment,
+}: ChatContextInput): ChatContext | null {
+  if (viewMode === 'attachments') {
+    if (!selectedAttachment || !isPdfAttachment(selectedAttachment.mimeType, selectedAttachment.filename)) return null;
+    return {
+      threadId: '',
+      accountId: selectedAttachment.accountId,
+      subject: selectedAttachment.filename,
+      attachmentId: selectedAttachment.id,
+    };
+  }
   if (!isEmailListView(viewMode)) return null;
 
   if (activeTab?.type === 'thread') {

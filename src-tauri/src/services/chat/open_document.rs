@@ -80,21 +80,38 @@ ignore this note and use the tools as usual."
     }
 }
 
-/// Read the PDF attachment `attachment_id` of `account_id` for this turn.
-/// `NotFound` for an attachment of another account (as the commands do), and
-/// `InvalidInput` for one that is not a PDF.
+/// Read the PDF attachment `attachment_id` of `account_id` for this turn: an
+/// email's attachment (a reading-pane tab) or, failing that, a file an
+/// attachment rule saved (the Attachments view). `NotFound` for an attachment
+/// of another account (as the commands do), and `InvalidInput` for one that is
+/// not a PDF.
 pub async fn load_open_document(db: &Arc<Database>, account_id: &str, attachment_id: &str) -> Result<OpenDocument> {
-    let meta = db
-        .get_email_attachment_metas_by_id(attachment_id)?
-        .filter(|m| m.account_id == account_id)
-        .ok_or_else(|| AppError::NotFound(format!("Attachment {attachment_id} not found")))?;
-    if !is_pdf(&meta.mime_type, &meta.filename) {
-        return Err(AppError::InvalidInput(format!(
-            "Attachment {attachment_id} is not a PDF ({})",
-            meta.mime_type
-        )));
-    }
-    let bytes = crate::services::attachments::fetch_meta_bytes(db, &meta).await?;
+    let not_found = || AppError::NotFound(format!("Attachment {attachment_id} not found"));
+    let (filename, bytes) = match db.get_email_attachment_metas_by_id(attachment_id)? {
+        Some(meta) => {
+            if meta.account_id != account_id {
+                return Err(not_found());
+            }
+            ensure_pdf(attachment_id, &meta.mime_type, &meta.filename)?;
+            let bytes = crate::services::attachments::fetch_meta_bytes(db, &meta).await?;
+            (meta.filename, bytes)
+        }
+        None => {
+            let att = db
+                .get_attachment(attachment_id)?
+                .filter(|a| a.account_id == account_id)
+                .ok_or_else(not_found)?;
+            ensure_pdf(attachment_id, &att.mime_type, &att.filename)?;
+            let data_dir = db
+                .db_path()
+                .parent()
+                .ok_or_else(|| AppError::IoError("The database has no data dir".to_string()))?;
+            let path = crate::services::attachments::safe_attachment_path(data_dir, &att.file_path)?;
+            let bytes = std::fs::read(&path)
+                .map_err(|e| AppError::IoError(format!("Failed to read attachment {}: {e}", path.display())))?;
+            (att.filename, bytes)
+        }
+    };
     let text = match tokio::task::spawn_blocking(move || extract_pdf_text(&bytes))
         .await
         .map_err(|e| AppError::IoError(format!("PDF text extraction stopped: {e}")))?
@@ -103,10 +120,16 @@ pub async fn load_open_document(db: &Arc<Database>, account_id: &str, attachment
         Err(PdfTextError::NoText) => None,
         Err(e @ PdfTextError::Unreadable(_)) => return Err(AppError::InvalidInput(e.to_string())),
     };
-    Ok(OpenDocument {
-        filename: meta.filename,
-        text,
-    })
+    Ok(OpenDocument { filename, text })
+}
+
+fn ensure_pdf(attachment_id: &str, mime_type: &str, filename: &str) -> Result<()> {
+    if is_pdf(mime_type, filename) {
+        return Ok(());
+    }
+    Err(AppError::InvalidInput(format!(
+        "Attachment {attachment_id} is not a PDF ({mime_type})"
+    )))
 }
 
 /// A PDF by its mime type, or by its name when the provider sent a generic
@@ -201,6 +224,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn loads_a_pdf_an_attachment_rule_saved() {
+        // The Attachments view lists the files rules saved (`attachments`
+        // table), not the email's attachment metas.
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(tmp.path().to_path_buf()).unwrap());
+        let id = seed_rule_attachment(&db, tmp.path(), "acct-1");
+        let loaded = load_open_document(&db, "acct-1", &id).await.unwrap();
+        assert_eq!(loaded.filename, "statement.pdf");
+        assert!(loaded.text.unwrap().contains("Total due"));
+    }
+
+    #[tokio::test]
+    async fn another_accounts_rule_attachment_is_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(tmp.path().to_path_buf()).unwrap());
+        let id = seed_rule_attachment(&db, tmp.path(), "acct-1");
+        assert!(matches!(
+            load_open_document(&db, "acct-2", &id).await,
+            Err(AppError::NotFound(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn another_accounts_attachment_is_not_found() {
         let db = Arc::new(Database::new_for_testing().unwrap());
         let id = seed_inline_attachment(&db, "acct-1", "quote.pdf", "application/pdf", &pdf_bytes());
@@ -243,6 +289,45 @@ mod tests {
         )])
         .unwrap();
         db.get_email_attachment_metas(&email.id).unwrap()[0].id.clone()
+    }
+
+    /// A PDF an attachment rule of `account_id` saved under the data dir; its id.
+    fn seed_rule_attachment(db: &Arc<Database>, data_dir: &std::path::Path, account_id: &str) -> String {
+        use crate::services::attachments::tests::{make_account, make_email};
+        make_account(db, account_id, "imap", "me@example.com");
+        db.insert_email(&make_email(account_id, "msg-1", "billing@vendor.example", "Statement"))
+            .unwrap();
+        let rule = crate::services::attachments::create_rule(
+            db,
+            account_id,
+            "Vendor",
+            Some("billing@vendor.example"),
+            None,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let relative = format!("attachments/{account_id}/statement.pdf");
+        std::fs::create_dir_all(data_dir.join(format!("attachments/{account_id}"))).unwrap();
+        std::fs::write(data_dir.join(&relative), pdf_bytes()).unwrap();
+        db.insert_attachment(&crate::models::Attachment {
+            id: "rule-att-1".into(),
+            account_id: account_id.into(),
+            email_id: "msg-1".into(),
+            rule_id: rule.id,
+            gmail_attachment_id: String::new(),
+            filename: "statement.pdf".into(),
+            mime_type: "application/pdf".into(),
+            file_size: 0,
+            file_path: relative,
+            tags: vec![],
+            sender_email: "billing@vendor.example".into(),
+            subject: "Statement".into(),
+            email_timestamp: 0,
+            created_at: 0,
+        })
+        .unwrap();
+        "rule-att-1".into()
     }
 
     fn pdf_bytes() -> Vec<u8> {
