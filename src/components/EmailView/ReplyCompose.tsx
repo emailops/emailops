@@ -1,5 +1,5 @@
 import { format } from 'date-fns';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
@@ -12,6 +12,7 @@ import { useFileDrop } from '@/hooks/useFileDrop';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
+  canSend,
   createDebouncedDraftSaver,
   createDraftAutosaver,
   type DebouncedDraftSaver,
@@ -459,7 +460,15 @@ export function ReplyCompose({
     // recipient the user means — it must not be dropped from the send.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
-    if (to.length === 0 || !plain) return;
+    const ready = canSend({
+      to,
+      subject: '',
+      requireSubject: false,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length,
+    });
+    if (!ready) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       // The signature is not the user's text: "attached" in it is no promise.
@@ -499,6 +508,15 @@ export function ReplyCompose({
   };
 
   const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft);
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    subject: '',
+    requireSubject: false,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length,
+  });
 
   const renderTokenInput = (
     field: 'to' | 'cc',
@@ -745,9 +763,7 @@ export function ReplyCompose({
           }
           onSend={() => void handleSend()}
           onSchedule={(at) => void handleSend(false, at)}
-          disabled={
-            isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
-          }
+          disabled={isSending || isLoadingDraft || !readyToSend}
         />
       </div>
 

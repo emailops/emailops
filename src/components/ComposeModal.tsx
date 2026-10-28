@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { AttachMenu } from '@/components/shared/AttachMenu';
@@ -20,6 +20,7 @@ import type {
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
+  canSend,
   createDebouncedDraftSaver,
   createDraftAutosaver,
   type DebouncedDraftSaver,
@@ -186,6 +187,15 @@ export function ComposeModal({
   const allRecipients = [...toRecipients, ...ccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
   const isLoadingAttachments = loadingFiles.length > 0;
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    subject,
+    requireSubject: true,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length,
+  });
 
   // Overall attachment load progress (average across all loading files)
   const loadProgress =
@@ -373,7 +383,15 @@ export function ComposeModal({
     const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain || isLoadingAttachments) return;
+    const ready = canSend({
+      to,
+      subject,
+      requireSubject: true,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length,
+    });
+    if (!ready || isLoadingAttachments) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -812,14 +830,7 @@ export function ComposeModal({
             label={isSending ? t('compose:sending') : isLoadingAttachments ? 'Loading files…' : t('compose:send')}
             onSend={handleSend}
             onSchedule={(at) => void submit(at)}
-            disabled={
-              isSending ||
-              sent ||
-              isLoadingAttachments ||
-              mergePendingRecipient(toRecipients, toInput).length === 0 ||
-              !subject.trim() ||
-              !bodyHtml.trim()
-            }
+            disabled={isSending || sent || isLoadingAttachments || !readyToSend}
           />
         </div>
       </div>
