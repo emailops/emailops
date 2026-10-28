@@ -8,6 +8,7 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
@@ -211,6 +212,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
   const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
@@ -469,7 +472,11 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden" onKeyDownCapture={handleSendKey}>
+    <div
+      className={`flex-1 bg-white flex flex-col overflow-hidden ${fileOver ? 'ring-2 ring-inset ring-primary-500' : ''}`}
+      onKeyDownCapture={handleSendKey}
+      {...dropProps}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>

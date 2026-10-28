@@ -9,6 +9,7 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
   DraftFailedEvent,
   DraftGeneratedEvent,
@@ -274,6 +275,8 @@ export function ComposeModal({
     // Reset the input so the same file can be re-selected if removed
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -548,8 +551,9 @@ export function ComposeModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
       <div
-        className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]"
+        className={`relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh] ${fileOver ? 'ring-2 ring-primary-500' : ''}`}
         onKeyDownCapture={handleSendKey}
+        {...dropProps}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">

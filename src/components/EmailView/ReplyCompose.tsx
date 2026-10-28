@@ -8,6 +8,7 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -426,6 +427,8 @@ export function ReplyCompose({
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
   const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
@@ -583,7 +586,11 @@ export function ReplyCompose({
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4" onKeyDownCapture={handleSendKey}>
+    <div
+      className={`mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 ${fileOver ? 'ring-2 ring-primary-500' : ''}`}
+      onKeyDownCapture={handleSendKey}
+      {...dropProps}
+    >
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>
