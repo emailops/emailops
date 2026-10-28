@@ -142,8 +142,8 @@ pub struct CaseOutcome {
     /// Wall-clock time inside the harness (turn dispatch + DB readback).
     pub wall_elapsed_ms: i64,
     pub sources_used: Vec<SourceSummary>,
-    /// Text of the email the turn ran against — the bound thread (`thread_id`)
-    /// or the open one (`ambient_thread_id`) — the same block the model saw.
+    /// Text of what the turn ran against — the bound thread (`thread_id`),
+    /// the open PDF (its whole text) or the open email (`ambient_thread_id`).
     /// It is the answer's grounding when the case used neither RAG sources nor
     /// tools, so the judge and the report get it too.
     pub open_thread: Option<String>,
@@ -177,6 +177,29 @@ pub struct SourceSummary {
     pub relevance_score: Option<f32>,
     /// The exact body snippet that was fed to the model (post HTML-strip, smart-sliced).
     pub body_snippet: String,
+}
+
+/// What the user had open for a turn, which the judge gets as grounding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenGrounding<'a> {
+    /// A thread id: the bound thread or the open email.
+    Thread(&'a str),
+    /// The attachment id of the open PDF.
+    Document(&'a str),
+}
+
+/// Pure: what the turn ran against, in the precedence the chat uses — the
+/// thread the conversation is bound to, then the open PDF, then the open
+/// email.
+pub fn plan_open_grounding<'a>(
+    bound_thread: Option<&'a str>,
+    attachment_id: Option<&'a str>,
+    ambient_thread: Option<&'a str>,
+) -> Option<OpenGrounding<'a>> {
+    bound_thread
+        .map(OpenGrounding::Thread)
+        .or(attachment_id.map(OpenGrounding::Document))
+        .or(ambient_thread.map(OpenGrounding::Thread))
 }
 
 /// How a case names the thread it binds to.
@@ -418,20 +441,25 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         })
         .collect();
 
-    // The email the turn ran against, the same block the model saw: the
-    // thread the conversation is bound to, or the open ("ambient") one under
-    // its own account when the case names one.
-    let open_thread = match (bound_thread.as_deref(), ambient_thread_id.as_deref()) {
-        (Some(thread_id), _) => Some(crate::services::chat::build_thread_context(&db, account_id, thread_id)?.0),
-        (None, Some(thread_id)) => Some(
-            crate::services::chat::build_thread_context(
-                &db,
-                ambient_owner.as_deref().unwrap_or(account_id),
-                thread_id,
-            )?
-            .0,
-        ),
-        (None, None) => None,
+    // What the turn ran against: the thread the conversation is bound to,
+    // the open PDF, or the open ("ambient") email under its own account. A
+    // PDF read in parts reached the model as notes, so the judge gets the
+    // whole text the notes were taken from.
+    let open_owner = ambient_owner.as_deref().unwrap_or(account_id);
+    let open_thread = match plan_open_grounding(
+        bound_thread.as_deref(),
+        ambient_attachment_id.as_deref(),
+        ambient_thread_id.as_deref(),
+    ) {
+        Some(OpenGrounding::Thread(thread_id)) => {
+            let owner = if bound_thread.is_some() { account_id } else { open_owner };
+            Some(crate::services::chat::build_thread_context(&db, owner, thread_id)?.0)
+        }
+        Some(OpenGrounding::Document(attachment_id)) => {
+            let doc = chat::open_document::load_open_document(&db, open_owner, attachment_id).await?;
+            Some(chat::open_document::open_document_block(&doc))
+        }
+        None => None,
     };
 
     // The trace keeps only the ids of the guide sections the turn served.
@@ -543,6 +571,35 @@ mod tests {
     fn memory_block_is_none_when_the_turn_had_no_header() {
         assert_eq!(memory_block("what is due?"), None);
         assert_eq!(memory_block("<memory>\nunterminated"), None);
+    }
+
+    // ── plan_open_grounding ───────────────────────────────────────────────────
+
+    /// The long-PDF case scored faithfulness 0 with a correct answer: the
+    /// judge got no document text, so every figure read as invented.
+    #[test]
+    fn an_open_pdf_is_the_grounding_the_judge_gets() {
+        assert_eq!(
+            plan_open_grounding(None, Some("att-1"), Some("th-1")),
+            Some(OpenGrounding::Document("att-1"))
+        );
+    }
+
+    #[test]
+    fn a_bound_thread_wins_over_what_is_open() {
+        assert_eq!(
+            plan_open_grounding(Some("th-b"), Some("att-1"), Some("th-1")),
+            Some(OpenGrounding::Thread("th-b"))
+        );
+    }
+
+    #[test]
+    fn an_open_email_is_the_grounding_when_no_pdf_is_open() {
+        assert_eq!(
+            plan_open_grounding(None, None, Some("th-1")),
+            Some(OpenGrounding::Thread("th-1"))
+        );
+        assert_eq!(plan_open_grounding(None, None, None), None);
     }
 
     // ── plan_thread_ref ───────────────────────────────────────────────────────

@@ -391,7 +391,7 @@ fn build_prompt(case: &EvalCase, outcome: &CaseOutcome) -> String {
         .as_deref()
         .map(|t| {
             format!(
-                "\nOPEN THREAD SHOWN TO THE ASSISTANT (the email the user had open):\n{}\n",
+                "\nOPEN THREAD SHOWN TO THE ASSISTANT (the email or PDF the user had open):\n{}\n",
                 indent_lines(t, "    ")
             )
         })
