@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
@@ -8,6 +8,7 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
@@ -19,6 +20,7 @@ import type {
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
+  canSend,
   createDraftAutosaver,
   type DraftAutosaver,
   shouldAutosaveDraft,
@@ -211,6 +213,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
   const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
@@ -275,6 +279,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   }, [addLog]);
 
   const canDraftWithAi = mergePendingRecipient(toRecipients, toInput).length > 0 && !!subject.trim();
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    subject,
+    requireSubject: true,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length,
+  });
 
   const handleDraftWithAI = async () => {
     const to = mergePendingRecipient(toRecipients, toInput);
@@ -303,7 +316,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain) return;
+    const ready = canSend({
+      to,
+      subject,
+      requireSubject: true,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length,
+    });
+    if (!ready) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -469,7 +490,11 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden" onKeyDownCapture={handleSendKey}>
+    <div
+      className={`flex-1 bg-white flex flex-col overflow-hidden ${fileOver ? 'ring-2 ring-inset ring-primary-500' : ''}`}
+      onKeyDownCapture={handleSendKey}
+      {...dropProps}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
@@ -655,13 +680,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           label={isSending ? t('compose:sending') : t('compose:send')}
           onSend={handleSend}
           onSchedule={(at) => void submit(at)}
-          disabled={
-            isSending ||
-            sent ||
-            mergePendingRecipient(toRecipients, toInput).length === 0 ||
-            !subject.trim() ||
-            !bodyHtml.trim()
-          }
+          disabled={isSending || sent || !readyToSend}
         />
       </div>
     </div>

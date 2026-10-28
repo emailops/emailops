@@ -216,6 +216,7 @@
         "answer": "Réponse (LLM)",
         "llmCall": "Appel LLM",
         "llmCallN": "Appel LLM {{n}}/{{total}}",
+        "documentPart": "Lecture du document, partie {{n}}/{{total}}",
         "budget": "Budget de contexte"
       },
       "section": {

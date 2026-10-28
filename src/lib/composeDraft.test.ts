@@ -3,6 +3,7 @@ import type { Draft } from '@/types';
 import {
   buildSaveDraftRequest,
   type ComposeDraftState,
+  canSend,
   createDebouncedDraftSaver,
   createDraftAutosaver,
   findThreadReplyDraft,
@@ -246,5 +247,38 @@ describe('replySubject', () => {
   it('adds Re: once', () => {
     expect(replySubject('Hello')).toBe('Re: Hello');
     expect(replySubject('RE: Hello')).toBe('RE: Hello');
+  });
+});
+
+describe('canSend', () => {
+  const ready = {
+    to: ['a@example.com'],
+    subject: 'Report',
+    requireSubject: true,
+    plainBody: '',
+    inlineImages: 0,
+    attachments: 0,
+  };
+
+  it('sends a message whose only content is an attachment', () => {
+    // Regression: the button was enabled, but Send returned silently when the
+    // text was empty, so a PDF sent with no text never left.
+    expect(canSend({ ...ready, attachments: 1 })).toBe(true);
+  });
+
+  it('sends text, or an inline image, without attachments', () => {
+    expect(canSend({ ...ready, plainBody: 'Hi' })).toBe(true);
+    expect(canSend({ ...ready, inlineImages: 1 })).toBe(true);
+  });
+
+  it('has nothing to send when there is no text, image or attachment', () => {
+    expect(canSend({ ...ready, plainBody: '  \n ' })).toBe(false);
+  });
+
+  it('needs a recipient, and a subject where the composer asks for one', () => {
+    const content = { ...ready, plainBody: 'Hi' };
+    expect(canSend({ ...content, to: [] })).toBe(false);
+    expect(canSend({ ...content, subject: ' ' })).toBe(false);
+    expect(canSend({ ...content, subject: '', requireSubject: false })).toBe(true);
   });
 });
