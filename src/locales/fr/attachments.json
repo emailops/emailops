@@ -14,7 +14,10 @@
     "openExternally": "Ouvrir en externe",
     "openInDefaultApp": "Ouvrir dans l'application par défaut",
     "previewLoadFailed": "Échec du chargement de l'aperçu : {{error}}",
-    "download": "Télécharger"
+    "download": "Télécharger",
+    "zoomOut": "Zoom arrière",
+    "zoomIn": "Zoom avant",
+    "fitWidth": "Ajuster à la largeur"
   },
   "toolbar": {
     "title": "Pièces jointes",

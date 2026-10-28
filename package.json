@@ -54,6 +54,7 @@
     "dompurify": "^3.4.17",
     "i18next": "^26.5.2",
     "mammoth": "^1.13.0",
+    "pdfjs-dist": "6.4.299",
     "pdfmake": "0.3.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

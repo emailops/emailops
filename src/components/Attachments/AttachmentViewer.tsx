@@ -6,6 +6,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment } from '@/types';
+import { PdfViewer } from './PdfViewer';
 
 interface AttachmentViewerProps {
   attachment: Attachment | null;
@@ -169,9 +170,8 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600" />
           </div>
         ) : isPdf ? (
-          // An iframe, not <object>: the CSP allows no plugin content. The
-          // WebView's built-in viewer draws the PDF, as in AttachmentTabView.
-          <iframe src={dataUrl} className="w-full h-full border-0" title={attachment.filename} />
+          // Keyed by attachment so another PDF opens fitted to width again.
+          <PdfViewer key={attachment.id} dataUrl={dataUrl} title={attachment.filename} />
         ) : isHtml ? (
           <iframe
             src={dataUrl}

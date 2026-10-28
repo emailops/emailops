@@ -14,7 +14,10 @@
     "openExternally": "Open Externally",
     "openInDefaultApp": "Open in default application",
     "previewLoadFailed": "Failed to load preview: {{error}}",
-    "download": "Download"
+    "download": "Download",
+    "zoomOut": "Zoom out",
+    "zoomIn": "Zoom in",
+    "fitWidth": "Fit to width"
   },
   "toolbar": {
     "title": "Attachments",

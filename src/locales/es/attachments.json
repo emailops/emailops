@@ -14,7 +14,10 @@
     "openExternally": "Abrir externamente",
     "openInDefaultApp": "Abrir en la aplicación predeterminada",
     "previewLoadFailed": "No se pudo cargar la vista previa: {{error}}",
-    "download": "Descargar"
+    "download": "Descargar",
+    "zoomOut": "Alejar",
+    "zoomIn": "Acercar",
+    "fitWidth": "Ajustar al ancho"
   },
   "toolbar": {
     "title": "Adjuntos",
