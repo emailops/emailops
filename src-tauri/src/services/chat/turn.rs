@@ -363,7 +363,7 @@ const SOURCE_FRAMING_CHARS: usize = 100;
 /// The open document cut to `slot_chars`: read in full, part by part, when it
 /// is longer than that (the answer then comes from notes on every part);
 /// only its start when that reading yields nothing (cancelled, every part
-/// failed).
+/// failed). Returned with the trace entries of the parts it read.
 #[allow(clippy::too_many_arguments)]
 async fn fit_open_document(
     provider: &dyn AIProvider,
@@ -374,7 +374,7 @@ async fn fit_open_document(
     conversation_id: &str,
     assistant_message_id: &str,
     cancelled: &std::sync::atomic::AtomicBool,
-) -> super::open_document::OpenDocument {
+) -> (super::open_document::OpenDocument, Vec<LlmCallTrace>) {
     use super::open_document::{part_prompt_overhead_chars, plan_document_reading, read_document_in_parts};
     let overhead_chars = part_prompt_overhead_chars(&doc.filename, question);
     let reading = match plan_document_reading(
@@ -385,14 +385,16 @@ async fn fit_open_document(
         doc.text_chars(),
     ) {
         Some(reading) if doc.read_in_parts.is_none() => reading,
-        _ => return doc.shortened(slot_chars),
+        _ => return (doc.shortened(slot_chars), Vec::new()),
     };
     emit_phase(conversation_id, assistant_message_id, ChatPhase::ReadingDocument);
     let on_part = |done: usize, total: usize| {
         emit_log("info", &format!("open document: read part {done} of {total}"));
     };
     let is_cancelled = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-    match read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await {
+    let (notes, calls) =
+        read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await;
+    let fitted = match notes {
         Some(notes) => notes.shortened(slot_chars),
         None => {
             emit_log(
@@ -401,7 +403,8 @@ async fn fit_open_document(
             );
             doc.shortened(slot_chars)
         }
-    }
+    };
+    (fitted, calls)
 }
 
 /// Plan how a turn's first prompt is cut to `budget_chars`. `messages` is the
@@ -5289,6 +5292,8 @@ async fn run_chat_turn_inner(
         turn_budget.message_chars(),
     );
     turn_budget.record_plan(&plan);
+    // The calls that read a long open document in parts, for the trace.
+    let mut document_calls: Vec<LlmCallTrace> = Vec::new();
     if !plan.cuts.is_empty() {
         emit_log(
             "info",
@@ -5301,8 +5306,8 @@ async fn run_chat_turn_inner(
         persist_stripped_history(&db, &history, &plan);
         // The open thread, read again into what the window leaves for it.
         let shorter_ambient = match (&ambient_context, &ambient_source, plan.open_thread_chars) {
-            (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => Some(Ambient::Document(
-                fit_open_document(
+            (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => {
+                let (fitted, calls) = fit_open_document(
                     provider.as_ref(),
                     doc,
                     &user_question,
@@ -5312,8 +5317,10 @@ async fn run_chat_turn_inner(
                     &assistant_message_id,
                     &turn_guard.flag,
                 )
-                .await,
-            )),
+                .await;
+                document_calls = calls;
+                Some(Ambient::Document(fitted))
+            }
             (Some(Ambient::Thread(thread)), Some((account, thread_id)), Some(chars)) if chars != thread.len() => {
                 match super::conversations::build_thread_context_within(&db, account, thread_id, chars) {
                     Ok((context, _subject)) => Some(Ambient::Thread(context)),
@@ -5377,6 +5384,8 @@ async fn run_chat_turn_inner(
     if let Some(pt) = planner_trace.take() {
         llm_calls.push(pt);
     }
+    // A long open document was read in parts before the loop: next.
+    llm_calls.extend(document_calls);
 
     // The route is a retrieval hint, never a capability gate (docs/DECISIONS.md,
     // 2026-09-14): every turn runs the tool loop with the full tool menu. On a
@@ -8958,7 +8967,7 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let fitted = fit_open_document(
+        let (fitted, calls) = fit_open_document(
             &provider,
             &doc,
             "what is the exit fee?",
@@ -8972,6 +8981,7 @@ mod tests {
         let parts = provider.prefix_completion_calls().len();
         assert!(parts > 1, "the whole text must be read, in several calls");
         assert_eq!(fitted.read_in_parts, Some(parts));
+        assert_eq!(calls.len(), parts, "every part read is in the trace");
         assert!(fitted.text_chars() <= 6_000);
         assert!(fitted.text.unwrap().contains("Early exit fee: EUR 9,400."));
     }
@@ -8983,7 +8993,7 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let fitted = fit_open_document(
+        let (fitted, calls) = fit_open_document(
             &provider,
             &doc,
             "q",
@@ -8995,6 +9005,7 @@ mod tests {
         )
         .await;
         assert_eq!(fitted, doc);
+        assert!(calls.is_empty());
         assert!(provider.prefix_completion_calls().is_empty());
     }
 
@@ -9005,7 +9016,7 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(true);
-        let fitted = fit_open_document(
+        let (fitted, calls) = fit_open_document(
             &provider,
             &doc,
             "q",
@@ -9017,6 +9028,7 @@ mod tests {
         )
         .await;
         assert_eq!(fitted.read_in_parts, None);
+        assert!(calls.is_empty());
         assert!(fitted.text.unwrap().contains("document truncated"));
     }
 

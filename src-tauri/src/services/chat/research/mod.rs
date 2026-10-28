@@ -751,7 +751,6 @@ fn call_trace(
     }
 }
 
-/// One completion with a timeout, traced.
 /// Options for one research call: no thinking, and — for the reading and
 /// condense steps — the JSON shape the reply must take.
 fn call_options(
@@ -767,7 +766,8 @@ fn call_options(
     }
 }
 
-async fn complete(
+/// One completion on the one-shot prefix slot with a timeout, traced.
+pub(in crate::services::chat) async fn complete(
     provider: &dyn AIProvider,
     prompt: (&str, &str),
     opts: CompletionOptions,

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::budget::{plan_prompt_tokens, plan_reply_reserve, Estimator};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
+use crate::models::LlmCallTrace;
 use crate::services::pdf_text::{extract_pdf_text, PdfTextError};
 
 /// The only attachment type the chat reads today.
@@ -108,6 +109,8 @@ pub(crate) const MIN_NOTE_CHARS: usize = 400;
 /// Below this a part is mostly prompt: a window this small reads in steps of
 /// at least this much rather than in a flood of tiny calls.
 const MIN_PART_CHARS: usize = 400;
+/// The trace kind of one part's completion.
+pub(crate) const DOCUMENT_PART_CALL: &str = "document_part";
 /// One part's completion may not hang the turn.
 const PART_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
@@ -238,9 +241,10 @@ pub(crate) fn part_prompt_overhead_chars(filename: &str, question: &str) -> usiz
 }
 
 /// Read `doc` in parts and return it as notes that fit `slot_chars`, calling
-/// `on_part(done, total)` after each part. `None` when the turn was cancelled
-/// or no part could be read (the caller then falls back to the start of the
-/// text).
+/// `on_part(done, total)` after each part, together with one trace entry per
+/// part read (`kind: "document_part"`), so the turn's trace shows what the
+/// reading cost. The notes are `None` when the turn was cancelled or no part
+/// could be read (the caller then falls back to the start of the text).
 pub(crate) async fn read_document_in_parts(
     provider: &dyn crate::ai::provider::AIProvider,
     doc: &OpenDocument,
@@ -249,8 +253,11 @@ pub(crate) async fn read_document_in_parts(
     slot_chars: usize,
     on_part: &(dyn Fn(usize, usize) + Send + Sync),
     is_cancelled: &(dyn Fn() -> bool + Send + Sync),
-) -> Option<OpenDocument> {
-    let parts = split_into_parts(doc.text.as_deref()?, reading.part_chars);
+) -> (Option<OpenDocument>, Vec<LlmCallTrace>) {
+    let Some(text) = doc.text.as_deref() else {
+        return (None, Vec::new());
+    };
+    let parts = split_into_parts(text, reading.part_chars);
     let total = parts.len();
     let max_note_chars = note_chars(slot_chars, total, reading.max_note_chars);
     let options = crate::ai::provider::CompletionOptions {
@@ -260,33 +267,40 @@ pub(crate) async fn read_document_in_parts(
         json_shape: None,
     };
     let mut notes = Vec::with_capacity(total);
+    let mut calls = Vec::with_capacity(total);
     for (i, part) in parts.iter().enumerate() {
         if is_cancelled() {
-            return None;
+            return (None, calls);
         }
         let suffix = part_prompt_suffix(&doc.filename, question, part, i + 1, total, max_note_chars / 6);
-        let call = provider.complete_with_prefix(PART_INSTRUCTIONS, &suffix, options.clone());
-        notes.push(match tokio::time::timeout(PART_TIMEOUT, call).await {
-            Ok(Ok(result)) => Some(result.text),
-            Ok(Err(e)) => {
+        let (result, trace) = super::research::complete(
+            provider,
+            (PART_INSTRUCTIONS, &suffix),
+            options.clone(),
+            PART_TIMEOUT,
+            DOCUMENT_PART_CALL,
+            i as i32,
+        )
+        .await;
+        calls.push(trace);
+        notes.push(match result {
+            Ok(result) => Some(result.text),
+            Err(e) => {
                 super::emit_log(
                     "warn",
                     &format!("open document: part {} of {total} could not be read: {e}", i + 1),
                 );
                 None
             }
-            Err(_) => {
-                super::emit_log("warn", &format!("open document: part {} of {total} timed out", i + 1));
-                None
-            }
         });
         on_part(i + 1, total);
     }
-    Some(OpenDocument {
+    let notes = assemble_notes(&notes, max_note_chars).map(|text| OpenDocument {
         filename: doc.filename.clone(),
-        text: Some(assemble_notes(&notes, max_note_chars)?),
+        text: Some(text),
         read_in_parts: Some(total),
-    })
+    });
+    (notes, calls)
 }
 
 /// Read the PDF attachment `attachment_id` of `account_id` for this turn: an
@@ -511,7 +525,7 @@ mod tests {
         };
         let reading = reading(100);
         let parts_seen = std::sync::Mutex::new(Vec::new());
-        let notes = read_document_in_parts(
+        let (notes, _) = read_document_in_parts(
             &provider,
             &long,
             "What is the early exit fee?",
@@ -520,8 +534,8 @@ mod tests {
             &|done, total| parts_seen.lock().unwrap().push((done, total)),
             &|| false,
         )
-        .await
-        .unwrap();
+        .await;
+        let notes = notes.unwrap();
 
         assert_eq!(notes.read_in_parts, Some(3));
         let text = notes.text.unwrap();
@@ -546,6 +560,7 @@ mod tests {
         };
         read_document_in_parts(&provider, &long, "q", &reading(80), 2_000, &|_, _| {}, &|| false)
             .await
+            .0
             .unwrap();
         let calls = provider.prefix_completion_calls();
         // Two frames (file name, part text); the injected tag adds no third.
@@ -580,11 +595,30 @@ mod tests {
             read_in_parts: None,
         };
         let reading = reading(100);
-        assert!(
-            read_document_in_parts(&provider, &long, "q", &reading, 3_000, &|_, _| {}, &|| false)
-                .await
-                .is_none()
-        );
+        let (notes, calls) =
+            read_document_in_parts(&provider, &long, "q", &reading, 3_000, &|_, _| {}, &|| false).await;
+        assert!(notes.is_none());
+        // Each failed part is still a call in the trace, marked failed.
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|c| c.kind == "document_part" && c.failed));
+    }
+
+    #[tokio::test]
+    async fn every_part_read_is_a_call_in_the_trace() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion("Term: 24 months.");
+        provider.push_completion("Nothing relevant.");
+        let long = OpenDocument {
+            filename: "msa.pdf".to_string(),
+            text: Some(format!("{}\n{}", "a".repeat(90), "b".repeat(90))),
+            read_in_parts: None,
+        };
+        let (notes, calls) =
+            read_document_in_parts(&provider, &long, "q", &reading(100), 3_000, &|_, _| {}, &|| false).await;
+        assert!(notes.is_some());
+        let seen: Vec<_> = calls.iter().map(|c| (c.kind.as_str(), c.round, c.failed)).collect();
+        assert_eq!(seen, vec![("document_part", 0, false), ("document_part", 1, false)]);
+        assert_eq!(calls[0].output.as_deref(), Some("Term: 24 months."));
     }
 
     #[tokio::test]
@@ -596,11 +630,9 @@ mod tests {
             read_in_parts: None,
         };
         let reading = reading(100);
-        assert!(
-            read_document_in_parts(&provider, &long, "q", &reading, 3_000, &|_, _| {}, &|| true)
-                .await
-                .is_none()
-        );
+        let (notes, calls) = read_document_in_parts(&provider, &long, "q", &reading, 3_000, &|_, _| {}, &|| true).await;
+        assert!(notes.is_none());
+        assert!(calls.is_empty());
         assert!(provider.prefix_completion_calls().is_empty());
     }
 
