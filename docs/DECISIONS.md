@@ -3947,6 +3947,23 @@ assistant prompts already treat mail as data. A model classifier — a model cal
 message, and the classifier reads the same text the attack is written for. Scoring the
 markers on the phishing axis only — invisible with the defaults.
 
+## 2026-10-28 — PDF attachments render with pdf.js, not the WebView's built-in viewer
+
+**Decision:** Both attachment viewers (`AttachmentViewer`, `AttachmentTabView`) draw PDFs
+with `pdfjs-dist` onto canvases (`PdfViewer`), with the app's own zoom toolbar (50–300 %,
+fit width by default, Cmd/Ctrl `=`/`-`/`0`). They use the `legacy` build, which pdf.js
+supports on Safari 18+ and Chrome 125+. The modern build lists no Safari, and macOS and
+Linux run WebKit. With no PDF left in an iframe, every framed attachment gets an empty
+`sandbox`, including one declared `application/pdf`.
+**Context:** Users needed zoom to read small print. The built-in viewer is a different
+engine per platform (PDFKit on macOS, WebKitGTK on Linux, Chromium on Windows), the page
+cannot control its zoom, and it was the one reason a framed attachment went unsandboxed.
+pdf.js runs no document script without its viewer's scripting sandbox, which is not
+loaded.
+**Rejected:** Scaling the native iframe with CSS `transform` — no dependency, but the
+plugin output blurs when stretched and scrolling breaks. A URL `#zoom=` fragment — only
+Chromium's viewer reads it.
+
 ## 2026-10-28 — The chat reads an open PDF through local text extraction, without OCR
 
 **Decision:** While a PDF attachment is open in the viewer, the chat panel offers it as

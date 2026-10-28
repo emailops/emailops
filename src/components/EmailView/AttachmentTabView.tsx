@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { PdfViewer } from '@/components/Attachments/PdfViewer';
 import { dataUrlToBase64, saveToDownloads } from '@/lib/download';
 import type { AttachmentViewTab } from '@/stores/emailStore';
 
@@ -9,7 +10,6 @@ interface AttachmentTabViewProps {
 
 export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
   const { t } = useTranslation(['attachments', 'common']);
-  const iframeSandbox = getAttachmentIframeSandbox(tab.mimeType);
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 flex-shrink-0 bg-gray-50">
@@ -58,39 +58,24 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
           <pre className="w-full h-full overflow-auto p-6 text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
             {decodeBase64Utf8(tab.dataUrl)}
           </pre>
-        ) : tab.mimeType === 'text/html' ? (
-          <iframe
-            src={tab.dataUrl}
-            title={tab.filename}
-            className="w-full h-full border-none"
-            sandbox={iframeSandbox}
-            referrerPolicy="no-referrer"
-          />
+        ) : tab.mimeType === 'application/pdf' ? (
+          <PdfViewer key={tab.id} dataUrl={tab.dataUrl} title={tab.filename} />
         ) : (
+          // The MIME type is whatever the sender declared, so anything framed
+          // here is untrusted: HTML, SVG, XHTML or a type the WebView sniffs as
+          // markup could run script. An empty sandbox applies every restriction
+          // (scripts, forms, popups, same-origin) yet still renders static content.
           <iframe
             src={tab.dataUrl}
             title={tab.filename}
             className="w-full h-full border-none"
-            sandbox={iframeSandbox}
+            sandbox=""
             referrerPolicy="no-referrer"
           />
         )}
       </div>
     </div>
   );
-}
-
-export function getAttachmentIframeSandbox(mimeType: string): string | undefined {
-  // An allowlist, because the MIME type is whatever the sender declared. PDFs
-  // are drawn by the WebView's built-in viewer, which a restrictive sandbox
-  // blocks — leaving the tab blank — so they alone go unsandboxed (no scripts,
-  // opaque-origin data: URI).
-  if (mimeType === 'application/pdf') return undefined;
-  // Everything else is untrusted: HTML, SVG, XHTML or a type the WebView
-  // sniffs as markup could run script. An empty sandbox applies every
-  // restriction (scripts, forms, popups, same-origin) yet still renders
-  // static content.
-  return '';
 }
 
 function AttachmentIcon({ mimeType }: { mimeType: string }) {
