@@ -75,6 +75,20 @@
         "label": "Antwort entwerfen",
         "prompt": "Entwirf eine Antwort auf diesen Thread, die "
       }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Dieses Dokument zusammenfassen",
+        "prompt": "Fasse dieses Dokument zusammen: was es ist, von wem es kommt und die wichtigsten Daten und Beträge."
+      },
+      "keyPoints": {
+        "label": "Kernpunkte, Daten und Beträge",
+        "prompt": "Liste die Kernpunkte, Daten und Beträge dieses Dokuments auf."
+      },
+      "ask": {
+        "label": "Frage zu diesem Dokument",
+        "prompt": "Zu diesem Dokument: "
+      }
     }
   },
   "message": {
@@ -107,6 +121,7 @@
     "generatingDraft": "Entwurf generieren…",
     "runningTools": "Anfrage verarbeiten…",
     "researching": "Recherche läuft…",
+    "readingDocument": "Das ganze Dokument wird gelesen…",
     "research": {
       "gathering": "Recherche: E-Mails werden gesammelt…",
       "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",
@@ -283,7 +298,9 @@
         "label": "Diese E-Mail liegt in {{email}}",
         "hint": "Der Chat antwortet aus einem anderen Konto und kann diese E-Mail nicht lesen. Wechsle das Konto, um danach zu fragen.",
         "action": "Wechseln"
-      }
+      },
+      "hintDocument": "Antworten stützen sich auf den Text dieses PDFs. Entferne es, um zu deinem Posteingang zu fragen.",
+      "restoreDocument": "Geöffnetes PDF als Kontext verwenden"
     },
     "newChat": "Neuer Chat"
   },

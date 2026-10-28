@@ -144,7 +144,14 @@ export function ChatPanel({
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
     const grounding = threadId ? { threadId, accountId } : turnContext;
-    await sendMessage(content, grounding?.threadId ?? null, grounding?.accountId ?? null, viewContext, accountId);
+    await sendMessage(
+      content,
+      grounding?.threadId ?? null,
+      grounding?.accountId ?? null,
+      viewContext,
+      accountId,
+      grounding?.attachmentId ?? null,
+    );
   };
 
   const header = (
@@ -223,7 +230,7 @@ export function ChatPanel({
             <p className="text-center text-sm leading-relaxed text-gray-500">{t('chat:panel.emptyHint')}</p>
             <ChatStarters
               accountId={accountId}
-              threadContext={contextActive}
+              openContext={contextActive ? (offeredContext?.attachmentId ? 'document' : 'thread') : undefined}
               compact
               disabled={isSending || streamingMessageId !== null}
               onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
@@ -250,6 +257,7 @@ export function ChatPanel({
                 turnContext?.threadId ?? null,
                 turnContext?.accountId ?? null,
                 viewContext,
+                turnContext?.attachmentId ?? null,
               )
             }
             rejectedMessageIds={rejectedMessageIds}

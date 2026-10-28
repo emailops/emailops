@@ -231,11 +231,37 @@ message here, call generate_email_draft with the exact id shown next to it.",
     )
 }
 
-/// [`build_prompt`] plus, when the user has an email open, that thread as
+/// What the user has open in the app, carried into one turn's final user
+/// message: the email thread they are reading, or a PDF attachment.
+#[derive(Debug, Clone)]
+pub(super) enum Ambient {
+    Thread(String),
+    Document(super::open_document::OpenDocument),
+}
+
+impl Ambient {
+    /// The prompt block that carries it.
+    fn block(&self) -> String {
+        match self {
+            Ambient::Thread(thread) => ambient_thread_block(thread),
+            Ambient::Document(doc) => super::open_document::open_document_block(doc),
+        }
+    }
+
+    /// Chars of its own content — the part the context budget may shorten.
+    fn content_chars(&self) -> usize {
+        match self {
+            Ambient::Thread(thread) => thread.len(),
+            Ambient::Document(doc) => doc.text_chars(),
+        }
+    }
+}
+
+/// [`build_prompt`] plus, when the user has an email or a PDF open, that as
 /// context in place of the "you MUST call search_emails" nag — the nag would
 /// push the model to search for an answer that is already in front of it.
 #[allow(clippy::too_many_arguments)]
-pub fn build_prompt_with_thread(
+pub(super) fn build_prompt_with_thread(
     sources: &[ScoredEmail],
     history: &[ChatMessage],
     user_question: &str,
@@ -243,7 +269,7 @@ pub fn build_prompt_with_thread(
     user_email: &str,
     system_template: &str,
     tools_section: &str,
-    ambient_thread: Option<&str>,
+    ambient: Option<&Ambient>,
 ) -> Vec<(String, String)> {
     build_prompt_fitted(
         sources,
@@ -253,7 +279,7 @@ pub fn build_prompt_with_thread(
         user_email,
         system_template,
         tools_section,
-        ambient_thread,
+        ambient,
         None,
     )
 }
@@ -334,6 +360,43 @@ fn source_header(src: &ScoredEmail) -> String {
 /// it and the relevant-region markers.
 const SOURCE_FRAMING_CHARS: usize = 100;
 
+/// The open document cut to `slot_chars`: read in full, part by part, when it
+/// is longer than that (the answer then comes from notes on every part);
+/// only its start when that reading yields nothing (cancelled, every part
+/// failed).
+#[allow(clippy::too_many_arguments)]
+async fn fit_open_document(
+    provider: &dyn AIProvider,
+    doc: &super::open_document::OpenDocument,
+    question: &str,
+    n_ctx: u32,
+    slot_chars: usize,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> super::open_document::OpenDocument {
+    use super::open_document::{plan_document_reading, read_document_in_parts};
+    let reading = match plan_document_reading(n_ctx, slot_chars, doc.text_chars()) {
+        Some(reading) if doc.read_in_parts.is_none() => reading,
+        _ => return doc.shortened(slot_chars),
+    };
+    emit_phase(conversation_id, assistant_message_id, ChatPhase::ReadingDocument);
+    let on_part = |done: usize, total: usize| {
+        emit_log("info", &format!("open document: read part {done} of {total}"));
+    };
+    let is_cancelled = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
+    match read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await {
+        Some(notes) => notes.shortened(slot_chars),
+        None => {
+            emit_log(
+                "warn",
+                "open document: reading it in parts gave nothing — using only its start",
+            );
+            doc.shortened(slot_chars)
+        }
+    }
+}
+
 /// Plan how a turn's first prompt is cut to `budget_chars`. `messages` is the
 /// prompt as it would be sent uncut (system first, the question's message
 /// last, every per-turn block already in it); the rest is what it was built
@@ -342,7 +405,7 @@ fn plan_first_prompt(
     messages: &[(String, String)],
     history: &[ChatMessage],
     sources: &[ScoredEmail],
-    ambient_thread: Option<&str>,
+    ambient: Option<&Ambient>,
     budget_chars: usize,
 ) -> PromptPlan {
     let history_items: Vec<HistoryItem> = replayed_history(history, MAX_HISTORY_TURNS)
@@ -353,8 +416,9 @@ fn plan_first_prompt(
             stripped_chars: stripped_history_content(m).map(|s| s.len()),
         })
         .collect();
-    // An open thread takes the place of the sources (see `build_prompt_fitted`).
-    let source_items: Vec<SourceItem> = if ambient_thread.is_some() {
+    // An open thread or document takes the place of the sources (see
+    // `build_prompt_fitted`).
+    let source_items: Vec<SourceItem> = if ambient.is_some() {
         Vec::new()
     } else {
         sources
@@ -369,7 +433,7 @@ fn plan_first_prompt(
         .iter()
         .map(|s| s.header_chars + s.body_chars.min(MAX_SOURCE_BODY_CHARS))
         .sum::<usize>()
-        + ambient_thread.map(str::len).unwrap_or(0);
+        + ambient.map(Ambient::content_chars).unwrap_or(0);
     let parts = PromptParts {
         system_chars: messages.first().map(|(_, c)| c.len()).unwrap_or(0),
         history: &history_items,
@@ -380,7 +444,7 @@ fn plan_first_prompt(
             .saturating_sub(this_turn),
         sources: &source_items,
         max_source_body_chars: MAX_SOURCE_BODY_CHARS,
-        open_thread_chars: ambient_thread.map(str::len),
+        open_thread_chars: ambient.map(Ambient::content_chars),
     };
     plan_prompt(&parts, budget_chars)
 }
@@ -517,7 +581,7 @@ fn build_prompt_fitted(
     user_email: &str,
     system_template: &str,
     tools_section: &str,
-    ambient_thread: Option<&str>,
+    ambient: Option<&Ambient>,
     plan: Option<&PromptPlan>,
 ) -> Vec<(String, String)> {
     let sources = match plan {
@@ -575,8 +639,8 @@ from this mailbox as if they answered the question."
     let system = crate::services::prompts::render(system_template, &tpl_vars);
 
     let mut tail = String::with_capacity(user_question.len() + sources.len() * 1200 + 128);
-    if let Some(thread) = ambient_thread {
-        tail.push_str(&ambient_thread_block(thread));
+    if let Some(ambient) = ambient {
+        tail.push_str(&ambient.block());
         tail.push('\n');
     } else if sources.is_empty() {
         tail.push_str(
@@ -3297,6 +3361,14 @@ pub(super) enum ChatTurnMode {
         /// turn's own account", which is correct for single-account callers.
         account_id: Option<String>,
     },
+    /// The user is reading this PDF attachment in the viewer; ground only
+    /// THIS turn in its text.
+    AmbientDocument {
+        /// The attachment's meta id (`email_attachment_meta.id`).
+        attachment_id: String,
+        /// Account that owns the attachment; `None` means the turn's own.
+        account_id: Option<String>,
+    },
     /// No context — the normal route/retrieval/tool-loop pipeline.
     Rag,
 }
@@ -3312,6 +3384,7 @@ pub(super) fn plan_turn_mode(
     system_message_count: usize,
     ambient_thread_id: Option<&str>,
     ambient_account_id: Option<&str>,
+    ambient_attachment_id: Option<&str>,
     user_question: &str,
 ) -> ChatTurnMode {
     if system_message_count > 0 {
@@ -3324,17 +3397,20 @@ pub(super) fn plan_turn_mode(
     if question_leaves_thread(user_question) {
         return ChatTurnMode::Rag;
     }
-    match ambient_thread_id.map(str::trim) {
-        Some(id) if !id.is_empty() => ChatTurnMode::AmbientThread {
-            thread_id: id.to_string(),
-            // Blank is treated as absent, same as the thread id: an empty
-            // string would become a lookup that matches no account.
-            account_id: ambient_account_id
-                .map(str::trim)
-                .filter(|a| !a.is_empty())
-                .map(str::to_string),
-        },
-        _ => ChatTurnMode::Rag,
+    // Blank is treated as absent everywhere: an empty string would become a
+    // lookup that matches nothing.
+    let present = |id: Option<&str>| id.map(str::trim).filter(|id| !id.is_empty()).map(str::to_string);
+    let account_id = present(ambient_account_id);
+    // An open PDF sits on top of the email it came from, so it wins.
+    if let Some(attachment_id) = present(ambient_attachment_id) {
+        return ChatTurnMode::AmbientDocument {
+            attachment_id,
+            account_id,
+        };
+    }
+    match present(ambient_thread_id) {
+        Some(thread_id) => ChatTurnMode::AmbientThread { thread_id, account_id },
+        None => ChatTurnMode::Rag,
     }
 }
 
@@ -3365,7 +3441,7 @@ pub(super) fn question_leaves_thread(user_question: &str) -> bool {
     let keep = KEEP.get_or_init(|| {
         #[allow(clippy::unwrap_used, clippy::expect_used)]
         let re = regex::Regex::new(
-            r"\b(este|esta|ese|esa|el|la)\s+(correo|email|mail|hilo|mensaje|conversacion)\b\s*(abiert|actual|$|[^\w]|con|en|a\b)|\bthis\s+(email|thread|message|conversation|mail)\b|\besto\b|\bit\b|\b(dice|dicen|pide|piden|says|said|asking|asks)\b|\b(traduc|translat)",
+            r"\b(este|esta|ese|esa|el|la)\s+(correo|email|mail|hilo|mensaje|conversacion)\b\s*(abiert|actual|$|[^\w]|con|en|a\b)|\b(este|ese|el)\s+(documento|pdf|archivo|adjunto)\b|\bthis\s+(email|thread|message|conversation|mail|document|pdf|file|attachment)\b|\besto\b|\bit\b|\b(dice|dicen|pide|piden|says|said|asking|asks)\b|\b(traduc|translat)",
         )
         .expect("static regex");
         re
@@ -4356,6 +4432,10 @@ pub struct TurnContext {
     /// assumed to equal the chat's account: in unified mode the panel runs on
     /// one account while the open thread can belong to any of them.
     pub ambient_account_id: Option<String>,
+    /// PDF attachment (its `email_attachment_meta.id`) the user has open in
+    /// the viewer, offered as ambient context in place of the thread. Owned
+    /// by `ambient_account_id` when set.
+    pub ambient_attachment_id: Option<String>,
     /// What the user has on screen (`view/…`, `settings/…`, `form/<id>`) plus
     /// the values of an open form.
     pub view: Option<crate::models::ChatViewContext>,
@@ -4490,6 +4570,11 @@ async fn run_chat_turn_inner(
         context.ambient_thread_id.clone()
     };
     let ambient_account_id = context.ambient_account_id.clone();
+    let ambient_attachment_id = if context.research {
+        None
+    } else {
+        context.ambient_attachment_id.clone()
+    };
 
     // Validated once: an unrecognised token is dropped here and can never
     // reach a prompt (see `view_context`).
@@ -4525,18 +4610,19 @@ async fn run_chat_turn_inner(
         system_messages.len(),
         ambient_thread_id.as_deref(),
         ambient_account_id.as_deref(),
+        ambient_attachment_id.as_deref(),
         &user_question,
     );
-    if ambient_thread_id.is_some() && turn_mode == ChatTurnMode::Rag {
+    if (ambient_thread_id.is_some() || ambient_attachment_id.is_some()) && turn_mode == ChatTurnMode::Rag {
         emit_log(
             "info",
-            "open email ignored for this turn: the question is about the mailbox, not the thread",
+            "open email or document ignored for this turn: the question is about the mailbox",
         );
     }
     // The open email (ambient thread) rides along as context on an ordinary
     // all-tools turn; only a conversation explicitly seeded with a thread
     // takes the thread-bound path. Its message ids join the link allowlist.
-    let mut ambient_context: Option<String> = None;
+    let mut ambient_context: Option<Ambient> = None;
     // Where it came from, to read it again shorter if the window is short.
     let mut ambient_source: Option<(String, String)> = None;
     let mut ambient_refs: Vec<String> = Vec::new();
@@ -4556,7 +4642,7 @@ async fn run_chat_turn_inner(
             // fall back to normal retrieval so the user still gets an answer.
             match super::conversations::build_thread_context(&db, lookup_account, &thread_id) {
                 Ok((context, _subject)) => {
-                    ambient_context = Some(context);
+                    ambient_context = Some(Ambient::Thread(context));
                     ambient_source = Some((lookup_account.to_string(), thread_id.clone()));
                     ambient_refs = db
                         .get_thread(lookup_account, &thread_id)
@@ -4581,6 +4667,39 @@ async fn run_chat_turn_inner(
                     None
                 }
             }
+        }
+        ChatTurnMode::AmbientDocument {
+            attachment_id,
+            account_id: ambient_account,
+        } => {
+            let lookup_account = ambient_account.as_deref().unwrap_or(&account_id);
+            // Same rule as the thread: a document that cannot be read must
+            // not kill the turn, and the user is told it was not used.
+            match super::open_document::load_open_document(&db, lookup_account, &attachment_id).await {
+                Ok(doc) => {
+                    if doc.text.is_none() {
+                        emit_log(
+                            "warn",
+                            &format!(
+                                "The open PDF has no extractable text (probably a scan): {}",
+                                doc.filename
+                            ),
+                        );
+                    }
+                    ambient_context = Some(Ambient::Document(doc));
+                }
+                Err(e) => {
+                    emit_log(
+                        "error",
+                        "The open PDF couldn't be used as context for this answer — answering from search instead.",
+                    );
+                    emit_log(
+                        "warn",
+                        &format!("open document context unavailable ({e}) — falling back to retrieval"),
+                    );
+                }
+            }
+            None
         }
         ChatTurnMode::Rag => None,
     };
@@ -4656,7 +4775,7 @@ async fn run_chat_turn_inner(
         // model keeps every tool for questions that are not about it.
         super::routing::RoutePlan::Decided(RouteDecision {
             mode: RouteMode::ToolsFirst,
-            reason: "open email as context; all tools available".to_string(),
+            reason: "open email or document as context; all tools available".to_string(),
             matched_keywords: Vec::new(),
             classifier: "ambient".to_string(),
         })
@@ -5152,14 +5271,14 @@ async fn run_chat_turn_inner(
         &user_email,
         &system_template,
         &tools_section,
-        ambient_context.as_deref(),
+        ambient_context.as_ref(),
     );
     decorate(&mut initial_messages);
     let plan = plan_first_prompt(
         &initial_messages,
         &history,
         &sources,
-        ambient_context.as_deref(),
+        ambient_context.as_ref(),
         turn_budget.message_chars(),
     );
     turn_budget.record_plan(&plan);
@@ -5174,10 +5293,23 @@ async fn run_chat_turn_inner(
         );
         persist_stripped_history(&db, &history, &plan);
         // The open thread, read again into what the window leaves for it.
-        let shorter_thread = match (&ambient_source, plan.open_thread_chars) {
-            (Some((account, thread_id)), Some(chars)) if Some(chars) != ambient_context.as_ref().map(String::len) => {
+        let shorter_ambient = match (&ambient_context, &ambient_source, plan.open_thread_chars) {
+            (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => Some(Ambient::Document(
+                fit_open_document(
+                    provider.as_ref(),
+                    doc,
+                    &user_question,
+                    turn_budget.n_ctx(),
+                    chars,
+                    &conversation_id,
+                    &assistant_message_id,
+                    &turn_guard.flag,
+                )
+                .await,
+            )),
+            (Some(Ambient::Thread(thread)), Some((account, thread_id)), Some(chars)) if chars != thread.len() => {
                 match super::conversations::build_thread_context_within(&db, account, thread_id, chars) {
-                    Ok((context, _subject)) => Some(context),
+                    Ok((context, _subject)) => Some(Ambient::Thread(context)),
                     Err(e) => {
                         emit_log(
                             "warn",
@@ -5197,7 +5329,7 @@ async fn run_chat_turn_inner(
             &user_email,
             &system_template,
             &tools_section,
-            shorter_thread.as_deref().or(ambient_context.as_deref()),
+            shorter_ambient.as_ref().or(ambient_context.as_ref()),
             Some(&plan),
         );
         decorate(&mut initial_messages);
@@ -8574,15 +8706,76 @@ mod tests {
     // ── Turn-mode planning (ambient view context) ───────────────────────
 
     #[test]
+    fn turn_mode_uses_the_open_document() {
+        assert_eq!(
+            plan_turn_mode(0, None, Some("acct"), Some("att-1"), "resume este documento"),
+            ChatTurnMode::AmbientDocument {
+                attachment_id: "att-1".to_string(),
+                account_id: Some("acct".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn the_open_document_wins_over_the_thread_it_came_from() {
+        // The PDF tab sits on top of its email: what the user is reading is
+        // the document.
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), Some("acct"), Some("att-1"), "summarise it"),
+            ChatTurnMode::AmbientDocument {
+                attachment_id: "att-1".to_string(),
+                account_id: Some("acct".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn turn_mode_drops_the_open_document_for_a_mailbox_wide_question() {
+        assert_eq!(
+            plan_turn_mode(0, None, Some("acct"), Some("att-1"), "que correos tengo hoy"),
+            ChatTurnMode::Rag
+        );
+        assert_eq!(
+            plan_turn_mode(1, None, Some("acct"), Some("att-1"), "resume este documento"),
+            ChatTurnMode::ConversationThread
+        );
+    }
+
+    #[test]
+    fn blank_attachment_id_falls_back_to_the_thread() {
+        assert_eq!(
+            plan_turn_mode(0, Some("t-42"), None, Some("  "), "resume el correo"),
+            ChatTurnMode::AmbientThread {
+                thread_id: "t-42".to_string(),
+                account_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_question_about_this_document_keeps_it() {
+        for q in [
+            "Which invoices does this document list?",
+            "¿Qué facturas menciona este documento?",
+            "List the dates and amounts in this PDF",
+        ] {
+            assert!(!question_leaves_thread(q), "{q}");
+        }
+    }
+
+    #[test]
     fn turn_mode_is_rag_without_any_context() {
-        assert_eq!(plan_turn_mode(0, None, None, ""), ChatTurnMode::Rag);
+        assert_eq!(plan_turn_mode(0, None, None, None, ""), ChatTurnMode::Rag);
     }
 
     #[test]
     fn turn_mode_is_conversation_bound_when_seeded_with_thread() {
         // "Chat about this thread" seeds a role='system' message at creation;
         // that binding owns the whole conversation.
-        assert_eq!(plan_turn_mode(1, None, None, ""), ChatTurnMode::ConversationThread);
+        assert_eq!(
+            plan_turn_mode(1, None, None, None, ""),
+            ChatTurnMode::ConversationThread
+        );
     }
 
     #[test]
@@ -8590,7 +8783,7 @@ mod tests {
         // Right-hand chat panel: the thread the user is looking at grounds
         // this turn only.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), None, "resume el correo"),
+            plan_turn_mode(0, Some("t-42"), None, None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None
@@ -8690,7 +8883,8 @@ mod tests {
 
     #[test]
     fn prompt_with_open_thread_replaces_the_search_nag() {
-        let with = build_prompt_with_thread(&[], &[], "resume el correo", "en", "", tpl(), "", Some("THREAD CTX"));
+        let thread = Ambient::Thread("THREAD CTX".to_string());
+        let with = build_prompt_with_thread(&[], &[], "resume el correo", "en", "", tpl(), "", Some(&thread));
         let (_, tail) = with.last().unwrap();
         assert!(tail.contains("THREAD CTX"));
         assert!(
@@ -8701,6 +8895,102 @@ mod tests {
 
         let without = build_prompt_with_thread(&[], &[], "resume el correo", "en", "", tpl(), "", None);
         assert!(without.last().unwrap().1.contains("you MUST call search_emails"));
+    }
+
+    fn open_pdf(text: &str) -> Ambient {
+        Ambient::Document(super::super::open_document::OpenDocument {
+            filename: "quote.pdf".to_string(),
+            text: Some(text.to_string()),
+            read_in_parts: None,
+        })
+    }
+
+    #[test]
+    fn an_open_document_rides_in_the_final_user_message_not_the_system_prompt() {
+        let doc = open_pdf("PDF TEXT 2041");
+        let msgs = build_prompt_with_thread(&[], &[], "summarise this document", "en", "", tpl(), "", Some(&doc));
+        assert!(!msgs[0].1.contains("PDF TEXT 2041"), "KV prefix must stay stable");
+        let (_, tail) = msgs.last().unwrap();
+        assert!(tail.contains("OPEN DOCUMENT"));
+        assert!(tail.contains("PDF TEXT 2041"));
+        assert!(!tail.contains("you MUST call search_emails"), "{tail}");
+        assert!(tail.trim_end().ends_with("summarise this document"));
+    }
+
+    #[test]
+    fn a_long_open_document_is_cut_to_fit_the_window() {
+        let doc = open_pdf(&"Clause about payment terms. ".repeat(4_000));
+        let built = build_prompt_with_thread(&[], &[], "summarise this document", "en", "", tpl(), "", Some(&doc));
+        let budget = built[0].1.len() + 6_000;
+        let plan = plan_first_prompt(&built, &[], &[], Some(&doc), budget);
+        let chars = plan.open_thread_chars.unwrap();
+        assert!(chars < doc.content_chars(), "the document must be shortened");
+        let Ambient::Document(d) = &doc else { unreachable!() };
+        let shorter = Ambient::Document(d.shortened(chars));
+        let fitted = build_prompt_fitted(
+            &[],
+            &[],
+            "summarise this document",
+            "en",
+            "",
+            tpl(),
+            "",
+            Some(&shorter),
+            Some(&plan),
+        );
+        let total: usize = fitted.iter().map(|(_, c)| c.len()).sum();
+        assert!(total <= budget, "{total} > {budget}");
+        assert!(fitted.last().unwrap().1.contains("document truncated"));
+    }
+
+    #[tokio::test]
+    async fn a_document_longer_than_its_slot_is_read_whole_in_parts_and_fits() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion("Early exit fee: EUR 9,400.");
+        let Ambient::Document(doc) = open_pdf(&"Clause about payment terms.\n".repeat(4_000)) else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let fitted = fit_open_document(
+            &provider,
+            &doc,
+            "what is the exit fee?",
+            8192,
+            6_000,
+            "c",
+            "m",
+            &cancelled,
+        )
+        .await;
+        let parts = provider.prefix_completion_calls().len();
+        assert!(parts > 1, "the whole text must be read, in several calls");
+        assert_eq!(fitted.read_in_parts, Some(parts));
+        assert!(fitted.text_chars() <= 6_000);
+        assert!(fitted.text.unwrap().contains("Early exit fee: EUR 9,400."));
+    }
+
+    #[tokio::test]
+    async fn a_document_that_fits_its_slot_costs_no_extra_call() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let Ambient::Document(doc) = open_pdf("Total due: 10 EUR") else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        assert_eq!(fitted, doc);
+        assert!(provider.prefix_completion_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_turn_falls_back_to_the_start_of_the_document() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let Ambient::Document(doc) = open_pdf(&"Clause about payment terms.\n".repeat(4_000)) else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        assert_eq!(fitted.read_in_parts, None);
+        assert!(fitted.text.unwrap().contains("document truncated"));
     }
 
     #[test]
@@ -8781,13 +9071,13 @@ mod tests {
     #[test]
     fn turn_mode_drops_the_ambient_thread_for_a_mailbox_wide_question() {
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), Some("acct"), "que correos tengo hoy"),
+            plan_turn_mode(0, Some("t-42"), Some("acct"), None, "que correos tengo hoy"),
             ChatTurnMode::Rag
         );
         // A conversation explicitly seeded with a thread keeps its binding —
         // the user chose "chat about this thread".
         assert_eq!(
-            plan_turn_mode(1, Some("t-42"), Some("acct"), "que correos tengo hoy"),
+            plan_turn_mode(1, Some("t-42"), Some("acct"), None, "que correos tengo hoy"),
             ChatTurnMode::ConversationThread
         );
     }
@@ -8802,7 +9092,7 @@ mod tests {
         // open and is told the model doesn't know which email they mean.
         // The thread's own account must ride along with the thread id.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), Some("acct-owning-t-42"), "resume el correo"),
+            plan_turn_mode(0, Some("t-42"), Some("acct-owning-t-42"), None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: Some("acct-owning-t-42".to_string()),
@@ -8816,7 +9106,7 @@ mod tests {
         // turn's own account is correct there, so `None` must stay valid
         // rather than disabling the grounding.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), None, "resume el correo"),
+            plan_turn_mode(0, Some("t-42"), None, None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None,
@@ -8829,7 +9119,7 @@ mod tests {
         // Same defensive treatment the thread id already gets: an empty string
         // must not become an account lookup that matches nothing.
         assert_eq!(
-            plan_turn_mode(0, Some("t-42"), Some("   "), "resume el correo"),
+            plan_turn_mode(0, Some("t-42"), Some("   "), None, "resume el correo"),
             ChatTurnMode::AmbientThread {
                 thread_id: "t-42".to_string(),
                 account_id: None,
@@ -8842,7 +9132,7 @@ mod tests {
         // A conversation explicitly created about thread A must not silently
         // re-point at thread B just because the user scrolled to it.
         assert_eq!(
-            plan_turn_mode(1, Some("t-99"), None, "resume el correo"),
+            plan_turn_mode(1, Some("t-99"), None, None, "resume el correo"),
             ChatTurnMode::ConversationThread
         );
     }
@@ -8852,9 +9142,12 @@ mod tests {
         // Defensive: an empty string from the frontend must not be treated as
         // a real thread and send the turn down the grounded path with no
         // context at all.
-        assert_eq!(plan_turn_mode(0, Some(""), None, "resume el correo"), ChatTurnMode::Rag);
         assert_eq!(
-            plan_turn_mode(0, Some("   "), None, "resume el correo"),
+            plan_turn_mode(0, Some(""), None, None, "resume el correo"),
+            ChatTurnMode::Rag
+        );
+        assert_eq!(
+            plan_turn_mode(0, Some("   "), None, None, "resume el correo"),
             ChatTurnMode::Rag
         );
     }

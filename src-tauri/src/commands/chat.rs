@@ -219,6 +219,10 @@ pub async fn send_chat_message(
     // reading a thread from any of them. Looking the thread up under the chat's
     // account found nothing and silently dropped the context.
     context_account_id: Option<String>,
+    // PDF attachment (attachment meta id) open in the viewer, owned by
+    // `context_account_id`. The turn reads its text as context in place of
+    // the thread it came from.
+    context_attachment_id: Option<String>,
     // What the user has on screen this turn: `view/<name>`, `settings/<tab>`,
     // or `form/<form id>` plus that form's current values. Lets "esto"/"aquí"
     // resolve, and lets "añade una columna de IVA" edit the form in front of
@@ -314,6 +318,7 @@ pub async fn send_chat_message(
     let categories_for_task = categories.clone();
     let ambient_thread_for_task = context_thread_id.clone();
     let ambient_account_for_task = context_account_id.clone();
+    let ambient_attachment_for_task = context_attachment_id.clone();
     let view_for_task = context_view.clone();
     let correction_for_task = correction.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
@@ -345,6 +350,7 @@ pub async fn send_chat_message(
                 chat::TurnContext {
                     ambient_thread_id: ambient_thread_for_task,
                     ambient_account_id: ambient_account_for_task,
+                    ambient_attachment_id: ambient_attachment_for_task,
                     view: view_for_task,
                     correction: correction_for_task,
                     research: research.unwrap_or(false),

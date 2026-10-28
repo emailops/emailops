@@ -10,6 +10,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 vi.mock('./EmailView', () => ({ EmailView: () => <div data-testid="thread-view" /> }));
 vi.mock('./ComposeTabView', () => ({ ComposeTabView: () => null }));
 vi.mock('./EmailTabBar', () => ({ EmailTabBar: () => null }));
+// pdf.js needs a canvas and ResizeObserver, which jsdom lacks; these tests are
+// about the tab layers, not the rendering.
+vi.mock('@/components/Attachments/PdfViewer', () => ({
+  PdfViewer: ({ title }: { title: string }) => <div data-testid="pdf-viewer" title={title} />,
+}));
 
 import { initI18n } from '@/i18n';
 import type { AttachmentViewTab, EmailTab, EmailThreadTab } from '@/stores/emailStore';
@@ -18,6 +23,8 @@ import { ReadingPane } from './ReadingPane';
 const pdfTab: AttachmentViewTab = {
   type: 'attachment',
   id: 'att-1',
+  accountId: 'acct-1',
+  emailId: 'email-1',
   filename: 'report.pdf',
   mimeType: 'application/pdf',
   dataUrl: 'data:application/pdf;base64,JVBERi0=',
@@ -72,8 +79,8 @@ function render(activeTab: EmailTab | null) {
   );
 }
 
-function pdfFrame(): HTMLIFrameElement | null {
-  return container.querySelector('iframe[title="report.pdf"]');
+function pdfFrame(): HTMLElement | null {
+  return container.querySelector('[data-testid="pdf-viewer"][title="report.pdf"]');
 }
 
 describe('ReadingPane attachment tabs', () => {

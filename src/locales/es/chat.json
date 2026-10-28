@@ -75,6 +75,20 @@
         "label": "Redactar una respuesta",
         "prompt": "Redacta una respuesta a este hilo que "
       }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Resumir este documento",
+        "prompt": "Resume este documento: qué es, de quién viene y sus fechas e importes clave."
+      },
+      "keyPoints": {
+        "label": "Puntos clave, fechas e importes",
+        "prompt": "Enumera los puntos clave, fechas e importes de este documento."
+      },
+      "ask": {
+        "label": "Preguntar sobre este documento",
+        "prompt": "Sobre este documento: "
+      }
     }
   },
   "message": {
@@ -107,6 +121,7 @@
     "generatingDraft": "Generando borrador…",
     "runningTools": "Procesando consulta…",
     "researching": "Investigando…",
+    "readingDocument": "Leyendo el documento completo…",
     "research": {
       "gathering": "Research: reuniendo correos…",
       "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",
@@ -283,7 +298,9 @@
         "label": "Este correo está en {{email}}",
         "hint": "El chat responde desde otra cuenta, así que no puede leer este correo. Cambia de cuenta para preguntar por él.",
         "action": "Cambiar"
-      }
+      },
+      "hintDocument": "Las respuestas usan el texto de este PDF. Quítalo para preguntar por tu bandeja.",
+      "restoreDocument": "Usar el PDF abierto como contexto"
     },
     "newChat": "Chat nuevo"
   },

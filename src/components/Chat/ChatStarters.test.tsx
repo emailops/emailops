@@ -47,12 +47,12 @@ afterEach(() => {
   container.remove();
 });
 
-async function render(threadContext = false) {
+async function render(openContext?: 'thread' | 'document') {
   await act(async () => {
     root.render(
       <ChatStarters
         accountId="acct"
-        threadContext={threadContext}
+        openContext={openContext}
         disabled={false}
         onSend={onSend}
         onPrefill={onPrefill}
@@ -152,7 +152,7 @@ describe('ChatStarters', () => {
 
   it('offers requests about the open thread instead of the mailbox ones', async () => {
     vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
-    await render(true);
+    await render('thread');
     expect(labels()).toEqual([
       'chat:starters.openThread.summary.label',
       'chat:starters.openThread.asks.label',
@@ -162,10 +162,29 @@ describe('ChatStarters', () => {
 
   it('puts a reply stem for the open thread in the input', async () => {
     vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
-    await render(true);
+    await render('thread');
     await act(async () => rows()[2].click());
     expect(onPrefill).toHaveBeenCalledWith('chat:starters.openThread.reply.prompt');
     await act(async () => rows()[0].click());
     expect(onSend).toHaveBeenCalledWith('chat:starters.openThread.summary.prompt');
+  });
+
+  it('offers requests about the open PDF while one is the context', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
+    await render('document');
+    expect(labels()).toEqual([
+      'chat:starters.openDocument.summary.label',
+      'chat:starters.openDocument.keyPoints.label',
+      'chat:starters.openDocument.ask.label',
+    ]);
+  });
+
+  it('sends the PDF summary and puts the question stem in the input', async () => {
+    vi.mocked(getChatStarters).mockResolvedValue(fromMailbox);
+    await render('document');
+    await act(async () => rows()[0].click());
+    expect(onSend).toHaveBeenCalledWith('chat:starters.openDocument.summary.prompt');
+    await act(async () => rows()[2].click());
+    expect(onPrefill).toHaveBeenCalledWith('chat:starters.openDocument.ask.prompt');
   });
 });

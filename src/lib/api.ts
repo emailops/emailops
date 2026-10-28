@@ -1765,6 +1765,12 @@ export async function sendChatMessage(
   research = false,
   /** The estimate the user confirmed: the run reads exactly what it counted. */
   researchEstimateId?: string | null,
+  /**
+   * PDF attachment the user has open in the viewer, owned by
+   * `contextAccountId`. The backend grounds the turn in its text in place of
+   * the thread, for this turn only.
+   */
+  contextAttachmentId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1776,6 +1782,7 @@ export async function sendChatMessage(
     correction: correction ?? null,
     research,
     researchEstimateId: researchEstimateId ?? null,
+    contextAttachmentId: contextAttachmentId ?? null,
   });
 }
 

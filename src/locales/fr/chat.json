@@ -75,6 +75,20 @@
         "label": "Rédiger une réponse",
         "prompt": "Rédige une réponse à ce fil qui "
       }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Résumer ce document",
+        "prompt": "Résume ce document : de quoi il s'agit, qui l'envoie, et ses dates et montants clés."
+      },
+      "keyPoints": {
+        "label": "Points clés, dates et montants",
+        "prompt": "Liste les points clés, les dates et les montants de ce document."
+      },
+      "ask": {
+        "label": "Poser une question sur ce document",
+        "prompt": "À propos de ce document : "
+      }
     }
   },
   "message": {
@@ -107,6 +121,7 @@
     "generatingDraft": "Génération du brouillon…",
     "runningTools": "Traitement de la requête…",
     "researching": "Recherche en cours…",
+    "readingDocument": "Lecture du document complet…",
     "research": {
       "gathering": "Recherche : collecte des e-mails…",
       "reading": "Recherche : lecture des e-mails {{read}}/{{total}} (lot {{batch}}/{{batches}})…",
@@ -283,7 +298,9 @@
         "label": "Cet e-mail est dans {{email}}",
         "hint": "La discussion répond depuis un autre compte et ne peut donc pas lire cet e-mail. Changez de compte pour poser des questions dessus.",
         "action": "Changer"
-      }
+      },
+      "hintDocument": "Les réponses s'appuient sur le texte de ce PDF. Retirez-le pour interroger votre boîte.",
+      "restoreDocument": "Utiliser le PDF ouvert comme contexte"
     },
     "newChat": "Nouveau chat"
   },

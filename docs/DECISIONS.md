@@ -3963,3 +3963,40 @@ loaded.
 **Rejected:** Scaling the native iframe with CSS `transform` — no dependency, but the
 plugin output blurs when stretched and scrolling breaks. A URL `#zoom=` fragment — only
 Chromium's viewer reads it.
+
+## 2026-10-28 — The chat reads an open PDF through local text extraction, without OCR
+
+**Decision:** While a PDF attachment is open in the viewer, the chat panel offers it as
+the turn's context in place of the thread it came from. The backend extracts its text
+locally with the `pdf-extract` crate and puts it in the turn's final user message as an
+untrusted "OPEN DOCUMENT" block, cut by the context budget like an open thread. A PDF
+with no text layer (a scan) is offered all the same, and the model is told it cannot
+read it, so it says so instead of guessing.
+**Context:** The chat could see the email but not the PDF the user was reading. The
+text has to stay out of the system prompt so the KV-prefix cache keeps working.
+Extraction is CPU work on a file someone else sent, so it runs off the async runtime,
+and a parser panic is treated as an unreadable file.
+**Rejected:** `pdfium-render` — better extraction, but the native pdfium library would
+have to ship on macOS, Windows and Linux. Raw `lopdf` — `pdf-extract` already wraps it
+for text. OCR for scans — another model and pipeline for an edge case. Sending the
+bytes the viewer already loaded from the frontend — the CLI and evals could not drive
+the same path.
+
+## 2026-10-28 — A PDF too long for the prompt is read in parts, not cut to its start
+
+**Decision:** When the open PDF's text is longer than the slot the context budget leaves
+it, the chat reads the whole document before answering. It splits the text into parts
+sized to the window (at most 12k characters), runs one completion per part on the
+auxiliary prefix slot, and keeps from each part what bears on the question. The turn
+then answers from those part notes, which share the slot. The bubble shows "Reading the
+whole document…". It falls back to the start of the text only when the turn is
+cancelled or every part fails.
+**Context:** Cutting the text to fit kept the first pages, so a summary or a question
+about a late clause missed most of a contract. Reading per part costs one call each
+(three for a 27k-character contract at 8k: about 10 s on the demo). Doing the calls
+on the auxiliary slot, as research mode does, keeps the chat's KV anchor intact.
+**Rejected:** Indexing the parts with embeddings and sending only the closest ones —
+it misses a summary, which needs every part. Asking the user to confirm first, as
+research mode does — one PDF has a known, bounded cost. Condensing the notes in rounds
+when they outgrow the slot — each note is already capped to its share. Revisit it if
+documents of hundreds of pages turn up.

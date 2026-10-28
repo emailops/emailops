@@ -450,6 +450,13 @@ describe('chatStore research mode', () => {
     expect(api.estimateResearch).not.toHaveBeenCalled();
   });
 
+  it('sends the open PDF with the turn, under the account that owns it', async () => {
+    await useChatStore.getState().sendMessage('summarise it', 'thread-1', 'acct-pdf', null, null, 'att-1');
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[4]).toBe('acct-pdf');
+    expect(call[9]).toBe('att-1');
+  });
+
   it('estimates first and waits for confirmation instead of sending', async () => {
     useChatStore.getState().setResearchMode(true);
     await useChatStore.getState().sendMessage('themes this quarter?');

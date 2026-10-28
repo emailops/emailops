@@ -9,6 +9,7 @@ import {
   clampChatPanelWidth,
   parseChatPanelWidth,
 } from '@/lib/chatPanelLayout';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface RightDockProps {
   children: ReactNode;
@@ -31,6 +32,9 @@ export function RightDock({ children }: RightDockProps) {
     serialize: (v) => String(v),
   });
   const [dragging, setDragging] = useState(false);
+  // The drag-capture layer covers the whole window: no conversation shortcut
+  // may act behind it.
+  useOverlay(dragging);
 
   // Publish the dock's width so a non-blocking dialog can keep clear of it
   // (see `Modal`'s `nonBlocking`). A CSS variable rather than a prop: the

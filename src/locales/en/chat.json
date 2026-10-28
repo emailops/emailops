@@ -75,6 +75,20 @@
         "label": "Draft a reply",
         "prompt": "Draft a reply to this thread that "
       }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Summarise this document",
+        "prompt": "Summarise this document: what it is, who it is from, and its key dates and amounts."
+      },
+      "keyPoints": {
+        "label": "Key points, dates and amounts",
+        "prompt": "List the key points, dates and amounts in this document."
+      },
+      "ask": {
+        "label": "Ask about this document",
+        "prompt": "About this document: "
+      }
     }
   },
   "message": {
@@ -107,6 +121,7 @@
     "generatingDraft": "Generating draft…",
     "runningTools": "Processing prompt…",
     "researching": "Researching…",
+    "readingDocument": "Reading the whole document…",
     "research": {
       "gathering": "Research: gathering emails…",
       "reading": "Research: reading emails {{read}}/{{total}} (batch {{batch}}/{{batches}})…",
@@ -283,7 +298,9 @@
         "label": "This email is in {{email}}",
         "hint": "Chat is answering from a different account, so it can't read this email. Switch to ask about it.",
         "action": "Switch"
-      }
+      },
+      "hintDocument": "Answers use the text of this PDF. Remove it to ask about your inbox instead.",
+      "restoreDocument": "Use the open PDF as context"
     },
     "newChat": "New chat"
   },

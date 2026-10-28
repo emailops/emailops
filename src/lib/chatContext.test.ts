@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { chatTurnContext, deriveChatContext, isConversationThreadBound, planChatContextOffer } from '@/lib/chatContext';
-import type { ChatMessage, Email } from '@/types';
+import {
+  chatContextKey,
+  chatTurnContext,
+  deriveChatContext,
+  isConversationThreadBound,
+  planChatContextOffer,
+} from '@/lib/chatContext';
+import type { Attachment, ChatMessage, Email } from '@/types';
 
 // The planner reads only threadId / accountId / subject off an Email. Building
 // a full row here would obscure that, so the fixture states the dependency and
@@ -13,6 +19,24 @@ function email(overrides: Partial<Email> = {}): Email {
     subject: 'Quarterly planning',
     ...overrides,
   } as Email;
+}
+
+// A file an attachment rule saved, as the Attachments view lists it. The
+// planner reads only id / accountId / filename / mimeType.
+function savedAttachment(overrides: { mimeType: string; filename: string }): Attachment {
+  return { id: 'saved-1', accountId: 'acct-saved', ...overrides } as Attachment;
+}
+
+function attachmentTab(overrides: { mimeType: string; filename: string }) {
+  return {
+    type: 'attachment' as const,
+    id: 'att-1',
+    accountId: 'acct-pdf',
+    emailId: 'e9',
+    dataUrl: '',
+    isLoading: false,
+    ...overrides,
+  };
 }
 
 describe('deriveChatContext', () => {
@@ -67,6 +91,56 @@ describe('deriveChatContext', () => {
       accountId: 'acct-1',
       subject: 'Budget review',
     });
+  });
+
+  it('offers an open PDF tab as the context, named by its file', () => {
+    const selected = { ...email(), threadId: 'thread-7', subject: 'Quote attached' };
+    const pdf = attachmentTab({ mimeType: 'application/pdf', filename: 'quote-2041.pdf' });
+    expect(deriveChatContext({ viewMode: 'inbox', activeTab: pdf, selectedEmail: selected })).toEqual({
+      threadId: 'thread-7',
+      accountId: 'acct-pdf',
+      subject: 'quote-2041.pdf',
+      attachmentId: 'att-1',
+    });
+  });
+
+  it('recognises a PDF sent with a generic mime type by its extension', () => {
+    const pdf = attachmentTab({ mimeType: 'application/octet-stream', filename: 'Contract.PDF' });
+    expect(deriveChatContext({ viewMode: 'inbox', activeTab: pdf, selectedEmail: null })?.attachmentId).toBe('att-1');
+  });
+
+  it('lets a non-PDF attachment tab fall through to the selected email', () => {
+    const selected = { ...email(), threadId: 'thread-7', subject: 'Photos' };
+    const image = attachmentTab({ mimeType: 'text/plain', filename: 'notes.txt' });
+    expect(deriveChatContext({ viewMode: 'inbox', activeTab: image, selectedEmail: selected })).toEqual({
+      threadId: 'thread-7',
+      accountId: 'acct-1',
+      subject: 'Photos',
+    });
+  });
+
+  it('offers the PDF selected in the Attachments view', () => {
+    const pdf = savedAttachment({ mimeType: 'application/pdf', filename: 'statement.pdf' });
+    expect(
+      deriveChatContext({ viewMode: 'attachments', activeTab: null, selectedEmail: null, selectedAttachment: pdf }),
+    ).toEqual({ threadId: '', accountId: 'acct-saved', subject: 'statement.pdf', attachmentId: 'saved-1' });
+  });
+
+  it('offers nothing in the Attachments view for a non-PDF or no selection', () => {
+    const image = savedAttachment({ mimeType: 'image/png', filename: 'scan.png' });
+    for (const selectedAttachment of [image, null]) {
+      expect(
+        deriveChatContext({ viewMode: 'attachments', activeTab: null, selectedEmail: email(), selectedAttachment }),
+      ).toBeNull();
+    }
+  });
+
+  it('ignores the Attachments selection in a mailbox view', () => {
+    // The selection survives a switch back to the inbox; it is not on screen there.
+    const pdf = savedAttachment({ mimeType: 'application/pdf', filename: 'statement.pdf' });
+    expect(
+      deriveChatContext({ viewMode: 'inbox', activeTab: null, selectedEmail: null, selectedAttachment: pdf }),
+    ).toBeNull();
   });
 
   it('returns null outside mailbox-backed views', () => {
@@ -125,6 +199,11 @@ describe('chatTurnContext', () => {
     });
   });
 
+  it('sends the open PDF along with its account', () => {
+    const pdf = { threadId: 'thread-7', accountId: 'acct-a', subject: 'quote.pdf', attachmentId: 'att-1' };
+    expect(chatTurnContext(pdf, true)).toEqual({ threadId: 'thread-7', accountId: 'acct-a', attachmentId: 'att-1' });
+  });
+
   it('sends nothing when the chip was dismissed', () => {
     // A dismissed chip must behave exactly like having nothing open.
     expect(chatTurnContext(context, false)).toBeNull();
@@ -161,5 +240,13 @@ describe('planChatContextOffer', () => {
   it('offers nothing when there is no open thread or no chat account', () => {
     expect(planChatContextOffer(null, 'acct-a', false)).toEqual({ kind: 'none' });
     expect(planChatContextOffer(context, null, false)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('chatContextKey', () => {
+  it('tells the open PDF apart from the thread it came from', () => {
+    const thread = { threadId: 'thread-7', accountId: 'acct-a', subject: 'Quote' };
+    const pdf = { ...thread, subject: 'quote.pdf', attachmentId: 'att-1' };
+    expect(chatContextKey(pdf)).not.toBe(chatContextKey(thread));
   });
 });

@@ -34,6 +34,8 @@ afterEach(() => {
 const tab = (mimeType: string): AttachmentViewTab => ({
   type: 'attachment',
   id: 'att-1',
+  accountId: 'acct-1',
+  emailId: 'e1',
   filename: 'file',
   mimeType,
   dataUrl: `data:${mimeType};base64,AAAA`,
