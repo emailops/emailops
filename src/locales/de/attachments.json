@@ -14,7 +14,10 @@
     "openExternally": "Extern öffnen",
     "openInDefaultApp": "In Standard-App öffnen",
     "previewLoadFailed": "Vorschau konnte nicht geladen werden: {{error}}",
-    "download": "Herunterladen"
+    "download": "Herunterladen",
+    "zoomOut": "Verkleinern",
+    "zoomIn": "Vergrößern",
+    "fitWidth": "An Breite anpassen"
   },
   "toolbar": {
     "title": "Anhänge",
