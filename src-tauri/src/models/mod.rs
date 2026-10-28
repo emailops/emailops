@@ -1566,6 +1566,8 @@ pub enum ChatPhase {
     /// Research mode: gathering candidates and reading them in batches. The
     /// `chat-research-progress` event carries the batch counts.
     Researching,
+    /// Reading an open PDF too long for one prompt, part by part.
+    ReadingDocument,
     /// Streaming the final assistant answer.
     Generating,
 }

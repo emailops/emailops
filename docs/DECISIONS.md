@@ -3981,3 +3981,22 @@ have to ship on macOS, Windows and Linux. Raw `lopdf` — `pdf-extract` already 
 for text. OCR for scans — another model and pipeline for an edge case. Sending the
 bytes the viewer already loaded from the frontend — the CLI and evals could not drive
 the same path.
+
+## 2026-10-28 — A PDF too long for the prompt is read in parts, not cut to its start
+
+**Decision:** When the open PDF's text is longer than the slot the context budget leaves
+it, the chat reads the whole document before answering. It splits the text into parts
+sized to the window (at most 12k characters), runs one completion per part on the
+auxiliary prefix slot, and keeps from each part what bears on the question. The turn
+then answers from those part notes, which share the slot. The bubble shows "Reading the
+whole document…". It falls back to the start of the text only when the turn is
+cancelled or every part fails.
+**Context:** Cutting the text to fit kept the first pages, so a summary or a question
+about a late clause missed most of a contract. Reading per part costs one call each
+(three for a 27k-character contract at 8k: about 10 s on the demo). Doing the calls
+on the auxiliary slot, as research mode does, keeps the chat's KV anchor intact.
+**Rejected:** Indexing the parts with embeddings and sending only the closest ones —
+it misses a summary, which needs every part. Asking the user to confirm first, as
+research mode does — one PDF has a known, bounded cost. Condensing the notes in rounds
+when they outgrow the slot — each note is already capped to its share. Revisit it if
+documents of hundreds of pages turn up.

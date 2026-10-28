@@ -360,6 +360,43 @@ fn source_header(src: &ScoredEmail) -> String {
 /// it and the relevant-region markers.
 const SOURCE_FRAMING_CHARS: usize = 100;
 
+/// The open document cut to `slot_chars`: read in full, part by part, when it
+/// is longer than that (the answer then comes from notes on every part);
+/// only its start when that reading yields nothing (cancelled, every part
+/// failed).
+#[allow(clippy::too_many_arguments)]
+async fn fit_open_document(
+    provider: &dyn AIProvider,
+    doc: &super::open_document::OpenDocument,
+    question: &str,
+    n_ctx: u32,
+    slot_chars: usize,
+    conversation_id: &str,
+    assistant_message_id: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> super::open_document::OpenDocument {
+    use super::open_document::{plan_document_reading, read_document_in_parts};
+    let reading = match plan_document_reading(n_ctx, slot_chars, doc.text_chars()) {
+        Some(reading) if doc.read_in_parts.is_none() => reading,
+        _ => return doc.shortened(slot_chars),
+    };
+    emit_phase(conversation_id, assistant_message_id, ChatPhase::ReadingDocument);
+    let on_part = |done: usize, total: usize| {
+        emit_log("info", &format!("open document: read part {done} of {total}"));
+    };
+    let is_cancelled = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
+    match read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await {
+        Some(notes) => notes.shortened(slot_chars),
+        None => {
+            emit_log(
+                "warn",
+                "open document: reading it in parts gave nothing — using only its start",
+            );
+            doc.shortened(slot_chars)
+        }
+    }
+}
+
 /// Plan how a turn's first prompt is cut to `budget_chars`. `messages` is the
 /// prompt as it would be sent uncut (system first, the question's message
 /// last, every per-turn block already in it); the rest is what it was built
@@ -5257,9 +5294,19 @@ async fn run_chat_turn_inner(
         persist_stripped_history(&db, &history, &plan);
         // The open thread, read again into what the window leaves for it.
         let shorter_ambient = match (&ambient_context, &ambient_source, plan.open_thread_chars) {
-            (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => {
-                Some(Ambient::Document(doc.shortened(chars)))
-            }
+            (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => Some(Ambient::Document(
+                fit_open_document(
+                    provider.as_ref(),
+                    doc,
+                    &user_question,
+                    turn_budget.n_ctx(),
+                    chars,
+                    &conversation_id,
+                    &assistant_message_id,
+                    &turn_guard.flag,
+                )
+                .await,
+            )),
             (Some(Ambient::Thread(thread)), Some((account, thread_id)), Some(chars)) if chars != thread.len() => {
                 match super::conversations::build_thread_context_within(&db, account, thread_id, chars) {
                     Ok((context, _subject)) => Some(Ambient::Thread(context)),
@@ -8854,6 +8901,7 @@ mod tests {
         Ambient::Document(super::super::open_document::OpenDocument {
             filename: "quote.pdf".to_string(),
             text: Some(text.to_string()),
+            read_in_parts: None,
         })
     }
 
@@ -8893,6 +8941,56 @@ mod tests {
         let total: usize = fitted.iter().map(|(_, c)| c.len()).sum();
         assert!(total <= budget, "{total} > {budget}");
         assert!(fitted.last().unwrap().1.contains("document truncated"));
+    }
+
+    #[tokio::test]
+    async fn a_document_longer_than_its_slot_is_read_whole_in_parts_and_fits() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_completion("Early exit fee: EUR 9,400.");
+        let Ambient::Document(doc) = open_pdf(&"Clause about payment terms.\n".repeat(4_000)) else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let fitted = fit_open_document(
+            &provider,
+            &doc,
+            "what is the exit fee?",
+            8192,
+            6_000,
+            "c",
+            "m",
+            &cancelled,
+        )
+        .await;
+        let parts = provider.prefix_completion_calls().len();
+        assert!(parts > 1, "the whole text must be read, in several calls");
+        assert_eq!(fitted.read_in_parts, Some(parts));
+        assert!(fitted.text_chars() <= 6_000);
+        assert!(fitted.text.unwrap().contains("Early exit fee: EUR 9,400."));
+    }
+
+    #[tokio::test]
+    async fn a_document_that_fits_its_slot_costs_no_extra_call() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let Ambient::Document(doc) = open_pdf("Total due: 10 EUR") else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        assert_eq!(fitted, doc);
+        assert!(provider.prefix_completion_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_turn_falls_back_to_the_start_of_the_document() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let Ambient::Document(doc) = open_pdf(&"Clause about payment terms.\n".repeat(4_000)) else {
+            unreachable!()
+        };
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        assert_eq!(fitted.read_in_parts, None);
+        assert!(fitted.text.unwrap().contains("document truncated"));
     }
 
     #[test]

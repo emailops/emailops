@@ -121,6 +121,7 @@
     "generatingDraft": "Entwurf generieren…",
     "runningTools": "Anfrage verarbeiten…",
     "researching": "Recherche läuft…",
+    "readingDocument": "Das ganze Dokument wird gelesen…",
     "research": {
       "gathering": "Recherche: E-Mails werden gesammelt…",
       "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",

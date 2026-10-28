@@ -696,6 +696,7 @@ export type ChatPhase =
   | 'generatingDraft'
   | 'runningTools'
   | 'researching'
+  | 'readingDocument'
   | 'generating';
 
 /** Progress of a research-mode turn, fired on `chat-research-progress`.

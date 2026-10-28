@@ -121,6 +121,7 @@
     "generatingDraft": "Generando borrador…",
     "runningTools": "Procesando consulta…",
     "researching": "Investigando…",
+    "readingDocument": "Leyendo el documento completo…",
     "research": {
       "gathering": "Research: reuniendo correos…",
       "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",

@@ -274,13 +274,26 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         conn, demo_dir = self._seeded()
         rows = conn.execute(
             "SELECT filename, mime_type, provider_attachment_id, file_path, inline_data "
-            "FROM email_attachment_meta WHERE mime_type NOT LIKE 'image/%' ORDER BY filename").fetchall()
+            "FROM email_attachment_meta WHERE mime_type NOT LIKE 'image/%' AND mime_type != 'application/pdf' "
+            "ORDER BY filename").fetchall()
         shortcut, page = rows
         self.assertEqual(shortcut[:3], ("larkspur-client-portal.webloc", "application/octet-stream", ""))
         self.assertFalse(pathlib.PurePosixPath(shortcut[3]).is_absolute(), "stored paths are relative to the data dir")
         self.assertIn("https://example.com/", (demo_dir / shortcut[3]).read_text(encoding="utf-8"))
         self.assertEqual(page[:4], ("larkspur-renewal-terms.html", "text/html", "INLINE::larkspur-renewal-terms.html", None))
         self.assertIn("renewal terms", base64.b64decode(page[4]).decode("utf-8"))
+
+    def test_a_long_contract_pdf_is_stored_on_disk_with_its_key_clause_near_the_end(self):
+        # The chat must read it in parts: a cut-to-fit read keeps only its start.
+        conn, demo_dir = self._seeded()
+        (path,) = conn.execute(
+            "SELECT file_path FROM email_attachment_meta WHERE filename = ?",
+            ("larkspur-master-services-agreement.pdf",)).fetchone()
+        pdf = (demo_dir / path).read_bytes()
+        self.assertTrue(pdf.startswith(b"%PDF-1.4"))
+        self.assertGreaterEqual(pdf.count(b"/Type /Page "), 8)
+        fee = pdf.index(b"early termination fee of EUR 1,750")
+        self.assertGreater(fee, len(pdf) * 3 // 4)
 
     def test_one_image_attachment_opens_in_the_lightbox(self):
         # The sweep opens it to prove no conversation shortcut acts behind the

@@ -121,6 +121,7 @@
     "generatingDraft": "Generating draft…",
     "runningTools": "Processing prompt…",
     "researching": "Researching…",
+    "readingDocument": "Reading the whole document…",
     "research": {
       "gathering": "Research: gathering emails…",
       "reading": "Research: reading emails {{read}}/{{total}} (batch {{batch}}/{{batches}})…",

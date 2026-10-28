@@ -39,3 +39,26 @@
   metrics:
     - answer_relevancy
     - faithfulness
+
+- id: demo_open_long_pdf_late_fact_8k
+  # A contract longer than its slot in an 8k prompt (the demo's synthetic
+  # larkspur-master-services-agreement.pdf, ~27k characters). The fee sits in
+  # clause 37 of 40, past what a cut-to-fit read keeps, so only reading the
+  # whole document in parts finds it.
+  question: "What is the early termination fee in this agreement, and how long is the term?"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: full
+  n_ctx: 8192
+  ambient_attachment_filename: "larkspur-master-services-agreement.pdf"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["1,750", "1.750", "1750"]
+  expected_answer_not_contains:
+    - "does not mention"
+    - "doesn't mention"
+    - "not mentioned"
+  expected_output: "The early termination fee is EUR 1,750, payable within 30 days of the termination date if Larkspur Freight ends the agreement early other than for the provider's material breach. The term is 24 months from 1 March 2026."
+  metrics:
+    - answer_relevancy
+    - faithfulness

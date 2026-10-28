@@ -121,6 +121,7 @@
     "generatingDraft": "Génération du brouillon…",
     "runningTools": "Traitement de la requête…",
     "researching": "Recherche en cours…",
+    "readingDocument": "Lecture du document complet…",
     "research": {
       "gathering": "Recherche : collecte des e-mails…",
       "reading": "Recherche : lecture des e-mails {{read}}/{{total}} (lot {{batch}}/{{batches}})…",
