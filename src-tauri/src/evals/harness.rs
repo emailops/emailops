@@ -306,6 +306,14 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         )?,
     )?;
 
+    let ambient_attachment_id = match case.ambient_attachment_filename.as_deref() {
+        Some(filename) => Some(
+            db.find_attachment_meta_id(ambient_owner.as_deref().unwrap_or(account_id), filename)?
+                .ok_or_else(|| EvalError::Config(format!("case {}: no attachment named {filename}", case.id)))?,
+        ),
+        None => None,
+    };
+
     let conv: ChatConversation = match bound_thread.as_deref() {
         Some(thread_id) => crate::services::chat::create_conversation_with_thread(&db, account_id, thread_id)?,
         None => db.create_chat_conversation(account_id, "New chat")?,
@@ -353,6 +361,7 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
             chat::TurnContext {
                 ambient_thread_id: ambient_thread_id.clone(),
                 ambient_account_id: ambient_owner.clone(),
+                ambient_attachment_id: ambient_attachment_id.clone(),
                 research: case.research,
                 ..Default::default()
             },

@@ -384,7 +384,12 @@ export interface EmailThreadTab {
 
 export interface AttachmentViewTab {
   type: 'attachment';
+  /** The attachment meta id. */
   id: string;
+  /** Account and email the attachment belongs to — the chat reads an open
+   *  PDF through them. */
+  accountId: string;
+  emailId: string;
   filename: string;
   mimeType: string;
   dataUrl: string;
@@ -718,6 +723,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     const newTab: AttachmentViewTab = {
       type: 'attachment',
       id: meta.id,
+      accountId: meta.accountId,
+      emailId: meta.emailId,
       filename: meta.filename,
       mimeType,
       dataUrl: '',

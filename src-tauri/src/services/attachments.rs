@@ -525,6 +525,35 @@ pub fn plan_retroactive_apply(
 
 // --- Attachment processing during sync ---
 
+/// The bytes of a recorded attachment, cheapest source first: the file it was
+/// downloaded to (inside the data dir, next to the database), the copy stored
+/// inline with its row (IMAP, small attachments), and last the provider, as
+/// the attachment viewer does.
+pub async fn fetch_meta_bytes(db: &Arc<Database>, meta: &crate::models::EmailAttachmentMeta) -> Result<Vec<u8>> {
+    if let (Some(file_path), Some(data_dir)) = (meta.file_path.as_deref(), db.db_path().parent()) {
+        // A downloaded file the user has since deleted is not an error: the
+        // other sources still have it.
+        match safe_attachment_path(data_dir, file_path) {
+            Ok(path) => {
+                return std::fs::read(&path)
+                    .map_err(|e| AppError::IoError(format!("Failed to read attachment {}: {e}", path.display())))
+            }
+            Err(AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if let Some(inline) = db.get_attachment_inline_data(&meta.email_id, &meta.filename)? {
+        return decode_inline_base64(&inline);
+    }
+    let account = db
+        .get_account(&meta.account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", meta.account_id)))?;
+    let provider = build_provider(&account, None).await?;
+    provider
+        .fetch_attachment_bytes(&meta.email_id, &meta.provider_attachment_id)
+        .await
+}
+
 /// Re-fetch a single message from its provider and re-extract its attachment
 /// metadata into `email_attachment_meta`. Repairs emails whose attachments were
 /// missed at original sync time — incremental sync skips already-stored messages,
@@ -1488,7 +1517,7 @@ async fn apply_planned(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::models::AttachmentRule;
 
@@ -1738,7 +1767,7 @@ mod tests {
     use crate::models::Email;
     use crate::sync::provider::{AttachmentInfo, EmailCategory, FakeEmailProvider};
 
-    fn make_account(db: &Database, id: &str, provider: &str, email: &str) {
+    pub(crate) fn make_account(db: &Database, id: &str, provider: &str, email: &str) {
         db.connection()
             .execute(
                 "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp) \
@@ -1748,7 +1777,7 @@ mod tests {
             .expect("insert account");
     }
 
-    fn make_email(account_id: &str, id: &str, sender_email: &str, subject: &str) -> Email {
+    pub(crate) fn make_email(account_id: &str, id: &str, sender_email: &str, subject: &str) -> Email {
         Email {
             id: id.into(),
             account_id: account_id.into(),

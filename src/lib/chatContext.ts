@@ -4,14 +4,24 @@ import type { EmailTab } from '@/stores/emailStore';
 import type { ChatMessage, Email } from '@/types';
 
 /**
- * The thread the chat panel offers as ambient context — i.e. what the user is
- * currently looking at in the main view.
+ * What the chat panel offers as ambient context — i.e. what the user is
+ * currently looking at in the main view: a thread, or a PDF attachment.
  */
 export interface ChatContext {
   threadId: string;
   accountId: string;
-  /** Shown on the context chip. May be empty for a no-subject thread. */
+  /** Shown on the context chip: the thread's subject (may be empty), or the
+   *  PDF's file name. */
   subject: string;
+  /** Set when the context is an open PDF tab: its attachment id. The backend
+   *  then grounds the turn in the PDF's text instead of the thread. */
+  attachmentId?: string;
+}
+
+/** A PDF by its mime type, or by its name when the sender declared a generic
+ *  type. Mirrors the backend's `open_document::is_pdf`. */
+export function isPdfAttachment(mimeType: string, filename: string): boolean {
+  return mimeType.toLowerCase() === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
 }
 
 export interface ChatContextInput {
@@ -27,9 +37,11 @@ export interface ChatContextInput {
  *
  * Precedence mirrors what is actually on screen:
  *   1. An active *thread* tab is the foreground content — it wins.
- *   2. Otherwise the selected email in the split/full-width pane.
- * Compose and attachment tabs are not threads, so they fall through to the
- * selected email rather than blanking the context.
+ *   2. An active *PDF* tab: the chat reads the document (its thread id, when
+ *      an email is selected, is kept only so the chip key stays stable).
+ *   3. Otherwise the selected email in the split/full-width pane.
+ * Compose tabs and non-PDF attachment tabs fall through to the selected email
+ * rather than blanking the context.
  *
  * Only mailbox-backed views (inbox/sent/spam/deleted/folders) produce context.
  * In calendar, contacts, tasks, memory, lenses or the dashboard there is no
@@ -43,6 +55,15 @@ export function deriveChatContext({ viewMode, activeTab, selectedEmail }: ChatCo
       threadId: activeTab.threadId,
       accountId: activeTab.accountId,
       subject: activeTab.subject,
+    };
+  }
+
+  if (activeTab?.type === 'attachment' && isPdfAttachment(activeTab.mimeType, activeTab.filename)) {
+    return {
+      threadId: selectedEmail?.threadId ?? '',
+      accountId: activeTab.accountId,
+      subject: activeTab.filename,
+      attachmentId: activeTab.id,
     };
   }
 
@@ -61,6 +82,8 @@ export function deriveChatContext({ viewMode, activeTab, selectedEmail }: ChatCo
 export interface ChatTurnContext {
   threadId: string;
   accountId: string;
+  /** The open PDF, when that is the context. */
+  attachmentId?: string;
 }
 
 /**
@@ -76,7 +99,9 @@ export interface ChatTurnContext {
  */
 export function chatTurnContext(context: ChatContext | null, active: boolean): ChatTurnContext | null {
   if (!active || !context) return null;
-  return { threadId: context.threadId, accountId: context.accountId };
+  const turn: ChatTurnContext = { threadId: context.threadId, accountId: context.accountId };
+  if (context.attachmentId) turn.attachmentId = context.attachmentId;
+  return turn;
 }
 
 /** What the panel should do about the thread the main view has open. */
@@ -134,5 +159,7 @@ export function isConversationThreadBound(messages: ChatMessage[]): boolean {
  * re-render of the same one.
  */
 export function chatContextKey(context: ChatContext | null): string | null {
-  return context ? `${context.accountId}:${context.threadId}` : null;
+  if (!context) return null;
+  const base = `${context.accountId}:${context.threadId}`;
+  return context.attachmentId ? `${base}:${context.attachmentId}` : base;
 }

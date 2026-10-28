@@ -248,6 +248,11 @@ pub enum Command {
         /// thread-bound path from the CLI.
         #[arg(long, value_name = "THREAD_ID")]
         thread: Option<String>,
+        /// Ground the turn in this PDF attachment (its attachment meta id), as
+        /// the chat panel does while the PDF is open in the viewer. Wins over
+        /// `--thread`.
+        #[arg(long, value_name = "ATTACHMENT_ID")]
+        attachment: Option<String>,
         /// Prewarm the chat prompt-prefix cache (system message + empty
         /// sources tail) BEFORE the first question, mirroring what the app
         /// does at startup / chat-panel open. Use in benches so turn-1
@@ -841,6 +846,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_attachment_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "summarise it", "--attachment", "att-1"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Chat { attachment: Some(ref id), .. }) if id == "att-1"
+        ));
+    }
+
+    #[test]
     fn chat_research_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "chat", "themes this quarter?", "--research"]);
         assert!(matches!(cli.command, Some(Command::Chat { research: true, .. })));
@@ -856,6 +870,7 @@ mod tests {
                 conversation,
                 fresh,
                 thread,
+                attachment,
                 prewarm,
                 research,
                 estimate,
@@ -865,6 +880,7 @@ mod tests {
                 assert!(conversation.is_none());
                 assert!(!fresh);
                 assert!(thread.is_none());
+                assert!(attachment.is_none());
                 assert!(!prewarm);
                 assert!(!research, "research mode is opt-in");
                 assert!(!estimate);

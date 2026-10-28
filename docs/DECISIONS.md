@@ -3946,3 +3946,21 @@ verdict that fades or hides the row.
 assistant prompts already treat mail as data. A model classifier — a model call per
 message, and the classifier reads the same text the attack is written for. Scoring the
 markers on the phishing axis only — invisible with the defaults.
+
+## 2026-10-28 — The chat reads an open PDF through local text extraction, without OCR
+
+**Decision:** While a PDF attachment is open in the viewer, the chat panel offers it as
+the turn's context in place of the thread it came from. The backend extracts its text
+locally with the `pdf-extract` crate and puts it in the turn's final user message as an
+untrusted "OPEN DOCUMENT" block, cut by the context budget like an open thread. A PDF
+with no text layer (a scan) is offered all the same, and the model is told it cannot
+read it, so it says so instead of guessing.
+**Context:** The chat could see the email but not the PDF the user was reading. The
+text has to stay out of the system prompt so the KV-prefix cache keeps working.
+Extraction is CPU work on a file someone else sent, so it runs off the async runtime,
+and a parser panic is treated as an unreadable file.
+**Rejected:** `pdfium-render` — better extraction, but the native pdfium library would
+have to ship on macOS, Windows and Linux. Raw `lopdf` — `pdf-extract` already wraps it
+for text. OCR for scans — another model and pipeline for an edge case. Sending the
+bytes the viewer already loaded from the frontend — the CLI and evals could not drive
+the same path.

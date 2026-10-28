@@ -22,6 +22,14 @@ const OPEN_THREAD: { kind: OpenThreadKind; action: ChatStarter['action'] }[] = [
   { kind: 'reply', action: 'prefill' },
 ];
 
+// With an open PDF armed as context the requests are about the document.
+type OpenDocumentKind = 'summary' | 'keyPoints' | 'ask';
+const OPEN_DOCUMENT: { kind: OpenDocumentKind; action: ChatStarter['action'] }[] = [
+  { kind: 'summary', action: 'send' },
+  { kind: 'keyPoints', action: 'send' },
+  { kind: 'ask', action: 'prefill' },
+];
+
 const ICONS: Record<ChatStarter['kind'], string> = {
   today: '📋',
   reply: '↩️',
@@ -33,8 +41,9 @@ const ICONS: Record<ChatStarter['kind'], string> = {
 
 interface ChatStartersProps {
   accountId: string;
-  /** The open thread is armed as the turn's context (the docked panel's chip). */
-  threadContext?: boolean;
+  /** What the docked panel's chip has armed as the turn's context, if
+   *  anything: the open thread or an open PDF. */
+  openContext?: 'thread' | 'document';
   disabled: boolean;
   /** Tighter rows for the narrow side panel. */
   compact?: boolean;
@@ -49,12 +58,12 @@ interface ChatStartersProps {
  * The requests an empty conversation suggests, as a vertical list: today's
  * mail, a thread waiting on a reply, a recent correspondent, a recent thread,
  * this week and a draft. The backend picks them from the mailbox; the wording
- * comes from the locales. With the open thread as context, the list is about
- * that thread instead.
+ * comes from the locales. With the open thread or an open PDF as context, the
+ * list is about that instead.
  */
 export function ChatStarters({
   accountId,
-  threadContext = false,
+  openContext,
   disabled,
   compact = false,
   onSend,
@@ -132,26 +141,35 @@ export function ChatStarters({
       onKeyDown={onKeyDown}
       className="flex w-full max-w-md flex-col gap-1.5"
     >
-      {(threadContext
-        ? OPEN_THREAD.map((s) => ({
-            key: `openThread-${s.kind}`,
-            icon: '✉️',
+      {(openContext === 'document'
+        ? OPEN_DOCUMENT.map((s) => ({
+            key: `openDocument-${s.kind}`,
+            icon: '📄',
             action: s.action,
             threadId: undefined,
-            label: t(`chat:starters.openThread.${s.kind}.label`),
-            prompt: t(`chat:starters.openThread.${s.kind}.prompt`),
+            label: t(`chat:starters.openDocument.${s.kind}.label`),
+            prompt: t(`chat:starters.openDocument.${s.kind}.prompt`),
           }))
-        : starters.map((s) => {
-            const { label, prompt } = text(s);
-            return {
-              key: `${s.kind}-${label}`,
-              icon: ICONS[s.kind],
+        : openContext === 'thread'
+          ? OPEN_THREAD.map((s) => ({
+              key: `openThread-${s.kind}`,
+              icon: '✉️',
               action: s.action,
-              threadId: s.threadId,
-              label,
-              prompt,
-            };
-          })
+              threadId: undefined,
+              label: t(`chat:starters.openThread.${s.kind}.label`),
+              prompt: t(`chat:starters.openThread.${s.kind}.prompt`),
+            }))
+          : starters.map((s) => {
+              const { label, prompt } = text(s);
+              return {
+                key: `${s.kind}-${label}`,
+                icon: ICONS[s.kind],
+                action: s.action,
+                threadId: s.threadId,
+                label,
+                prompt,
+              };
+            })
       ).map(({ key, icon, action, threadId, label, prompt }) => (
         <button
           key={key}

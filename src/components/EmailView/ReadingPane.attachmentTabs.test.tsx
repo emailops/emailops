@@ -18,6 +18,8 @@ import { ReadingPane } from './ReadingPane';
 const pdfTab: AttachmentViewTab = {
   type: 'attachment',
   id: 'att-1',
+  accountId: 'acct-1',
+  emailId: 'email-1',
   filename: 'report.pdf',
   mimeType: 'application/pdf',
   dataUrl: 'data:application/pdf;base64,JVBERi0=',

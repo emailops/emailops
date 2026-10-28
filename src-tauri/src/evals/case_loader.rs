@@ -143,6 +143,13 @@ pub struct EvalCase {
     #[serde(default)]
     pub ambient_account: Option<String>,
 
+    /// PDF attachment the viewer has open, by file name, passed as ambient
+    /// context (`ChatTurnMode::AmbientDocument`). Resolved under
+    /// `ambient_account` when set, else the case's account. By name because
+    /// the demo generator redraws ids.
+    #[serde(default)]
+    pub ambient_attachment_filename: Option<String>,
+
     /// Expected router mode. Absence skips the route check.
     #[serde(default)]
     pub expected_route: Option<RouteMode>,

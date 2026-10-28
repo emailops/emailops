@@ -144,6 +144,9 @@ interface ChatStore {
     /** The account the sending surface shows; a first message creates its
      * conversation there. Falls back to `currentAccountId`. */
     accountId?: string | null,
+    /** PDF attachment open in the viewer (chat panel only), grounding the
+     * turn in place of `contextThreadId`; owned by `contextAccountId`. */
+    contextAttachmentId?: string | null,
   ) => Promise<void>;
   /**
    * "This answer is wrong" → a fresh corrective turn.
@@ -158,6 +161,7 @@ interface ChatStore {
     contextThreadId?: string | null,
     contextAccountId?: string | null,
     contextView?: api.ChatViewContext | null,
+    contextAttachmentId?: string | null,
   ) => Promise<void>;
   /** Ids of assistant messages the user marked wrong, for this session. */
   rejectedMessageIds: string[];
@@ -205,6 +209,7 @@ interface ChatStore {
 interface TurnOptions {
   contextThreadId?: string | null;
   contextAccountId?: string | null;
+  contextAttachmentId?: string | null;
   contextView?: api.ChatViewContext | null;
   correction?: api.ChatCorrection | null;
   research?: boolean;
@@ -504,8 +509,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
 
-    sendMessage: async (content, contextThreadId, contextAccountId, contextView, accountId) => {
-      const opts: TurnOptions = { contextThreadId, contextAccountId, contextView, accountId };
+    sendMessage: async (content, contextThreadId, contextAccountId, contextView, accountId, contextAttachmentId) => {
+      const opts: TurnOptions = { contextThreadId, contextAccountId, contextAttachmentId, contextView, accountId };
       if (!get().researchMode) {
         await get().dispatchTurn(content, opts);
         return;
@@ -550,7 +555,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     },
 
-    retryWithCorrection: async (rejectedMessageId, reason, contextThreadId, contextAccountId, contextView) => {
+    retryWithCorrection: async (
+      rejectedMessageId,
+      reason,
+      contextThreadId,
+      contextAccountId,
+      contextView,
+      contextAttachmentId,
+    ) => {
       const trimmed = reason.trim();
       if (!trimmed) return;
       // Mark first so the rejected bubble is struck through while the corrective
@@ -563,6 +575,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const opts: TurnOptions = {
         contextThreadId,
         contextAccountId,
+        contextAttachmentId,
         contextView,
         correction: { rejectedMessageId, reason: trimmed },
       };
@@ -652,6 +665,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           correction,
           research,
           opts.researchEstimateId,
+          opts.contextAttachmentId,
         );
         // Only mutate if we're still on the same conversation. The turn keeps
         // streaming into `backgroundTurns`; the lock must still be released or

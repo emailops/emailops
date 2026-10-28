@@ -54,6 +54,8 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 # RFC 5545 recurrence expansion for ICS-feed calendars (sync::ics_feed_calendar).
 rrule = "0.14"
+# Text of an open PDF attachment for the chat (services::pdf_text).
+pdf-extract = "0.12"
 # Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
 # impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
 reqwest = { version = "0.12", features = ["json", "stream"] }
