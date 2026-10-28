@@ -408,6 +408,11 @@ impl TurnBudget {
         self.n_ctx
     }
 
+    /// The turn's chars-per-token estimate.
+    pub(crate) fn estimator(&self) -> Estimator {
+        self.est
+    }
+
     /// See [`compact_prefix`].
     pub(crate) fn compact_prefix(&self) -> bool {
         compact_prefix(self.n_ctx)

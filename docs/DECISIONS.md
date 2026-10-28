@@ -3986,17 +3986,22 @@ the same path.
 
 **Decision:** When the open PDF's text is longer than the slot the context budget leaves
 it, the chat reads the whole document before answering. It splits the text into parts
-sized to the window (at most 12k characters), runs one completion per part on the
+that fill what the window leaves once the part's own prompt and the reply are taken
+out: the prompt is measured as built, and tokens come from the turn's chars-per-token
+estimate and the chat's reply reserve, so no size is set by hand and a longer prompt
+or a bigger window resizes the parts on its own. It runs one completion per part on the
 auxiliary prefix slot, and keeps from each part what bears on the question. The turn
 then answers from those part notes, which share the slot. The bubble shows "Reading the
 whole document…". It falls back to the start of the text only when the turn is
 cancelled or every part fails.
 **Context:** Cutting the text to fit kept the first pages, so a summary or a question
 about a late clause missed most of a contract. Reading per part costs one call each
-(three for a 27k-character contract at 8k: about 10 s on the demo). Doing the calls
+(two for a 27k-character contract at 8k: about 11 s on the demo). Doing the calls
 on the auxiliary slot, as research mode does, keeps the chat's KV anchor intact.
 **Rejected:** Indexing the parts with embeddings and sending only the closest ones —
 it misses a summary, which needs every part. Asking the user to confirm first, as
-research mode does — one PDF has a known, bounded cost. Condensing the notes in rounds
+research mode does — one PDF has a known, bounded cost. A fixed cap on part size (12k characters) against the model losing the middle of a
+long part — unmeasured, and it ignored the window; the late-clause eval passes with
+window-sized parts. Condensing the notes in rounds
 when they outgrow the slot — each note is already capped to its share. Revisit it if
 documents of hundreds of pages turn up.

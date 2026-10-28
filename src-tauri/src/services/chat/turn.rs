@@ -369,14 +369,21 @@ async fn fit_open_document(
     provider: &dyn AIProvider,
     doc: &super::open_document::OpenDocument,
     question: &str,
-    n_ctx: u32,
+    budget: &TurnBudget,
     slot_chars: usize,
     conversation_id: &str,
     assistant_message_id: &str,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> super::open_document::OpenDocument {
-    use super::open_document::{plan_document_reading, read_document_in_parts};
-    let reading = match plan_document_reading(n_ctx, slot_chars, doc.text_chars()) {
+    use super::open_document::{part_prompt_overhead_chars, plan_document_reading, read_document_in_parts};
+    let overhead_chars = part_prompt_overhead_chars(&doc.filename, question);
+    let reading = match plan_document_reading(
+        budget.n_ctx(),
+        budget.estimator(),
+        overhead_chars,
+        slot_chars,
+        doc.text_chars(),
+    ) {
         Some(reading) if doc.read_in_parts.is_none() => reading,
         _ => return doc.shortened(slot_chars),
     };
@@ -5299,7 +5306,7 @@ async fn run_chat_turn_inner(
                     provider.as_ref(),
                     doc,
                     &user_question,
-                    turn_budget.n_ctx(),
+                    &turn_budget,
                     chars,
                     &conversation_id,
                     &assistant_message_id,
@@ -8955,7 +8962,7 @@ mod tests {
             &provider,
             &doc,
             "what is the exit fee?",
-            8192,
+            &TurnBudget::new(8192, Estimator::uncalibrated(), 0),
             6_000,
             "c",
             "m",
@@ -8976,7 +8983,17 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        let fitted = fit_open_document(
+            &provider,
+            &doc,
+            "q",
+            &TurnBudget::new(8192, Estimator::uncalibrated(), 0),
+            6_000,
+            "c",
+            "m",
+            &cancelled,
+        )
+        .await;
         assert_eq!(fitted, doc);
         assert!(provider.prefix_completion_calls().is_empty());
     }
@@ -8988,7 +9005,17 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(true);
-        let fitted = fit_open_document(&provider, &doc, "q", 8192, 6_000, "c", "m", &cancelled).await;
+        let fitted = fit_open_document(
+            &provider,
+            &doc,
+            "q",
+            &TurnBudget::new(8192, Estimator::uncalibrated(), 0),
+            6_000,
+            "c",
+            "m",
+            &cancelled,
+        )
+        .await;
         assert_eq!(fitted.read_in_parts, None);
         assert!(fitted.text.unwrap().contains("document truncated"));
     }
