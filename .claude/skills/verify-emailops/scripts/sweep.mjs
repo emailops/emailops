@@ -310,8 +310,9 @@ await step('Búsqueda', 'botón derecho añade el filtro a la búsqueda', 'con �
 // ---------- Correo de verificación (scripts/generate_demo_db.py, insert_verification_fixtures) ----------
 const SEARCH = 'input[placeholder^="Search…"]';
 const clearSearch = async () => { await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1200); };
-await step('Búsqueda', 'correo en la papelera fuera de los resultados', 'buscar «Larkspur» lista solo la corrección: el presupuesto que se envió a la papelera no aparece', async () => {
-  await type(SEARCH, 'Larkspur'); await enter(); await sleep(1500);
+await step('Búsqueda', 'correo en la papelera fuera de los resultados', 'buscar «Larkspur renewal» lista solo la corrección: el presupuesto que se envió a la papelera no aparece', async () => {
+  // «renewal» leaves out the long-PDF contract, also from Larkspur.
+  await type(SEARCH, 'Larkspur renewal'); await enter(); await sleep(1500);
   const found = await js(() => [...document.querySelectorAll('div[role="button"]')].map((r) => r.innerText.replace(/\n/g, ' | ').slice(0, 90)));
   return ok(found.length === 1 && /Corrected Larkspur Freight renewal quote/.test(found[0]), `1 fila: ${found[0]}`, `${found.length} filas: ${found.join(' // ') || 'ninguna (¿BD demo sin las fixtures de verificación?)'}`);
 });
