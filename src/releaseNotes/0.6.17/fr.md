@@ -16,7 +16,7 @@
 
 ### Corrections
 
-- Un compte Gmail ne cesse plus de se synchroniser quand le nom d'un expéditeur contient < ou >.
+- Un compte Gmail ne cesse plus de se synchroniser quand le nom d'un expéditeur contient < ou >, et un message illisible est ignoré au lieu d'arrêter la synchronisation.
 - Un message qui ne contient qu'une pièce jointe s'envoie désormais.
 - Un fichier déposé sur un message en cours de rédaction est joint au lieu de s'ouvrir en plein écran.
 - La boîte de dialogue de blocage d'un expéditeur se ferme à la confirmation et reste lisible en thème sombre.

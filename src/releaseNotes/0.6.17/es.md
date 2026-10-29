@@ -16,7 +16,7 @@
 
 ### Correcciones
 
-- Una cuenta de Gmail ya no deja de sincronizar cuando el nombre de un remitente contiene < o >.
+- Una cuenta de Gmail ya no deja de sincronizar cuando el nombre de un remitente contiene < o >, y un mensaje que no se puede leer se salta en vez de parar la sincronización.
 - Un mensaje que solo lleva un adjunto ya se envía.
 - Un fichero que sueltas sobre un mensaje que estás escribiendo se adjunta en vez de abrirse a pantalla completa.
 - El diálogo de bloquear remitente se cierra al confirmar y se lee bien en el tema oscuro.

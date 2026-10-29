@@ -16,7 +16,7 @@
 
 ### Korrekturen
 
-- Ein Gmail-Konto synchronisiert weiter, wenn der Name eines Absenders < oder > enthält.
+- Ein Gmail-Konto synchronisiert weiter, wenn der Name eines Absenders < oder > enthält, und eine Nachricht, die sich nicht lesen lässt, wird übersprungen, statt die Synchronisierung anzuhalten.
 - Eine Nachricht, die nur einen Anhang enthält, wird jetzt gesendet.
 - Eine auf eine Nachricht im Entwurf gezogene Datei wird angehängt, statt im Vollbild geöffnet zu werden.
 - Der Dialog zum Blockieren eines Absenders schließt sich beim Bestätigen und ist im dunklen Schema gut lesbar.

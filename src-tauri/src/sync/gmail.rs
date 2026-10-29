@@ -943,7 +943,14 @@ impl GmailClient {
         })
     }
 
+    /// One message that panics on parse is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        let what = format!("Reading Gmail message {}", msg.id);
+        crate::util::panic_guard::run_isolated(&what, self.parse_message_unguarded(msg)).await
+    }
+
+    async fn parse_message_unguarded(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         let headers = &msg.payload.headers;
 
         // Preserve message order: `capture` depends on it for both the topmost
@@ -4230,6 +4237,21 @@ mod tests {
     fn mailbox_self_sent_email_stays_in_inbox() {
         // Self-sent emails carry both labels — they should remain visible in inbox.
         assert_eq!(mailbox_from_labels(&labels(&["INBOX", "SENT"])), "inbox");
+    }
+
+    /// The message that stopped an account's sync for good: its sender name
+    /// holds '>' before the address.
+    #[tokio::test]
+    async fn a_message_from_a_sender_name_with_angle_brackets_is_read() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let mut msg = test_message(&["INBOX"]);
+        for h in msg.payload.headers.iter_mut().filter(|h| h.name == "From") {
+            h.value = r#""News >> Weekly" <news@example.com>"#.to_string();
+        }
+
+        let (email, _, _) = client.parse_message(msg).await.expect("parse");
+
+        assert_eq!(email.sender_email, "news@example.com");
     }
 
     #[tokio::test]

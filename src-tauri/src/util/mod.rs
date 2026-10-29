@@ -6,6 +6,7 @@ pub mod fs_link;
 pub mod html;
 pub mod instance_lock;
 pub mod owner_only;
+pub mod panic_guard;
 pub mod private_eval_db;
 pub mod relaunch;
 pub mod startup_dialog;
