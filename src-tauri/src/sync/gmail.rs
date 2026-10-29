@@ -943,7 +943,14 @@ impl GmailClient {
         })
     }
 
+    /// One message that panics on parse is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        let what = format!("Reading Gmail message {}", msg.id);
+        crate::util::panic_guard::run_isolated(&what, self.parse_message_unguarded(msg)).await
+    }
+
+    async fn parse_message_unguarded(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         let headers = &msg.payload.headers;
 
         // Preserve message order: `capture` depends on it for both the topmost
@@ -2535,11 +2542,12 @@ fn split_address_list(raw: &str) -> Vec<String> {
 }
 
 fn parse_email_address(from: &str) -> (String, String) {
-    // Parse "Name <email@example.com>" or "email@example.com"
-    if let Some(start) = from.find('<') {
-        if let Some(end) = from.find('>') {
+    // Parse "Name <email@example.com>" or "email@example.com". The address is
+    // the last <…>: a display name may itself hold '<' or '>'.
+    if let Some(start) = from.rfind('<') {
+        if let Some(len) = from[start + 1..].find('>') {
             let name = from[..start].trim().trim_matches('"').to_string();
-            let email = from[start + 1..end].to_string();
+            let email = from[start + 1..start + 1 + len].to_string();
             return (if name.is_empty() { email.clone() } else { name }, email);
         }
     }
@@ -3745,6 +3753,41 @@ mod tests {
         );
     }
 
+    // --- parse_email_address tests ---
+
+    #[test]
+    fn sender_parse_splits_name_and_address() {
+        assert_eq!(
+            parse_email_address(r#""Jane Doe" <jane@example.com>"#),
+            ("Jane Doe".to_string(), "jane@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address("jane@example.com"),
+            ("jane@example.com".to_string(), "jane@example.com".to_string())
+        );
+    }
+
+    /// A display name holding '>' before the address made the sync panic on
+    /// a reversed slice, and the account stopped syncing for good.
+    #[test]
+    fn sender_parse_takes_a_name_with_angle_brackets() {
+        assert_eq!(
+            parse_email_address(r#""News >> Weekly" <news@example.com>"#),
+            ("News >> Weekly".to_string(), "news@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address(r#""a <b" <x@example.com>"#),
+            ("a <b".to_string(), "x@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn sender_parse_never_panics_on_a_malformed_header() {
+        for from in ["> <", "Name > x <", "<", ">", "Name <unclosed@example.com", ""] {
+            let _ = parse_email_address(from);
+        }
+    }
+
     // --- find_body_part tests ---
 
     /// An `.html` file attached ahead of the real body used to be picked as
@@ -4194,6 +4237,21 @@ mod tests {
     fn mailbox_self_sent_email_stays_in_inbox() {
         // Self-sent emails carry both labels — they should remain visible in inbox.
         assert_eq!(mailbox_from_labels(&labels(&["INBOX", "SENT"])), "inbox");
+    }
+
+    /// The message that stopped an account's sync for good: its sender name
+    /// holds '>' before the address.
+    #[tokio::test]
+    async fn a_message_from_a_sender_name_with_angle_brackets_is_read() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let mut msg = test_message(&["INBOX"]);
+        for h in msg.payload.headers.iter_mut().filter(|h| h.name == "From") {
+            h.value = r#""News >> Weekly" <news@example.com>"#.to_string();
+        }
+
+        let (email, _, _) = client.parse_message(msg).await.expect("parse");
+
+        assert_eq!(email.sender_email, "news@example.com");
     }
 
     #[tokio::test]

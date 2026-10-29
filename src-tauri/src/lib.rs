@@ -480,6 +480,9 @@ pub fn run() {
             // silently dropped — that's fine for the few µs of bootstrap before
             // this line.
             services::logger::install(Arc::new(services::logger::TauriLogger::new(app.handle().clone())));
+            // Panics also reach the Logs panel (where, never what): stderr is
+            // invisible in an installed app.
+            util::panic_guard::install_panic_hook();
 
             // Install the production event sink so chat streaming, phases,
             // sources, and progress events reach the frontend. Sibling of the

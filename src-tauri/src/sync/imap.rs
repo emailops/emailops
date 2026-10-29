@@ -986,7 +986,18 @@ impl ImapClient {
 
     // ── Parse raw RFC 5322 bytes ──────────────────────────────────────────────
 
+    /// One message that panics on parse is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     fn parse_message(uid: u32, fetched: &imap_search::FetchedMessage) -> Result<(Email, Vec<AttachmentInfo>)> {
+        crate::util::panic_guard::call_isolated(&format!("Reading IMAP message UID {uid}"), || {
+            Self::parse_message_unguarded(uid, fetched)
+        })
+    }
+
+    fn parse_message_unguarded(
+        uid: u32,
+        fetched: &imap_search::FetchedMessage,
+    ) -> Result<(Email, Vec<AttachmentInfo>)> {
         let parsed =
             parse_mail(&fetched.raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
 

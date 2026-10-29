@@ -16,6 +16,7 @@
 
 ### Fixes
 
+- A Gmail account no longer stops syncing when a sender's name contains < or >, and a message that cannot be read is skipped instead of stopping the sync.
 - A message with only an attachment now sends.
 - A file dropped on a message you are writing is attached instead of opening full screen.
 - The block-sender dialog closes when you confirm and reads well in the dark theme.

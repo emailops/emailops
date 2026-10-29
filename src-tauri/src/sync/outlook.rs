@@ -340,7 +340,17 @@ impl OutlookClient {
     /// Turn a fetched `GraphMessage` into a stored email: attachments, parse,
     /// and inline-image substitution. Shared by the single-message path and the
     /// `$batch` path so both produce identical rows.
+    /// One message that panics here is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     async fn finalize_message(&self, msg: GraphMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        let what = format!("Reading Outlook message {}", msg.id);
+        crate::util::panic_guard::run_isolated(&what, self.finalize_message_unguarded(msg)).await
+    }
+
+    async fn finalize_message_unguarded(
+        &self,
+        msg: GraphMessage,
+    ) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         // Only skip the attachments call when Graph explicitly reports `false`.
         // Some Outlook mailboxes return `hasAttachments` as `null` even when
         // attachments exist; defaulting that to "no attachments" silently drops
