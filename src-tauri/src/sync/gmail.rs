@@ -2535,11 +2535,12 @@ fn split_address_list(raw: &str) -> Vec<String> {
 }
 
 fn parse_email_address(from: &str) -> (String, String) {
-    // Parse "Name <email@example.com>" or "email@example.com"
-    if let Some(start) = from.find('<') {
-        if let Some(end) = from.find('>') {
+    // Parse "Name <email@example.com>" or "email@example.com". The address is
+    // the last <…>: a display name may itself hold '<' or '>'.
+    if let Some(start) = from.rfind('<') {
+        if let Some(len) = from[start + 1..].find('>') {
             let name = from[..start].trim().trim_matches('"').to_string();
-            let email = from[start + 1..end].to_string();
+            let email = from[start + 1..start + 1 + len].to_string();
             return (if name.is_empty() { email.clone() } else { name }, email);
         }
     }
@@ -3743,6 +3744,41 @@ mod tests {
             split_address_list(r#""A \"x, y\" B" <a@example.com>, , c@example.com"#),
             vec![r#""A \"x, y\" B" <a@example.com>"#, "c@example.com"]
         );
+    }
+
+    // --- parse_email_address tests ---
+
+    #[test]
+    fn sender_parse_splits_name_and_address() {
+        assert_eq!(
+            parse_email_address(r#""Jane Doe" <jane@example.com>"#),
+            ("Jane Doe".to_string(), "jane@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address("jane@example.com"),
+            ("jane@example.com".to_string(), "jane@example.com".to_string())
+        );
+    }
+
+    /// A display name holding '>' before the address made the sync panic on
+    /// a reversed slice, and the account stopped syncing for good.
+    #[test]
+    fn sender_parse_takes_a_name_with_angle_brackets() {
+        assert_eq!(
+            parse_email_address(r#""News >> Weekly" <news@example.com>"#),
+            ("News >> Weekly".to_string(), "news@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address(r#""a <b" <x@example.com>"#),
+            ("a <b".to_string(), "x@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn sender_parse_never_panics_on_a_malformed_header() {
+        for from in ["> <", "Name > x <", "<", ">", "Name <unclosed@example.com", ""] {
+            let _ = parse_email_address(from);
+        }
     }
 
     // --- find_body_part tests ---

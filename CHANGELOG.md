@@ -30,6 +30,8 @@ No unreleased changes yet.
 
 - A message whose only content is an attachment now sends (Send was enabled
   but did nothing).
+- A Gmail account no longer stops syncing for good when a sender's name contains
+  `<` or `>`.
 - A file dragged onto a composer is attached instead of opening full screen.
 - The block-sender dialog closes on confirm and reads well in dark mode.
 - The checked email row stays readable in dark mode.
