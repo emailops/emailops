@@ -74,6 +74,38 @@ pub async fn sync_account_with_contention(
     sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     contention: SyncContention,
 ) -> Result<()> {
+    // A panic must not end the poll loop or watcher that called us, nor leave
+    // the UI's command unanswered: it becomes this sync's error, which the
+    // callers already log and record in `sync_state`.
+    let what = format!("Sync of {account_id}");
+    // Boxed: inline, the guard pushes the command future over its stack budget.
+    crate::util::panic_guard::run_isolated(
+        &what,
+        Box::pin(sync_account_with_contention_unguarded(
+            db,
+            account_id,
+            app_data_dir,
+            app,
+            ai_background,
+            sync_abort_flags,
+            sync_locks,
+            contention,
+        )),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // same arguments as sync_account_with_contention
+async fn sync_account_with_contention_unguarded(
+    db: &Arc<Database>,
+    account_id: &str,
+    app_data_dir: &Path,
+    app: Option<AppHandle>,
+    ai_background: crate::services::task_queue::TaskQueue,
+    sync_abort_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    sync_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    contention: SyncContention,
+) -> Result<()> {
     // Acquire per-account lock atomically. If another sync is already running
     // for this account (scheduler tick racing with UI trigger, or double-click),
     // bail out immediately rather than running two downloads in parallel.
@@ -3431,6 +3463,7 @@ mod extra_mailbox_window_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: sync_from,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4156,6 +4189,7 @@ mod sync_anchor_tests {
             enabled: true,
             // "All mail" — the preference the sync watermark used to destroy.
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4294,6 +4328,7 @@ mod backfill_watermark_persistence_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None, // "All mail"
+            color: crate::models::AccountColor::Blue,
         };
         db.connection()
             .execute(
@@ -4367,6 +4402,7 @@ mod inbox_gap_repair_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -4587,6 +4623,7 @@ mod spam_reconcile_tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 

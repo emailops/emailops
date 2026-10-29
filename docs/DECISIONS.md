@@ -3793,3 +3793,215 @@ expansion — DST and monthly BYDAY rules are where home-grown code goes wrong. 
 the hand-over is the only way to create from the calendar; the in-app dialog remains the path
 for every writable calendar.
 
+
+## 2026-10-23 — AI base URLs: no LAN over plain http, no credentials in the URL
+
+**Decision:** Every AI base URL (Ollama's `OLLAMA_HOST`, and the OpenAI-compatible server
+that follows) goes through one `normalize_ai_base_url`: trim, strip trailing slashes,
+refuse an empty value, then `validate_ai_base_url`. Plain `http://` stays limited to
+loopback (`localhost`, `127.0.0.0/8`, `::1`); LAN addresses, private ranges, `*.local`
+and bare hostnames need `https://`. A URL with a user name or password is refused and
+the error does not echo it. The refusal tells the user how to reach a LAN machine
+anyway: https, or an SSH tunnel / Tailscale so the server appears on localhost. A shared
+test table of refused URLs runs through every caller's entry point.
+**Context:** The OpenAI-compatible provider request (issue #138) proposed allowing http
+to private ranges so LM Studio or llama-server on another machine works out of the box.
+Prompts carry email content, and DASA 1.1.1 (transport) is part of the CASA AL1 evidence;
+a home or office LAN is not a trusted transport. Credentials in a URL end up in
+preferences and logs (DASA 1.10.2).
+**Rejected:** http to RFC 1918 ranges and `*.local` (cleartext mail on shared networks,
+and a DNS name is not proof of locality); a per-user "allow insecure LAN" toggle (one
+click from cleartext, and it weakens a recorded CASA control); stripping credentials
+from the URL silently (the user would think the key is in use).
+
+## 2026-10-23 — OpenAI-compatible provider: one destination by default, disclosure for remote hosts
+
+**Decision:** The fourth AI provider, an OpenAI-compatible server at a base URL the user
+enters (LM Studio, vLLM, `llama-server`, LiteLLM, a proxy), runs chat and, by default, the
+email index on that same server, so mail goes to one destination; the in-app embedding model
+(only where the embedded runtime runs) and OpenRouter stay as explicit alternatives. A server
+on this machine needs no extra step. Saving a server on another host requires an explicit
+confirmation that email content goes there and that EmailOps cannot control what it keeps or
+trains on; the confirmed host is stored, and a URL on any other host asks again. The backend
+enforces it (`services::ai_server::plan_server_settings`), not only the dialog. The client
+follows no redirects, sends the stored key only to the saved server's origin, keeps the key in
+the secrets vault apart from the OpenRouter key, and shows a failed request as its status plus
+a trimmed message, never the raw body. The monthly budget meters OpenRouter traffic only.
+**Context:** Issue #138 and its review. OpenRouter requests always carry
+`data_collection = "deny"` (recorded for Google's Gmail data policy); an arbitrary server gives
+no equivalent guarantee, and a proxy may forward mail elsewhere. CASA AL1 / DASA 1.1.1
+(transport), 1.8.1 (no internals in errors) and 1.10.2 (sensitive data) apply.
+**Rejected:** In-app embeddings as the default for this provider (two destinations for mail,
+and unavailable on Intel Macs); following redirects that stay on https (the check on the base
+URL would no longer describe where mail goes); a disclosure shown once per install rather than
+per host (moving the URL to another provider would inherit consent given for a different one);
+showing the server's error body in the UI (servers return HTML pages and stack traces there).
+
+## 2026-10-24 — OpenAI-compatible server: the loaded context window caps the setting
+
+**Decision:** Chat with an OpenAI-compatible server sizes prompts to the smaller of the
+context window set in Settings and the one the server reports it has the model loaded with,
+read on every turn from `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+`/api/v0/models` (`loaded_context_length` of a loaded model) or `llama-server`'s `/props`
+(`n_ctx`). With neither, it assumes 8192. Test and Save in Settings show the window chat will
+use and where it comes from, and warn below 16384 tokens (the auxiliary planner's floor). A
+request the server still refuses for its length is a typed error
+(`AppError::AiContextExceeded`) telling the user to raise the context on the server.
+**Context:** The OpenAI protocol has no field to set the context window; whoever loads the
+model decides it. LM Studio loads a model on demand with the context length saved for it,
+which was seen to differ from the one it last ran with (64000 against 32768), so a size typed
+in Settings alone overflowed or under-used the server.
+**Rejected:** Loading or reloading the model from EmailOps with a vendor API (`lms load`,
+LM Studio's load endpoint): it ties a generic provider to one server and changes the user's
+server without asking. Refusing to save below 16384 tokens: chat still works there, cut down.
+Remembering the reported window for the process (as for OpenRouter's catalogue): a reload
+on the server changes it.
+
+## 2026-10-26 — Calendar offers "All accounts"; every account has a colour
+
+**Decision:** The Calendar screen and the docked agenda offer "All accounts" once two
+accounts have a calendar enabled, and follow the sidebar into it. It shows every calendar
+account's events on one grid, each in its account's colour, with the legend grouped by
+account. Every account has a stored colour (`accounts.color`, V040). It is assigned from
+a palette when the account is added (the least-used colour first), can be changed in the
+account's settings, and marks the account in the sidebar and the unified inbox rows too.
+Supersedes "Calendar is per-account only" (2026-07-22).
+**Context:** The concerns that deferred a combined view were handled as follows.
+Overlapping events: a meeting in two accounts shows once per account, since rows carry no
+iCalUID to match them. Per-account colours: the stored account colour. Duplicated
+notifications: reminders come from the backend for every account whatever the view
+shows, so a combined view adds none. The "All accounts" view is frontend-only: it fans
+out the per-account commands, so the backend keeps no cross-account calendar read path.
+A new event in "All accounts" asks which account it goes to. A Proton account (a
+read-only feed) is a hand-over to Proton Calendar.
+**Rejected:** Deduplicating a meeting shared between accounts (needs the iCalUID stored
+and a migration, for a rare case). An `AccountScope::AllEnabled` calendar command (the
+fan-out already gives per-account error and re-auth handling). Hash-derived account
+colours (they collided and could not be changed).
+
+## 2026-10-27 — The data folder can be moved from the app; a pointer beside the default finds it
+
+**Decision:** Users choose where EmailOps keeps its data folder from Settings → Privacy &
+Security → Data location, and from one line at the foot of the first onboarding step (no extra
+wizard screen). Choosing a folder copies the whole data folder there (the database as an SQLite
+online-backup snapshot), verifies the copy, writes a pointer file and restarts; the old folder
+is kept for the user to delete. The pointer lives *beside* the platform default folder
+(`com.emailops.app.data-location.json`), not inside it. Resolution order for the app and the
+CLI: `--data-dir` → `EMAILOPS_DATA_DIR` → pointer → default. A chosen folder that is missing at
+launch stops the app with a dialog naming it; it is never created on the fly.
+**Context:** A user wanted mail and AI models on an external disk; the only way was the
+`EMAILOPS_DATA_DIR` environment variable. The location has to be known before the database is
+opened, so it cannot be a preference. Most users never need it, hence no onboarding screen.
+**Rejected:** Pointer inside the default folder — deleting "the old copy" as instructed would
+delete the pointer too and open an empty mailbox. Repointing without copying — leaves the user
+to move a live SQLite database by hand. Deleting the old copy automatically — the copy is the
+only rollback if the new disk misbehaves. Creating a missing chosen folder — on an unplugged
+disk that writes an empty database under the mount point.
+
+## 2026-10-27 — Mailbox text reaches the chat model fenced as data; chat bubbles show no images
+
+**Decision:** Every chat tool result (except our own refusal notes), the Sources block,
+the open email, the thread of a thread-bound chat and the research prompts' emails and
+notes reach the model inside `<UNTRUSTED_EMAIL>` … `</UNTRUSTED_EMAIL>`, and the prompts
+say the text inside is data, never instructions. `remember` and `create_task` run only
+when the user's own message asks for them (or confirms an offer), the same gate
+`generate_email_draft` already had. Any copy of the delimiter inside email text is broken with a zero-width
+space before it is fenced, in the chat and in the classification, task and memory
+prompts. Turn markers of the common chat templates are broken the same way in all text
+sent to Ollama and OpenAI-compatible/OpenRouter servers, which render the template
+themselves. Chat markdown renders an image as its alt text and never loads it. Around
+that, the app CSP sets `object-src 'none'` (both attachment viewers draw PDFs in an
+iframe), the email frame drops `allow-popups`, and one-click unsubscribe reaches only
+public addresses (literal IPs checked, names resolved through a resolver that drops
+non-public addresses, redirects checked the same way).
+**Context:** The chat model reads text that other people wrote and can call tools, and
+whatever its reply contains is rendered in the bubble. The extraction prompts already
+fenced the email, but the chat path, the one with tools, did not, and nothing stopped a
+field from closing the fence. An `<img>` in the bubble fetches its URL on render, with
+no click. The embedded runtime already broke control tokens from the model's own
+vocabulary. The remote backends have no vocabulary to read, so they use a fixed list.
+**Rejected:** Allowing images from `data:` / `asset:` only — no chat answer needs an
+image, and alt text is simpler to reason about. Tightening the app CSP `img-src` instead
+— the email viewer relies on it, and gating per surface is clearer. Fencing only the
+tools that return email bodies — every tool result carries mailbox text in some form,
+and per-tool lists drift. Removing `remember` / `create_task` from turns that carry email
+text — almost every turn does, so it would remove them altogether.
+
+## 2026-10-27 — A message carrying text for the AI assistant gets a warning, junk detection or not
+
+**Decision:** Opening a message whose subject or body carries a chat-template turn marker
+or the `<UNTRUSTED_EMAIL>` tag shows a red banner ("This message contains instructions
+aimed at your AI assistant"). The backend checks the body when the message opens
+(`junk::has_ai_control_markup`), with no stored state and no setting, so the warning
+reaches every install. The same check, plus a Markdown image on a remote host, is also
+junk evidence on the phishing axis (`ai_control_markup` at 0.70, enough to flag alone;
+`markdown_remote_image` at 0.35, never alone), for installs that opted into the detector.
+**Context:** Junk detection is off by default and its phishing axis has a second opt-in,
+because impersonation evidence is weak. These markers are the opposite: no message
+written for a person carries them, so hiding them behind both switches would hide them
+from nearly everyone. A newsletter about language models can still quote one; compliant
+bulk-mail markers damp it below the badge, and the open-time banner is a warning, not a
+verdict that fades or hides the row.
+**Rejected:** Phrase lists ("ignore previous instructions") — keyword rules, and the
+assistant prompts already treat mail as data. A model classifier — a model call per
+message, and the classifier reads the same text the attack is written for. Scoring the
+markers on the phishing axis only — invisible with the defaults.
+
+## 2026-10-28 — PDF attachments render with pdf.js, not the WebView's built-in viewer
+
+**Decision:** Both attachment viewers (`AttachmentViewer`, `AttachmentTabView`) draw PDFs
+with `pdfjs-dist` onto canvases (`PdfViewer`), with the app's own zoom toolbar (50–300 %,
+fit width by default, Cmd/Ctrl `=`/`-`/`0`). They use the `legacy` build, which pdf.js
+supports on Safari 18+ and Chrome 125+. The modern build lists no Safari, and macOS and
+Linux run WebKit. With no PDF left in an iframe, every framed attachment gets an empty
+`sandbox`, including one declared `application/pdf`.
+**Context:** Users needed zoom to read small print. The built-in viewer is a different
+engine per platform (PDFKit on macOS, WebKitGTK on Linux, Chromium on Windows), the page
+cannot control its zoom, and it was the one reason a framed attachment went unsandboxed.
+pdf.js runs no document script without its viewer's scripting sandbox, which is not
+loaded.
+**Rejected:** Scaling the native iframe with CSS `transform` — no dependency, but the
+plugin output blurs when stretched and scrolling breaks. A URL `#zoom=` fragment — only
+Chromium's viewer reads it.
+
+## 2026-10-28 — The chat reads an open PDF through local text extraction, without OCR
+
+**Decision:** While a PDF attachment is open in the viewer, the chat panel offers it as
+the turn's context in place of the thread it came from. The backend extracts its text
+locally with the `pdf-extract` crate and puts it in the turn's final user message as an
+untrusted "OPEN DOCUMENT" block, cut by the context budget like an open thread. A PDF
+with no text layer (a scan) is offered all the same, and the model is told it cannot
+read it, so it says so instead of guessing.
+**Context:** The chat could see the email but not the PDF the user was reading. The
+text has to stay out of the system prompt so the KV-prefix cache keeps working.
+Extraction is CPU work on a file someone else sent, so it runs off the async runtime,
+and a parser panic is treated as an unreadable file.
+**Rejected:** `pdfium-render` — better extraction, but the native pdfium library would
+have to ship on macOS, Windows and Linux. Raw `lopdf` — `pdf-extract` already wraps it
+for text. OCR for scans — another model and pipeline for an edge case. Sending the
+bytes the viewer already loaded from the frontend — the CLI and evals could not drive
+the same path.
+
+## 2026-10-28 — A PDF too long for the prompt is read in parts, not cut to its start
+
+**Decision:** When the open PDF's text is longer than the slot the context budget leaves
+it, the chat reads the whole document before answering. It splits the text into parts
+that fill what the window leaves once the part's own prompt and the reply are taken
+out: the prompt is measured as built, and tokens come from the turn's chars-per-token
+estimate and the chat's reply reserve, so no size is set by hand and a longer prompt
+or a bigger window resizes the parts on its own. It runs one completion per part on the
+auxiliary prefix slot, and keeps from each part what bears on the question. The turn
+then answers from those part notes, which share the slot. The bubble shows "Reading the
+whole document…". It falls back to the start of the text only when the turn is
+cancelled or every part fails.
+**Context:** Cutting the text to fit kept the first pages, so a summary or a question
+about a late clause missed most of a contract. Reading per part costs one call each
+(two for a 27k-character contract at 8k: about 11 s on the demo). Doing the calls
+on the auxiliary slot, as research mode does, keeps the chat's KV anchor intact.
+**Rejected:** Indexing the parts with embeddings and sending only the closest ones —
+it misses a summary, which needs every part. Asking the user to confirm first, as
+research mode does — one PDF has a known, bounded cost. A fixed cap on part size (12k characters) against the model losing the middle of a
+long part — unmeasured, and it ignored the window; the late-clause eval passes with
+window-sized parts. Condensing the notes in rounds
+when they outgrow the slot — each note is already capped to its share. Revisit it if
+documents of hundreds of pages turn up.

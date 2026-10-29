@@ -1,9 +1,11 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import type { RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
+import type { CreateAccountChoice } from '@/lib/calendarAccounts';
 import { type CalendarRecurrence, isValidInviteeEmail, recurrenceOptions } from '@/lib/calendarEvent';
 import { extractEmail } from '@/lib/composeRecipients';
 import { errorText, isAuthError } from '@/lib/errors';
@@ -32,9 +34,10 @@ function epochAt(day: Date, minutes: number): number {
 }
 
 interface NewEventDialogProps {
-  accountId: string;
-  /** Gmail accounts get a Google Meet link auto-added backend-side — show the note. */
-  isGmail: boolean;
+  /** Accounts the event can go to (`createAccountChoices`). With more than
+   *  one ("All accounts") the dialog asks which; the first writable one is
+   *  the default. A Proton account is a hand-over to Proton Calendar. */
+  choices: CreateAccountChoice[];
   /** Proposed slot, unix seconds (from the double-clicked grid position). */
   initialStart: number;
   initialEnd: number;
@@ -42,14 +45,13 @@ interface NewEventDialogProps {
   /** Created on the provider — parent inserts it (or, for a recurring master,
    *  syncs so the expanded per-occurrence instances appear). */
   onCreated: (event: CalendarEvent, recurrence: CalendarRecurrence) => void;
-  /** Auth-class failure — parent closes the dialog and shows its re-auth banner. */
-  onAuthError: () => void;
+  /** Auth-class failure — parent closes the dialog and shows the account's re-auth banner. */
+  onAuthError: (accountId: string) => void;
 }
 
 /** "New event" dialog opened by double-clicking an empty calendar slot. */
 export function NewEventDialog({
-  accountId,
-  isGmail,
+  choices,
   initialStart,
   initialEnd,
   onClose,
@@ -78,6 +80,13 @@ export function NewEventDialog({
   const [endMin, setEndMin] = useState(initial.endMin);
   const [description, setDescription] = useState('');
   const [recurrence, setRecurrence] = useState<CalendarRecurrence>('none');
+  const [accountId, setAccountId] = useState(
+    () => (choices.find((c) => c.plan.kind === 'dialog') ?? choices[0]).account.id,
+  );
+  const choice = choices.find((c) => c.account.id === accountId) ?? choices[0];
+  // Gmail accounts get a Google Meet link auto-added backend-side — show the note.
+  const isGmail = choice.account.provider === 'gmail';
+  const protonUrl = choice.plan.kind === 'proton' ? choice.plan.url : null;
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -219,13 +228,22 @@ export function NewEventDialog({
       const msg = errorText(e);
       addLog('error', 'sync', `Failed to create calendar event: ${msg}`);
       if (isAuthError(e, msg)) {
-        onAuthError();
+        onAuthError(accountId);
       } else {
         setError(msg);
       }
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Proton has no write API: its own create form opens on the slot's day.
+  const openInProton = (url: string) => {
+    addLog('info', 'system', t('calendar:createInProton'));
+    openExternal(url).catch((err) => {
+      addLog('error', 'system', `Failed to open Proton Calendar: ${err}`);
+    });
+    onClose();
   };
 
   return (
@@ -263,220 +281,257 @@ export function NewEventDialog({
           </button>
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void handleCreate();
-          }}
-          className="px-5 py-4 space-y-4 overflow-y-auto"
-        >
-          <div>
-            <label
-              htmlFor="new-event-title"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-            >
-              {t('calendar:create.eventTitle')}
-            </label>
-            <input
-              id="new-event-title"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={t('calendar:create.eventTitlePlaceholder')}
-              // biome-ignore lint/a11y/noAutofocus: dialog opens explicitly for typing a title
-              autoFocus
-              required
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="new-event-date"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-            >
-              {t('calendar:create.date')}
-            </label>
-            <input
-              id="new-event-date"
-              type="date"
-              value={toDateInputValue(day)}
-              onChange={(e) => handleDateChange(e.target.value)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
-            />
-          </div>
-
-          <div className="flex gap-3">
-            <div className="flex-1 min-w-0">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                {t('calendar:create.startTime')}
-              </label>
-              <Select
-                value={String(startMin)}
-                onChange={(value) => handleStartChange(Number(value))}
-                options={startOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
-                ariaLabel={t('calendar:create.startTime')}
-                fullWidth
-              />
-            </div>
-            <div className="flex-1 min-w-0">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                {t('calendar:create.endTime')}
-              </label>
-              <Select
-                value={String(endMin)}
-                onChange={(value) => setEndMin(Number(value))}
-                options={endOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
-                ariaLabel={t('calendar:create.endTime')}
-                fullWidth
-              />
-            </div>
-          </div>
-
-          <div>
+        {choices.length > 1 && (
+          <div className="px-5 pt-4 flex-shrink-0">
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-              {t('calendar:create.recurrence.label')}
+              {t('calendar:create.account')}
             </label>
             <Select
-              value={recurrence}
-              onChange={setRecurrence}
-              options={recurrenceOpts.map((o) => ({
-                value: o.value,
-                label: t(`calendar:create.recurrence.${o.labelKey}`, o.params),
-              }))}
-              ariaLabel={t('calendar:create.recurrence.label')}
+              value={accountId}
+              onChange={setAccountId}
+              options={choices.map((c) => ({ value: c.account.id, label: c.account.email }))}
+              ariaLabel={t('calendar:create.account')}
               fullWidth
             />
           </div>
+        )}
 
-          <div>
-            <label
-              htmlFor="new-event-invitees"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-            >
-              {t('calendar:create.invitees')}
-            </label>
-            <div
-              className={`flex flex-wrap gap-1 items-center border rounded-md px-2 py-1.5 bg-white min-h-[38px] focus-within:ring-1 focus-within:ring-primary-500 ${
-                inviteeInvalid ? 'border-red-400' : 'border-gray-300'
-              } ${inviteeShaking ? 'animate-shake' : ''}`}
-              onAnimationEnd={() => setInviteeShaking(false)}
-              onClick={() => document.getElementById('new-event-invitees')?.focus()}
-            >
-              {invitees.map((email) => (
-                <span
-                  key={email}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700"
-                >
-                  {email}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeInvitee(email);
-                    }}
-                    className="hover:text-red-500"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              <div className="relative flex-1 min-w-[140px]">
-                <input
-                  id="new-event-invitees"
-                  type="text"
-                  value={inviteeInput}
-                  onChange={(e) => {
-                    setInviteeInput(e.target.value);
-                    setInviteeInvalid(false);
-                  }}
-                  onFocus={() => setInviteeFocused(true)}
-                  onBlur={() => setTimeout(() => setInviteeFocused(false), 200)}
-                  onKeyDown={handleInviteeKeyDown}
-                  title={inviteeInvalid ? t('calendar:create.invalidEmail') : undefined}
-                  className={`w-full text-sm outline-none bg-transparent py-0.5 ${
-                    inviteeInvalid ? 'text-red-700' : 'text-gray-900'
-                  }`}
-                  placeholder={invitees.length === 0 ? t('calendar:create.inviteesPlaceholder') : ''}
-                />
-                {inviteeFocused && suggestions.length > 0 && (
-                  <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
-                    {suggestions.map((s, i) => (
-                      <button
-                        key={s.email}
-                        type="button"
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                          i === selectedIdx ? 'bg-primary-50' : ''
-                        }`}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          addInvitee(s.email);
-                        }}
-                      >
-                        <div className="truncate text-gray-900">{s.email}</div>
-                        {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+        {protonUrl ? (
+          <div className="px-5 py-4 space-y-3">
+            <p className="text-sm text-gray-700">{t('calendar:create.protonHint')}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => openInProton(protonUrl)}
+                className="px-4 py-1.5 text-sm rounded-md bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors"
+              >
+                {t('calendar:create.openProton')}
+              </button>
             </div>
           </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+            className="px-5 py-4 space-y-4 overflow-y-auto"
+          >
+            <div>
+              <label
+                htmlFor="new-event-title"
+                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              >
+                {t('calendar:create.eventTitle')}
+              </label>
+              <input
+                id="new-event-title"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={t('calendar:create.eventTitlePlaceholder')}
+                // biome-ignore lint/a11y/noAutofocus: dialog opens explicitly for typing a title
+                autoFocus
+                required
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+            </div>
 
-          <div>
-            <label
-              htmlFor="new-event-description"
-              className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-            >
-              {t('calendar:create.description')}
-            </label>
-            <textarea
-              id="new-event-description"
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={t('calendar:create.descriptionPlaceholder')}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
-            />
-          </div>
+            <div>
+              <label
+                htmlFor="new-event-date"
+                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              >
+                {t('calendar:create.date')}
+              </label>
+              <input
+                id="new-event-date"
+                type="date"
+                value={toDateInputValue(day)}
+                onChange={(e) => handleDateChange(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+            </div>
 
-          {isGmail && (
-            <p className="flex items-start gap-2 text-xs text-gray-500">
-              <svg className="w-4 h-4 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                  clipRule="evenodd"
+            <div className="flex gap-3">
+              <div className="flex-1 min-w-0">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                  {t('calendar:create.startTime')}
+                </label>
+                <Select
+                  value={String(startMin)}
+                  onChange={(value) => handleStartChange(Number(value))}
+                  options={startOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
+                  ariaLabel={t('calendar:create.startTime')}
+                  fullWidth
                 />
-              </svg>
-              {t('calendar:create.meetNote')}
-            </p>
-          )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                  {t('calendar:create.endTime')}
+                </label>
+                <Select
+                  value={String(endMin)}
+                  onChange={(value) => setEndMin(Number(value))}
+                  options={endOptions.map((m) => ({ value: String(m), label: timeLabel(m) }))}
+                  ariaLabel={t('calendar:create.endTime')}
+                  fullWidth
+                />
+              </div>
+            </div>
 
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isSaving}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-            >
-              {t('common:actions.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving || !trimmedTitle}
-              className="px-4 py-1.5 text-sm rounded-md bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {isSaving && (
-                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                {t('calendar:create.recurrence.label')}
+              </label>
+              <Select
+                value={recurrence}
+                onChange={setRecurrence}
+                options={recurrenceOpts.map((o) => ({
+                  value: o.value,
+                  label: t(`calendar:create.recurrence.${o.labelKey}`, o.params),
+                }))}
+                ariaLabel={t('calendar:create.recurrence.label')}
+                fullWidth
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="new-event-invitees"
+                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              >
+                {t('calendar:create.invitees')}
+              </label>
+              <div
+                className={`flex flex-wrap gap-1 items-center border rounded-md px-2 py-1.5 bg-white min-h-[38px] focus-within:ring-1 focus-within:ring-primary-500 ${
+                  inviteeInvalid ? 'border-red-400' : 'border-gray-300'
+                } ${inviteeShaking ? 'animate-shake' : ''}`}
+                onAnimationEnd={() => setInviteeShaking(false)}
+                onClick={() => document.getElementById('new-event-invitees')?.focus()}
+              >
+                {invitees.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700"
+                  >
+                    {email}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeInvitee(email);
+                      }}
+                      className="hover:text-red-500"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <div className="relative flex-1 min-w-[140px]">
+                  <input
+                    id="new-event-invitees"
+                    type="text"
+                    value={inviteeInput}
+                    onChange={(e) => {
+                      setInviteeInput(e.target.value);
+                      setInviteeInvalid(false);
+                    }}
+                    onFocus={() => setInviteeFocused(true)}
+                    onBlur={() => setTimeout(() => setInviteeFocused(false), 200)}
+                    onKeyDown={handleInviteeKeyDown}
+                    title={inviteeInvalid ? t('calendar:create.invalidEmail') : undefined}
+                    className={`w-full text-sm outline-none bg-transparent py-0.5 ${
+                      inviteeInvalid ? 'text-red-700' : 'text-gray-900'
+                    }`}
+                    placeholder={invitees.length === 0 ? t('calendar:create.inviteesPlaceholder') : ''}
+                  />
+                  {inviteeFocused && suggestions.length > 0 && (
+                    <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto">
+                      {suggestions.map((s, i) => (
+                        <button
+                          key={s.email}
+                          type="button"
+                          className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                            i === selectedIdx ? 'bg-primary-50' : ''
+                          }`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            addInvitee(s.email);
+                          }}
+                        >
+                          <div className="truncate text-gray-900">{s.email}</div>
+                          {s.name && <div className="truncate text-xs text-gray-500">{s.name}</div>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="new-event-description"
+                className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+              >
+                {t('calendar:create.description')}
+              </label>
+              <textarea
+                id="new-event-description"
+                rows={3}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder={t('calendar:create.descriptionPlaceholder')}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
+              />
+            </div>
+
+            {isGmail && (
+              <p className="flex items-start gap-2 text-xs text-gray-500">
+                <svg className="w-4 h-4 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                    clipRule="evenodd"
+                  />
                 </svg>
-              )}
-              {isSaving ? t('calendar:create.creating') : t('calendar:create.createButton')}
-            </button>
-          </div>
-        </form>
+                {t('calendar:create.meetNote')}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isSaving}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving || !trimmedTitle}
+                className="px-4 py-1.5 text-sm rounded-md bg-primary-600 text-white font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isSaving && (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                )}
+                {isSaving ? t('calendar:create.creating') : t('calendar:create.createButton')}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

@@ -9,7 +9,11 @@ export interface Account {
   sortOrder: number;
   enabled: boolean;
   syncFromTimestamp: number | null;
+  /** Identifies the account wherever accounts are mixed (sidebar, unified inbox, calendar). */
+  color: AccountColor;
 }
+
+export type AccountColor = 'blue' | 'emerald' | 'amber' | 'purple' | 'rose' | 'cyan' | 'indigo' | 'orange';
 
 export interface AccountSettings {
   gmailCategories: string[];
@@ -378,7 +382,7 @@ export interface Attachment {
 }
 
 export interface AiConfig {
-  provider: 'ollama' | 'openrouter' | 'llamacpp';
+  provider: 'ollama' | 'openrouter' | 'llamacpp' | 'openai_compatible';
   model: string;
   embeddingModel: string;
   /** The OpenRouter embedding model that passed the dimension check, if any. */
@@ -392,6 +396,14 @@ export interface AiConfig {
   hasApiKey: boolean;
   thinkingEnabled: boolean;
   zeroDataRetention: boolean;
+  /** The OpenAI-compatible server's saved settings. */
+  server: {
+    baseUrl: string | null;
+    hasApiKey: boolean;
+    embeddingSource: 'server' | 'inapp' | 'openrouter';
+    contextWindow: number;
+    disclosedHost: string | null;
+  };
 }
 
 /** A kind of AI background work that uses the configured provider
@@ -419,6 +431,9 @@ export interface AiWorkItem {
 export interface AiProviderActivity {
   /** The provider in use (the saved one). */
   provider: string;
+  /** Where embedding work sends mail: `provider`, or the OpenAI-compatible
+   *  server's embedding source. */
+  embeddingProvider: string;
   items: AiWorkItem[];
 }
 
@@ -613,6 +628,18 @@ export interface ChatMessageSource {
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
+/** A suggested request for an empty conversation (`get_chat_starters`). The
+ * frontend words it from `kind` + the parameters in the UI language. */
+export interface ChatStarter {
+  kind: 'today' | 'reply' | 'sender' | 'thread' | 'thisWeek' | 'draft';
+  /** `send` sends it on click; `prefill` puts a sentence stem in the input. */
+  action: 'send' | 'prefill';
+  senderName?: string;
+  subject?: string;
+  /** The thread a `reply` starter is about; the turn is grounded in it. */
+  threadId?: string;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -660,6 +687,7 @@ export interface ChatSourcesEvent {
  *  "Processing…" status the bubble shows before any answer tokens arrive.
  *  Mirrors the Rust `ChatPhase` enum (camelCase serde). */
 export type ChatPhase =
+  | 'queued'
   | 'routing'
   | 'retrieving'
   | 'searchingContacts'
@@ -668,6 +696,7 @@ export type ChatPhase =
   | 'generatingDraft'
   | 'runningTools'
   | 'researching'
+  | 'readingDocument'
   | 'generating';
 
 /** Progress of a research-mode turn, fired on `chat-research-progress`.

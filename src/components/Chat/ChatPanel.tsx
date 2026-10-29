@@ -15,6 +15,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
+import { ChatStarters } from './ChatStarters';
 import { MessageList } from './MessageList';
 import { OtherAccountContextNotice } from './OtherAccountContextNotice';
 import { ThreadContextChip } from './ThreadContextChip';
@@ -71,6 +72,7 @@ export function ChatPanel({
     loadCategoriesPref,
     categoriesLoaded,
     inputPrefill,
+    prefillInput,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
   // What the user has on screen, sent with each turn so "esto" / "aquí"
@@ -81,6 +83,7 @@ export function ChatPanel({
   // thread re-arms it — a dismissal applies to the thread it was made on, not
   // to every thread the user visits afterwards.
   const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
+  const [inputFocusNonce, setInputFocusNonce] = useState<number | undefined>(undefined);
   const contextKey = chatContextKey(context);
   // A conversation seeded via "Chat about this thread" already owns its
   // grounding — the backend ignores ambient context for it, so don't offer any.
@@ -128,23 +131,27 @@ export function ChatPanel({
     }
   };
 
-  const handleSend = async (content: string) => {
-    if (!activeConversationId) {
-      if (!accountId) return;
-      try {
-        await createConversation(accountId);
-      } catch (e) {
-        addLog('error', 'ai', `Failed to create conversation: ${errorText(e)}`);
-        return;
-      }
-    }
+  // `threadId`: a starter about one thread of this account grounds the turn in
+  // it, as the context chip does.
+  const handleSend = async (content: string, threadId?: string) => {
+    // A first message creates its conversation inside the store, after the
+    // user's text is already on screen (`chatStore.dispatchTurn`).
+    if (!accountId) return;
     addLog('info', 'ai', `Sent: ${content.slice(0, 60)}${content.length > 60 ? '…' : ''}`);
     // Only pass the thread when the chip is armed — a dismissed chip must
     // behave exactly like having nothing open (normal retrieval).
     // The thread's OWN account travels with it — in unified mode it differs
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
-    await sendMessage(content, turnContext?.threadId ?? null, turnContext?.accountId ?? null, viewContext);
+    const grounding = threadId ? { threadId, accountId } : turnContext;
+    await sendMessage(
+      content,
+      grounding?.threadId ?? null,
+      grounding?.accountId ?? null,
+      viewContext,
+      accountId,
+      grounding?.attachmentId ?? null,
+    );
   };
 
   const header = (
@@ -219,8 +226,17 @@ export function ChatPanel({
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {showEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm leading-relaxed text-gray-500">
-            {t('chat:panel.emptyHint')}
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-4 py-4">
+            <p className="text-center text-sm leading-relaxed text-gray-500">{t('chat:panel.emptyHint')}</p>
+            <ChatStarters
+              accountId={accountId}
+              openContext={contextActive ? (offeredContext?.attachmentId ? 'document' : 'thread') : undefined}
+              compact
+              disabled={isSending || streamingMessageId !== null}
+              onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
+              onPrefill={prefillInput}
+              onSomethingElse={() => setInputFocusNonce((n) => (n ?? 0) + 1)}
+            />
           </div>
         ) : isLoadingMessages ? (
           <div className="flex flex-1 items-center justify-center text-xs text-gray-500">
@@ -241,6 +257,7 @@ export function ChatPanel({
                 turnContext?.threadId ?? null,
                 turnContext?.accountId ?? null,
                 viewContext,
+                turnContext?.attachmentId ?? null,
               )
             }
             rejectedMessageIds={rejectedMessageIds}
@@ -257,6 +274,7 @@ export function ChatPanel({
         onClear={handleCreate}
         prefillText={inputPrefill?.text}
         prefillNonce={inputPrefill?.nonce}
+        focusNonce={inputFocusNonce}
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={

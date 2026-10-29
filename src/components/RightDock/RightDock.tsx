@@ -1,4 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useRef } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
 import {
@@ -8,6 +9,7 @@ import {
   clampChatPanelWidth,
   parseChatPanelWidth,
 } from '@/lib/chatPanelLayout';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface RightDockProps {
   children: ReactNode;
@@ -29,7 +31,10 @@ export function RightDock({ children }: RightDockProps) {
     parse: parseChatPanelWidth,
     serialize: (v) => String(v),
   });
-  const draggingRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
+  // The drag-capture layer covers the whole window: no conversation shortcut
+  // may act behind it.
+  useOverlay(dragging);
 
   // Publish the dock's width so a non-blocking dialog can keep clear of it
   // (see `Modal`'s `nonBlocking`). A CSS variable rather than a prop: the
@@ -47,18 +52,16 @@ export function RightDock({ children }: RightDockProps) {
   // the distance from the pointer to the window's right edge.
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
-    draggingRef.current = true;
+    setDragging(true);
   }, []);
 
   useEffect(() => {
+    if (!dragging) return;
     const onMove = (e: PointerEvent) => {
-      if (!draggingRef.current) return;
       e.preventDefault();
       setWidth(clampChatPanelWidth(window.innerWidth - e.clientX));
     };
-    const stop = () => {
-      draggingRef.current = false;
-    };
+    const stop = () => setDragging(false);
     // Listen on window, not the handle: the pointer routinely outruns a 4px
     // target mid-drag, and losing the move events would freeze the resize.
     window.addEventListener('pointermove', onMove);
@@ -69,7 +72,7 @@ export function RightDock({ children }: RightDockProps) {
       window.removeEventListener('pointerup', stop);
       window.removeEventListener('pointercancel', stop);
     };
-  }, [setWidth]);
+  }, [dragging, setWidth]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -95,6 +98,14 @@ export function RightDock({ children }: RightDockProps) {
         className="w-1 flex-shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-primary-300 focus:bg-primary-400 focus:outline-none"
       />
       <div className="min-w-0 flex-1">{children}</div>
+      {/* While dragging, a layer over the whole window keeps the pointer in
+          this document: over an iframe (a PDF, an email body) the window gets
+          no pointermove events and the resize froze mid-drag. */}
+      {dragging &&
+        createPortal(
+          <div data-testid="right-dock-drag-capture" className="fixed inset-0 z-[9999] cursor-col-resize" />,
+          document.body,
+        )}
     </div>
   );
 }

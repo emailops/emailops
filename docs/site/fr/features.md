@@ -176,7 +176,8 @@ utilisées, avec un bouton en dessous pour voir le reste.
 ## Calendrier {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Vues mois, semaine et jour par compte pour Google Agenda et Outlook. Vous recevez des rappels
+Vues mois, semaine et jour pour Google Agenda et Outlook, d'un compte ou de **Tous les
+comptes** ensemble, où chaque événement prend la couleur de son compte. Vous recevez des rappels
 avant chaque événement, avec un bouton **Rejoindre** en un clic pour les liens Meet, Teams,
 Webex et Zoom. La synchronisation du calendrier est active par défaut pour les comptes Gmail
 et Outlook et peut être désactivée compte par compte, tout comme le délai de notification,
@@ -188,6 +189,16 @@ qu'un collègue a partagé avec vous apparaît donc ici comme dans Google ou Out
 prend la couleur que lui donne son fournisseur, et la légende au-dessus de la grille masque
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
 **Paramètres → Calendrier**.
+
+<!-- claim:feat-calendar-4 -->
+Les comptes IMAP ont un calendrier en s'abonnant à un lien de calendrier publié (ICS), par
+exemple l'URL de partage par lien de Proton Calendar, dans **Flux de calendrier (comptes IMAP)**
+sous **Paramètres → Calendrier**. Un flux est en lecture seule, se met à jour toutes les quelques
+minutes, et son lien est conservé dans votre trousseau, pas dans la base de données.
+
+<!-- claim:feat-calendar-5 -->
+À côté de la boîte de réception, le calendrier s'ouvre aussi en panneau ancré à droite,
+l'**Agenda** ; **Ouvrir le calendrier complet** passe à la vue complète.
 
 <!-- claim:feat-calendar-3 -->
 Les notifications système d'un rappel omettent le titre de la réunion, sauf si vous activez
@@ -201,6 +212,9 @@ verrouillage de l'app. Le rappel dans EmailOps affiche toujours la réunion comp
 Un seul endroit pour les pièces jointes qui comptent — factures, contrats, reçus — avec aperçu
 et téléchargement, au lieu de fouiller à nouveau les fils de discussion. Ouvrez-la depuis
 **Pièces jointes** dans la barre latérale.
+
+<!-- claim:feat-attachments-view-9 -->
+Un PDF s'ouvre dans son propre onglet, où **Zoom avant** et **Zoom arrière** changent sa taille.
 
 <!-- claim:feat-attachments-view-2 -->
 La vue collecte les pièces jointes grâce à des **règles**, elle est donc vide au départ. Cliquez

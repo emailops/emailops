@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{Account, OAuthTokens};
+use crate::models::{Account, AccountColor, OAuthTokens};
 use crate::services::logger;
 use crate::sync::gmail::GmailClient;
 use crate::sync::imap::{ImapClient, ImapCredentials};
@@ -94,6 +94,7 @@ pub async fn add_account(db: &Arc<Database>, provider_name: &str, sync_from_time
         sort_order: 0,
         enabled: true,
         sync_from_timestamp,
+        color: db.next_account_color()?,
     };
 
     persist_oauth_account(db, &account, &tokens)?;
@@ -496,6 +497,16 @@ pub fn update_account_name(db: &Arc<Database>, account_id: &str, name: &str) -> 
 
     db.update_account_name(account_id, &name)?;
     Ok(Account { name, ..account })
+}
+
+/// Recolour `account_id` — the colour that marks it in the sidebar, the
+/// unified inbox and the "All accounts" calendar.
+pub fn set_account_color(db: &Arc<Database>, account_id: &str, color: AccountColor) -> Result<Account> {
+    if !db.set_account_color(account_id, color)? {
+        return Err(AppError::NotFound(format!("Account {} not found", account_id)));
+    }
+    db.get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))
 }
 
 /// Whether `account` should take its name from Gmail's "Send mail as" setting:
@@ -1036,6 +1047,7 @@ pub async fn add_imap_account(
         sort_order: 0,
         enabled: true,
         sync_from_timestamp,
+        color: db.next_account_color()?,
     };
 
     persist_imap_account(db, &account, &credentials)?;
@@ -1367,6 +1379,26 @@ mod tests {
     }
 
     #[test]
+    fn set_account_color_returns_the_recoloured_account() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-c", "c@example.com"))
+            .expect("seed account");
+
+        let account = set_account_color(&db, "acc-c", AccountColor::Indigo).expect("recolour");
+
+        assert_eq!(account.color, AccountColor::Indigo);
+    }
+
+    #[test]
+    fn set_account_color_on_an_unknown_account_is_not_found() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+
+        let err = set_account_color(&db, "missing", AccountColor::Indigo).unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[test]
     fn update_account_name_stores_the_trimmed_name() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
         db.insert_account(&imap_account("acc-r", "r@example.com"))
@@ -1503,6 +1535,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: AccountColor::Blue,
         }
     }
 

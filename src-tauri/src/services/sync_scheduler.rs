@@ -581,9 +581,18 @@ fn make_calendar_sync_fn(db: Arc<Database>, account: Account, app: AppHandle) ->
             let dedup_key = format!("calendar:{}", account.id);
             let now = chrono::Utc::now().timestamp();
             let result = match crate::services::calendar::sync::build_calendar_provider(&db, &account) {
+                // A panic is this tick's error, not the end of the poll loop.
                 Ok(provider) => {
-                    crate::services::calendar::sync::sync_account_calendar(&db, &account.id, provider.as_ref(), now)
-                        .await
+                    crate::util::panic_guard::run_isolated(
+                        &format!("Calendar sync of {}", account.id),
+                        crate::services::calendar::sync::sync_account_calendar(
+                            &db,
+                            &account.id,
+                            provider.as_ref(),
+                            now,
+                        ),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             };
@@ -1176,6 +1185,7 @@ mod tests {
             sort_order: 0,
             enabled,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 

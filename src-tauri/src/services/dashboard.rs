@@ -399,6 +399,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: Some(1_700_000_000),
+            color: crate::models::AccountColor::Blue,
         };
         db.insert_account(&acc).unwrap();
         acc

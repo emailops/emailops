@@ -1,0 +1,20 @@
+{
+  "rust": {
+    "src-tauri/src/services/chat/starters.rs::a_thread_awaiting_a_reply_is_suggested_right_after_today": "Un hilo donde la otra persona escribió lo último aparece justo después de «hoy», con su nombre y el asunto.",
+    "src-tauri/src/services/chat/starters.rs::the_newest_thread_awaiting_a_reply_is_the_one_suggested": "Si hay varios hilos sin responder, se sugiere el más reciente.",
+    "src-tauri/src/services/chat/starters.rs::no_reply_starter_when_nothing_awaits_a_reply": "Sin hilos pendientes de respuesta no aparece la fila «Sin responder».",
+    "src-tauri/src/services/chat/starters.rs::an_automated_thread_never_awaits_a_reply": "Un hilo cuyo último mensaje es de un remitente automático nunca se sugiere como pendiente de respuesta.",
+    "src-tauri/src/services/chat/starters.rs::the_thread_awaiting_a_reply_is_not_suggested_twice": "El hilo sin responder no se repite como fila de hilo reciente.",
+    "src-tauri/src/services/chat/starters.rs::the_suggested_sender_is_someone_other_than_the_one_awaiting_a_reply_when_it_can": "El remitente frecuente sugerido es otra persona distinta de la que espera respuesta, si la hay, para no nombrar dos veces a la misma.",
+    "src-tauri/src/services/chat/starters.rs::a_reply_starter_without_a_display_name_is_named_by_address": "Si quien espera respuesta no tiene nombre visible, la fila usa su dirección.",
+    "src-tauri/src/db/emails/chat_starters.rs::a_thread_whose_newest_email_is_inbound_awaits_a_reply": "Un hilo cuyo correo más reciente es entrante y posterior a la última respuesta del usuario queda marcado como pendiente, con el nombre del remitente.",
+    "src-tauri/src/db/emails/chat_starters.rs::a_thread_the_owner_answered_last_does_not_await_a_reply": "Si el usuario respondió después (aunque su respuesta esté en Enviados), el hilo no queda pendiente.",
+    "src-tauri/src/services/chat/starters.rs::the_reply_starter_carries_its_thread_so_the_turn_is_grounded_in_it": "La fila «Sin responder» lleva el id de su hilo, para que el turno se ancle a ese hilo y la respuesta lo lea entero."
+  },
+  "vitest": {
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters names the person and the thread waiting on a reply": "La fila «Sin responder» muestra la persona y el asunto, y al pulsarla envía la pregunta junto con el id del hilo.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters offers requests about the open thread instead of the mailbox ones": "Con el hilo abierto como contexto, las sugerencias son sobre ese hilo (resumir, qué me piden, redactar respuesta) y no las del buzón.",
+    "src/components/Chat/ChatStarters.test.tsx::ChatStarters puts a reply stem for the open thread in the input": "«Redactar una respuesta» del hilo abierto rellena el campo; «Resume este hilo» se envía directamente.",
+    "src/stores/chatStore.test.ts::a first message while the store has no account yet creates its conversation on the account the surface passes": "Justo tras un cambio de cuenta, cuando el store aún no tiene cuenta, un primer mensaje crea la conversación en la cuenta del panel en vez de fallar con «No active conversation»."
+  }
+}

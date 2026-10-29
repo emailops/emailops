@@ -7,11 +7,13 @@ const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
 use crate::ai::provider::{
-    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ProviderType,
+    ToolStreamResult,
 };
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{AiConfig, AiLogEvent, AiUsageSummary};
+use crate::services::ai_server::{self, EmbeddingSource, ServerSettingsInput, ServerSettingsPlan};
 
 /// Shown when the configured provider is the embedded runtime but this build
 /// was compiled without it (`--no-default-features`, e.g. the Intel-mac bundle
@@ -48,7 +50,7 @@ const OPENROUTER_EMBED_VALIDATED_PREF: &str = "openrouter_embedding_validated_mo
 const OPENROUTER_EMBED_DIMENSIONS_PREF: &str = "openrouter_embedding_dimensions";
 
 /// Every provider a config can be saved for.
-const PROVIDERS: [&str; 3] = ["llamacpp", "ollama", "openrouter"];
+const PROVIDERS: [&str; 4] = ["llamacpp", "ollama", "openrouter", ai_server::PROVIDER_ID];
 /// The in-app embedding model a fresh install is configured with.
 const DEFAULT_LLAMACPP_EMBEDDING_MODEL: &str = "nomic-embed-text-v1.5-q4_k_m";
 
@@ -75,21 +77,83 @@ pub struct ProviderModels {
 /// Ollama has no list to check against and namespaced ids of its own, so it
 /// refuses only what is known to be another provider's: a catalogue GGUF id
 /// or `openrouter_model`, the embedding model remembered for OpenRouter.
+///
+/// `provider` is the embedding backend (see [`embedding_backend`]). An
+/// OpenAI-compatible server lists ids of its own, any of which it may serve,
+/// or none (keyword-only search); only a catalogue GGUF id is certainly wrong.
 fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<&str>) -> bool {
     use crate::ai::model_catalog;
     match provider {
         "openrouter" => model.is_empty() || crate::ai::openrouter::is_openrouter_model_id(model),
         "llamacpp" => model_catalog::embedding_models().any(|m| m.id == model),
+        ai_server::PROVIDER_ID => model.is_empty() || model_catalog::find(model).is_none(),
         _ => !model.is_empty() && model_catalog::find(model).is_none() && openrouter_model != Some(model),
     }
 }
 
 fn default_embedding_model(provider: &str) -> &'static str {
     match provider {
-        "openrouter" => "",
+        "openrouter" | ai_server::PROVIDER_ID => "",
         "llamacpp" => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
         _ => crate::services::embeddings::DEFAULT_EMBEDDING_MODEL,
     }
+}
+
+/// The provider whose embedding models `provider` uses: itself, except for the
+/// OpenAI-compatible server, which embeds with itself, the in-app model or
+/// OpenRouter as its stored embedding source says.
+fn embedding_backend(provider: &str, source: EmbeddingSource) -> &str {
+    match (provider, source) {
+        (ai_server::PROVIDER_ID, EmbeddingSource::InApp) => "llamacpp",
+        (ai_server::PROVIDER_ID, EmbeddingSource::OpenRouter) => "openrouter",
+        _ => provider,
+    }
+}
+
+/// Whether the in-app embedding model can run here: compiled in, and a host
+/// the embedded runtime executes on.
+fn in_app_embeddings_supported() -> bool {
+    cfg!(feature = "llamacpp")
+        && crate::ai::gpu_plan::embedded_runtime_supported(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Shown when the OpenAI-compatible server is set to index mail with the in-app
+/// model on a build or machine where it cannot run.
+#[cfg(not(feature = "llamacpp"))]
+const IN_APP_EMBEDDINGS_UNAVAILABLE: &str = "This build of EmailOps does not include the in-app embedding model. \
+     Choose the server or OpenRouter for the email index in Settings → AI.";
+
+/// What Settings sends when the AI config is saved.
+#[derive(Debug, Clone, Default)]
+pub struct AiSettingsInput {
+    pub provider: String,
+    pub model: String,
+    pub embedding_model: Option<String>,
+    /// A new OpenRouter key; `None` or empty keeps the stored one.
+    pub api_key: Option<String>,
+    pub monthly_budget_usd: f64,
+    pub thinking_enabled: Option<bool>,
+    pub zero_data_retention: Option<bool>,
+    /// Required when `provider` is the OpenAI-compatible server.
+    pub server: Option<ServerSettingsInput>,
+}
+
+/// An AI config every field of which has been checked (and whose server
+/// embedding model has passed its probe). Only [`AiService::prepare_ai_settings`]
+/// makes one, so nothing is written before everything was validated.
+#[derive(Debug)]
+pub struct PreparedAiSettings {
+    input: AiSettingsInput,
+    server: Option<ServerSettingsPlan>,
+    /// The server embedding model that just passed the probe, as stored in the
+    /// validated preference, and how to ask it for vectors.
+    server_embedding: Option<(String, EmbeddingDimensions)>,
+}
+
+/// The value of the validated-model preference for a server embedding model:
+/// a probe holds for that model on that server only.
+fn server_embedding_key(base_url: &str, model: &str) -> String {
+    format!("{base_url} {model}")
 }
 
 /// The embedding model a save stores, and what it replaced when it had to.
@@ -430,6 +494,11 @@ impl AiService {
                 config.model = model.to_string();
                 Ok(Arc::new(Self::openrouter_client(db, config)?))
             }
+            ai_server::PROVIDER_ID => {
+                let mut config = Self::get_config(db)?;
+                config.model = model.to_string();
+                Self::openai_compatible_provider(db, config)
+            }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -516,8 +585,10 @@ impl AiService {
     /// `save_config`); an embedding model it cannot use does not count.
     pub fn remembered_models(db: &Database, config: &AiConfig) -> Result<Vec<(&'static str, ProviderModels)>> {
         let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
-        let usable =
-            |provider: &str, model: &String| embedding_model_usable(provider, model, openrouter_model.as_deref());
+        let source = ai_server::load_server_settings(db)?.embedding_source;
+        let usable = |provider: &str, model: &String| {
+            embedding_model_usable(embedding_backend(provider, source), model, openrouter_model.as_deref())
+        };
         PROVIDERS
             .into_iter()
             .map(|provider| {
@@ -553,7 +624,7 @@ impl AiService {
         if probe.cost_usd > 0.0 {
             Self::record_provider_call(
                 db,
-                client,
+                client.provider_type(),
                 client.embedding_model_name(),
                 "embed",
                 probe.tokens,
@@ -604,6 +675,7 @@ impl AiService {
                     .with_keep_alive(ollama_keep_alive),
             )),
             "openrouter" => Ok(Arc::new(Self::openrouter_client(db, config)?)),
+            ai_server::PROVIDER_ID => Self::openai_compatible_provider(db, config),
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -742,12 +814,12 @@ impl AiService {
         provider: &str,
         model: &str,
         embedding_model: Option<&str>,
-        api_key: Option<&str>,
         monthly_budget_usd: f64,
         thinking_enabled: Option<bool>,
         zero_data_retention: Option<bool>,
     ) -> Result<()> {
         let current_embedding = db.get_preference("ai_embedding_model")?;
+        let source = ai_server::load_server_settings(db)?.embedding_source;
         // Leaving a provider: remember the models it was using, which may
         // have changed outside this function (quick model selector, download
         // auto-select) since they were last saved.
@@ -756,16 +828,15 @@ impl AiService {
                 db.set_preference(&remembered_model_pref(&previous), &previous_model)?;
             }
             let openrouter_model = Self::stored_embedding_model(db, "openrouter")?;
-            if let Some(previous_embedding) = current_embedding
-                .as_ref()
-                .filter(|m| embedding_model_usable(&previous, m, openrouter_model.as_deref()))
-            {
+            if let Some(previous_embedding) = current_embedding.as_ref().filter(|m| {
+                embedding_model_usable(embedding_backend(&previous, source), m, openrouter_model.as_deref())
+            }) {
                 db.set_preference(&remembered_embedding_pref(&previous), previous_embedding)?;
             }
         }
 
         let plan = plan_embedding_model(
-            provider,
+            embedding_backend(provider, source),
             embedding_model,
             current_embedding.as_deref(),
             Self::stored_embedding_model(db, provider)?.as_deref(),
@@ -798,21 +869,236 @@ impl AiService {
         let now = chrono::Utc::now().timestamp();
         db.set_preference("ai_period_start", &now.to_string())?;
 
-        if let Some(key) = api_key {
-            // Route the secret to the right backing store based on the
-            // provider being saved. Previously this unconditionally wrote
-            // to the OpenRouter slot regardless of provider.
-            match provider {
-                "openrouter" => Self::store_openrouter_api_key(db, key)?,
-                _ => {
-                    // No-op: ollama / llamacpp don't take a key. Silently
-                    // ignore so a stray key doesn't get stored under the
-                    // wrong provider.
-                }
-            }
+        Ok(())
+    }
+
+    /// Check everything Settings sent, without writing anything: the provider,
+    /// the budget and, for the OpenAI-compatible server, its URL, disclosure,
+    /// key change, embedding source and context size. A newly chosen server
+    /// embedding model is probed once here and refused when it returns no
+    /// vectors the email index can hold.
+    pub async fn prepare_ai_settings(db: &Database, input: AiSettingsInput) -> Result<PreparedAiSettings> {
+        if !PROVIDERS.contains(&input.provider.as_str()) {
+            return Err(AppError::InvalidInput(format!(
+                "Unknown AI provider \"{}\"",
+                input.provider
+            )));
+        }
+        if !input.monthly_budget_usd.is_finite() || input.monthly_budget_usd < 0.0 {
+            return Err(AppError::InvalidInput(
+                "The monthly budget must be a positive amount, or 0 for none.".to_string(),
+            ));
+        }
+        if input.provider != ai_server::PROVIDER_ID {
+            return Ok(PreparedAiSettings {
+                input,
+                server: None,
+                server_embedding: None,
+            });
         }
 
-        Ok(())
+        let server_input = input
+            .server
+            .as_ref()
+            .ok_or_else(|| AppError::InvalidInput("The server settings are missing.".to_string()))?;
+        if input.model.trim().is_empty() {
+            return Err(AppError::InvalidInput(
+                "Choose a chat model for the server.".to_string(),
+            ));
+        }
+        let previous = ai_server::load_server_settings(db)?.disclosed_host;
+        let plan = ai_server::plan_server_settings(server_input, previous.as_deref(), in_app_embeddings_supported())?;
+
+        let mut server_embedding = None;
+        let embedding_model = input.embedding_model.as_deref().unwrap_or_default().trim();
+        if plan.embedding_source == EmbeddingSource::Server
+            && !embedding_model.is_empty()
+            && Self::server_embedding_dimensions(db, &plan.base_url, embedding_model)?.is_none()
+        {
+            let key = match &plan.key {
+                ai_server::KeyChange::Set(key) => key.clone(),
+                ai_server::KeyChange::Clear => String::new(),
+                ai_server::KeyChange::Keep => ai_server::load_api_key(db)?,
+            };
+            let client = OpenRouterClient::openai_compatible(
+                &plan.base_url,
+                key,
+                input.model.clone(),
+                embedding_model.to_string(),
+            );
+            let probe = client.probe_embedding().await?;
+            server_embedding = Some((server_embedding_key(&plan.base_url, embedding_model), probe.dimensions));
+        }
+
+        Ok(PreparedAiSettings {
+            input,
+            server: Some(plan),
+            server_embedding,
+        })
+    }
+
+    /// Write a config [`Self::prepare_ai_settings`] checked. Secrets go first:
+    /// a keychain write is the step that can still fail (a refused macOS
+    /// prompt), and it fails before any preference has changed.
+    pub fn apply_ai_settings(db: &Database, prepared: PreparedAiSettings) -> Result<()> {
+        let PreparedAiSettings {
+            input,
+            server,
+            server_embedding,
+        } = prepared;
+        let openrouter_key = input.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+        if let (Some(key), "openrouter") = (openrouter_key, input.provider.as_str()) {
+            Self::store_openrouter_api_key(db, key)?;
+        }
+        if let Some(plan) = &server {
+            ai_server::apply_key_change(db, &plan.key, Self::use_dev_ai_keys())?;
+            ai_server::store_server_settings(db, plan)?;
+        }
+        if let Some((validated, dimensions)) = &server_embedding {
+            db.set_preference(ai_server::EMBED_VALIDATED_PREF, validated)?;
+            db.set_preference(ai_server::EMBED_DIMENSIONS_PREF, dimensions.as_pref())?;
+        }
+        Self::save_config(
+            db,
+            &input.provider,
+            &input.model,
+            input.embedding_model.as_deref(),
+            input.monthly_budget_usd,
+            input.thinking_enabled,
+            input.zero_data_retention,
+        )
+    }
+
+    /// How the server embedding model `model` at `base_url` was validated, or
+    /// `None` when it has not passed the probe there.
+    fn server_embedding_dimensions(db: &Database, base_url: &str, model: &str) -> Result<Option<EmbeddingDimensions>> {
+        if model.is_empty() {
+            return Ok(None);
+        }
+        let validated = db.get_preference(ai_server::EMBED_VALIDATED_PREF)?;
+        let mode = db.get_preference(ai_server::EMBED_DIMENSIONS_PREF)?;
+        Ok(validated_embedding(
+            &server_embedding_key(base_url, model),
+            validated.as_deref(),
+            mode.as_deref(),
+        ))
+    }
+
+    /// The provider for the OpenAI-compatible server: chat on the server, and
+    /// the email index on the server, the in-app model or OpenRouter.
+    fn openai_compatible_provider(db: &Database, config: AiConfig) -> Result<Arc<dyn AIProvider>> {
+        let server = ai_server::load_server_settings(db)?;
+        let base_url = server.base_url.as_deref().ok_or_else(|| {
+            AppError::AiError("No server URL is set — enter one in Settings → AI → OpenAI-compatible".to_string())
+        })?;
+        // Checked again here: the preference is only as safe as its last write.
+        let base_url = normalize_ai_base_url(base_url)?;
+        let key = ai_server::load_api_key(db)?;
+        let context_window = (server.context_window > 0).then_some(server.context_window);
+        let on_server = server.embedding_source == EmbeddingSource::Server;
+        let server_embedding_model = if on_server {
+            config.embedding_model.clone()
+        } else {
+            String::new()
+        };
+        let dimensions = Self::server_embedding_dimensions(db, &base_url, &server_embedding_model)?;
+        let chat = OpenRouterClient::openai_compatible(&base_url, key, config.model.clone(), server_embedding_model)
+            .with_context_window(context_window)
+            .with_embedding_dimensions(dimensions);
+        let embeddings: Arc<dyn AIProvider> = match server.embedding_source {
+            EmbeddingSource::Server => return Ok(Arc::new(chat)),
+            EmbeddingSource::OpenRouter => Arc::new(Self::openrouter_client(db, config)?),
+            EmbeddingSource::InApp => Self::in_app_embedder(db, &config.embedding_model)?,
+        };
+        Ok(Arc::new(crate::ai::provider::SplitProvider::new(
+            Arc::new(chat),
+            embeddings,
+        )))
+    }
+
+    /// The backend the email index is sent to with the saved config: the
+    /// provider itself, or the OpenAI-compatible server's embedding source.
+    pub fn embedding_provider(db: &Database) -> Result<String> {
+        let provider = Self::get_config(db)?.provider;
+        let source = ai_server::load_server_settings(db)?.embedding_source;
+        Ok(embedding_backend(&provider, source).to_string())
+    }
+
+    /// A client for a server typed in Settings and maybe not saved yet, for
+    /// listing its models or testing it. `api_key` is the key typed with it;
+    /// without one the stored key is used, but only for the saved server's
+    /// origin (scheme, host and port), so it is never sent to another server.
+    pub fn server_client_for(
+        db: &Database,
+        base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+    ) -> Result<OpenRouterClient> {
+        let base_url = normalize_ai_base_url(base_url)?;
+        let key = match api_key.map(str::trim).filter(|k| !k.is_empty()) {
+            Some(key) => key.to_string(),
+            None => {
+                let origin = |url: &str| url::Url::parse(url).ok().map(|u| u.origin());
+                let saved = ai_server::load_server_settings(db)?.base_url;
+                if saved
+                    .as_deref()
+                    .and_then(origin)
+                    .is_some_and(|o| Some(o) == origin(&base_url))
+                {
+                    ai_server::load_api_key(db)?
+                } else {
+                    String::new()
+                }
+            }
+        };
+        Ok(OpenRouterClient::openai_compatible(
+            &base_url,
+            key,
+            model.to_string(),
+            String::new(),
+        ))
+    }
+
+    /// The context window chat would use with the server typed in Settings,
+    /// and the window the server says it has loaded.
+    pub async fn server_context(
+        db: &Database,
+        base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        configured: u32,
+    ) -> Result<ai_server::ContextReport> {
+        let client = Self::server_client_for(db, base_url, api_key, model)?;
+        Ok(ai_server::plan_context_report(
+            configured,
+            client.served_context_window().await,
+        ))
+    }
+
+    /// The models a server lists at `GET {base_url}/models`.
+    pub async fn list_server_models(db: &Database, base_url: &str, api_key: Option<&str>) -> Result<Vec<ModelInfo>> {
+        Self::server_client_for(db, base_url, api_key, "")?.list_models().await
+    }
+
+    /// The in-app runtime with only `embedding_model` loaded, for a provider
+    /// that chats elsewhere.
+    #[cfg(feature = "llamacpp")]
+    fn in_app_embedder(db: &Database, embedding_model: &str) -> Result<Arc<dyn AIProvider>> {
+        use crate::ai::llama_cpp::LlamaCppBackend;
+        ensure_embedded_runtime_supported()?;
+        let (_, embed_path) = llamacpp_model_paths(db, "", embedding_model);
+        let runtime =
+            get_or_create_llamacpp_runtime(None, embed_path, load_keep_alive_secs(db), load_n_ctx_override(db));
+        Ok(Arc::new(LlamaCppBackend::new(
+            runtime,
+            String::new(),
+            embedding_model.to_string(),
+        )))
+    }
+
+    #[cfg(not(feature = "llamacpp"))]
+    fn in_app_embedder(_db: &Database, _embedding_model: &str) -> Result<Arc<dyn AIProvider>> {
+        Err(AppError::AiError(IN_APP_EMBEDDINGS_UNAVAILABLE.to_string()))
     }
 
     /// Refuse a new call once the period's spend has reached the budget.
@@ -821,12 +1107,19 @@ impl AiService {
     /// reports a call's cost after it has been charged, so the call that
     /// crosses the budget is recorded and its output kept, and the next one is
     /// refused here.
-    fn ensure_budget_remaining(&self) -> Result<()> {
-        Self::ensure_budget(&self.db)
+    ///
+    /// Only OpenRouter charges, so only calls bound for it are refused: a
+    /// user who reached the budget there and moved to a local or self-hosted
+    /// backend must still be able to use it.
+    fn ensure_budget_remaining(&self, destination: ProviderType) -> Result<()> {
+        Self::ensure_budget(&self.db, destination)
     }
 
     /// [`Self::ensure_budget_remaining`] without a service.
-    fn ensure_budget(db: &Database) -> Result<()> {
+    fn ensure_budget(db: &Database, destination: ProviderType) -> Result<()> {
+        if destination != ProviderType::OpenRouter {
+            return Ok(());
+        }
         let config = Self::get_config(db)?;
         if config.monthly_budget_usd <= 0.0 {
             return Ok(());
@@ -905,6 +1198,7 @@ impl AiService {
 
     fn record_usage(&self, result: &CompletionResult, operation: &str) -> Result<()> {
         self.record_call(
+            self.provider.provider_type(),
             &result.model,
             operation,
             result.prompt_tokens,
@@ -915,6 +1209,7 @@ impl AiService {
 
     fn record_call(
         &self,
+        charged_by: ProviderType,
         model: &str,
         operation: &str,
         prompt_tokens: u32,
@@ -923,7 +1218,7 @@ impl AiService {
     ) -> Result<()> {
         Self::record_provider_call(
             &self.db,
-            self.provider.as_ref(),
+            charged_by,
             model,
             operation,
             prompt_tokens,
@@ -932,10 +1227,11 @@ impl AiService {
         )
     }
 
-    /// [`Self::record_call`] without a service.
+    /// [`Self::record_call`] without a service. `charged_by` is the backend
+    /// the call went to (for a split provider, the embedding one on `embed`).
     fn record_provider_call(
         db: &Database,
-        provider: &dyn AIProvider,
+        charged_by: ProviderType,
         model: &str,
         operation: &str,
         prompt_tokens: u32,
@@ -948,7 +1244,7 @@ impl AiService {
             "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
-                provider.provider_type().to_string(),
+                charged_by.to_string(),
                 model,
                 operation,
                 prompt_tokens,
@@ -961,7 +1257,7 @@ impl AiService {
         crate::services::events::emit(
             "ai_log",
             &AiLogEvent {
-                provider: provider.provider_type().to_string(),
+                provider: charged_by.to_string(),
                 model: model.to_string(),
                 operation: operation.to_string(),
                 prompt_tokens,
@@ -990,7 +1286,7 @@ impl AiService {
         };
         Self::record_provider_call(
             db,
-            provider,
+            provider.provider_type(),
             provider.model_name(),
             operation,
             prompt_tokens.unwrap_or(0),
@@ -1010,7 +1306,7 @@ impl AiService {
         tools: Vec<serde_json::Value>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_stream_with_tools(messages, tools, on_token).await?;
         Self::record_stream_usage(
             db,
@@ -1032,7 +1328,7 @@ impl AiService {
         tools: &[serde_json::Value],
         operation: &str,
     ) -> Result<AiMessage> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_with_tools_metered(messages, tools).await?;
         Self::record_stream_usage(
             db,
@@ -1053,7 +1349,7 @@ impl AiService {
         messages: Vec<AiMessage>,
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ChatStreamResult> {
-        Self::ensure_budget(db)?;
+        Self::ensure_budget(db, provider.provider_type())?;
         let result = provider.chat_stream(messages, on_token).await?;
         Self::record_stream_usage(
             db,
@@ -1089,7 +1385,7 @@ impl AiService {
                 opts.think = Some(false);
             }
         }
-        self.ensure_budget_remaining()?;
+        self.ensure_budget_remaining(self.provider.provider_type())?;
         let t = std::time::Instant::now();
         let result = if prefix.is_empty() {
             self.provider.complete(suffix, opts).await?
@@ -1114,13 +1410,14 @@ impl AiService {
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.ensure_budget_remaining()?;
+        self.ensure_budget_remaining(self.provider.embedding_provider_type())?;
         let result = self.provider.embed(text).await?;
         // Only charged embeddings get a usage row: a local provider embeds
         // every chunk of every email for free, and a row (plus a log event)
         // per chunk would flood the usage table without informing the budget.
         if result.cost_usd > 0.0 {
             self.record_call(
+                self.provider.embedding_provider_type(),
                 self.provider.embedding_model_name(),
                 "embed",
                 result.tokens,
@@ -1146,6 +1443,38 @@ impl AiService {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Normalize a user- or env-supplied AI base URL, then validate it.
+///
+/// Trims surrounding whitespace and trailing slashes (endpoints are built as
+/// `{base}/...`, so a trailing slash would double it) and refuses an empty value
+/// before applying [`validate_ai_base_url`]. Callers store and use the returned
+/// string, never the raw input.
+pub fn normalize_ai_base_url(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_end_matches('/').trim();
+    if trimmed.is_empty() {
+        return Err(AppError::AiError("AI base URL is empty.".to_string()));
+    }
+    validate_ai_base_url(trimmed)?;
+    Ok(trimmed.to_string())
+}
+
+/// Whether `host` is this machine: `localhost`, `127.0.0.0/8` or `::1`.
+fn is_loopback_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    }
+}
+
+/// The host of a validated AI base URL, and whether it is this machine.
+/// `None` when the URL has no host.
+pub fn ai_base_url_host(url: &str) -> Option<(String, bool)> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host()?;
+    Some((host.to_string(), is_loopback_host(&host)))
+}
+
 /// Reject AI provider base URLs that would send email content somewhere unsafe.
 ///
 /// Only `http://` and `https://` URLs with a host are accepted: anything else
@@ -1154,13 +1483,22 @@ impl AiService {
 /// through another protocol handler. Plain `http://` is further limited to
 /// loopback hosts (`localhost`, `127.0.0.0/8`, `::1`), where the traffic never
 /// leaves the machine; any other host must use `https://` so prompts built from
-/// email never cross a network in cleartext (DASA 1.1.1).
+/// email never cross a network in cleartext (DASA 1.1.1). URLs carrying
+/// credentials (`user:pass@host`) are refused, and the error never echoes them:
+/// a key belongs in the keychain, not in a URL that ends up in preferences and
+/// logs (DASA 1.10.2).
 pub fn validate_ai_base_url(raw: &str) -> Result<()> {
     let parsed = url::Url::parse(raw).map_err(|e| {
         AppError::AiError(format!(
-            "Invalid AI base URL '{raw}': {e}. Expected an http(s) URL such as http://localhost:8080."
+            "Invalid AI base URL: {e}. Expected an http(s) URL such as http://localhost:8080."
         ))
     })?;
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppError::AiError(
+            "AI base URL must not contain a user name or password. Enter the API key in its own field.".to_string(),
+        ));
+    }
 
     match parsed.scheme() {
         "http" | "https" => {}
@@ -1175,15 +1513,12 @@ pub fn validate_ai_base_url(raw: &str) -> Result<()> {
         return Err(AppError::AiError(format!("AI base URL '{raw}' has no host component.")));
     };
 
-    let loopback = match host {
-        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
-        url::Host::Ipv4(ip) => ip.is_loopback(),
-        url::Host::Ipv6(ip) => ip.is_loopback(),
-    };
-    if parsed.scheme() == "http" && !loopback {
+    if parsed.scheme() == "http" && !is_loopback_host(&host) {
         return Err(AppError::AiError(format!(
             "AI base URL '{raw}' would send email content unencrypted to another machine. \
-             Use https:// for a remote server, or http:// only with localhost, 127.0.0.1 or ::1."
+             Use https:// for a remote server, or http:// only with localhost, 127.0.0.1 or ::1. \
+             To reach a server on another machine without https, forward it to this one with an \
+             SSH tunnel (ssh -L 8080:localhost:8080 <host>) or Tailscale, then use http://localhost."
         )));
     }
 
@@ -1290,13 +1625,13 @@ mod provider_tests {
         let db = Database::new_for_testing().expect("test db");
         assert!(!AiService::get_config(&db).unwrap().zero_data_retention);
 
-        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, Some(true)).unwrap();
+        AiService::save_config(&db, "openrouter", "m", None, 0.0, None, Some(true)).unwrap();
         assert!(AiService::get_config(&db).unwrap().zero_data_retention);
 
-        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, None).unwrap();
+        AiService::save_config(&db, "openrouter", "m", None, 0.0, None, None).unwrap();
         assert!(AiService::get_config(&db).unwrap().zero_data_retention);
 
-        AiService::save_config(&db, "openrouter", "m", None, None, 0.0, None, Some(false)).unwrap();
+        AiService::save_config(&db, "openrouter", "m", None, 0.0, None, Some(false)).unwrap();
         assert!(!AiService::get_config(&db).unwrap().zero_data_retention);
     }
 
@@ -1453,7 +1788,7 @@ mod provider_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
-    use crate::ai::provider::FakeAiProvider;
+    use crate::ai::provider::{FakeAiProvider, ProviderType, SplitProvider};
 
     fn service_with_budget(budget: &str, fake: FakeAiProvider) -> (AiService, Arc<FakeAiProvider>) {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
@@ -1475,7 +1810,10 @@ mod budget_tests {
     /// recorded and its output returned, not thrown away unrecorded.
     #[tokio::test]
     async fn a_completion_that_crosses_the_budget_is_recorded_and_returned() {
-        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter),
+        );
         fake.push_completion_result(paid_completion("answer", 1.5));
 
         let text = svc.complete("q", "test", None).await.expect("paid output is kept");
@@ -1490,7 +1828,10 @@ mod budget_tests {
     /// refused before it reaches the provider.
     #[tokio::test]
     async fn a_completion_is_refused_before_the_call_once_the_budget_is_spent() {
-        let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter),
+        );
         fake.push_completion_result(paid_completion("first", 1.0));
         svc.complete("q1", "test", None).await.unwrap();
 
@@ -1502,7 +1843,12 @@ mod budget_tests {
 
     #[tokio::test]
     async fn a_paid_embedding_is_recorded() {
-        let (svc, _fake) = service_with_budget("1.0", FakeAiProvider::new().with_embedding_cost(0.25));
+        let (svc, _fake) = service_with_budget(
+            "1.0",
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.25),
+        );
 
         svc.embed("text").await.unwrap();
 
@@ -1513,7 +1859,12 @@ mod budget_tests {
 
     #[tokio::test]
     async fn an_embedding_is_refused_before_the_call_once_the_budget_is_spent() {
-        let (svc, fake) = service_with_budget("0.5", FakeAiProvider::new().with_embedding_cost(0.5));
+        let (svc, fake) = service_with_budget(
+            "0.5",
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.5),
+        );
         svc.embed("a").await.unwrap();
 
         assert!(matches!(svc.embed("b").await, Err(AppError::BudgetExceeded(_))));
@@ -1649,7 +2000,7 @@ mod budget_tests {
     /// No budget (0) never refuses, whatever was spent.
     #[tokio::test]
     async fn no_budget_never_refuses() {
-        let (svc, fake) = service_with_budget("0", FakeAiProvider::new());
+        let (svc, fake) = service_with_budget("0", FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter));
         fake.push_completion_result(paid_completion("a", 5.0));
         svc.complete("q1", "test", None).await.unwrap();
         assert!(svc.complete("q2", "test", None).await.is_ok());
@@ -1771,6 +2122,69 @@ mod budget_tests {
 
         assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
     }
+
+    /// Charge `cost_usd` to the current period, as an earlier OpenRouter call would.
+    fn spend(db: &Database, cost_usd: f64) {
+        db.connection()
+            .execute(
+                "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
+                 VALUES ('openrouter', 'vendor/model', 'chat', 0, 0, ?1, ?2)",
+                rusqlite::params![cost_usd, chrono::Utc::now().timestamp() + 1],
+            )
+            .unwrap();
+    }
+
+    /// The budget is OpenRouter's spend: a user who hit it and moved to a free
+    /// local or self-hosted backend must not be refused by it.
+    #[tokio::test]
+    async fn a_spent_budget_never_refuses_a_backend_that_is_not_openrouter() {
+        for kind in [
+            ProviderType::Ollama,
+            ProviderType::LlamaCpp,
+            ProviderType::OpenAiCompatible,
+        ] {
+            let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new().with_provider_type(kind));
+            spend(&svc.db, 2.0);
+            fake.push_chat_response("local answer");
+
+            svc.complete("q", "test", None).await.expect("completion");
+            svc.embed("text").await.expect("embedding");
+            AiService::chat_stream(&svc.db, fake.as_ref(), question(), Box::new(|_| true))
+                .await
+                .expect("chat");
+        }
+    }
+
+    /// Server chat with OpenRouter embeddings: only the OpenRouter side is
+    /// metered, refused and recorded.
+    #[tokio::test]
+    async fn openrouter_embeddings_beside_a_server_chat_are_metered_on_their_own() {
+        let chat = Arc::new(FakeAiProvider::new().with_provider_type(ProviderType::OpenAiCompatible));
+        let embeddings = Arc::new(
+            FakeAiProvider::new()
+                .with_provider_type(ProviderType::OpenRouter)
+                .with_embedding_cost(0.5),
+        );
+        let db = Arc::new(db_with_budget("0.5"));
+        let svc = AiService::with_provider(db, Arc::new(SplitProvider::new(chat.clone(), embeddings.clone())));
+
+        svc.embed("a").await.expect("first embedding");
+        let second = svc.embed("b").await;
+        svc.complete("q", "test", None)
+            .await
+            .expect("server chat is not metered");
+
+        assert!(matches!(second, Err(AppError::BudgetExceeded(_))), "got {second:?}");
+        assert_eq!(embeddings.embed_calls().len(), 1);
+        let provider: String = svc
+            .db
+            .reader()
+            .query_row("SELECT provider FROM ai_usage WHERE operation = 'embed'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(provider, "openrouter", "the row names who charged for it");
+    }
 }
 
 #[cfg(test)]
@@ -1843,7 +2257,7 @@ mod provider_models_tests {
     }
 
     fn save(db: &Database, provider: &str, model: &str, embedding: Option<&str>) {
-        AiService::save_config(db, provider, model, embedding, None, 0.0, None, None).unwrap();
+        AiService::save_config(db, provider, model, embedding, 0.0, None, None).unwrap();
     }
 
     fn remembered(db: &Database, provider: &str) -> ProviderModels {
@@ -1958,10 +2372,79 @@ mod provider_models_tests {
     }
 }
 
+/// Base URLs every AI base URL caller must refuse: plain `http://` to anything
+/// that is not loopback (LAN, private ranges, `*.local`, bare hostnames) and URLs
+/// carrying credentials. Each caller's tests run this table through its own entry
+/// point so the rule cannot be loosened for one of them by accident.
+#[cfg(test)]
+pub(crate) const REFUSED_AI_BASE_URLS: &[&str] = &[
+    "http://10.0.0.5:11434",
+    "http://192.168.1.20:1234",
+    "http://172.16.0.9:8000",
+    "http://studio.local:1234",
+    "http://ollama:11434",
+    "http://localhost.example.com:11434",
+    "http://[::2]:11434",
+    "http://[fe80::1]:11434",
+    "http://0.0.0.0:11434",
+    "https://user:secret@api.example.com/v1",
+    "http://user@localhost:8080",
+];
+
 #[cfg(test)]
 mod url_validation_tests {
-    use super::validate_ai_base_url;
+    use super::{normalize_ai_base_url, validate_ai_base_url, REFUSED_AI_BASE_URLS};
     use crate::models::error::AppError;
+
+    #[test]
+    fn refuses_the_shared_table() {
+        for refused in REFUSED_AI_BASE_URLS {
+            assert!(
+                matches!(normalize_ai_base_url(refused), Err(AppError::AiError(_))),
+                "{refused} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn refuses_credentials_without_echoing_them() {
+        let err = validate_ai_base_url("https://user:secret@api.example.com/v1").expect_err("creds");
+        let msg = err.to_string();
+        assert!(!msg.contains("secret"), "{msg}");
+        assert!(!msg.contains("user:"), "{msg}");
+    }
+
+    #[test]
+    fn the_lan_refusal_points_to_a_way_out() {
+        let msg = validate_ai_base_url("http://192.168.1.20:1234")
+            .expect_err("lan")
+            .to_string();
+        assert!(msg.contains("https://"), "{msg}");
+        assert!(msg.contains("SSH tunnel"), "{msg}");
+        assert!(msg.contains("Tailscale"), "{msg}");
+    }
+
+    #[test]
+    fn normalize_trims_and_strips_trailing_slashes() {
+        assert_eq!(
+            normalize_ai_base_url("  http://localhost:1234/v1/  ").expect("ok"),
+            "http://localhost:1234/v1"
+        );
+        assert_eq!(
+            normalize_ai_base_url("https://api.example.com").expect("ok"),
+            "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_an_empty_value() {
+        for blank in ["", "   ", "/", " // "] {
+            assert!(
+                matches!(normalize_ai_base_url(blank), Err(AppError::AiError(_))),
+                "{blank:?} must be refused"
+            );
+        }
+    }
 
     #[test]
     fn accepts_localhost_and_https_hosts() {
@@ -2066,5 +2549,379 @@ mod keep_alive_tests {
         assert_eq!(format_ollama_keep_alive(KEEP_ALIVE_FOREVER), "-1");
         assert_eq!(format_ollama_keep_alive(0), "0");
         assert_eq!(format_ollama_keep_alive(1800), "30m");
+    }
+}
+
+#[cfg(test)]
+mod server_provider_tests {
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+    use crate::ai::provider::ProviderType;
+    use crate::db::embeddings::EMAIL_EMBEDDING_DIM;
+    use crate::services::ai_server::{EmbeddingSource, ServerSettingsInput};
+
+    fn db() -> Database {
+        Database::new_for_testing().expect("test db")
+    }
+
+    fn settings(server: &MockServer, embedding_model: &str, source: EmbeddingSource) -> AiSettingsInput {
+        AiSettingsInput {
+            provider: "openai_compatible".to_string(),
+            model: "local-chat".to_string(),
+            embedding_model: Some(embedding_model.to_string()),
+            api_key: None,
+            monthly_budget_usd: 0.0,
+            thinking_enabled: None,
+            zero_data_retention: None,
+            server: Some(ServerSettingsInput {
+                base_url: server.uri(),
+                embedding_source: source,
+                ..Default::default()
+            }),
+        }
+    }
+
+    async fn save(db: &Database, input: AiSettingsInput) -> Result<()> {
+        let prepared = AiService::prepare_ai_settings(db, input).await?;
+        AiService::apply_ai_settings(db, prepared)
+    }
+
+    async fn embedding_server(len: usize) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": if len == 0 { json!([]) } else { json!([{ "embedding": vec![0.1_f32; len] }]) }
+            })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn requests_to(server: &MockServer, route: &str) -> usize {
+        server
+            .received_requests()
+            .await
+            .expect("recording")
+            .iter()
+            .filter(|r| r.url.path() == route)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_saved_server_answers_the_chat() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "content": "OK" }, "finish_reason": "stop" }]
+            })))
+            .mount(&server)
+            .await;
+        let db = db();
+
+        save(&db, settings(&server, "", EmbeddingSource::Server))
+            .await
+            .expect("saved");
+        let provider = AiService::load_provider(&db).expect("provider");
+
+        assert_eq!(provider.provider_type(), ProviderType::OpenAiCompatible);
+        assert_eq!(provider.model_name(), "local-chat");
+        let reply = provider
+            .complete("hi", CompletionOptions::default())
+            .await
+            .expect("reply");
+        assert_eq!(reply.text, "OK");
+        assert_eq!(requests_to(&server, "/chat/completions").await, 1);
+        assert!(!provider.embedding_configured(), "no embedding model chosen");
+    }
+
+    #[tokio::test]
+    async fn the_server_embedding_model_is_probed_on_save_and_then_used() {
+        let server = embedding_server(EMAIL_EMBEDDING_DIM).await;
+        let db = db();
+
+        save(&db, settings(&server, "local-embed", EmbeddingSource::Server))
+            .await
+            .expect("saved");
+        let provider = AiService::load_provider(&db).expect("provider");
+
+        assert_eq!(requests_to(&server, "/embeddings").await, 1, "probed once on save");
+        assert!(provider.embedding_configured());
+        assert_eq!(provider.embedding_provider_type(), ProviderType::OpenAiCompatible);
+        provider.embed("mail").await.expect("server embeds");
+        assert_eq!(requests_to(&server, "/embeddings").await, 2);
+
+        save(&db, settings(&server, "local-embed", EmbeddingSource::Server))
+            .await
+            .expect("saved again");
+        assert_eq!(
+            requests_to(&server, "/embeddings").await,
+            2,
+            "an unchanged model is not probed again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_without_vectors_is_refused_and_nothing_is_saved() {
+        let server = embedding_server(0).await;
+        let db = db();
+
+        let result = save(&db, settings(&server, "chat-only", EmbeddingSource::Server)).await;
+
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(db.get_preference("ai_provider").unwrap(), None);
+        assert_eq!(
+            crate::services::ai_server::load_server_settings(&db).unwrap().base_url,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn an_invalid_field_saves_nothing() {
+        let server = MockServer::start().await;
+        let db = db();
+        let mut input = settings(&server, "", EmbeddingSource::Server);
+        if let Some(s) = input.server.as_mut() {
+            s.api_key = Some("sk-new".to_string());
+            s.context_window = Some(100);
+        }
+
+        assert!(save(&db, input).await.is_err());
+
+        assert_eq!(db.get_preference("ai_provider").unwrap(), None);
+        assert!(
+            !crate::services::ai_server::load_server_settings(&db)
+                .unwrap()
+                .has_api_key
+        );
+    }
+
+    #[tokio::test]
+    async fn openrouter_embeddings_can_sit_beside_a_server_chat() {
+        let server = MockServer::start().await;
+        let db = db();
+        db.set_preference(OPENROUTER_DEV_KEY_PREF, "or-key").unwrap();
+        db.set_preference("openrouter_api_key_id", OPENROUTER_KEY_ID).unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "native").unwrap();
+
+        save(&db, settings(&server, "vendor/embed", EmbeddingSource::OpenRouter))
+            .await
+            .expect("saved");
+        let provider = AiService::load_provider(&db).expect("provider");
+
+        assert_eq!(provider.provider_type(), ProviderType::OpenAiCompatible);
+        assert_eq!(provider.embedding_provider_type(), ProviderType::OpenRouter);
+        assert!(provider.embedding_configured());
+        assert_eq!(
+            requests_to(&server, "/embeddings").await,
+            0,
+            "the server never sees the index"
+        );
+    }
+
+    #[cfg(not(feature = "llamacpp"))]
+    #[tokio::test]
+    async fn in_app_embeddings_are_refused_where_the_runtime_is_missing() {
+        let server = MockServer::start().await;
+        let db = db();
+
+        let err = save(
+            &db,
+            settings(&server, DEFAULT_LLAMACPP_EMBEDDING_MODEL, EmbeddingSource::InApp),
+        )
+        .await
+        .expect_err("no runtime");
+
+        assert!(
+            matches!(&err, AppError::InvalidInput(m) if m.contains("in-app")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn settings_are_told_the_window_the_server_has_loaded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "id": "local-chat", "state": "loaded", "loaded_context_length": 4096 }]
+            })))
+            .mount(&server)
+            .await;
+
+        let report = AiService::server_context(&db(), &server.uri(), None, "local-chat", 32_768)
+            .await
+            .expect("report");
+
+        assert_eq!(report.served, Some(4096));
+        assert_eq!(report.window, 4096);
+        assert!(report.below_recommended);
+    }
+
+    #[tokio::test]
+    async fn the_server_window_is_not_read_from_a_refused_url() {
+        let err = AiService::server_context(&db(), "http://192.168.1.20:1234/v1", None, "m", 0)
+            .await
+            .expect_err("plain http to the LAN");
+
+        assert!(matches!(err, AppError::AiError(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn the_configured_context_window_reaches_the_provider() {
+        let server = MockServer::start().await;
+        let db = db();
+        let mut input = settings(&server, "", EmbeddingSource::Server);
+        if let Some(s) = input.server.as_mut() {
+            s.context_window = Some(16_384);
+        }
+
+        save(&db, input).await.expect("saved");
+
+        let provider = AiService::load_provider(&db).expect("provider");
+        assert_eq!(provider.resolve_context_window().await, Some(16_384));
+    }
+
+    async fn models_server() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [{ "id": "local-chat" }] })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn last_auth(requests: &[wiremock::Request]) -> Option<String> {
+        requests
+            .last()
+            .and_then(|r| r.headers.get("authorization"))
+            .map(|v| v.to_str().unwrap_or_default().to_string())
+    }
+
+    #[tokio::test]
+    async fn listing_an_unsaved_server_uses_the_typed_key() {
+        let server = models_server().await;
+        let db = db();
+
+        let models = AiService::list_server_models(&db, &server.uri(), Some("sk-typed"))
+            .await
+            .expect("models");
+
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["local-chat"]
+        );
+        assert_eq!(
+            last_auth(&server.received_requests().await.unwrap()),
+            Some("Bearer sk-typed".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_stored_key_goes_only_to_the_saved_server() {
+        let saved = models_server().await;
+        let typed = models_server().await;
+        let db = db();
+        let mut input = settings(&saved, "", EmbeddingSource::Server);
+        if let Some(s) = input.server.as_mut() {
+            s.api_key = Some("sk-saved".to_string());
+        }
+        save(&db, input).await.expect("saved");
+
+        AiService::list_server_models(&db, &saved.uri(), None)
+            .await
+            .expect("saved server");
+        // Another port on the same host is another server.
+        AiService::list_server_models(&db, &typed.uri(), None)
+            .await
+            .expect("typed server");
+
+        assert_eq!(
+            last_auth(&saved.received_requests().await.unwrap()),
+            Some("Bearer sk-saved".to_string())
+        );
+        assert_eq!(last_auth(&typed.received_requests().await.unwrap()), None);
+    }
+
+    #[tokio::test]
+    async fn listing_refuses_a_url_the_rule_refuses() {
+        let db = db();
+        for refused in REFUSED_AI_BASE_URLS {
+            assert!(
+                AiService::list_server_models(&db, refused, None).await.is_err(),
+                "{refused}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_embedding_provider_names_where_the_index_is_sent() {
+        let server = MockServer::start().await;
+        let db = db();
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "llamacpp");
+
+        save(&db, settings(&server, "", EmbeddingSource::OpenRouter))
+            .await
+            .expect("saved");
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "openrouter");
+
+        save(&db, settings(&server, "", EmbeddingSource::Server))
+            .await
+            .expect("saved");
+        assert_eq!(AiService::embedding_provider(&db).unwrap(), "openai_compatible");
+    }
+
+    #[tokio::test]
+    async fn the_saved_key_is_sent_and_can_be_cleared() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "content": "OK" }, "finish_reason": "stop" }]
+            })))
+            .mount(&server)
+            .await;
+        let db = db();
+        let mut input = settings(&server, "", EmbeddingSource::Server);
+        if let Some(s) = input.server.as_mut() {
+            s.api_key = Some("sk-server".to_string());
+        }
+        save(&db, input).await.expect("saved");
+        AiService::load_provider(&db)
+            .unwrap()
+            .complete("x", CompletionOptions::default())
+            .await
+            .unwrap();
+
+        let mut clear = settings(&server, "", EmbeddingSource::Server);
+        if let Some(s) = clear.server.as_mut() {
+            s.clear_api_key = true;
+        }
+        save(&db, clear).await.expect("cleared");
+        AiService::load_provider(&db)
+            .unwrap()
+            .complete("x", CompletionOptions::default())
+            .await
+            .unwrap();
+
+        let auth: Vec<Option<String>> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| {
+                r.headers
+                    .get("authorization")
+                    .map(|v| v.to_str().unwrap_or_default().to_string())
+            })
+            .collect();
+        assert_eq!(auth, vec![Some("Bearer sk-server".to_string()), None]);
     }
 }

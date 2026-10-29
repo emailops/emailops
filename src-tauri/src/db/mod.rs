@@ -537,6 +537,36 @@ impl Database {
         Ok(dest_path)
     }
 
+    /// Write a consistent copy of the live database to `dest` with SQLite's
+    /// online backup API, which a plain file copy of a WAL database is not.
+    /// `progress(done, of)` reports the fraction copied, in pages.
+    ///
+    /// Unlike `backup`, it copies without pausing between steps: it serves a
+    /// move the user is waiting on, and WAL mode keeps the app's writers
+    /// unblocked meanwhile.
+    pub fn snapshot_to(&self, dest: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<()> {
+        use rusqlite::backup::StepResult;
+        /// 16 MB at the default 4 KB page size: a progress tick per step.
+        const PAGES_PER_STEP: std::os::raw::c_int = 4096;
+        // Open a fresh source connection — avoids holding either mutex during the copy.
+        let src = Connection::open(&self.db_path)?;
+        let mut dst = Connection::open(dest)?;
+        let backup = rusqlite::backup::Backup::new(&src, &mut dst)?;
+        loop {
+            let step = backup.step(PAGES_PER_STEP)?;
+            let p = backup.progress();
+            let of = u64::try_from(p.pagecount).unwrap_or(0);
+            progress(of.saturating_sub(u64::try_from(p.remaining).unwrap_or(0)), of);
+            match step {
+                StepResult::Done => return Ok(()),
+                StepResult::More => {}
+                StepResult::Busy | StepResult::Locked => std::thread::sleep(std::time::Duration::from_millis(50)),
+                // `StepResult` is non-exhaustive.
+                _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+    }
+
     /// Remove a backup temp file plus any SQLite sidecar journals it may have
     /// left behind. Best-effort — a missing file (or a directory occupying the
     /// path in tests) is fine.
@@ -1221,6 +1251,45 @@ mod schema_parity_tests {
                 );
             }
         }
+    }
+
+    /// V040: accounts that predate the colour column get one palette slot
+    /// each, in sidebar order (sort_order, then newest first).
+    #[test]
+    fn existing_accounts_are_backfilled_with_distinct_colours_in_sidebar_order() {
+        // Registers sqlite-vec for the raw connection below (vec0 tables).
+        Database::new_for_testing().expect("create test db");
+        let mut conn = Connection::open_in_memory().expect("open");
+        embedded::migrations::runner()
+            .set_target(refinery::Target::Version(39))
+            .run(&mut conn)
+            .expect("migrate to V039");
+        conn.execute_batch(
+            "INSERT INTO accounts (id, provider, email, name, created_at, sort_order) VALUES
+             ('second', 'gmail', 'b@x.example', '', 10, 1),
+             ('first', 'gmail', 'a@x.example', '', 20, 0),
+             ('third', 'gmail', 'c@x.example', '', 5, 1);",
+        )
+        .expect("seed accounts");
+        embedded::migrations::runner()
+            .run(&mut conn)
+            .expect("migrate to latest");
+        let mut stmt = conn
+            .prepare("SELECT id, color FROM accounts ORDER BY sort_order, created_at DESC")
+            .expect("prepare");
+        let colours: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        assert_eq!(
+            colours,
+            vec![
+                ("first".to_string(), "blue".to_string()),
+                ("second".to_string(), "emerald".to_string()),
+                ("third".to_string(), "amber".to_string()),
+            ]
+        );
     }
 
     /// Every child column that references `emails(id)` needs its own index:

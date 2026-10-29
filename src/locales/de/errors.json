@@ -54,6 +54,7 @@
     "ai": "KI-Fehler: {{detail}}",
     "ai_disabled": "Die KI ist deaktiviert. Aktiviere sie in den Einstellungen.",
     "ai_data_policy": "Das Modell {{model}} ist mit der Datenrichtlinie von EmailOps nicht verfügbar. Wähle in den Einstellungen → KI ein anderes Modell.",
+    "ai_context_exceeded": "Die Anfrage ist länger als das Kontextfenster, mit dem das Modell geladen ist. Lade das Modell auf dem Server mit mehr Kontext oder verringere das Kontextfenster in Einstellungen → KI.",
     "io": "Dateifehler. Siehe Ausgabebereich.",
     "budget_exceeded": "KI-Budget überschritten: {{detail}}",
     "cancelled": "Abgebrochen.",
@@ -75,6 +76,13 @@
     "no_archive_folder": "Dieses Konto hat keinen Archivordner. Legen Sie einen Ordner namens „Archive“ an, um E-Mails zu archivieren.",
     "outbox_not_pending": "Diese Nachricht wird bereits gesendet und kann nicht mehr geändert werden.",
     "no_spam_folder": "Dieses Konto hat keinen Junk-Ordner, in dem Spam abgelegt werden kann.",
-    "file_not_downloaded": "„{{filename}}“ liegt noch in iCloud (oder einem anderen Cloud-Ordner) und wurde nicht rechtzeitig geladen. Laden Sie die Datei im Finder herunter und versuchen Sie es erneut."
+    "file_not_downloaded": "„{{filename}}“ liegt noch in iCloud (oder einem anderen Cloud-Ordner) und wurde nicht rechtzeitig geladen. Laden Sie die Datei im Finder herunter und versuchen Sie es erneut.",
+    "data_move_env_override": "Der Datenordner wird durch EMAILOPS_DATA_DIR festgelegt. Entferne die Variable, um in der App einen Ordner zu wählen.",
+    "data_move_same_folder": "EmailOps speichert seine Daten bereits dort.",
+    "data_move_inside_current": "Der neue Ordner darf nicht im aktuellen Datenordner liegen.",
+    "data_move_not_empty": "{{path}} enthält bereits Dateien. Wähle einen leeren Ordner oder lösche zuerst die alte Kopie dort.",
+    "data_move_not_writable": "EmailOps kann nicht nach {{path}} schreiben.",
+    "data_move_not_enough_space": "Nicht genug freier Speicher: {{needed}} benötigt, {{available}} verfügbar.",
+    "data_move_copy_mismatch": "Die Kopie in {{path}} stimmt nicht mit dem Original überein ({{detail}}). Es wurde nichts geändert."
   }
 }

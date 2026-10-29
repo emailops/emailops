@@ -121,6 +121,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             conversation,
             fresh,
             thread,
+            attachment,
             prewarm,
             research,
             estimate,
@@ -133,6 +134,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                     conversation,
                     fresh,
                     thread,
+                    attachment,
                     prewarm,
                     research,
                     estimate,
@@ -683,6 +685,7 @@ struct ChatOptions {
     conversation: Option<String>,
     fresh: bool,
     thread: Option<String>,
+    attachment: Option<String>,
     prewarm: bool,
     research: bool,
     /// With `research`: print the estimate and stop, reading nothing.
@@ -695,6 +698,7 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
         conversation,
         fresh,
         thread,
+        attachment,
         prewarm,
         research,
         estimate,
@@ -764,6 +768,16 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
             .map(|a| a.id),
         None => None,
     };
+    // `--attachment` likewise grounds under the account that owns the PDF: an
+    // email's attachment, or a file an attachment rule saved.
+    let ambient_account = match attachment.as_deref() {
+        Some(attachment_id) => match session.db.get_email_attachment_metas_by_id(attachment_id)? {
+            Some(meta) => Some(meta.account_id),
+            None => session.db.get_attachment(attachment_id)?.map(|a| a.account_id),
+        }
+        .or(ambient_account),
+        None => ambient_account,
+    };
 
     // Mirror the app's idle-time prompt-prefix prewarm before the first turn
     // so turn-1 prefill numbers match the in-app first-turn experience.
@@ -827,6 +841,7 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
             crate::services::chat::TurnContext {
                 ambient_thread_id: thread.clone(),
                 ambient_account_id: ambient_account.clone(),
+                ambient_attachment_id: attachment.clone(),
                 research,
                 ..Default::default()
             },

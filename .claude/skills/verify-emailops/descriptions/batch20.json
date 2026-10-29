@@ -1,0 +1,12 @@
+{
+  "rust": {
+    "src-tauri/src/sync/gmail.rs::sender_parse_splits_name_and_address": "Separa «Nombre <dirección>» en nombre y dirección, y una dirección sola se usa para ambos.",
+    "src-tauri/src/sync/gmail.rs::sender_parse_takes_a_name_with_angle_brackets": "Un nombre de remitente con «>» o «<» antes de la dirección se lee bien: antes el sync entraba en panic y la cuenta dejaba de sincronizar.",
+    "src-tauri/src/sync/gmail.rs::sender_parse_never_panics_on_a_malformed_header": "Ninguna cabecera From malformada (corchetes sueltos, sin cerrar, vacía) provoca un panic.",
+    "src-tauri/src/sync/gmail.rs::a_message_from_a_sender_name_with_angle_brackets_is_read": "Un mensaje de Gmail cuyo remitente lleva «>>» en el nombre se lee entero con la dirección correcta.",
+    "src-tauri/src/util/panic_guard.rs::run_isolated_passes_results_through": "La guarda de panics deja pasar tal cual los resultados Ok y Err.",
+    "src-tauri/src/util/panic_guard.rs::run_isolated_turns_a_panic_into_an_error_without_its_message": "Un panic dentro de un sync se convierte en un error con el nombre de la tarea, sin copiar el texto del panic (puede citar un correo).",
+    "src-tauri/src/util/panic_guard.rs::call_isolated_passes_results_through_and_catches_a_panic": "La versión síncrona de la guarda deja pasar los resultados y convierte un panic al leer un mensaje en un error de ese mensaje.",
+    "src-tauri/src/util/panic_guard.rs::the_panic_report_names_the_place_only": "La línea que llega al panel de Logs por un panic dice dónde ocurrió (fichero y línea), nunca su mensaje."
+  }
+}

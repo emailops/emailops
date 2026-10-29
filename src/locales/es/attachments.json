@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Selecciona un adjunto para previsualizar",
-    "pdfUnsupported": "La vista previa de PDF no es compatible con este navegador",
     "previewUnavailable": "Vista previa no disponible para este tipo de archivo",
     "loadFailed": "No se pudo cargar el adjunto.",
     "imageLoadFailed": "No se pudo cargar la imagen.",
@@ -15,7 +14,10 @@
     "openExternally": "Abrir externamente",
     "openInDefaultApp": "Abrir en la aplicación predeterminada",
     "previewLoadFailed": "No se pudo cargar la vista previa: {{error}}",
-    "download": "Descargar"
+    "download": "Descargar",
+    "zoomOut": "Alejar",
+    "zoomIn": "Acercar",
+    "fitWidth": "Ajustar al ancho"
   },
   "toolbar": {
     "title": "Adjuntos",

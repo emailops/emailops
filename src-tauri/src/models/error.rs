@@ -69,6 +69,11 @@ pub enum AppError {
     #[error("The model {model} is not available under EmailOps' data policy — choose another model in Settings")]
     AiDataPolicy { model: String },
 
+    /// The server refused a request longer than the context window its model
+    /// is loaded with.
+    #[error("The request is longer than the context window the model is loaded with — raise the model's context on the server, or lower the context window in Settings → AI")]
+    AiContextExceeded,
+
     #[error("IO error: {0}")]
     IoError(String),
 
@@ -111,6 +116,11 @@ pub enum AppError {
     /// carries its own translation code (`skill_*`) and params.
     #[error("{0}")]
     Skill(#[from] crate::services::skills::SkillProblem),
+
+    /// The data folder could not be moved; the problem carries its own
+    /// translation code (`data_move_*`) and params.
+    #[error("{0}")]
+    DataMove(#[from] crate::services::data_move::MoveProblem),
 }
 
 impl AppError {
@@ -135,6 +145,7 @@ impl AppError {
             AppError::AiError(_) => "ai",
             AppError::AiDisabled => "ai_disabled",
             AppError::AiDataPolicy { .. } => "ai_data_policy",
+            AppError::AiContextExceeded => "ai_context_exceeded",
             AppError::IoError(_) => "io",
             AppError::BudgetExceeded(_) => "budget_exceeded",
             AppError::Cancelled => "cancelled",
@@ -144,6 +155,7 @@ impl AppError {
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::FileNotDownloaded { .. } => "file_not_downloaded",
             AppError::Skill(problem) => problem.code(),
+            AppError::DataMove(problem) => problem.code(),
         }
     }
 
@@ -181,6 +193,7 @@ impl AppError {
                 p.insert("model", model.clone());
             }
             AppError::AiDisabled
+            | AppError::AiContextExceeded
             | AppError::ReadOnlyCalendar
             | AppError::Cancelled
             | AppError::NoArchiveFolder
@@ -194,6 +207,9 @@ impl AppError {
                 p.insert("kind", (*kind).to_string());
             }
             AppError::Skill(problem) => {
+                p = problem.params();
+            }
+            AppError::DataMove(problem) => {
                 p = problem.params();
             }
         }
@@ -276,6 +292,7 @@ mod tests {
     fn code_is_stable_per_variant() {
         assert_eq!(AppError::AuthError("x".into()).code(), "auth");
         assert_eq!(AppError::AiDisabled.code(), "ai_disabled");
+        assert_eq!(AppError::AiContextExceeded.code(), "ai_context_exceeded");
         assert_eq!(AppError::Cancelled.code(), "cancelled");
         assert_eq!(AppError::NoArchiveFolder.code(), "no_archive_folder");
         assert_eq!(AppError::NoSpamFolder.code(), "no_spam_folder");

@@ -312,15 +312,28 @@ const CUT_NOTE_START: &str = "\n[… cut here: ";
 ///
 /// No tool reads part of a result, so the note does not send the model for
 /// the rest: it keeps the model from calling the unseen part absent.
+///
+/// A result fenced as untrusted email data is cut inside the fence, which is
+/// then closed again, so the note stays outside it.
 pub(crate) fn cut_tool_result(text: &str, cap: usize) -> String {
+    use crate::ai::prompt_guard::{frame_untrusted_email, untrusted_email_inner};
     if text.len() <= cap + TOOL_NOTE_CHARS {
         return text.to_string();
     }
-    let kept = crate::util::text::truncate_utf8(text, cap);
+    let (kept, omitted) = match untrusted_email_inner(text) {
+        Some(inner) => {
+            let fence = text.len() - inner.len();
+            let inner_kept = crate::util::text::truncate_utf8(inner, cap.saturating_sub(fence));
+            (frame_untrusted_email(inner_kept), inner.len() - inner_kept.len())
+        }
+        None => {
+            let kept = crate::util::text::truncate_utf8(text, cap);
+            (kept.to_string(), text.len() - kept.len())
+        }
+    };
     format!(
-        "{kept}{CUT_NOTE_START}{} of {} characters omitted to fit the context window; fetching it again \
+        "{kept}{CUT_NOTE_START}{omitted} of {} characters omitted to fit the context window; fetching it again \
 gives the same. If the answer may be in the rest, tell the user it was cut, never that it is absent.]",
-        text.len() - kept.len(),
         text.len()
     )
 }
@@ -393,6 +406,11 @@ impl TurnBudget {
 
     pub(crate) fn n_ctx(&self) -> u32 {
         self.n_ctx
+    }
+
+    /// The turn's chars-per-token estimate.
+    pub(crate) fn estimator(&self) -> Estimator {
+        self.est
     }
 
     /// See [`compact_prefix`].
@@ -859,6 +877,19 @@ mod tests {
         assert!(note.contains("again"), "{note}");
         assert!(is_cut_tool_result(&cut));
         assert!(!is_cut_tool_result("short"));
+    }
+
+    /// A framed result keeps its closing tag when cut, and the note stays
+    /// outside the block: it is our instruction, not email text.
+    #[test]
+    fn a_cut_framed_tool_result_keeps_its_closing_tag_before_the_note() {
+        let framed = crate::ai::prompt_guard::frame_untrusted_email(&"x".repeat(5_000));
+        let cut = cut_tool_result(&framed, 2_000);
+        let close = cut.find("</UNTRUSTED_EMAIL>").expect("closing tag kept");
+        assert_eq!(cut.matches("</UNTRUSTED_EMAIL>").count(), 1, "{cut}");
+        assert!(cut.starts_with("<UNTRUSTED_EMAIL>\n"), "{cut}");
+        assert!(cut[close..].contains("characters omitted"), "{cut}");
+        assert!(is_cut_tool_result(&cut));
     }
 
     #[test]

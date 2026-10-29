@@ -12,10 +12,24 @@ use crate::ai::provider::{
     AIProvider, AiMessage, BackendCapabilities, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult,
     ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
+use crate::ai::thinking_filter::{strip_reasoning, ThinkingGate};
 use crate::db::embeddings::EMAIL_EMBEDDING_DIM;
 use crate::models::error::{AppError, Result};
 
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+/// Which server this client talks to. Both speak the OpenAI Chat Completions
+/// API; OpenRouter adds a routing/data-policy object and attribution headers
+/// that a plain OpenAI-compatible server (LM Studio, vLLM, llama-server,
+/// LiteLLM, a local proxy…) does not know and may reject.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Endpoint {
+    /// openrouter.ai, with its data policy and `vendor/model` ids.
+    OpenRouter,
+    /// A user-configured OpenAI-compatible server. Model ids are whatever the
+    /// server lists; the API key is optional (many local servers need none).
+    OpenAiCompatible,
+}
 const APP_NAME: &str = "emailops";
 const APP_URL: &str = "https://github.com/emailops";
 
@@ -25,6 +39,10 @@ const GENERATION_TIMEOUT: Duration = Duration::from_secs(120);
 /// between two chunks — before it is given up on. OpenRouter sends keep-alive
 /// comments while a model is busy, so a healthy stream is never this quiet.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long an OpenAI-compatible server may take to send the first token of a
+/// streamed reply. A local server sends nothing while it prefills a long
+/// prompt, which on a laptop can take minutes; the idle window applies after.
+const COMPATIBLE_FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(300);
 /// Sampling temperature for chat turns: low, to keep answers grounded in the
 /// retrieved mail (the same value the Ollama chat path uses).
 const CHAT_TEMPERATURE: f64 = 0.2;
@@ -45,7 +63,14 @@ struct OpenRouterChatRequest {
     /// the chat tool registry already produces.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
-    provider: ProviderPreferences,
+    /// OpenRouter only; omitted for a plain OpenAI-compatible server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderPreferences>,
+    /// OpenAI-compatible servers only: variables for the model's chat
+    /// template. `enable_thinking: false` turns off a reasoning model's
+    /// thinking where the server honours it (vLLM, llama-server).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Value>,
 }
 
 /// OpenRouter routing constraints sent with every request that carries mail
@@ -73,16 +98,89 @@ impl ProviderPreferences {
 /// data policy.
 const DATA_POLICY_REJECTION: &str = "No endpoints found matching your data policy";
 
-/// The error for a failed OpenRouter request: a data-policy rejection names the
-/// blocked model so the user knows to choose another; anything else keeps the
-/// raw body for the log.
+/// Longest server error message shown to the user, in characters.
+const ERROR_SUMMARY_CHARS: usize = 200;
+/// Longest error body written to the log, in bytes.
+const ERROR_LOG_BYTES: usize = 4_096;
+
+/// The part of a failed response's body that may be shown to the user: the
+/// `error.message` / `message` / `detail` string of a JSON body, or a plain-text
+/// body, whitespace collapsed and cut to [`ERROR_SUMMARY_CHARS`]. `None` for an
+/// HTML page or anything else that is not a short message: a server can return
+/// stack traces and internal paths there (DASA 1.8.1).
+fn summarize_error_body(body: &str) -> Option<String> {
+    let text = match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(json) => [
+            json.pointer("/error/message"),
+            json.get("error"),
+            json.get("message"),
+            json.get("detail"),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|v| v.as_str().map(str::to_string))?,
+        Err(_) if body.trim_start().starts_with('<') => return None,
+        Err(_) => body.to_string(),
+    };
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= ERROR_SUMMARY_CHARS {
+        return Some(collapsed);
+    }
+    Some(format!(
+        "{}…",
+        collapsed.chars().take(ERROR_SUMMARY_CHARS).collect::<String>()
+    ))
+}
+
+/// The error for a failed request: a data-policy rejection names the blocked
+/// model so the user knows to choose another; anything else carries `context`
+/// (which callers end with the `(HTTP n)` status) and a trimmed summary of the
+/// body. The full body
+/// goes to the log only.
 fn request_error(status: u16, body: &str, model: &str, context: &str) -> AppError {
     if status == 404 && body.contains(DATA_POLICY_REJECTION) {
         return AppError::AiDataPolicy {
             model: model.to_string(),
         };
     }
-    AppError::AiError(format!("{context}: {body}"))
+    let mut logged = body.to_string();
+    if logged.len() > ERROR_LOG_BYTES {
+        let cut = (0..=ERROR_LOG_BYTES)
+            .rev()
+            .find(|i| logged.is_char_boundary(*i))
+            .unwrap_or(0);
+        logged.truncate(cut);
+    }
+    crate::services::logger::log("debug", "ai", format!("{context}: {logged}"));
+    if is_context_overflow(status, body) {
+        return AppError::AiContextExceeded;
+    }
+    match summarize_error_body(body) {
+        Some(summary) => AppError::AiError(format!("{context}: {summary}")),
+        None => AppError::AiError(context.to_string()),
+    }
+}
+
+/// Whether a refused request was refused for being longer than the context
+/// window the model is loaded with. Pure.
+fn is_context_overflow(status: u16, body: &str) -> bool {
+    // vLLM/OpenAI: code `context_length_exceeded`; llama-server: type
+    // `exceed_context_size_error`; LM Studio: only a message naming the
+    // context length.
+    const MARKERS: [&str; 4] = [
+        "context_length_exceeded",
+        "exceed_context_size",
+        "context length",
+        "context size",
+    ];
+    if !(400..500).contains(&status) {
+        return false;
+    }
+    let body = body.to_lowercase();
+    MARKERS.iter().any(|m| body.contains(m))
 }
 
 /// Whether `model` has the shape of an OpenRouter model id (`vendor/model`).
@@ -96,22 +194,25 @@ pub fn is_openrouter_model_id(model: &str) -> bool {
             .is_some_and(|(vendor, name)| !vendor.is_empty() && !name.is_empty())
 }
 
-/// The error for a chat turn OpenRouter refused before streaming anything.
+/// The error for a chat turn the server refused before streaming anything.
 /// Says what the status means, so a rate limit or an outage does not reach
-/// the user as a bare JSON body.
-fn stream_request_error(status: u16, body: &str, model: &str) -> AppError {
+/// the user as a bare JSON body. `server` names it (see `server_name`), so a
+/// local server's failure is not blamed on OpenRouter.
+fn stream_request_error(status: u16, body: &str, model: &str, server: &str) -> AppError {
     let what = match status {
-        402 => "OpenRouter refused the request: the account is out of credits",
-        429 => "OpenRouter rate limit reached — wait a moment and try again",
-        500..=599 => "OpenRouter or the model's provider is unavailable — try again, or choose another model",
-        _ => "OpenRouter chat error",
+        401 | 403 => format!("{server} refused the request: check the API key"),
+        402 => format!("{server} refused the request: the account is out of credits"),
+        404 => format!("{server} does not know the model \"{model}\" — choose another one in Settings → AI"),
+        429 => format!("{server} rate limit reached — wait a moment and try again"),
+        500..=599 => format!("{server} or the model's provider is unavailable — try again, or choose another model"),
+        _ => format!("{server} chat error"),
     };
     request_error(status, body, model, &format!("{what} (HTTP {status})"))
 }
 
-fn stream_stalled(idle: Duration) -> AppError {
+fn stream_stalled(idle: Duration, server: &str) -> AppError {
     AppError::AiError(format!(
-        "OpenRouter stopped responding ({}s without data)",
+        "{server} stopped responding ({}s without data)",
         idle.as_secs_f32()
     ))
 }
@@ -149,6 +250,10 @@ fn first_choice_truncated(response: &OpenRouterChatResponse) -> bool {
 #[derive(Debug, Deserialize)]
 struct ChatMessageContent {
     content: serde_json::Value,
+    /// What a server that separates a reasoning model's thinking put there
+    /// (`reasoning_content`: LM Studio, vLLM, llama-server).
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,11 +283,18 @@ struct OpenRouterEmbeddingsResponse {
 #[derive(Debug, Deserialize)]
 struct OpenRouterModelInfo {
     id: String,
+    #[serde(default)]
     name: Option<String>,
+    /// OpenRouter prices every model; a plain OpenAI-compatible server
+    /// (`/v1/models` with only `id`) does not.
+    #[serde(default)]
     pricing: serde_json::Value,
     /// Maximum context length of the model, in tokens.
     #[serde(default)]
     context_length: Option<u32>,
+    /// vLLM's name for the context length.
+    #[serde(default)]
+    max_model_len: Option<u32>,
     #[serde(default)]
     top_provider: Option<OpenRouterTopProvider>,
 }
@@ -214,11 +326,25 @@ fn model_context_length(models: &[OpenRouterModelInfo], model_id: &str) -> Optio
         .find(|m| m.id == model_id)
         .or_else(|| models.iter().find(|m| m.id == base_id))?;
     let top = model.top_provider.as_ref().and_then(|p| p.context_length);
-    [model.context_length, top]
+    [model.context_length, model.max_model_len, top]
         .into_iter()
         .flatten()
         .filter(|n| *n > 0)
         .min()
+}
+
+/// The window LM Studio loaded `model_id` with, from its `/api/v0/models`;
+/// `None` when the model is not loaded. Pure.
+fn lm_studio_loaded_window(body: &serde_json::Value, model_id: &str) -> Option<u32> {
+    body.get("data")?
+        .as_array()?
+        .iter()
+        .find(|m| m.get("id").and_then(serde_json::Value::as_str) == Some(model_id))
+        .filter(|m| m.get("state").and_then(serde_json::Value::as_str) == Some("loaded"))?
+        .get("loaded_context_length")?
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,7 +361,9 @@ struct OpenRouterEmbeddingRequest {
     encoding_format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
-    provider: ProviderPreferences,
+    /// OpenRouter only; omitted for a plain OpenAI-compatible server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderPreferences>,
 }
 
 /// How a validated embedding model is made to return vectors the email index
@@ -381,7 +509,12 @@ pub struct OpenRouterClient {
     embedding_dimensions: Option<EmbeddingDimensions>,
     zero_data_retention: bool,
     base_url: String,
+    endpoint: Endpoint,
     stream_idle_timeout: Duration,
+    /// How long a streamed reply may take to start; `None` = the idle window.
+    first_token_timeout: Option<Duration>,
+    /// The context window the user set for this model; `None` = ask the server.
+    context_window: Option<u32>,
 }
 
 impl OpenRouterClient {
@@ -399,14 +532,88 @@ impl OpenRouterClient {
             embedding_dimensions: None,
             zero_data_retention: false,
             base_url: OPENROUTER_BASE_URL.to_string(),
+            endpoint: Endpoint::OpenRouter,
             stream_idle_timeout: STREAM_IDLE_TIMEOUT,
+            first_token_timeout: None,
+            context_window: None,
         }
+    }
+
+    /// A client for a user-configured OpenAI-compatible server at `base_url`
+    /// (e.g. `http://localhost:1234/v1`). `api_key` may be empty. No
+    /// OpenRouter routing object or attribution headers are sent.
+    ///
+    /// Redirects are never followed: `base_url` passed
+    /// `normalize_ai_base_url`, and a redirect could send the mail in the
+    /// request on to a host (or a plain-http URL) that check never saw.
+    pub fn openai_compatible(base_url: &str, api_key: String, model: String, embedding_model: String) -> Self {
+        let mut client = Self::new(api_key, model, embedding_model);
+        client.client = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_else(|e| {
+                crate::services::logger::log(
+                    "warn",
+                    "ai",
+                    format!("could not build the OpenAI-compatible HTTP client ({e}); requests will fail"),
+                );
+                Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap_or_default()
+            });
+        client.base_url = base_url.trim().trim_end_matches('/').to_string();
+        client.endpoint = Endpoint::OpenAiCompatible;
+        client.first_token_timeout = Some(COMPATIBLE_FIRST_TOKEN_TIMEOUT);
+        client
     }
 
     /// Send requests to `base_url` (a mock server) instead of openrouter.ai.
     #[cfg(test)]
     pub(crate) fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// The server this client talks to.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    /// Name used in errors and logs, so a local server's failure is not
+    /// blamed on OpenRouter.
+    fn server_name(&self) -> &'static str {
+        match self.endpoint {
+            Endpoint::OpenRouter => "OpenRouter",
+            Endpoint::OpenAiCompatible => "The OpenAI-compatible server",
+        }
+    }
+
+    /// OpenRouter's data-policy object; `None` for other servers.
+    fn provider_preferences(&self) -> Option<ProviderPreferences> {
+        (self.endpoint == Endpoint::OpenRouter).then(|| ProviderPreferences::new(self.zero_data_retention))
+    }
+
+    /// Attach authentication (when there is a key) and, for OpenRouter only,
+    /// its attribution headers.
+    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let request = if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("Authorization", format!("Bearer {}", self.api_key))
+        };
+        match self.endpoint {
+            Endpoint::OpenRouter => request
+                .header("HTTP-Referer", APP_URL)
+                .header("X-OpenRouter-Title", APP_NAME),
+            Endpoint::OpenAiCompatible => request,
+        }
+    }
+
+    /// Use `window` as the model's context window instead of asking the server.
+    pub fn with_context_window(mut self, window: Option<u32>) -> Self {
+        self.context_window = window.filter(|n| *n > 0);
         self
     }
 
@@ -427,6 +634,15 @@ impl OpenRouterClient {
     /// [`is_openrouter_model_id`]) with what to do about it, before a request
     /// carrying mail content is sent.
     fn ensure_chat_model(&self) -> Result<()> {
+        if self.endpoint == Endpoint::OpenAiCompatible {
+            // Any id the server knows; an empty one is the only certain mistake.
+            if self.model.trim().is_empty() {
+                return Err(AppError::AiError(
+                    "No chat model selected — choose one in Settings → AI → OpenAI-compatible".to_string(),
+                ));
+            }
+            return Ok(());
+        }
         if is_openrouter_model_id(&self.model) {
             return Ok(());
         }
@@ -445,7 +661,9 @@ impl OpenRouterClient {
             temperature: options.temperature,
             response_format: response_format(options.json_shape.as_ref()),
             tools: None,
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
+            chat_template_kwargs: (self.endpoint == Endpoint::OpenAiCompatible && options.think == Some(false))
+                .then(|| serde_json::json!({ "enable_thinking": false })),
         }
     }
 
@@ -460,7 +678,8 @@ impl OpenRouterClient {
             temperature: Some(CHAT_TEMPERATURE),
             response_format: None,
             tools: (!tools.is_empty()).then(|| tools.to_vec()),
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
+            chat_template_kwargs: None,
         }
     }
 
@@ -470,7 +689,7 @@ impl OpenRouterClient {
             input: text.to_string(),
             encoding_format: "float".to_string(),
             dimensions,
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
         }
     }
 
@@ -485,11 +704,7 @@ impl OpenRouterClient {
         let request = self.embedding_request(text, dimensions);
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(&url))
             .header("Content-Type", "application/json")
             .timeout(GENERATION_TIMEOUT)
             .json(&request)
@@ -498,11 +713,12 @@ impl OpenRouterClient {
             .map_err(|e| {
                 EmbeddingFailure::other(if e.is_timeout() {
                     AppError::AiError(format!(
-                        "OpenRouter embedding timed out ({}s)",
+                        "{} embedding timed out ({}s)",
+                        self.server_name(),
                         GENERATION_TIMEOUT.as_secs()
                     ))
                 } else {
-                    AppError::AiError(format!("Failed to connect to OpenRouter embeddings: {}", e))
+                    AppError::AiError(format!("Failed to connect to {} embeddings: {}", self.server_name(), e))
                 })
             })?;
 
@@ -515,20 +731,24 @@ impl OpenRouterClient {
                     status.as_u16(),
                     &error_text,
                     &self.embedding_model,
-                    "OpenRouter embedding error",
+                    &format!("{} embedding error (HTTP {})", self.server_name(), status.as_u16()),
                 ),
             });
         }
 
         let body: OpenRouterEmbeddingResponse = response.json().await.map_err(|e| {
             EmbeddingFailure::other(AppError::AiError(format!(
-                "Failed to parse OpenRouter embedding response: {}",
+                "Failed to parse {} embedding response: {}",
+                self.server_name(),
                 e
             )))
         })?;
 
         let embedding = body.data.first().map(|item| item.embedding.clone()).ok_or_else(|| {
-            EmbeddingFailure::other(AppError::AiError("OpenRouter returned no embedding vector".to_string()))
+            EmbeddingFailure::other(AppError::AiError(format!(
+                "{} returned no embedding vector",
+                self.server_name()
+            )))
         })?;
 
         Ok(EmbeddingResult {
@@ -610,36 +830,45 @@ impl OpenRouterClient {
     ) -> Result<StreamOutcome> {
         self.ensure_chat_model()?;
         let idle = self.stream_idle_timeout;
+        let first_token = self.first_token_timeout.unwrap_or(idle);
         let send = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(format!("{}/chat/completions", self.base_url)))
             .header("Content-Type", "application/json")
             .json(&self.stream_request(messages, tools))
             .send();
-        let response = tokio::time::timeout(idle, send)
+        let response = tokio::time::timeout(first_token, send)
             .await
-            .map_err(|_| stream_stalled(idle))?
-            .map_err(|e| AppError::AiError(format!("Failed to connect to OpenRouter: {e}")))?;
+            .map_err(|_| stream_stalled(first_token, self.server_name()))?
+            .map_err(|e| AppError::AiError(format!("Failed to connect to {}: {e}", self.server_name())))?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(stream_request_error(status, &error_text, &self.model));
+            return Err(stream_request_error(
+                status,
+                &error_text,
+                &self.model,
+                self.server_name(),
+            ));
         }
 
         let mut stream = response.bytes_stream();
         let mut lines = SseLines::default();
         let mut reply = StreamAccumulator::default();
+        // Many local models write their reasoning inline (`<think>…</think>`):
+        // it is held back from the user and dropped from the final message.
+        let mut thinking = ThinkingGate::new();
+        let mut started = false;
         loop {
-            let next = tokio::time::timeout(idle, stream.next())
+            let wait = if started { idle } else { first_token };
+            let next = tokio::time::timeout(wait, stream.next())
                 .await
-                .map_err(|_| stream_stalled(idle))?;
+                .map_err(|_| stream_stalled(wait, self.server_name()))?;
             let (batch, ended) = match next {
                 Some(chunk) => {
-                    let bytes = chunk.map_err(|e| AppError::AiError(format!("OpenRouter stream read error: {e}")))?;
+                    let bytes = chunk
+                        .map_err(|e| AppError::AiError(format!("{} stream read error: {e}", self.server_name())))?;
+                    started = true;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -647,11 +876,12 @@ impl OpenRouterClient {
             for line in batch {
                 match parse_sse_line(&line)? {
                     None => {}
-                    Some(SseEvent::Done) => return reply.finish(),
+                    Some(SseEvent::Done) => return reply.finish().map(without_reasoning),
                     Some(SseEvent::Chunk(chunk)) => {
                         if let Some(prose) = reply.apply(chunk) {
-                            if !on_token(prose) {
-                                return Ok(reply.into_partial());
+                            let visible = thinking.push(&prose);
+                            if !visible.is_empty() && !on_token(visible) {
+                                return Ok(without_reasoning(reply.into_partial()));
                             }
                         }
                     }
@@ -659,12 +889,12 @@ impl OpenRouterClient {
             }
             if ended {
                 return if reply.finished() {
-                    reply.finish()
+                    reply.finish().map(without_reasoning)
                 } else {
-                    Err(AppError::AiError(
-                        "OpenRouter ended the reply before it was complete — the model's provider may have dropped the connection"
-                            .to_string(),
-                    ))
+                    Err(AppError::AiError(format!(
+                        "{} ended the reply before it was complete — the model's provider may have dropped the connection",
+                        self.server_name()
+                    )))
                 };
             }
         }
@@ -691,47 +921,110 @@ impl OpenRouterClient {
     async fn fetch_model_catalogue(&self) -> Result<Vec<OpenRouterModelInfo>> {
         let url = format!("{}/models", self.base_url);
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to fetch OpenRouter models: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to fetch {} models: {}", self.server_name(), e)))?;
 
         if !response.status().is_success() {
-            return Err(AppError::AiError("Failed to list OpenRouter models".to_string()));
+            return Err(AppError::AiError(format!(
+                "Failed to list {} models",
+                self.server_name()
+            )));
         }
 
         let body: OpenRouterModelsResponse = response
             .json()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter models: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to parse {} models: {}", self.server_name(), e)))?;
 
         Ok(body.data)
+    }
+
+    /// The context window the server says the model is loaded with: from
+    /// `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+    /// `/api/v0/models` (`loaded_context_length` of a loaded model) or
+    /// llama-server's `/props` (`n_ctx`). `None` when none of them says, or
+    /// the model is not loaded yet. Read on every call: LM Studio reloads a
+    /// model on demand with the window saved for it, not the last one.
+    pub async fn served_context_window(&self) -> Option<u32> {
+        match self.fetch_model_catalogue().await {
+            Ok(models) => {
+                if let Some(window) = model_context_length(&models, &self.model) {
+                    return Some(window);
+                }
+            }
+            Err(e) => crate::services::logger::log(
+                "warn",
+                "ai",
+                format!(
+                    "{}: could not read the context window of {}: {e}",
+                    self.server_name(),
+                    self.model
+                ),
+            ),
+        }
+        let root = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+        if let Some(window) = self
+            .get_json(&format!("{root}/api/v0/models"))
+            .await
+            .and_then(|body| lm_studio_loaded_window(&body, &self.model))
+        {
+            return Some(window);
+        }
+        self.get_json(&format!("{root}/props"))
+            .await?
+            .pointer("/default_generation_settings/n_ctx")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n > 0)
+    }
+
+    /// `GET url` as JSON; `None` when the server has no such route or the
+    /// body is not JSON.
+    async fn get_json(&self, url: &str) -> Option<serde_json::Value> {
+        let response = match self
+            .authorized(self.client.get(url))
+            .timeout(CONNECT_TIMEOUT)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                crate::services::logger::log("debug", "ai", format!("GET {url}: HTTP {}", response.status()));
+                return None;
+            }
+            Err(e) => {
+                crate::services::logger::log("debug", "ai", format!("GET {url}: {e}"));
+                return None;
+            }
+        };
+        response
+            .json()
+            .await
+            .map_err(|e| crate::services::logger::log("debug", "ai", format!("GET {url}: not JSON: {e}")))
+            .ok()
     }
 
     pub async fn list_embedding_models_from_api(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/embeddings/models", self.base_url);
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
             .map_err(|e| AppError::AiError(format!("Failed to fetch OpenRouter embedding models: {}", e)))?;
 
         if !response.status().is_success() {
+            let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(AppError::AiError(format!(
-                "Failed to list OpenRouter embedding models: {}",
-                error_text
-            )));
+            return Err(request_error(
+                status,
+                &error_text,
+                &self.embedding_model,
+                &format!("Failed to list OpenRouter embedding models (HTTP {status})"),
+            ));
         }
 
         let body: OpenRouterEmbeddingsResponse = response
@@ -765,7 +1058,10 @@ impl OpenRouterClient {
 #[async_trait]
 impl AIProvider for OpenRouterClient {
     fn provider_type(&self) -> ProviderType {
-        ProviderType::OpenRouter
+        match self.endpoint {
+            Endpoint::OpenRouter => ProviderType::OpenRouter,
+            Endpoint::OpenAiCompatible => ProviderType::OpenAiCompatible,
+        }
     }
 
     /// The selected model's window from the catalogue. Asked for on demand
@@ -773,7 +1069,19 @@ impl AIProvider for OpenRouterClient {
     /// every turn to the window — costs one catalogue request per model, not
     /// one per turn. An unreadable catalogue leaves it unknown (and is asked
     /// again next time); the caller sizes to its safe default.
+    ///
+    /// A compatible server is asked every time (see
+    /// [`OpenRouterClient::served_context_window`]), and the window set in
+    /// Settings is capped by the one it reports, so a prompt is never sized
+    /// past what the server accepts.
     async fn resolve_context_window(&self) -> Option<u32> {
+        if self.endpoint == Endpoint::OpenAiCompatible {
+            let served = self.served_context_window().await;
+            return [self.context_window, served].into_iter().flatten().min();
+        }
+        if self.context_window.is_some() {
+            return self.context_window;
+        }
         let key = (self.base_url.clone(), self.model.clone());
         if let Some(window) = known_windows()
             .lock()
@@ -795,7 +1103,11 @@ impl AIProvider for OpenRouterClient {
                 crate::services::logger::log(
                     "warn",
                     "ai",
-                    format!("OpenRouter: could not read the context window of {}: {e}", self.model),
+                    format!(
+                        "{}: could not read the context window of {}: {e}",
+                        self.server_name(),
+                        self.model
+                    ),
                 );
                 None
             }
@@ -808,11 +1120,7 @@ impl AIProvider for OpenRouterClient {
 
     async fn is_available(&self) -> bool {
         let url = format!("{}/models", self.base_url);
-        self.client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+        self.authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
@@ -831,11 +1139,7 @@ impl AIProvider for OpenRouterClient {
         let request = self.chat_request(prompt, &options);
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(&url))
             .header("Content-Type", "application/json")
             .timeout(GENERATION_TIMEOUT)
             .json(&request)
@@ -844,29 +1148,35 @@ impl AIProvider for OpenRouterClient {
             .map_err(|e| {
                 if e.is_timeout() {
                     AppError::AiError(format!(
-                        "OpenRouter generation timed out ({}s)",
+                        "{} generation timed out ({}s)",
+                        self.server_name(),
                         GENERATION_TIMEOUT.as_secs()
                     ))
                 } else {
-                    AppError::AiError(format!("Failed to connect to OpenRouter: {}", e))
+                    AppError::AiError(format!("Failed to connect to {}: {}", self.server_name(), e))
                 }
             })?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(request_error(status, &error_text, &self.model, "OpenRouter error"));
+            return Err(request_error(
+                status,
+                &error_text,
+                &self.model,
+                &format!("{} error (HTTP {status})", self.server_name()),
+            ));
         }
 
         let result: OpenRouterChatResponse = response
             .json()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter response: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to parse {} response: {}", self.server_name(), e)))?;
 
         let text = result
             .choices
             .first()
-            .map(|c| openrouter_content_to_text(&c.message.content))
+            .map(|c| self.completion_text(&c.message, options.json_shape.is_some()))
             .unwrap_or_default();
 
         let prompt_tokens = result.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0);
@@ -987,6 +1297,34 @@ impl AIProvider for OpenRouterClient {
 /// The assistant turn a finished stream amounts to. When it asks for tools
 /// its prose is dropped — as on the other backends, a tool-call turn
 /// dispatches calls rather than surfacing text.
+impl OpenRouterClient {
+    /// The answer in a completion's `message`, without inline reasoning. A
+    /// compatible server that parses a reasoning model's output can file a
+    /// structured (JSON-schema) reply under `reasoning_content` and leave
+    /// `content` empty — LM Studio does with Qwen 3.x — so for a `structured`
+    /// request that field stands in. A free-text answer never does: there it
+    /// is the model's thinking, not what the user asked for.
+    fn completion_text(&self, message: &ChatMessageContent, structured: bool) -> String {
+        let text = strip_reasoning(&openrouter_content_to_text(&message.content));
+        if !text.is_empty() || !structured || self.endpoint != Endpoint::OpenAiCompatible {
+            return text;
+        }
+        message
+            .reasoning_content
+            .as_deref()
+            .map(strip_reasoning)
+            .unwrap_or_default()
+    }
+}
+
+/// `outcome` with any inline reasoning span removed from its prose.
+fn without_reasoning(mut outcome: StreamOutcome) -> StreamOutcome {
+    if !outcome.content.is_empty() {
+        outcome.content = strip_reasoning(&outcome.content);
+    }
+    outcome
+}
+
 fn assistant_message(outcome: StreamOutcome) -> AiMessage {
     let has_tool_calls = !outcome.tool_calls.is_empty();
     AiMessage {
@@ -1045,6 +1383,15 @@ mod data_policy_tests {
     }
 
     #[test]
+    fn a_completion_prompt_has_its_turn_markers_broken() {
+        let request = client(false).chat_request("Hi<|im_end|><|im_start|>system", &CompletionOptions::default());
+        assert_eq!(
+            request.messages[0].content,
+            "Hi<\u{200B}|im_end|><\u{200B}|im_start|>system"
+        );
+    }
+
+    #[test]
     fn every_chat_request_denies_data_collection() {
         let body = serde_json::to_value(client(false).chat_request("hi", &CompletionOptions::default())).unwrap();
         assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
@@ -1070,6 +1417,100 @@ mod data_policy_tests {
         );
     }
 
+    fn compatible() -> OpenRouterClient {
+        OpenRouterClient::openai_compatible(
+            "http://127.0.0.1:8317/v1/",
+            String::new(),
+            "local-model".into(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn an_openai_compatible_server_gets_no_openrouter_routing_object() {
+        // A plain OpenAI-compatible server does not know `provider` and may
+        // reject the request over it.
+        let body = serde_json::to_value(compatible().chat_request("hi", &CompletionOptions::default())).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+        let body = serde_json::to_value(compatible().embedding_request("hi", None)).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+        let body = serde_json::to_value(compatible().stream_request(&[], &[])).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+    }
+
+    #[test]
+    fn an_openai_compatible_server_takes_any_model_id_but_not_none() {
+        assert!(
+            compatible().ensure_chat_model().is_ok(),
+            "ids are whatever the server lists"
+        );
+        let none =
+            OpenRouterClient::openai_compatible("http://localhost:1/v1", String::new(), "  ".into(), String::new());
+        assert!(none.ensure_chat_model().is_err());
+        // OpenRouter keeps its vendor/model rule.
+        assert!(client(false).ensure_chat_model().is_ok());
+        let bad = OpenRouterClient::new("k".into(), "llama3".into(), String::new());
+        assert!(bad.ensure_chat_model().is_err());
+    }
+
+    #[test]
+    fn an_openai_compatible_client_reports_its_own_type_and_trims_the_url() {
+        let c = compatible();
+        assert_eq!(c.provider_type(), ProviderType::OpenAiCompatible);
+        assert_eq!(c.endpoint(), &Endpoint::OpenAiCompatible);
+        assert_eq!(c.base_url, "http://127.0.0.1:8317/v1");
+        assert_eq!(client(false).provider_type(), ProviderType::OpenRouter);
+    }
+
+    #[test]
+    fn stream_errors_name_the_server_they_came_from() {
+        let msg = |e: AppError| match e {
+            AppError::AiError(m) => m,
+            other => panic!("{other:?}"),
+        };
+        let local = msg(stream_request_error(401, "{}", "m", "The OpenAI-compatible server"));
+        assert!(
+            local.starts_with("The OpenAI-compatible server refused the request: check the API key"),
+            "{local}"
+        );
+        assert!(!local.contains("OpenRouter"));
+        let unknown = msg(stream_request_error(404, "{}", "gpt-x", "The OpenAI-compatible server"));
+        assert!(unknown.contains("does not know the model \"gpt-x\""), "{unknown}");
+        // OpenRouter's data-policy 404 keeps its own meaning.
+        let policy = r#"{"error":{"message":"No endpoints found matching your data policy"}}"#;
+        assert!(matches!(
+            stream_request_error(404, policy, "vendor/model", "OpenRouter"),
+            AppError::AiDataPolicy { .. }
+        ));
+    }
+
+    #[test]
+    fn a_context_overflow_is_told_apart_from_other_refusals() {
+        let overflows = [
+            // vLLM / OpenAI
+            r#"{"error":{"message":"This model's maximum context length is 4096 tokens. However, you requested 9000 tokens.","code":"context_length_exceeded"}}"#,
+            // llama-server
+            r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}"#,
+            // LM Studio
+            r#"{"error":"Trying to keep the first 9000 tokens when context the overflows. However, the model is loaded with context length of only 4096 tokens, which is not enough."}"#,
+        ];
+        for body in overflows {
+            assert!(is_context_overflow(400, body), "{body}");
+        }
+        assert!(!is_context_overflow(
+            400,
+            r#"{"error":{"message":"invalid temperature"}}"#
+        ));
+        assert!(
+            !is_context_overflow(500, overflows[0]),
+            "a server failure is not an overflow"
+        );
+        assert!(matches!(
+            request_error(400, overflows[1], "m", "chat (HTTP 400)"),
+            AppError::AiContextExceeded
+        ));
+    }
+
     #[test]
     fn a_data_policy_404_names_the_blocked_model() {
         let body = r#"{"error":{"message":"No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy","code":404}}"#;
@@ -1084,7 +1525,7 @@ mod data_policy_tests {
         let body = r#"{"error":{"message":"Provider returned error","code":429}}"#;
         assert!(matches!(
             request_error(429, body, "vendor/model", "OpenRouter error"),
-            AppError::AiError(msg) if msg == format!("OpenRouter error: {body}")
+            AppError::AiError(msg) if msg == "OpenRouter error: Provider returned error"
         ));
         let body = r#"{"error":{"message":"x cannot be used with the chat/completions endpoint","code":404}}"#;
         assert!(matches!(
@@ -1152,6 +1593,80 @@ mod chat_stream_tests {
 
     fn client(server: &MockServer) -> OpenRouterClient {
         OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into()).with_base_url(server.uri())
+    }
+
+    /// What an OpenAI-compatible server received: only the parts that differ
+    /// from OpenRouter (headers, body) are inspected.
+    async fn received(server: &MockServer) -> (reqwest::header::HeaderMap, serde_json::Value) {
+        let requests = server.received_requests().await.expect("recording enabled");
+        let last = requests.last().expect("a request was sent");
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in last.headers.iter() {
+            if let (Ok(n), Ok(v)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+                reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
+            ) {
+                headers.insert(n, v);
+            }
+        }
+        (headers, serde_json::from_slice(&last.body).unwrap_or_default())
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_streams_a_reply_without_openrouter_headers() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"Bon"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"jour"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let c = OpenRouterClient::openai_compatible(&server.uri(), String::new(), "claude-haiku".into(), String::new());
+        let (tokens, on_token) = recording(|_| true);
+        let result = c.chat_stream(vec![user("Salut")], on_token).await.expect("streamed");
+        assert_eq!(result.content, "Bonjour");
+        assert_eq!(seen(&tokens).concat(), "Bonjour");
+
+        let (headers, body) = received(&server).await;
+        assert!(
+            headers.get("authorization").is_none(),
+            "no key, no Authorization header"
+        );
+        assert!(headers.get("x-openrouter-title").is_none());
+        assert!(headers.get("http-referer").is_none());
+        assert_eq!(body["model"], "claude-haiku");
+        assert!(body.get("provider").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_gets_the_key_when_one_is_set() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let c = OpenRouterClient::openai_compatible(&server.uri(), "secret".into(), "m".into(), String::new());
+        let (_tokens, on_token) = recording(|_| true);
+        c.chat_stream(vec![user("x")], on_token).await.expect("streamed");
+        let (headers, _) = received(&server).await;
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer secret");
+    }
+
+    #[tokio::test]
+    async fn openrouter_still_sends_its_headers_and_routing_object() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let (_tokens, on_token) = recording(|_| true);
+        client(&server)
+            .chat_stream(vec![user("x")], on_token)
+            .await
+            .expect("streamed");
+        let (headers, body) = received(&server).await;
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+        assert!(headers.get("x-openrouter-title").is_some());
+        assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
     }
 
     async fn server_replying(body: String) -> MockServer {
@@ -1607,7 +2122,7 @@ mod chat_stream_tests {
 #[cfg(test)]
 mod context_window_tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn models(json: serde_json::Value) -> Vec<OpenRouterModelInfo> {
@@ -1664,6 +2179,31 @@ mod context_window_tests {
             OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
         assert_eq!(client.context_window(), None, "not known before it is asked for");
         assert_eq!(client.resolve_context_window().await, Some(128_000));
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_lists_models_that_carry_only_an_id() {
+        // CLIProxyAPI, LM Studio, vLLM…: `/v1/models` has no name or pricing.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer 123456"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    { "id": "claude-haiku", "object": "model", "owned_by": "anthropic" },
+                    { "id": "claude-sonnet", "object": "model" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::openai_compatible(
+            &format!("{}/v1", server.uri()),
+            "123456".into(),
+            String::new(),
+            String::new(),
+        );
+        let ids: Vec<String> = client.list_models().await.unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["claude-haiku", "claude-sonnet"]);
     }
 
     #[tokio::test]
@@ -1954,5 +2494,440 @@ mod embedding_tests {
             assert_eq!(bodies[0].get("dimensions").is_some(), sends, "{mode:?}");
             assert_eq!(bodies[0]["provider"]["data_collection"], "deny");
         }
+    }
+}
+
+#[cfg(test)]
+mod compatible_server_tests {
+    use std::sync::{Arc, Mutex, PoisonError};
+
+    use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    fn sse(events: &[&str]) -> String {
+        events.iter().map(|event| format!("data: {event}\n\n")).collect()
+    }
+
+    fn compatible(server: &MockServer) -> OpenRouterClient {
+        OpenRouterClient::openai_compatible(&server.uri(), String::new(), "local-model".into(), "local-embed".into())
+    }
+
+    fn user(content: &str) -> AiMessage {
+        AiMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+        }
+    }
+
+    type Tokens = Arc<Mutex<Vec<String>>>;
+
+    fn recording() -> (Tokens, Box<dyn FnMut(String) -> bool + Send>) {
+        let tokens: Tokens = Arc::default();
+        let sink = tokens.clone();
+        let callback = Box::new(move |token: String| {
+            sink.lock().unwrap_or_else(PoisonError::into_inner).push(token);
+            true
+        });
+        (tokens, callback)
+    }
+
+    async fn chat_replying(template: ResponseTemplate) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(template)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_not_followed() {
+        let elsewhere = chat_replying(ResponseTemplate::new(200).set_body_raw(
+            sse(&[
+                r#"{"choices":[{"delta":{"content":"leaked"},"finish_reason":"stop"}]}"#,
+                "[DONE]",
+            ]),
+            "text/event-stream",
+        ))
+        .await;
+        let server = chat_replying(
+            ResponseTemplate::new(307).insert_header("Location", format!("{}/chat/completions", elsewhere.uri())),
+        )
+        .await;
+
+        let result = compatible(&server)
+            .chat_stream(vec![user("mail")], Box::new(|_| true))
+            .await;
+
+        assert!(result.is_err(), "{result:?}");
+        let followed = elsewhere.received_requests().await.expect("recording").len();
+        assert_eq!(followed, 0, "the redirect target must never receive the mail");
+    }
+
+    #[tokio::test]
+    async fn an_html_error_page_never_reaches_the_message() {
+        let server = chat_replying(ResponseTemplate::new(500).set_body_raw(
+            "<html><body>Traceback (most recent call last): /srv/app/secret.py</body></html>",
+            "text/html",
+        ))
+        .await;
+
+        let err = compatible(&server)
+            .chat_stream(vec![user("x")], Box::new(|_| true))
+            .await
+            .expect_err("500");
+        let msg = err.to_string();
+
+        assert!(msg.contains("HTTP 500"), "{msg}");
+        assert!(!msg.contains("<html"), "{msg}");
+        assert!(!msg.contains("Traceback"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_json_error_keeps_only_its_trimmed_message() {
+        let long = "x".repeat(2_000);
+        let server = chat_replying(ResponseTemplate::new(400).set_body_json(json!({
+            "error": { "message": format!("model is not loaded {long}"), "type": "invalid_request_error" }
+        })))
+        .await;
+
+        let err = compatible(&server)
+            .complete("x", CompletionOptions::default())
+            .await
+            .expect_err("400");
+        let msg = err.to_string();
+
+        assert!(msg.contains("model is not loaded"), "{msg}");
+        assert!(!msg.contains("invalid_request_error"), "{msg}");
+        assert!(msg.len() < 400, "trimmed, got {} chars", msg.len());
+    }
+
+    #[tokio::test]
+    async fn inline_reasoning_is_dropped_from_the_stream() {
+        let server = chat_replying(ResponseTemplate::new(200).set_body_raw(
+            sse(&[
+                r#"{"choices":[{"delta":{"content":"<thi"}}]}"#,
+                r#"{"choices":[{"delta":{"content":"nk>planning the answer</think>"}}]}"#,
+                r#"{"choices":[{"delta":{"content":"Two emails."},"finish_reason":"stop"}]}"#,
+                "[DONE]",
+            ]),
+            "text/event-stream",
+        ))
+        .await;
+        let (tokens, on_token) = recording();
+
+        let result = compatible(&server)
+            .chat_stream(vec![user("x")], on_token)
+            .await
+            .expect("streamed");
+
+        assert_eq!(result.content, "Two emails.");
+        let shown = tokens.lock().unwrap_or_else(PoisonError::into_inner).concat();
+        assert_eq!(shown, "Two emails.");
+    }
+
+    #[tokio::test]
+    async fn inline_reasoning_is_dropped_from_a_completion() {
+        let server = chat_replying(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{ "message": { "content": "<think>hmm</think>OK" }, "finish_reason": "stop" }]
+        })))
+        .await;
+
+        let result = compatible(&server)
+            .complete("x", CompletionOptions::default())
+            .await
+            .expect("completed");
+
+        assert_eq!(result.text, "OK");
+    }
+
+    fn shaped() -> CompletionOptions {
+        CompletionOptions {
+            json_shape: Some(crate::ai::json_shape::JsonShape::object(vec![(
+                "kind",
+                crate::ai::json_shape::JsonShape::one_of(&["search", "other"]),
+            )])),
+            ..CompletionOptions::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_output_filed_as_reasoning_is_still_the_answer() {
+        // LM Studio parses a reasoning model's constrained JSON into
+        // `reasoning_content` and leaves `content` empty.
+        let server = chat_replying(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": { "content": "", "reasoning_content": "{\"kind\": \"search\"}\n" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .await;
+
+        let result = compatible(&server).complete("x", shaped()).await.expect("completed");
+
+        assert_eq!(result.text, "{\"kind\": \"search\"}");
+    }
+
+    #[tokio::test]
+    async fn reasoning_is_never_the_answer_of_a_free_text_completion() {
+        let server = chat_replying(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "message": { "content": "", "reasoning_content": "the user wants a summary" },
+                "finish_reason": "stop"
+            }]
+        })))
+        .await;
+
+        let result = compatible(&server)
+            .complete("x", CompletionOptions::default())
+            .await
+            .expect("completed");
+
+        assert_eq!(result.text, "");
+    }
+
+    #[test]
+    fn a_no_thinking_call_asks_the_server_template_to_skip_reasoning() {
+        let server_client =
+            OpenRouterClient::openai_compatible("http://127.0.0.1:1", String::new(), "m".into(), String::new());
+        let no_think = CompletionOptions {
+            think: Some(false),
+            ..CompletionOptions::default()
+        };
+
+        let body = serde_json::to_value(server_client.chat_request("x", &no_think)).expect("json");
+        assert_eq!(body["chat_template_kwargs"], json!({ "enable_thinking": false }));
+
+        let default =
+            serde_json::to_value(server_client.chat_request("x", &CompletionOptions::default())).expect("json");
+        assert!(default.get("chat_template_kwargs").is_none(), "left to the server");
+
+        let openrouter = OpenRouterClient::new("k".into(), "vendor/m".into(), String::new());
+        let body = serde_json::to_value(openrouter.chat_request("x", &no_think)).expect("json");
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "OpenRouter does not take it"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_token_may_take_longer_than_the_idle_window() {
+        // A local server prefilling a long prompt is silent until the first
+        // token; the idle window only applies once the reply has started.
+        let server = chat_replying(
+            ResponseTemplate::new(200)
+                .set_body_raw(
+                    sse(&[
+                        r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+                        "[DONE]",
+                    ]),
+                    "text/event-stream",
+                )
+                .set_delay(Duration::from_millis(300)),
+        )
+        .await;
+        let client = OpenRouterClient {
+            stream_idle_timeout: Duration::from_millis(50),
+            ..compatible(&server)
+        };
+
+        let result = client.chat_stream(vec![user("x")], Box::new(|_| true)).await;
+
+        assert_eq!(result.expect("prefill is not a stall").content, "ok");
+    }
+
+    #[tokio::test]
+    async fn the_context_window_comes_from_max_model_len() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "id": "local-model", "max_model_len": 32768 }]
+            })))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, Some(32768));
+    }
+
+    /// A server whose `/models` names the model but not its window.
+    async fn silent_models(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [{ "id": "local-model" }] })))
+            .mount(server)
+            .await;
+    }
+
+    fn lm_studio_models(state: &str, loaded: Option<u32>) -> serde_json::Value {
+        json!({ "data": [
+            { "id": "other-model", "state": "loaded", "loaded_context_length": 131072 },
+            { "id": "local-model", "state": state, "loaded_context_length": loaded, "max_context_length": 262144 }
+        ] })
+    }
+
+    #[tokio::test]
+    async fn the_loaded_window_comes_from_lm_studio_when_models_says_nothing() {
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(4096))))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, Some(4096));
+    }
+
+    #[tokio::test]
+    async fn a_model_lm_studio_has_not_loaded_has_no_known_window() {
+        // The trained maximum is not the window the model will be loaded with.
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("not-loaded", None)))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, None);
+    }
+
+    #[tokio::test]
+    async fn the_window_comes_from_llama_server_props() {
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/props"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "default_generation_settings": { "n_ctx": 8192 }
+            })))
+            .mount(&server)
+            .await;
+
+        assert_eq!(compatible(&server).resolve_context_window().await, Some(8192));
+    }
+
+    #[tokio::test]
+    async fn a_reloaded_model_is_seen_with_its_new_window() {
+        // LM Studio reloads a model on demand with its own default window, so
+        // the window is read again rather than remembered.
+        let server = MockServer::start().await;
+        silent_models(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(4096))))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v0/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(lm_studio_models("loaded", Some(64_000))))
+            .mount(&server)
+            .await;
+        let client = compatible(&server);
+
+        assert_eq!(client.resolve_context_window().await, Some(4096));
+        assert_eq!(client.resolve_context_window().await, Some(64_000));
+    }
+
+    #[tokio::test]
+    async fn a_configured_window_is_capped_by_the_one_the_server_loaded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "id": "local-model", "max_model_len": 4096 }]
+            })))
+            .mount(&server)
+            .await;
+        let client = compatible(&server).with_context_window(Some(32_768));
+
+        assert_eq!(client.resolve_context_window().await, Some(4096));
+    }
+
+    #[tokio::test]
+    async fn a_configured_window_stands_when_the_server_says_nothing() {
+        let server = MockServer::start().await;
+        let client = compatible(&server).with_context_window(Some(16_384));
+
+        assert_eq!(client.resolve_context_window().await, Some(16_384));
+    }
+
+    #[tokio::test]
+    async fn a_prompt_longer_than_the_loaded_window_is_named() {
+        let server = chat_replying(ResponseTemplate::new(400).set_body_json(json!({
+            "error": { "code": 400, "type": "exceed_context_size_error",
+                       "message": "the request exceeds the available context size, try increasing it" }
+        })))
+        .await;
+
+        let err = compatible(&server)
+            .chat_stream(vec![user("x")], Box::new(|_| true))
+            .await
+            .expect_err("refused");
+
+        assert!(matches!(err, AppError::AiContextExceeded), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn tool_calls_work_against_a_compatible_server() {
+        let server = chat_replying(ResponseTemplate::new(200).set_body_raw(
+            sse(&[
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search_emails","arguments":"{\"query\":"}}]}}]}"#,
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"invoice\"}"}}]}}]}"#,
+                r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+                "[DONE]",
+            ]),
+            "text/event-stream",
+        ))
+        .await;
+        let tool = json!({"type": "function", "function": {"name": "search_emails", "parameters": {"type": "object"}}});
+
+        let result = compatible(&server)
+            .chat_stream_with_tools(vec![user("Find the invoice")], vec![tool.clone()], Box::new(|_| true))
+            .await
+            .expect("tool round");
+
+        let calls = result.message.tool_calls.expect("a tool call");
+        assert_eq!(calls[0].function.name, "search_emails");
+        assert_eq!(calls[0].function.arguments, json!({"query": "invoice"}));
+        let requests = server.received_requests().await.expect("recording");
+        let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json");
+        assert_eq!(body["tools"], json!([tool]));
+        assert!(body.get("provider").is_none());
+    }
+
+    #[tokio::test]
+    async fn the_embedding_probe_accepts_an_index_sized_vector() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "embedding": vec![0.1_f32; EMAIL_EMBEDDING_DIM] }]
+            })))
+            .mount(&server)
+            .await;
+
+        let probe = compatible(&server).probe_embedding().await.expect("compatible");
+
+        assert_eq!(probe.dimensions, EmbeddingDimensions::Requested);
+    }
+
+    #[tokio::test]
+    async fn the_embedding_probe_refuses_a_model_without_vectors() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+            .mount(&server)
+            .await;
+
+        assert!(compatible(&server).probe_embedding().await.is_err());
     }
 }

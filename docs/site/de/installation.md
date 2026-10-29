@@ -245,8 +245,9 @@ Betriebssystems:
 - **OAuth-Tokens und Passwörter** — der Schlüsselbund Ihres Systems, nie eine Klartextdatei. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Um ein Datenverzeichnis zu verschieben oder zu teilen (für Tests oder ein zweites Profil),
-setzen Sie vor dem Start die Umgebungsvariable `EMAILOPS_DATA_DIR`. Die genauen Pfade je
+Um die Daten auf einem anderen Laufwerk aufzubewahren, wählen Sie **Einstellungen → Datenschutz & Sicherheit →
+Speicherort der Daten → Ändern…**. Für Tests oder ein zweites Profil setzen Sie stattdessen vor
+dem Start die Umgebungsvariable `EMAILOPS_DATA_DIR`. Die genauen Pfade je
 Plattform und was wo geschrieben wird, stehen unter
 [Datenschutz und Sicherheit](../privacy-security/#where-your-data-is-stored).
 

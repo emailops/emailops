@@ -1,6 +1,6 @@
 [package]
 name = "emailops"
-version = "0.6.16"
+version = "0.6.17"
 description = "Privacy-first, AI-native email client"
 authors = ["Gero DP"]
 edition = "2021"
@@ -44,9 +44,9 @@ tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
-# Still on 0.39: `refinery` 0.9 capped its rusqlite range at <=0.39. Since
-# refinery 0.10 allows <=0.40, the rusqlite bump is unblocked but not done yet.
-rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+# Must stay within the rusqlite range `refinery-core` accepts (one rusqlite /
+# libsqlite3-sys in the tree); refinery-core 0.10.1 accepts 0.41.
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -54,6 +54,8 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 # RFC 5545 recurrence expansion for ICS-feed calendars (sync::ics_feed_calendar).
 rrule = "0.14"
+# Text of an open PDF attachment for the chat (services::pdf_text).
+pdf-extract = "0.12"
 # Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
 # impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -110,7 +112,7 @@ sys-locale = "0.3"
 fd-lock = "4"
 # Physical RAM probe. Default features pull in disk/network/component/user
 # collectors we never touch, so only `system` is enabled.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # Free-space probe (`statvfs` on Unix, `GetDiskFreeSpaceExW` on Windows).
 fs4 = { version = "1.1", default-features = false, features = ["sync"] }
 # Eval harness deps (used by examples/chat_eval.rs)

@@ -4,7 +4,7 @@
 // media queries, ticket cut-outs, hero-image sizing). Rendering them in a
 // regular div forces a choice between stripping `<style>` (breaks layout) and
 // letting it cascade into the app's Tailwind (breaks the app). The iframe
-// sandbox (no `allow-same-origin`, no `allow-top-navigation`) gives the email
+// sandbox (no `allow-same-origin`, no `allow-top-navigation`, no `allow-popups`) gives the email
 // a null origin so its CSS can't escape and its scripts (already stripped by
 // DOMPurify) couldn't reach the parent DOM even if they survived.
 //
@@ -470,7 +470,7 @@ export function EmailHtmlFrame({
       <iframe
         ref={frameRef}
         title={t('inbox:emailView.frameTitle')}
-        sandbox="allow-scripts allow-popups"
+        sandbox="allow-scripts"
         srcDoc={srcDoc}
         onLoad={handleLoad}
         className={className}

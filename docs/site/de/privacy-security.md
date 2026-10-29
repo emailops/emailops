@@ -33,8 +33,14 @@ Darin:
 - **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Zeigen Sie `EMAILOPS_DATA_DIR` vor dem Start woanders hin, um einen anderen Ort zu verwenden —
-ein zweites Profil oder ein verschlüsseltes Volume.
+Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschlüsselten Volume —
+nutzen Sie **Einstellungen → Datenschutz & Sicherheit → Speicherort der Daten** oder den Link unten im
+ersten Schritt der Einrichtung. EmailOps kopiert alles dorthin, startet neu und lässt den alten
+Ordner liegen, damit Sie ihn selbst löschen. Ist das Laufwerk beim Start nicht angeschlossen,
+meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Ein mit **Vorhandene Datei verwenden…** hinzugefügtes
+Modell wird nicht kopiert: Der neue Ordner verweist auf dieselbe Datei. EmailOps verschlüsselt die Daten nicht, wählen Sie also ein
+verschlüsseltes Laufwerk; den Ordner, den es dort anlegt, kann nur Ihr Benutzer lesen. Eine vor dem Start
+gesetzte `EMAILOPS_DATA_DIR` (für ein zweites Profil) hat Vorrang vor dieser Wahl.
 
 <!-- claim:priv-where-data-6 -->
 **Zugangsdaten liegen nicht dort.** OAuth-Tokens und IMAP-Passwörter gehen in den
@@ -61,12 +67,19 @@ sind:
 | Ihr E-Mail-Anbieter (Gmail, Microsoft Graph, Ihr IMAP/SMTP-Server) | Bei jeder Synchronisierung und jedem Versand | Ja — es ist Ihr Postfach |
 | Ihr Kalenderanbieter (Google, Outlook) | Kalendersynchronisierung, falls aktiviert | Nur Kalenderdaten |
 | Hugging Face | Nur während des Downloads eines von Ihnen gewählten KI-Modells | Nein |
+| Ihr OpenAI-kompatibler Server | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 | OpenRouter | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 
 <!-- claim:priv-there-no-2 -->
-Die letzte Zeile ist der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
+Abgesehen von einem Server, den Sie selbst betreiben, ist die letzte Zeile der einzige Weg, auf dem Ihre E-Mails zu einem Dritten gelangen können.
 Sie ist standardmäßig aus und erfordert eine bewusste Änderung unter
 **Einstellungen → KI: Backend & Modelle** sowie Ihren eigenen API-Schlüssel.
+
+<!-- claim:priv-there-no-5 -->
+Ein OpenAI-kompatibler Server auf diesem Computer behält Ihre Post dort. Einer auf einem anderen
+Rechner muss https verwenden, und beim Speichern bestätigen Sie für seinen Host, dass Ihre Post
+dorthin gesendet wird und dass EmailOps nicht steuern kann, was er aufbewahrt; siehe
+[ein OpenAI-kompatibler Server](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 Wenn Sie ihn aktivieren, weist jede Anfrage OpenRouter an, nur Anbieter zu verwenden, die das
@@ -127,7 +140,8 @@ Embeddings, Chat sowie Aufgaben- und Gedächtnis-Extraktion laufen alle dort.
 
 <!-- claim:priv-local-ai-2 -->
 Der Wechsel zu Ollama hält die Inferenz ebenfalls lokal, nur in einem eigenen Prozess auf
-Ihrer Maschine. Nur OpenRouter sendet Inhalte vom Gerät weg. Siehe
+Ihrer Maschine. Nur OpenRouter und ein OpenAI-kompatibler Server auf einem anderen Rechner senden Inhalte vom
+Gerät weg. Siehe
 [Backend wählen](../ai-features/#choosing-a-backend).
 
 ## Schutz vor den E-Mails selbst {#protection-from-the-mail-itself}

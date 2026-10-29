@@ -47,6 +47,50 @@
       "prompt": "Escribe un borrador para "
     }
   },
+  "starters": {
+    "title": "Peticiones sugeridas",
+    "somethingElse": "Otra cosa…",
+    "reply": {
+      "label": "Sin responder: {{name}} — «{{subject}}»",
+      "prompt": "En «{{subject}}», {{name}} escribió lo último y no he contestado. ¿Necesita algo de mí? Si es así, ¿qué y para cuándo?"
+    },
+    "sender": {
+      "label": "¿Qué me ha escrito {{name}}?",
+      "prompt": "¿Qué me ha escrito {{name}} últimamente? Resume cada correo en una línea y cítalo."
+    },
+    "thread": {
+      "label": "Resume «{{subject}}»",
+      "prompt": "Resume el hilo «{{subject}}» y dime si hay algo pendiente por mi parte."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Resume este hilo",
+        "prompt": "Resume este hilo: quién participa, qué se ha acordado y qué queda pendiente."
+      },
+      "asks": {
+        "label": "¿Qué me piden aquí?",
+        "prompt": "¿Qué se me pide en este hilo y para cuándo?"
+      },
+      "reply": {
+        "label": "Redactar una respuesta",
+        "prompt": "Redacta una respuesta a este hilo que "
+      }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Resumir este documento",
+        "prompt": "Resume este documento: qué es, de quién viene y sus fechas e importes clave."
+      },
+      "keyPoints": {
+        "label": "Puntos clave, fechas e importes",
+        "prompt": "Enumera los puntos clave, fechas e importes de este documento."
+      },
+      "ask": {
+        "label": "Preguntar sobre este documento",
+        "prompt": "Sobre este documento: "
+      }
+    }
+  },
   "message": {
     "user": "Tú",
     "assistant": "Asistente",
@@ -68,6 +112,7 @@
     "budgetSettings": "Ajustes de IA"
   },
   "processing": {
+    "queued": "Esperando a que termine otra tarea de IA…",
     "routing": "Enrutando…",
     "retrieving": "Recuperando correos…",
     "searchingContacts": "Buscando contactos…",
@@ -76,6 +121,7 @@
     "generatingDraft": "Generando borrador…",
     "runningTools": "Procesando consulta…",
     "researching": "Investigando…",
+    "readingDocument": "Leyendo el documento completo…",
     "research": {
       "gathering": "Research: reuniendo correos…",
       "reading": "Research: leyendo correos {{read}}/{{total}} (lote {{batch}}/{{batches}})…",
@@ -170,6 +216,7 @@
         "answer": "Respuesta (LLM)",
         "llmCall": "Llamada LLM",
         "llmCallN": "Llamada LLM {{n}}/{{total}}",
+        "documentPart": "Lectura del documento, parte {{n}}/{{total}}",
         "budget": "Presupuesto de contexto"
       },
       "section": {
@@ -252,7 +299,9 @@
         "label": "Este correo está en {{email}}",
         "hint": "El chat responde desde otra cuenta, así que no puede leer este correo. Cambia de cuenta para preguntar por él.",
         "action": "Cambiar"
-      }
+      },
+      "hintDocument": "Las respuestas usan el texto de este PDF. Quítalo para preguntar por tu bandeja.",
+      "restoreDocument": "Usar el PDF abierto como contexto"
     },
     "newChat": "Chat nuevo"
   },

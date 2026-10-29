@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.6.17] — 2026-10-29
+
+### Added
+
+- **Chat reads the open PDF.** With a PDF open in a tab, or selected in the
+  Attachments view, the chat answers about that document, and a new
+  conversation offers document starters (summarise it, key points/dates/amounts,
+  ask about it). A PDF too long for the context window is read in parts.
+- **Zoom in the PDF viewer.**
+- **Suggested requests** when opening a new chat conversation.
+- **Calendar feeds (ICS) for IMAP accounts** (Proton Calendar and others) and a
+  calendar panel docked on the right.
+- **All accounts in the calendar view**, with a colour per account.
+- **OpenAI-compatible AI provider** with a custom base URL.
+- **Choose the data folder location** from the app.
+- **Star on GitHub** button next to Give feedback.
+
+### Fixed
+
+- A message whose only content is an attachment now sends (Send was enabled
+  but did nothing).
+- A Gmail account no longer stops syncing for good when a sender's name contains
+  `<` or `>`.
+- An internal error while syncing no longer stops an account for good or leaves
+  the app waiting: a message that cannot be read is skipped, the sync carries on,
+  and the error appears in Logs.
+- A file dragged onto a composer is attached instead of opening full screen.
+- The block-sender dialog closes on confirm and reads well in dark mode.
+- The checked email row stays readable in dark mode.
+
+### Security
+
+- Chat and AI prompts handle mailbox text more defensively.
+- Dependency updates (tokio, rusqlite).
+
 ## [0.6.16] — 2026-10-19
 
 ### Added

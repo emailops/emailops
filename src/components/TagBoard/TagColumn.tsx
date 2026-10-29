@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { tagHeaderBackground } from '@/components/common/TagChips';
 import { accountColorClass } from '@/lib/colors';
 import type { DropSide, TagBoardColumn, TagBoardType } from '@/lib/tagBoard';
+import { useAccountStore } from '@/stores/accountStore';
 import type { Email } from '@/types';
 import { TagEmailCard, type TagEmailCardProps } from './TagEmailCard';
 
@@ -57,6 +58,7 @@ export function TagColumn({
   onDragEndBlock,
 }: TagColumnProps) {
   const { t } = useTranslation(['tagboard', 'common']);
+  const accounts = useAccountStore((s) => s.accounts);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   // A block awaiting its turn in the fetch queue has isLoading === false but
@@ -125,7 +127,7 @@ export function TagColumn({
         title={t('tagboard:dragHint')}
         className={`flex flex-shrink-0 cursor-grab items-center gap-2 rounded-t-xl px-2.5 py-2 text-gray-900 active:cursor-grabbing ${tagHeaderBackground(tagType, column.value)}`}
       >
-        <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(column.accountId)}`} />
+        <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(accounts, column.accountId)}`} />
         <button
           type="button"
           onClick={() => onOpenInInbox(column)}

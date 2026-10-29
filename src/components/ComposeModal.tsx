@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { AttachMenu } from '@/components/shared/AttachMenu';
@@ -9,6 +9,7 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
   DraftFailedEvent,
   DraftGeneratedEvent,
@@ -19,6 +20,7 @@ import type {
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
+  canSend,
   createDebouncedDraftSaver,
   createDraftAutosaver,
   type DebouncedDraftSaver,
@@ -185,6 +187,15 @@ export function ComposeModal({
   const allRecipients = [...toRecipients, ...ccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
   const isLoadingAttachments = loadingFiles.length > 0;
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    subject,
+    requireSubject: true,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length,
+  });
 
   // Overall attachment load progress (average across all loading files)
   const loadProgress =
@@ -274,6 +285,8 @@ export function ComposeModal({
     // Reset the input so the same file can be re-selected if removed
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
   const removeAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
@@ -370,7 +383,15 @@ export function ComposeModal({
     const cc = mergePendingRecipient(ccRecipients, ccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain || isLoadingAttachments) return;
+    const ready = canSend({
+      to,
+      subject,
+      requireSubject: true,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length,
+    });
+    if (!ready || isLoadingAttachments) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -548,8 +569,9 @@ export function ComposeModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
       <div
-        className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]"
+        className={`relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh] ${fileOver ? 'ring-2 ring-primary-500' : ''}`}
         onKeyDownCapture={handleSendKey}
+        {...dropProps}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
@@ -808,14 +830,7 @@ export function ComposeModal({
             label={isSending ? t('compose:sending') : isLoadingAttachments ? 'Loading files…' : t('compose:send')}
             onSend={handleSend}
             onSchedule={(at) => void submit(at)}
-            disabled={
-              isSending ||
-              sent ||
-              isLoadingAttachments ||
-              mergePendingRecipient(toRecipients, toInput).length === 0 ||
-              !subject.trim() ||
-              !bodyHtml.trim()
-            }
+            disabled={isSending || sent || isLoadingAttachments || !readyToSend}
           />
         </div>
       </div>

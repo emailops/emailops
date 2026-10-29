@@ -33,8 +33,14 @@ Dentro:
 - **Una carpeta `models/`** — los modelos de IA que hayas descargado. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Apunta `EMAILOPS_DATA_DIR` a otro sitio antes de arrancar para usar otra ubicación — un
-segundo perfil, o un volumen cifrado.
+Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →
+Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
+EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
+disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
+vacío. Un modelo que añadiste con **Usar archivo existente…** no se copia: la carpeta nueva
+apunta al mismo archivo. EmailOps no cifra los datos, así que elige un disco cifrado; la
+carpeta que crea allí solo la puede leer tu usuario. Definir `EMAILOPS_DATA_DIR` antes de arrancar (para un segundo perfil) tiene prioridad
+sobre esa elección.
 
 <!-- claim:priv-where-data-6 -->
 **Las credenciales no están ahí.** Los tokens OAuth y las contraseñas IMAP van al almacén de
@@ -60,12 +66,19 @@ estos destinos, todos identificables:
 | Tu proveedor de correo (Gmail, Microsoft Graph, tu servidor IMAP/SMTP) | En cada sincronización y envío | Sí — es tu buzón |
 | Tu proveedor de calendario (Google, Outlook) | Sincronización de calendario, si está activada | Solo datos de calendario |
 | Hugging Face | Solo mientras descargas un modelo de IA que hayas elegido | No |
+| Tu servidor compatible con OpenAI | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 | OpenRouter | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 
 <!-- claim:priv-there-no-2 -->
-La última fila es la única vía por la que tu correo puede llegar a un tercero, está desactivada
+Salvo un servidor que ejecutes tú, la última fila es la única vía por la que tu correo puede llegar a un tercero, está desactivada
 por defecto y requiere un cambio deliberado en **Ajustes → IA: backend y modelos** más tu
 propia clave de API.
+
+<!-- claim:priv-there-no-5 -->
+Un servidor compatible con OpenAI en este ordenador mantiene tu correo en él. Uno en otra máquina
+debe usar https, y al guardarlo te pide confirmar, para su host, que tu correo se enviará allí y que
+EmailOps no puede controlar qué conserva; consulta
+[un servidor compatible con OpenAI](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 Si la activas, cada petición indica a OpenRouter que use solo proveedores que no guarden lo que
@@ -125,7 +138,8 @@ extracción de tareas y memoria se ejecutan ahí.
 
 <!-- claim:priv-local-ai-2 -->
 Cambiar a Ollama también mantiene la inferencia local, solo que en otro proceso de tu máquina.
-Solo OpenRouter envía contenido fuera del dispositivo. Consulta
+Solo OpenRouter, y un servidor compatible con OpenAI en otra máquina, envían contenido fuera del
+dispositivo. Consulta
 [elegir un backend](../ai-features/#choosing-a-backend).
 
 ## Protección frente al propio correo {#protection-from-the-mail-itself}

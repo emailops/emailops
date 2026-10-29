@@ -30,7 +30,7 @@ interface MonthGridProps {
   anchor: Date;
   events: CalendarEvent[];
   /** Resolved colour per `calendarId` — see `calendarColor`. */
-  colorFor: (calendarId: string) => string;
+  colorFor: (event: CalendarEvent) => string;
   onSelectEvent: (event: CalendarEvent) => void;
   /** "+N more" clicked → open that day in Day view. */
   onOpenDay: (day: Date) => void;
@@ -128,8 +128,8 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
                         }`}
                         style={
                           event.isAllDay
-                            ? eventChipStyle(colorFor(event.calendarId))
-                            : eventBlockStyle(colorFor(event.calendarId), event.status === 'tentative')
+                            ? eventChipStyle(colorFor(event))
+                            : eventBlockStyle(colorFor(event), event.status === 'tentative')
                         }
                       >
                         {!event.isAllDay && <span className="font-medium mr-1">{time(event.startTime)}</span>}
@@ -170,7 +170,7 @@ export function MonthGrid({ anchor, events, colorFor, onSelectEvent, onOpenDay, 
                       left: `calc(${(startIndex / DAYS_PER_WEEK) * 100}% + 3px)`,
                       width: `calc(${((endIndex - startIndex + 1) / DAYS_PER_WEEK) * 100}% - 6px)`,
                       height: SPAN_LANE_PX - 2,
-                      ...eventChipStyle(colorFor(event.calendarId)),
+                      ...eventChipStyle(colorFor(event)),
                     }}
                   >
                     {continuesBefore && <span aria-hidden="true">‹</span>}

@@ -33,6 +33,8 @@ const HEADLINE_REASONS = [
   'spf_fail',
   'dangerous_attachment',
   'credential_solicitation',
+  'ai_control_markup',
+  'markdown_remote_image',
   'display_name_contains_address',
   'server_spam_flag',
   'mixed_script_display_name',

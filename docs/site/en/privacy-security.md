@@ -32,8 +32,14 @@ Inside it:
 - **A `models/` folder** — the AI models you downloaded. <!-- claim:priv-where-data-4 -->
 
 <!-- claim:priv-where-data-5 -->
-Point `EMAILOPS_DATA_DIR` somewhere else before launching to use a different location — a
-second profile, or an encrypted volume.
+To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →
+Privacy & Security → Data location**, or the link at the foot of the first onboarding step. EmailOps
+copies everything there, restarts, and leaves the old folder for you to delete. If that disk is
+not connected when EmailOps starts, it says so and quits rather than opening an empty mailbox.
+A model you added with **Use existing file…** is not copied: the new folder points to the same file.
+EmailOps does not encrypt the data, so pick an encrypted disk; the folder it creates there is
+readable only by your user.
+Setting `EMAILOPS_DATA_DIR` before launching (for a second profile) overrides that choice.
 
 <!-- claim:priv-where-data-6 -->
 **Credentials are not in there.** OAuth tokens and IMAP passwords go to the system credential
@@ -58,12 +64,19 @@ these hosts, all of which you can name:
 | Your mail provider (Gmail, Microsoft Graph, your IMAP/SMTP server) | Every sync and send | Yes — it is your mailbox |
 | Your calendar provider (Google, Outlook) | Calendar sync, if enabled | Calendar data only |
 | Hugging Face | Only while downloading an AI model you picked | No |
+| Your OpenAI-compatible server | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 | OpenRouter | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 
 <!-- claim:priv-there-no-2 -->
-The last row is the only path by which your mail can reach a third party, it is off by
-default, and it takes a deliberate change in **Settings → AI Backend & Models** plus your own
-API key to enable.
+Apart from a server you run yourself, the last row is the only path by which your mail can
+reach a third party, it is off by default, and it takes a deliberate change in
+**Settings → AI Backend & Models** plus your own API key to enable.
+
+<!-- claim:priv-there-no-5 -->
+An OpenAI-compatible server on this computer keeps your mail on it. One on another machine must
+use https, and saving it asks you to confirm, for its host, that your mail will be sent there and
+that EmailOps cannot control what it keeps; see
+[an OpenAI-compatible server](../ai-features/#openai-compatible-server).
 
 <!-- claim:priv-there-no-3 -->
 When you do enable it, every request tells OpenRouter to use only providers that neither store
@@ -123,7 +136,8 @@ there.
 
 <!-- claim:priv-local-ai-2 -->
 Switching to Ollama keeps inference local too, just in a separate process on your machine.
-Only OpenRouter sends content off the device. See
+Only OpenRouter, and an OpenAI-compatible server on another machine, send content off the
+device. See
 [choosing a backend](../ai-features/#choosing-a-backend).
 
 ## Protection from the mail itself {#protection-from-the-mail-itself}

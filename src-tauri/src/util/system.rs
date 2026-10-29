@@ -13,7 +13,13 @@ use std::path::Path;
 /// Total physical RAM in bytes, or `None` when the platform probe fails.
 /// Callers must treat `None` as "assume a small machine" — never as an error.
 pub fn total_ram_bytes() -> Option<u64> {
-    let mut sys = sysinfo::System::new();
+    let mut sys = match sysinfo::System::new() {
+        Ok(sys) => sys,
+        Err(e) => {
+            eprintln!("[system] RAM probe failed: {e}");
+            return None;
+        }
+    };
     sys.refresh_memory();
     // sysinfo reports 0 rather than an error when it cannot read the value.
     match sys.total_memory() {

@@ -545,3 +545,20 @@
     spam: clean
     phishing: clean
     reasons_include: [list_unsubscribe_present, no_engagement]
+
+# ADVERSARIAL-LEGIT: a newsletter about language models quoting a turn marker.
+# Compliant bulk markers damp the markup below the badge.
+- id: legit-newsletter-quotes-chat-template-markup
+  tier: smoke
+  raw_headers: |
+    From: "ML Weekly" <news@mlweekly.example>
+    List-Id: <weekly.mlweekly.example>
+    List-Unsubscribe: <https://mlweekly.example/u>
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=mlweekly.example;
+        dkim=pass header.d=mlweekly.example; dmarc=pass
+    Subject: How chat templates work
+  body: |
+    <p>ChatML wraps each turn in &lt;|im_start|&gt; and &lt;|im_end|&gt;.</p>
+  expect:
+    phishing: clean
+    spam: clean

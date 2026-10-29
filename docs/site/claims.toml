@@ -571,6 +571,16 @@ checks = [
   { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
 ]
 
+[feat-calendar-4]
+checks = [
+  { tests = ['services::calendar::feeds::tests::add_feed_rejects_non_imap_accounts_and_bad_urls_without_fetching', 'services::calendar::feeds::tests::add_feed_stores_the_url_in_the_vault_not_in_sqlite_and_mirrors_the_calendar'], covers = ["IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example Proton Calendar's share-via-link URL, under Calendar feeds (IMAP accounts) in Settings → Calendar.", "A feed is read-only, refreshes every few minutes, and its link is kept in your keychain, not in the database."] },
+]
+
+[feat-calendar-5]
+checks = [
+  { manual = 'The docked Agenda panel is not driven by the docs app check yet; the demo calendar account asks to sign in again.' },
+]
+
 [feat-calendar-3]
 checks = [
   { app = true },
@@ -584,6 +594,11 @@ checks = [
   { manual = 'Export (select, then Download) is not exercised.' },
 ]
 
+
+[feat-attachments-view-9]
+checks = [
+  { manual = 'Covered by src/components/Attachments/PdfViewer.test.tsx (zoom levels from the toolbar); the docs app check does not open a PDF tab yet.' },
+]
 
 [feat-attachments-view-2]
 checks = [
@@ -922,6 +937,55 @@ checks = [
   { app = true },
 ]
 
+[ai-choosing-backend-5]
+checks = [
+  { tests = ['services::ai::server_provider_tests::a_saved_server_answers_the_chat', 'ai::openrouter::compatible_server_tests::tool_calls_work_against_a_compatible_server'], covers = ["Chat goes to that server"] },
+  { tests = ['services::ai::server_provider_tests::the_server_embedding_model_is_probed_on_save_and_then_used', 'services::ai_server::plan_tests::a_loopback_server_needs_no_disclosure'], covers = ["unless you choose otherwise, so does the email index"] },
+  { manual = 'The tab is covered by AiSettings.server.test.tsx (vitest); no docClaim case drives it, and the demo instance runs no OpenAI-compatible server. The servers named are the ones the setting was tested against by hand.' },
+]
+
+[ai-openai-compatible-1]
+checks = [
+  { tests = ['services::ai::server_provider_tests::listing_an_unsaved_server_uses_the_typed_key', 'services::ai::server_provider_tests::the_stored_key_goes_only_to_the_saved_server'], covers = ["Load models lists the models the server serves"] },
+  { tests = ['services::ai_server::key_tests::the_key_lives_in_the_vault_and_never_in_preferences', 'services::ai_server::key_tests::the_server_key_is_separate_from_the_openrouter_key', 'services::ai_server::key_tests::a_cleared_key_is_deleted_from_the_vault', 'services::ai::server_provider_tests::the_saved_key_is_sent_and_can_be_cleared'], covers = ["The key is kept in the system keychain, apart from the OpenRouter key, and Remove the saved key deletes it."] },
+  { manual = 'Typing a model id, Test against the typed server and the example URLs are covered by AiSettings.server.test.tsx (vitest) and by hand; the demo instance runs no OpenAI-compatible server.' },
+]
+
+[ai-openai-compatible-2]
+checks = [
+  { tests = ['services::ai::url_validation_tests::refuses_the_shared_table', 'ai::ollama::base_url_tests::refuses_every_url_in_the_shared_table', 'services::ai_server::plan_tests::the_base_url_rule_is_the_shared_one', 'services::ai::url_validation_tests::plain_http_is_allowed_only_for_loopback_hosts', 'services::ai::url_validation_tests::refuses_credentials_without_echoing_them'], covers = ["A server on another machine needs https://, even on your home or office network, and a URL with a user name or password in it is refused."] },
+  { tests = ['services::ai::url_validation_tests::the_lan_refusal_points_to_a_way_out'] },
+  { manual = 'How an SSH tunnel or Tailscale forwards a port is outside the app; the refusal message names both.' },
+]
+
+[ai-openai-compatible-3]
+checks = [
+  { tests = ['services::ai_server::plan_tests::a_remote_server_is_refused_until_its_disclosure_is_confirmed', 'services::ai_server::plan_tests::moving_to_another_remote_host_asks_again', 'services::ai_server::plan_tests::a_host_confirmed_before_needs_no_new_confirmation'], covers = ["It asks again whenever the URL moves to another host."] },
+  { manual = 'The dialog and its wording are covered by AiSettings.server.test.tsx and serverSettings.test.ts (vitest); no docClaim case drives a remote server.' },
+]
+
+[ai-openai-compatible-4]
+checks = [
+  { tests = ['services::ai::server_provider_tests::the_server_embedding_model_is_probed_on_save_and_then_used', 'services::ai::server_provider_tests::a_model_without_vectors_is_refused_and_nothing_is_saved'], covers = ["An embedding model on the server is checked when you save, and one that returns no vectors the index can hold is refused."] },
+  { tests = ['services::ai_server::plan_tests::in_app_embeddings_are_refused_where_the_runtime_cannot_run', 'services::ai::server_provider_tests::openrouter_embeddings_can_sit_beside_a_server_chat', 'services::ai::budget_tests::openrouter_embeddings_beside_a_server_chat_are_metered_on_their_own'] },
+  { manual = 'The selector, the OpenRouter controls it brings back and the re-index question are covered by AiSettings.server.test.tsx (vitest).' },
+]
+
+[ai-openai-compatible-5]
+checks = [
+  { tests = ['ai::openrouter::compatible_server_tests::the_context_window_comes_from_max_model_len', 'ai::openrouter::compatible_server_tests::a_configured_window_is_capped_by_the_one_the_server_loaded', 'ai::openrouter::compatible_server_tests::a_configured_window_stands_when_the_server_says_nothing', 'ai::openrouter::compatible_server_tests::the_loaded_window_comes_from_lm_studio_when_models_says_nothing', 'ai::openrouter::compatible_server_tests::the_window_comes_from_llama_server_props', 'services::ai::server_provider_tests::the_configured_context_window_reaches_the_provider', 'services::chat::research::tests::a_remote_model_with_an_unknown_window_gets_the_safe_default'] },
+  { tests = ['ai::openrouter::compatible_server_tests::the_first_token_may_take_longer_than_the_idle_window'], covers = ["Replies wait up to five minutes for their first word while a local server reads a long prompt"] },
+  { tests = ['ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_the_stream', 'ai::openrouter::compatible_server_tests::inline_reasoning_is_dropped_from_a_completion'], covers = ["reasoning that a model writes inline is left out of the answer."] },
+  { tests = ['ai::openrouter::compatible_server_tests::a_no_thinking_call_asks_the_server_template_to_skip_reasoning'], covers = ["EmailOps asks the server to skip a reasoning model's thinking on its short internal calls"] },
+  { manual = 'Which servers report their context size (vLLM in /models, LM Studio in /api/v0/models, llama-server in /props; LM Studio checked by hand on 24/10/2026), and which honour enable_thinking (LM Studio ignored it with Qwen 3.6, checked on 23/10/2026), was checked by hand.' },
+]
+[ai-openai-compatible-6]
+checks = [
+  { tests = ['services::ai_server::context_report_tests::a_configured_window_larger_than_the_loaded_one_is_capped', 'services::ai_server::context_report_tests::a_silent_server_falls_back_to_the_configured_window_or_the_default', 'services::ai::server_provider_tests::settings_are_told_the_window_the_server_has_loaded'], covers = ["warn when it is"] },
+  { tests = ['ai::openrouter::compatible_server_tests::a_reloaded_model_is_seen_with_its_new_window'], covers = ["LM Studio loads a model on demand"] },
+  { tests = ['ai::openrouter::compatible_server_tests::a_prompt_longer_than_the_loaded_window_is_named', 'ai::openrouter::data_policy_tests::a_context_overflow_is_told_apart_from_other_refusals'], covers = ["fails with a message that says so."] },
+  { manual = 'Showing the report on Test and Save is covered by AiSettings.server.test.tsx and serverSettings.test.ts (vitest).' },
+]
 [ai-choosing-backend-model-catalog-1]
 checks = [
   { generated = "ai::model_catalog::recommendation_tests::published_model_table_is_generated_from_the_catalog" },
@@ -982,6 +1046,17 @@ checks = [
 checks = [
   { app = true },
   { manual = 'That thread context applies to one question and is never saved onto the conversation is not exercised.' },
+]
+
+[ai-chat-mailbox-16]
+checks = [
+  { tests = ['services::chat::open_document::tests::a_document_that_fits_its_slot_is_read_whole', 'services::chat::open_document::tests::parts_cover_the_whole_text_in_order_within_the_limit', 'services::chat::open_document::tests::the_block_of_a_document_read_in_parts_says_the_notes_cover_all_of_it'], covers = ["A PDF too long for the model's context window is read in parts, and the answer is built from notes on every part."] },
+  { manual = 'The PDF chip and the three document starters are covered by src/components/Chat/ChatStarters.test.tsx ("offers requests about the open PDF while one is the context"); the docs app check does not open a PDF yet.', covers = ["With a PDF open in a tab, or selected in Attachments, the chip offers that document instead, and chat answers from its text.", "A new conversation then suggests Summarise this document, Key points, dates and amounts and Ask about this document."] },
+]
+
+[ai-chat-mailbox-17]
+checks = [
+  { manual = 'Covered by src/components/Chat/ChatStarters.test.tsx (mailbox starters, then "something else"); which starters appear depends on the mailbox, and the docs app check does not read them yet.' },
 ]
 
 [ai-chat-mailbox-3]
@@ -1119,6 +1194,7 @@ checks = [
 
 [ai-semantic-search-2]
 checks = [
+  { tests = ['services::ai::server_provider_tests::the_embedding_provider_names_where_the_index_is_sent', 'services::ai::server_provider_tests::openrouter_embeddings_can_sit_beside_a_server_chat'], covers = ["With an OpenAI-compatible server it happens where its Email index (Embeddings) setting says."] },
   { tests = ['ai::openrouter::embedding_tests::without_a_validated_model_nothing_is_sent', 'services::ai::budget_tests::the_loaded_openrouter_client_embeds_only_with_a_validated_model'], covers = ["With OpenRouter it happens only if you pick an Embedding Model in its panel"] },
   { tests = ['services::ai::budget_tests::an_openrouter_embedding_records_what_the_provider_charged', 'services::ai::budget_tests::an_openrouter_embedding_is_not_requested_once_the_budget_is_spent'], covers = ["counts against the monthly budget"] },
   { tests = ['services::chat::retrieval::tests::no_embedding_is_requested_when_no_embedding_model_is_set_up', 'services::embeddings::tests::a_skipped_run_names_what_is_actually_wrong_for_each_provider'], covers = ["With none picked, semantic search is off and search is keyword-only."] },
@@ -1247,6 +1323,8 @@ checks = [
 [priv-where-data-5]
 checks = [
   { app = true },
+  { tests = ['services::data_move::tests::moving_keeps_a_linked_model_a_link', 'services::data_move::tests::a_linked_model_does_not_count_toward_the_bytes_needed'], covers = ["A model you added with Use existing file… is not copied: the new folder points to the same file."] },
+  { tests = ['services::data_move::tests::the_new_folder_is_readable_only_by_the_user'], covers = ["the folder it creates there is readable only by your user."] },
 ]
 
 [priv-where-data-6]
@@ -1272,6 +1350,11 @@ checks = [
   { app = true },
 ]
 
+[priv-there-no-5]
+checks = [
+  { tests = ['services::ai_server::plan_tests::a_loopback_server_needs_no_disclosure', 'services::ai_server::plan_tests::a_remote_server_is_refused_until_its_disclosure_is_confirmed', 'services::ai::url_validation_tests::plain_http_is_allowed_only_for_loopback_hosts'] },
+  { manual = 'The disclosure dialog is covered by AiSettings.server.test.tsx (vitest).' },
+]
 [priv-there-no-3]
 checks = [
   { tests = ['ai::openrouter::data_policy_tests::every_chat_request_denies_data_collection', 'ai::openrouter::data_policy_tests::every_embedding_request_carries_the_same_policy', 'ai::openrouter::data_policy_tests::a_data_policy_404_names_the_blocked_model'], covers = ["every request tells OpenRouter to use only providers that neither store nor train on what they receive", "a model that no such provider serves is refused with an error, never sent anyway"] },

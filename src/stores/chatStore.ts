@@ -141,6 +141,12 @@ interface ChatStore {
     contextThreadId?: string | null,
     contextAccountId?: string | null,
     contextView?: api.ChatViewContext | null,
+    /** The account the sending surface shows; a first message creates its
+     * conversation there. Falls back to `currentAccountId`. */
+    accountId?: string | null,
+    /** PDF attachment open in the viewer (chat panel only), grounding the
+     * turn in place of `contextThreadId`; owned by `contextAccountId`. */
+    contextAttachmentId?: string | null,
   ) => Promise<void>;
   /**
    * "This answer is wrong" → a fresh corrective turn.
@@ -155,6 +161,7 @@ interface ChatStore {
     contextThreadId?: string | null,
     contextAccountId?: string | null,
     contextView?: api.ChatViewContext | null,
+    contextAttachmentId?: string | null,
   ) => Promise<void>;
   /** Ids of assistant messages the user marked wrong, for this session. */
   rejectedMessageIds: string[];
@@ -202,10 +209,13 @@ interface ChatStore {
 interface TurnOptions {
   contextThreadId?: string | null;
   contextAccountId?: string | null;
+  contextAttachmentId?: string | null;
   contextView?: api.ChatViewContext | null;
   correction?: api.ChatCorrection | null;
   research?: boolean;
   researchEstimateId?: string | null;
+  /** Account for the conversation a first message creates. */
+  accountId?: string | null;
 }
 
 /** A research question waiting for the user to confirm its estimate. */
@@ -499,8 +509,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
 
-    sendMessage: async (content, contextThreadId, contextAccountId, contextView) => {
-      const opts: TurnOptions = { contextThreadId, contextAccountId, contextView };
+    sendMessage: async (content, contextThreadId, contextAccountId, contextView, accountId, contextAttachmentId) => {
+      const opts: TurnOptions = { contextThreadId, contextAccountId, contextAttachmentId, contextView, accountId };
       if (!get().researchMode) {
         await get().dispatchTurn(content, opts);
         return;
@@ -508,6 +518,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Research: estimate first, send only once the user confirms. The toggle
       // is spent on this question either way.
       set({ researchMode: false });
+      // The estimate is asked per conversation; a first question creates it.
+      const owner = accountId ?? get().currentAccountId;
+      if (!get().activeConversationId && owner) {
+        try {
+          await get().createConversation(owner);
+        } catch (e) {
+          set({ error: errorText(e) });
+          return;
+        }
+      }
       await holdForEstimate(content, opts);
     },
 
@@ -535,7 +555,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
     },
 
-    retryWithCorrection: async (rejectedMessageId, reason, contextThreadId, contextAccountId, contextView) => {
+    retryWithCorrection: async (
+      rejectedMessageId,
+      reason,
+      contextThreadId,
+      contextAccountId,
+      contextView,
+      contextAttachmentId,
+    ) => {
       const trimmed = reason.trim();
       if (!trimmed) return;
       // Mark first so the rejected bubble is struck through while the corrective
@@ -548,6 +575,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const opts: TurnOptions = {
         contextThreadId,
         contextAccountId,
+        contextAttachmentId,
         contextView,
         correction: { rejectedMessageId, reason: trimmed },
       };
@@ -566,25 +594,65 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { contextThreadId, contextAccountId, contextView, correction } = opts;
       const trimmed = content.trim();
       if (!trimmed) return;
-      const conversationId = get().activeConversationId;
-      if (!conversationId) {
-        set({ error: 'No active conversation' });
-        return;
-      }
       if (get().isSending) return;
+      // The user's text goes on screen at once, before any backend write: on a
+      // busy mailbox creating the conversation and saving the turn can wait
+      // behind sync on the single write connection, and a click with nothing to
+      // show for it reads as a click that did not land. The saved message
+      // replaces this bubble when the command returns.
+      const pendingId = `pending-${Date.now()}`;
+      const pendingBubble: ChatMessage = {
+        id: pendingId,
+        conversationId: get().activeConversationId ?? '',
+        role: 'user',
+        content: trimmed,
+        model: null,
+        tokenCount: null,
+        latencyMs: null,
+        createdAt: Math.floor(Date.now() / 1000),
+        sources: [],
+      };
+      const withoutPending = (messages: ChatMessage[]) => messages.filter((m) => m.id !== pendingId);
       // Clear any stale phase from a previous turn up front. We must NOT clear it
       // again when the command returns: a fast turn (e.g. thread-bound chat) can
       // emit its first phase during the await, and that early phase must survive
       // the streamingMessageId assignment so the status shows instead of bare dots.
       const research = opts.research ?? false;
-      set({
+      set((s) => ({
         isSending: true,
         error: null,
         streamingPhase: null,
         researchProgress: null,
         researchStartedAt: null,
         turnCancelling: false,
-      });
+        messages: [...s.messages, pendingBubble],
+      }));
+
+      // A first message creates its conversation here, behind the bubble and the
+      // isSending lock, so a second click meanwhile cannot start another one.
+      let conversationId = get().activeConversationId;
+      if (!conversationId) {
+        // The surface's account, not only the store's: right after an account
+        // switch `reset()` leaves `currentAccountId` null until `selectAccount`
+        // runs again, and a click in that gap must still land.
+        const accountId = opts.accountId ?? get().currentAccountId;
+        if (!accountId) {
+          set((s) => ({ isSending: false, error: 'No active conversation', messages: withoutPending(s.messages) }));
+          return;
+        }
+        try {
+          const conv = await api.createChatConversation(accountId);
+          set((s) => ({
+            conversations: [conv, ...s.conversations],
+            activeConversationId: conv.id,
+            focusInputPending: true,
+          }));
+          conversationId = conv.id;
+        } catch (e) {
+          set((s) => ({ isSending: false, error: errorText(e), messages: withoutPending(s.messages) }));
+          return;
+        }
+      }
 
       try {
         const { userMessage, assistantMessage } = await api.sendChatMessage(
@@ -597,26 +665,27 @@ export const useChatStore = create<ChatStore>((set, get) => {
           correction,
           research,
           opts.researchEstimateId,
+          opts.contextAttachmentId,
         );
         // Only mutate if we're still on the same conversation. The turn keeps
         // streaming into `backgroundTurns`; the lock must still be released or
         // the conversation now on screen can never send.
         if (get().activeConversationId !== conversationId) {
-          set({ isSending: false, earlyStream: {} });
+          set((s) => ({ isSending: false, earlyStream: {}, messages: withoutPending(s.messages) }));
           return;
         }
         set((s) => {
           const early = s.earlyStream[assistantMessage.id];
           if (!early) {
             return {
-              messages: [...s.messages, userMessage, assistantMessage],
+              messages: [...withoutPending(s.messages), userMessage, assistantMessage],
               streamingMessageId: assistantMessage.id,
               isSending: false,
               earlyStream: {},
             };
           }
           return {
-            messages: [...s.messages, userMessage, { ...assistantMessage, content: early.content }],
+            messages: [...withoutPending(s.messages), userMessage, { ...assistantMessage, content: early.content }],
             streamingMessageId: early.done ? null : assistantMessage.id,
             streamingPhase: early.done ? null : s.streamingPhase,
             researchProgress: early.done ? null : s.researchProgress,
@@ -626,7 +695,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
           };
         });
       } catch (e) {
-        set({ isSending: false, error: errorText(e), streamingMessageId: null, streamingPhase: null, earlyStream: {} });
+        set((s) => ({
+          isSending: false,
+          error: errorText(e),
+          streamingMessageId: null,
+          streamingPhase: null,
+          earlyStream: {},
+          messages: withoutPending(s.messages),
+        }));
       }
     },
 

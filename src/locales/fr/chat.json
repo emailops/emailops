@@ -47,6 +47,50 @@
       "prompt": "Rédige un brouillon pour "
     }
   },
+  "starters": {
+    "title": "Demandes suggérées",
+    "somethingElse": "Autre chose…",
+    "reply": {
+      "label": "Sans réponse : {{name}} — « {{subject}} »",
+      "prompt": "Dans « {{subject}} », {{name}} a écrit en dernier et je n’ai pas répondu. Attend-on quelque chose de moi ? Si oui, quoi et pour quand ?"
+    },
+    "sender": {
+      "label": "Qu’est-ce que {{name}} m’a écrit ?",
+      "prompt": "Qu’est-ce que {{name}} m’a écrit récemment ? Résume chaque e-mail en une ligne et cite-le."
+    },
+    "thread": {
+      "label": "Résumer « {{subject}} »",
+      "prompt": "Résume le fil « {{subject}} » et dis-moi si quelque chose y attend une action de ma part."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Résumer ce fil",
+        "prompt": "Résume ce fil : qui y participe, ce qui a été convenu et ce qui reste en suspens."
+      },
+      "asks": {
+        "label": "Qu’attend-on de moi ici ?",
+        "prompt": "Qu’attend-on de moi dans ce fil, et pour quand ?"
+      },
+      "reply": {
+        "label": "Rédiger une réponse",
+        "prompt": "Rédige une réponse à ce fil qui "
+      }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Résumer ce document",
+        "prompt": "Résume ce document : de quoi il s'agit, qui l'envoie, et ses dates et montants clés."
+      },
+      "keyPoints": {
+        "label": "Points clés, dates et montants",
+        "prompt": "Liste les points clés, les dates et les montants de ce document."
+      },
+      "ask": {
+        "label": "Poser une question sur ce document",
+        "prompt": "À propos de ce document : "
+      }
+    }
+  },
   "message": {
     "user": "Vous",
     "assistant": "Assistant",
@@ -68,6 +112,7 @@
     "budgetSettings": "Paramètres IA"
   },
   "processing": {
+    "queued": "En attente de la fin d’une autre tâche d’IA…",
     "routing": "Routage…",
     "retrieving": "Récupération des courriels…",
     "searchingContacts": "Recherche de contacts…",
@@ -76,6 +121,7 @@
     "generatingDraft": "Génération du brouillon…",
     "runningTools": "Traitement de la requête…",
     "researching": "Recherche en cours…",
+    "readingDocument": "Lecture du document complet…",
     "research": {
       "gathering": "Recherche : collecte des e-mails…",
       "reading": "Recherche : lecture des e-mails {{read}}/{{total}} (lot {{batch}}/{{batches}})…",
@@ -170,6 +216,7 @@
         "answer": "Réponse (LLM)",
         "llmCall": "Appel LLM",
         "llmCallN": "Appel LLM {{n}}/{{total}}",
+        "documentPart": "Lecture du document, partie {{n}}/{{total}}",
         "budget": "Budget de contexte"
       },
       "section": {
@@ -252,7 +299,9 @@
         "label": "Cet e-mail est dans {{email}}",
         "hint": "La discussion répond depuis un autre compte et ne peut donc pas lire cet e-mail. Changez de compte pour poser des questions dessus.",
         "action": "Changer"
-      }
+      },
+      "hintDocument": "Les réponses s'appuient sur le texte de ce PDF. Retirez-le pour interroger votre boîte.",
+      "restoreDocument": "Utiliser le PDF ouvert comme contexte"
     },
     "newChat": "Nouveau chat"
   },

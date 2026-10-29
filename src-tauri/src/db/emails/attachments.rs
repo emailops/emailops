@@ -201,6 +201,24 @@ impl Database {
         Ok(())
     }
 
+    /// The id of `account_id`'s attachment named `filename` (the newest email's
+    /// when several carry that name).
+    pub fn find_attachment_meta_id(&self, account_id: &str, filename: &str) -> Result<Option<String>> {
+        let conn = self.reader();
+        let result = conn.query_row(
+            "SELECT m.id FROM email_attachment_meta m JOIN emails e ON e.id = m.email_id
+             WHERE m.account_id = ?1 AND m.filename = ?2
+             ORDER BY e.timestamp DESC LIMIT 1",
+            params![account_id, filename],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Update the local file_path once an attachment has been downloaded to disk.
     pub fn set_email_attachment_file_path(&self, email_id: &str, filename: &str, file_path: &str) -> Result<()> {
         let conn = self.connection();

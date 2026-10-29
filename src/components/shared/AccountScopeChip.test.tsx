@@ -1,13 +1,12 @@
 // The unified ("All accounts") scope chip: shows which single account a
 // per-account view is bound to, with the explanatory hint as its tooltip and
-// the same deterministic account color the inbox rows use. UnifiedScopeBar is
+// the account's stored colour the inbox rows use. UnifiedScopeBar is
 // the self-gating wrapper views mount unconditionally.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initI18n } from '@/i18n';
-import { accountColorClass } from '@/lib/colors';
 import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import type { Account } from '@/types';
 import { AccountScopeChip } from './AccountScopeChip';
@@ -39,12 +38,27 @@ describe('AccountScopeChip', () => {
     expect(chip?.getAttribute('title')).toBe('This view shows work@example.com only');
   });
 
-  it('uses the deterministic per-account color dot (same palette as inbox rows)', () => {
+  it("paints the dot with the account's stored colour (same as inbox rows)", () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          provider: 'gmail',
+          email: 'work@example.com',
+          name: '',
+          createdAt: 0,
+          sortOrder: 0,
+          enabled: true,
+          syncFromTimestamp: null,
+          color: 'rose',
+        },
+      ],
+    });
     act(() => {
       root.render(<AccountScopeChip accountId="acc-1" email="work@example.com" hint="hint" />);
     });
     const dot = container.querySelector('span[aria-hidden="true"]');
-    expect(dot?.className).toContain(accountColorClass('acc-1'));
+    expect(dot?.className).toContain('bg-rose-500');
   });
 });
 

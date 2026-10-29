@@ -4,6 +4,7 @@ import { arch as osArch, platform as osPlatform, version as osVersion } from '@t
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
 import type {
   Account,
+  AccountColor,
   AccountDashboard,
   AccountSettings,
   AccountSignature,
@@ -25,6 +26,7 @@ import type {
   CatalogModel,
   ChatConversation,
   ChatMessage,
+  ChatStarter,
   ClassificationConfig,
   ClassificationRule,
   CompanyContactsGroup,
@@ -222,6 +224,10 @@ export async function updateAccountSyncFrom(accountId: string, syncFromTimestamp
  *  blank name falls back to the address. */
 export async function updateAccountName(accountId: string, name: string): Promise<Account> {
   return invoke('update_account_name', { accountId, name });
+}
+
+export async function setAccountColor(accountId: string, color: AccountColor): Promise<Account> {
+  return invoke('set_account_color', { accountId, color });
 }
 
 export async function getAccountSettings(accountId: string): Promise<AccountSettings> {
@@ -1150,6 +1156,8 @@ export async function setAiConfig(
   thinkingEnabled?: boolean,
   // Omitted keeps the stored choice (the backend treats a missing value as "unchanged").
   zeroDataRetention?: boolean,
+  /** Required when `provider` is the OpenAI-compatible server. */
+  server?: ServerSettingsInput,
 ): Promise<void> {
   return invoke('set_ai_config', {
     provider,
@@ -1159,7 +1167,54 @@ export async function setAiConfig(
     monthlyBudgetUsd: monthlyBudgetUsd ?? 0,
     thinkingEnabled: thinkingEnabled ?? false,
     zeroDataRetention,
+    server,
   });
+}
+
+/** What Settings sends for the OpenAI-compatible server
+ *  (`services::ai_server::ServerSettingsInput`). */
+export interface ServerSettingsInput {
+  baseUrl: string;
+  /** A new key; null keeps the stored one. */
+  apiKey: string | null;
+  /** Delete the stored key. */
+  clearApiKey: boolean;
+  embeddingSource: 'server' | 'inapp' | 'openrouter';
+  /** Tokens; 0 reads it from the server. */
+  contextWindow: number;
+  /** The remote host whose disclosure the user just confirmed. */
+  disclosureAcceptedHost: string | null;
+}
+
+/** Models an OpenAI-compatible server lists at `GET {baseUrl}/models`. The
+ *  server may not be saved yet; `apiKey` is the key typed with it. */
+export async function listOpenAiCompatibleModels(
+  baseUrl: string,
+  apiKey?: string | null,
+): Promise<{ id: string; name: string }[]> {
+  return invoke('list_openai_compatible_models', { baseUrl, apiKey });
+}
+
+/** The context window chat uses with a server (`services::ai_server::ContextReport`). */
+export interface ServerContextReport {
+  window: number;
+  /** Reported by the server, set in Settings, or the default assumed. */
+  source: 'server' | 'configured' | 'assumed';
+  /** What the server reported; null when it did not say. */
+  served: number | null;
+  /** What Settings holds; 0 reads it from the server. */
+  configured: number;
+  recommended: number;
+  belowRecommended: boolean;
+}
+
+export async function checkOpenAiCompatibleContext(
+  baseUrl: string,
+  apiKey: string | null,
+  model: string,
+  contextWindow: number,
+): Promise<ServerContextReport> {
+  return invoke('check_openai_compatible_context', { baseUrl, apiKey, model, contextWindow });
 }
 
 export async function getAiUsage(): Promise<AiUsageSummary> {
@@ -1192,8 +1247,14 @@ export async function validateOpenRouterEmbeddingModel(
   return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
-export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {
-  return invoke('test_ai_provider', { provider, model, apiKey });
+/** `baseUrl` is the OpenAI-compatible server to test, which may not be saved yet. */
+export async function testAiProvider(
+  provider: string,
+  model: string,
+  apiKey?: string | null,
+  baseUrl?: string,
+): Promise<string> {
+  return invoke('test_ai_provider', { provider, model, apiKey, baseUrl });
 }
 
 export async function getEmbeddingsConfig(accountId: string): Promise<EmbeddingsConfig> {
@@ -1344,6 +1405,11 @@ export async function getEmailTagsBatch(emailIds: string[]): Promise<EmailTag[]>
 /** Verdicts keyed by email id. A missing key means "not scored yet". */
 export async function getJunkVerdicts(emailIds: string[]): Promise<Record<string, JunkVerdict>> {
   return invoke('get_junk_verdicts', { emailIds });
+}
+
+/** Whether the message carries text addressed to the AI assistant. Works with junk detection off. */
+export async function hasAiControlMarkup(accountId: string, emailId: string): Promise<boolean> {
+  return invoke('has_ai_control_markup', { accountId, emailId });
 }
 
 /**
@@ -1699,6 +1765,12 @@ export async function sendChatMessage(
   research = false,
   /** The estimate the user confirmed: the run reads exactly what it counted. */
   researchEstimateId?: string | null,
+  /**
+   * PDF attachment the user has open in the viewer, owned by
+   * `contextAccountId`. The backend grounds the turn in its text in place of
+   * the thread, for this turn only.
+   */
+  contextAttachmentId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1710,6 +1782,7 @@ export async function sendChatMessage(
     correction: correction ?? null,
     research,
     researchEstimateId: researchEstimateId ?? null,
+    contextAttachmentId: contextAttachmentId ?? null,
   });
 }
 
@@ -1763,6 +1836,11 @@ export interface ChatViewContext {
  */
 export async function prewarmChat(accountId: string): Promise<void> {
   return invoke('prewarm_chat', { accountId });
+}
+
+/** Suggested requests for an empty conversation on this account (no model call). */
+export async function getChatStarters(accountId: string): Promise<ChatStarter[]> {
+  return invoke('get_chat_starters', { accountId });
 }
 
 // ── Memory subsystem ─────────────────────────────────────────────────────────
@@ -2021,6 +2099,55 @@ export async function getQueueState(): Promise<AllQueuesState> {
 
 export async function getStorageStats(): Promise<StorageStats> {
   return invoke('get_storage_stats');
+}
+
+// ── Data location ────────────────────────────────────────────────────────────
+
+/** Where EmailOps keeps its data folder (`commands/data_location.rs`). */
+export interface DataLocationInfo {
+  /** False on mobile, whose sandbox decides where app data lives. */
+  supported: boolean;
+  path: string;
+  defaultPath: string;
+  isDefault: boolean;
+  /** `EMAILOPS_DATA_DIR` decides the folder; it cannot be moved from the app. */
+  setByEnv: boolean;
+  /** The folder the data was moved from, until the user dismisses the note. */
+  previousPath: string | null;
+  sizeBytes: number;
+}
+
+/** The folder the data would move to, checked and remembered by the backend. */
+export interface PickedDataFolder {
+  path: string;
+  neededBytes: number;
+}
+
+/** Payload of the `data-move-progress` event. */
+export interface DataMoveProgress {
+  copiedBytes: number;
+  totalBytes: number;
+}
+
+export async function getDataLocation(): Promise<DataLocationInfo> {
+  return invoke('get_data_location');
+}
+
+export async function dismissPreviousDataLocation(): Promise<void> {
+  return invoke('dismiss_previous_data_location');
+}
+
+/** Open the native folder dialog; `null` when cancelled. */
+export async function pickDataFolder(): Promise<PickedDataFolder | null> {
+  return invoke('pick_data_folder');
+}
+
+/**
+ * Move the data to the folder last picked (or back to the default) and
+ * restart the app. Only returns on failure, which rejects.
+ */
+export async function moveDataLocation(toDefault: boolean): Promise<void> {
+  return invoke('move_data_location', { toDefault });
 }
 
 // ── Lenses ───────────────────────────────────────────────────────────────────

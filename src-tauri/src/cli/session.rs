@@ -130,7 +130,11 @@ impl CliSession {
             std::env::var_os("NO_COLOR").is_some(),
         );
 
-        let data_dir = resolve_data_dir(cli.data_dir.clone());
+        let data_dir = resolve_data_dir(
+            cli.data_dir.clone(),
+            std::env::var("EMAILOPS_DATA_DIR").ok(),
+            default_data_dir(),
+        )?;
         let db = Arc::new(open_db(data_dir.clone(), opens_read_only(cli.command.as_ref()))?);
 
         // Credential reads (sync auth, remote AI providers) resolve through a
@@ -198,17 +202,20 @@ impl CliSession {
     }
 }
 
-/// `--data-dir` flag → `$EMAILOPS_DATA_DIR` → platform default app data dir.
-fn resolve_data_dir(flag: Option<PathBuf>) -> PathBuf {
-    if let Some(dir) = flag {
-        return dir;
+/// `--data-dir` flag → `$EMAILOPS_DATA_DIR` → the folder chosen in the app →
+/// platform default app data dir. Same order as the desktop app; see
+/// `util::data_location`.
+fn resolve_data_dir(flag: Option<PathBuf>, env: Option<String>, default: PathBuf) -> Result<PathBuf> {
+    use crate::util::data_location;
+    let pointer = data_location::read_pointer(&default).map_err(|e| AppError::IoError(e.to_string()))?;
+    let resolved = data_location::resolve(flag, env, pointer, default);
+    if let Some(dir) = data_location::unavailable_chosen_dir(&resolved) {
+        return Err(AppError::NotFound(format!(
+            "the data folder chosen in the app is not available: {} — connect the disk it is on",
+            dir.display()
+        )));
     }
-    if let Ok(env) = std::env::var("EMAILOPS_DATA_DIR") {
-        if !env.is_empty() {
-            return PathBuf::from(env);
-        }
-    }
-    default_data_dir()
+    Ok(resolved.path)
 }
 
 #[cfg(target_os = "macos")]
@@ -338,6 +345,7 @@ mod tests {
             conversation: None,
             fresh: false,
             thread: None,
+            attachment: None,
             prewarm: false,
             research: false,
             estimate: false,
@@ -358,6 +366,7 @@ mod tests {
             conversation: None,
             fresh: false,
             thread: None,
+            attachment: None,
             prewarm: false,
             research: false,
             estimate: false,
@@ -418,6 +427,7 @@ mod tests {
                 conversation: None,
                 fresh: false,
                 thread: None,
+                attachment: None,
                 prewarm: false,
                 research: false,
                 estimate: false,
@@ -580,6 +590,30 @@ mod tests {
     #[test]
     fn resolve_data_dir_prefers_flag() {
         let p = PathBuf::from("/tmp/explicit-dir");
-        assert_eq!(resolve_data_dir(Some(p.clone())), p);
+        assert_eq!(
+            resolve_data_dir(Some(p.clone()), None, PathBuf::from("/default")).unwrap(),
+            p
+        );
+    }
+
+    #[test]
+    fn resolve_data_dir_follows_the_folder_chosen_in_the_app() {
+        let parent = tempfile::tempdir().unwrap();
+        let default = parent.path().join("com.emailops.app");
+        let chosen = tempfile::tempdir().unwrap();
+        crate::util::data_location::write_pointer(&default, chosen.path()).unwrap();
+        assert_eq!(resolve_data_dir(None, None, default).unwrap(), chosen.path());
+    }
+
+    #[test]
+    fn resolve_data_dir_refuses_a_chosen_folder_that_is_gone() {
+        let parent = tempfile::tempdir().unwrap();
+        let default = parent.path().join("com.emailops.app");
+        let gone = parent.path().join("unplugged-disk");
+        crate::util::data_location::write_pointer(&default, &gone).unwrap();
+        assert!(matches!(
+            resolve_data_dir(None, None, default),
+            Err(AppError::NotFound(_))
+        ));
     }
 }

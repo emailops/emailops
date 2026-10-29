@@ -175,7 +175,8 @@ mit einer Schaltfläche darunter für den Rest.
 ## Kalender {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Monats-, Wochen- und Tagesansichten je Konto für Google Kalender und Outlook. Sie erhalten vor
+Monats-, Wochen- und Tagesansichten für Google Kalender und Outlook, für ein Konto oder für
+**Alle Konten** zusammen, wobei jeder Termin die Farbe seines Kontos trägt. Sie erhalten vor
 jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Teilnehmen** für Meet-, Teams-, Webex-
 und Zoom-Links. Die Kalendersynchronisierung ist für Gmail- und Outlook-Konten standardmäßig
 aktiv und lässt sich je Konto abschalten — ebenso die Vorlaufzeit der Benachrichtigung — unter
@@ -187,6 +188,16 @@ eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google o
 Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 **Einstellungen → Kalender**.
+
+<!-- claim:feat-calendar-4 -->
+IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)
+abonnieren, zum Beispiel den Freigabe-Link von Proton Calendar, unter **Kalender-Feeds
+(IMAP-Konten)** in **Einstellungen → Kalender**. Ein Feed ist schreibgeschützt, wird alle paar
+Minuten aktualisiert, und sein Link liegt in Ihrem Schlüsselbund, nicht in der Datenbank.
+
+<!-- claim:feat-calendar-5 -->
+Neben dem Posteingang öffnet sich der Kalender auch als rechts angedocktes Feld, die
+**Agenda**; **Vollständigen Kalender öffnen** wechselt zur vollen Ansicht.
 
 <!-- claim:feat-calendar-3 -->
 Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
@@ -200,6 +211,9 @@ App-Sperre. Die Erinnerung in EmailOps zeigt immer das vollständige Meeting.
 Ein Ort für die Anhänge, die Ihnen wichtig sind — Rechnungen, Verträge, Belege — mit Vorschau
 und Download, statt sich erneut durch Threads zu graben. Öffnen Sie sie über **Anhänge** in der
 Seitenleiste.
+
+<!-- claim:feat-attachments-view-9 -->
+Ein PDF öffnet sich in einem eigenen Tab, wo **Vergrößern** und **Verkleinern** seine Größe ändern.
 
 <!-- claim:feat-attachments-view-2 -->
 Die Ansicht sammelt Anhänge über **Regeln** und ist daher anfangs leer. Klicken Sie auf **Regeln

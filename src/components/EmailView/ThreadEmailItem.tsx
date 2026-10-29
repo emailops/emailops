@@ -7,6 +7,7 @@ import { useAiStore } from '@/stores/aiStore';
 import { useTranslationEnabledStore } from '@/stores/featureToggleStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Email, EmailAttachmentMeta } from '@/types';
+import { AiMarkupBanner } from './AiMarkupBanner';
 import { CalendarInviteCard } from './CalendarInviteCard';
 import { EmailAttachments } from './EmailAttachments';
 import { EmailBody } from './EmailBody';
@@ -167,6 +168,7 @@ export function ThreadEmailItem({
               threadId={email.threadId}
               mailbox={email.mailbox}
             />
+            {!email.isSent && <AiMarkupBanner accountId={email.accountId} emailId={email.id} />}
             {!email.isSent && <SenderBanner accountId={email.accountId} emailId={email.id} />}
             {translationEnabled && aiEnabled && <TranslationControls accountId={email.accountId} emailId={email.id} />}
             {showTranslated && translation ? (

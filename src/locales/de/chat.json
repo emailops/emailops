@@ -47,6 +47,50 @@
       "prompt": "Entwirf einen Entwurf für "
     }
   },
+  "starters": {
+    "title": "Vorgeschlagene Anfragen",
+    "somethingElse": "Etwas anderes …",
+    "reply": {
+      "label": "Unbeantwortet: {{name}} — „{{subject}}“",
+      "prompt": "In „{{subject}}“ hat {{name}} zuletzt geschrieben und ich habe nicht geantwortet. Wird etwas von mir erwartet? Wenn ja, was und bis wann?"
+    },
+    "sender": {
+      "label": "Was hat mir {{name}} geschrieben?",
+      "prompt": "Was hat mir {{name}} in letzter Zeit geschrieben? Fasse jede E-Mail in einer Zeile zusammen und zitiere sie."
+    },
+    "thread": {
+      "label": "„{{subject}}“ zusammenfassen",
+      "prompt": "Fasse den Thread „{{subject}}“ zusammen und sag mir, ob darin etwas auf mich wartet."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Diesen Thread zusammenfassen",
+        "prompt": "Fasse diesen Thread zusammen: wer beteiligt ist, was vereinbart wurde und was noch offen ist."
+      },
+      "asks": {
+        "label": "Was wird hier von mir erwartet?",
+        "prompt": "Was wird in diesem Thread von mir erwartet, und bis wann?"
+      },
+      "reply": {
+        "label": "Antwort entwerfen",
+        "prompt": "Entwirf eine Antwort auf diesen Thread, die "
+      }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Dieses Dokument zusammenfassen",
+        "prompt": "Fasse dieses Dokument zusammen: was es ist, von wem es kommt und die wichtigsten Daten und Beträge."
+      },
+      "keyPoints": {
+        "label": "Kernpunkte, Daten und Beträge",
+        "prompt": "Liste die Kernpunkte, Daten und Beträge dieses Dokuments auf."
+      },
+      "ask": {
+        "label": "Frage zu diesem Dokument",
+        "prompt": "Zu diesem Dokument: "
+      }
+    }
+  },
   "message": {
     "user": "Du",
     "assistant": "Assistent",
@@ -68,6 +112,7 @@
     "budgetSettings": "KI-Einstellungen"
   },
   "processing": {
+    "queued": "Warte, bis eine andere KI-Aufgabe fertig ist…",
     "routing": "Route bestimmen…",
     "retrieving": "E-Mails abrufen…",
     "searchingContacts": "Kontakte suchen…",
@@ -76,6 +121,7 @@
     "generatingDraft": "Entwurf generieren…",
     "runningTools": "Anfrage verarbeiten…",
     "researching": "Recherche läuft…",
+    "readingDocument": "Das ganze Dokument wird gelesen…",
     "research": {
       "gathering": "Recherche: E-Mails werden gesammelt…",
       "reading": "Recherche: E-Mails lesen {{read}}/{{total}} (Stapel {{batch}}/{{batches}})…",
@@ -170,6 +216,7 @@
         "answer": "Antwort (LLM)",
         "llmCall": "LLM-Aufruf",
         "llmCallN": "LLM-Aufruf {{n}}/{{total}}",
+        "documentPart": "Dokument lesen, Teil {{n}}/{{total}}",
         "budget": "Kontextbudget"
       },
       "section": {
@@ -252,7 +299,9 @@
         "label": "Diese E-Mail liegt in {{email}}",
         "hint": "Der Chat antwortet aus einem anderen Konto und kann diese E-Mail nicht lesen. Wechsle das Konto, um danach zu fragen.",
         "action": "Wechseln"
-      }
+      },
+      "hintDocument": "Antworten stützen sich auf den Text dieses PDFs. Entferne es, um zu deinem Posteingang zu fragen.",
+      "restoreDocument": "Geöffnetes PDF als Kontext verwenden"
     },
     "newChat": "Neuer Chat"
   },

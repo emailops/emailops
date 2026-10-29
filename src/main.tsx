@@ -8,6 +8,7 @@ import { FALLBACK_LANGUAGE, i18n, initI18n, isSupportedLanguage } from './i18n';
 import { getPref, getSystemLocale } from './lib/api';
 import { useThemeStore } from './stores/themeStore';
 import './index.css';
+import { installFileDropGuard } from '@/hooks/useFileDrop';
 
 // Resolve the initial UI language before mounting React so the very first
 // frame uses the correct bundle (no "flash of English"). Chain:
@@ -46,6 +47,9 @@ async function bootstrap() {
     // something is very wrong with index.html.
     throw new Error('Root element #root not found in document');
   }
+
+  // A file dropped where nothing takes it must not replace the app.
+  installFileDropGuard(window);
 
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>

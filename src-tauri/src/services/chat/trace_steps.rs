@@ -4,6 +4,7 @@
 //! chat --trace`, the eval report — walks the list this module builds, so the
 //! turn reads the same everywhere and a new step is added in one place.
 
+use super::open_document::DOCUMENT_PART_CALL;
 use crate::models::{CacheAction, CacheActionKind, ChatTrace, KvCacheStats, LlmCallTrace, TraceStep};
 
 /// The steps of `trace`, in execution order:
@@ -149,9 +150,10 @@ fn describe_anchor(before: u32, after: u32) -> String {
 /// (HTTP providers, traces from before the plan was recorded).
 pub fn cache_action(call: &LlmCallTrace) -> Option<CacheAction> {
     let plan = call.prefix_plan.as_deref()?;
-    // One-shot calls (planner, research) use the auxiliary prefix slot, not
-    // the chat anchor: their plan is the slot's own verdict.
-    if call.kind == "planner" || call.kind.starts_with("research_") {
+    // One-shot calls (planner, research, the parts of a long open document)
+    // use the auxiliary prefix slot, not the chat anchor: their plan is the
+    // slot's own verdict.
+    if call.kind == "planner" || call.kind.starts_with("research_") || call.kind == DOCUMENT_PART_CALL {
         let (kind, detail) = match plan {
             "Reuse" => (CacheActionKind::Extend, "one-shot slot: instructions reused"),
             "Reseed" => (CacheActionKind::ColdFresh, "one-shot slot: instructions decoded"),
@@ -356,6 +358,7 @@ pub fn step_label(trace: &ChatTrace, step: &TraceStep) -> String {
             Some(c) if c.kind == "planner" => "planner".into(),
             Some(c) if c.kind == "final_stream" => "answer".into(),
             Some(c) if c.kind == "tool_round" => format!("llm round {}", c.round),
+            Some(c) if c.kind == DOCUMENT_PART_CALL => format!("document part {}", c.round + 1),
             Some(c) => format!("llm call ({})", c.kind),
             None => "llm call".into(),
         },
@@ -528,6 +531,31 @@ mod tests {
         c.prefix_plan = Some("Bypass".into());
         let a = cache_action(&c).expect("an action");
         assert!(a.detail.contains("not used"), "{}", a.detail);
+    }
+
+    #[test]
+    fn a_document_part_reports_its_prefix_slot_and_its_part_number() {
+        // A long open PDF is read on the auxiliary slot too, one call a part.
+        let mut c = llm("document_part", 1, 0);
+        c.prefix_plan = Some("Reuse".into());
+        let a = cache_action(&c).expect("an action");
+        assert!(a.detail.contains("instructions reused"), "{}", a.detail);
+        let t = trace(
+            "ambient",
+            vec![llm("document_part", 0, 0), c, llm("tool_round", 0, 0)],
+            vec![],
+        );
+        assert_eq!(
+            tags(&t),
+            [
+                "route",
+                "llm:document_part/0",
+                "llm:document_part/1",
+                "llm:tool_round/0"
+            ]
+        );
+        let label = step_label(&t, &plan_steps(&t)[2]);
+        assert_eq!(label, "document part 2");
     }
 
     #[test]

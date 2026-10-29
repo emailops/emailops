@@ -234,3 +234,16 @@ describe('ChatInput /clear command', () => {
     expect(onClear).not.toHaveBeenCalled();
   });
 });
+
+describe('ChatInput focusNonce', () => {
+  it('focuses the textarea and keeps what the user already typed', () => {
+    const textarea = renderInput();
+    typeInto(textarea, 'half a question');
+    textarea.blur();
+    act(() => {
+      root.render(<ChatInput onSend={() => {}} onClear={() => {}} disabled={false} focusNonce={1} />);
+    });
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.value).toBe('half a question');
+  });
+});

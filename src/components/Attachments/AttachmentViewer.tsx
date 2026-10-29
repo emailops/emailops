@@ -6,6 +6,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment } from '@/types';
+import { PdfViewer } from './PdfViewer';
 
 interface AttachmentViewerProps {
   attachment: Attachment | null;
@@ -169,17 +170,8 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600" />
           </div>
         ) : isPdf ? (
-          <object data={dataUrl} type="application/pdf" className="w-full h-full">
-            <div className="flex flex-col items-center justify-center h-full">
-              <p className="text-sm text-gray-500 mb-3">{t('attachments:viewer.pdfUnsupported')}</p>
-              <button
-                onClick={handleOpenExternally}
-                className="px-4 py-2 text-sm font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
-              >
-                {t('attachments:viewer.openInDefaultApp')}
-              </button>
-            </div>
-          </object>
+          // Keyed by attachment so another PDF opens fitted to width again.
+          <PdfViewer key={attachment.id} dataUrl={dataUrl} title={attachment.filename} />
         ) : isHtml ? (
           <iframe
             src={dataUrl}

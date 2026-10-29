@@ -4,12 +4,22 @@ import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { useCalendarAccount } from '@/hooks/useCalendarAccount';
 import { useCalendarData } from '@/hooks/useCalendarData';
+import {
+  type CreateAccountChoice,
+  calendarAccountOptions,
+  calendarLegendGroups,
+  calendarSelectionIds,
+  createAccountChoices,
+  eventColorFor,
+} from '@/lib/calendarAccounts';
 import { eventsAfterDelete } from '@/lib/calendarEvent';
-import { isReadOnlyCalendar, planCreateSlot } from '@/lib/calendarFeeds';
+import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, monthGrid, startOfDay, weekDays } from '@/lib/calendarGrid';
+import { accountColorHex } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
+import { calendarPanelState, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
-import type { Account, CalendarEvent } from '@/types';
+import type { Account, Calendar, CalendarEvent } from '@/types';
 import { EventDetailDialog } from './EventDetailDialog';
 import { MonthGrid } from './MonthGrid';
 import { NewEventDialog } from './NewEventDialog';
@@ -25,14 +35,17 @@ interface CalendarViewProps {
   accounts: Account[];
   /** Concrete fallback account (effective account — never the unified sentinel). */
   defaultAccountId: string | null;
+  /** Open Settings → Calendar (to subscribe an IMAP account to a feed). */
+  onOpenSettings: () => void;
 }
 
 /**
- * Per-account calendar screen (docs/DECISIONS.md: deliberately no unified
- * "All accounts" option). Month / Week / Day views over `get_calendar_events`,
- * with an on-open / on-switch `sync_calendar_now` refresh.
+ * Calendar screen: one account, or "All accounts" — every calendar account's
+ * events on one grid, each in its account's colour (docs/DECISIONS.md).
+ * Month / Week / Day views over `get_calendar_events`, with an on-open /
+ * on-switch `sync_calendar_now` refresh.
  */
-export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) {
+export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: CalendarViewProps) {
   const { t, i18n } = useTranslation(['calendar', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
@@ -40,18 +53,32 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
     calendarAccounts,
     disabledCurrentAccount,
     selectedAccountId,
-    selectedAccount,
+    isAllAccounts,
+    followsAllAccounts,
     handleSelectAccount,
     enableCurrentCalendar,
     isEnabling,
   } = useCalendarAccount(accounts, defaultAccountId);
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  // The account the user is in is IMAP without a feed: say how to get one
+  // rather than showing another account's calendar (unless the sidebar is on
+  // "All accounts", where the user is in no single account).
+  const enabledIds = useCalendarIntegrationStore((s) => s.enabledIds);
+  const feedsByAccount = useCalendarIntegrationStore((s) => s.feedsByAccount);
+  const currentAccount = accountById.get(defaultAccountId ?? '') ?? null;
+  const needsSetup = !followsAllAccounts && calendarPanelState(currentAccount, enabledIds, feedsByAccount) === 'setup';
+  // No data traffic while the current account still has nothing to show.
+  const shownAccountIds = needsSetup ? [] : calendarSelectionIds(selectedAccountId, calendarAccounts);
 
   // View state
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
   const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  /** Proposed slot for the "New event" dialog (double-clicked grid position). */
-  const [createSlot, setCreateSlot] = useState<{ start: number; end: number } | null>(null);
+  /** Proposed slot for the "New event" dialog (double-clicked grid position)
+   *  and the accounts it can go to. */
+  const [createSlot, setCreateSlot] = useState<{ start: number; end: number; choices: CreateAccountChoice[] } | null>(
+    null,
+  );
 
   // Visible range for the current view/anchor, in unix seconds.
   const { rangeStart, rangeEnd } = useMemo(() => {
@@ -74,15 +101,30 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
     isSyncing,
     error,
     setError,
-    needsReauth,
-    setNeedsReauth,
-    isReauthing,
-    colorFor,
+    syncErrors,
+    dismissErrors,
+    reauthAccountIds,
+    markNeedsReauth,
+    dismissReauth,
+    reauthingAccountId,
+    colorFor: calendarColorFor,
     shownEvents,
     toggleCalendar,
     runSync,
     runReauth,
-  } = useCalendarData(selectedAccountId, rangeStart, rangeEnd);
+  } = useCalendarData(shownAccountIds, rangeStart, rangeEnd);
+
+  const colorFor = useMemo(
+    () => eventColorFor(isAllAccounts, calendarAccounts, calendarColorFor),
+    [isAllAccounts, calendarAccounts, calendarColorFor],
+  );
+  // A legend swatch is painted like the calendar's events.
+  const legendColor = (calendar: Calendar) =>
+    colorFor({ accountId: calendar.accountId, calendarId: calendar.providerCalendarId } as CalendarEvent);
+  const shownAccounts = useMemo(
+    () => calendarAccounts.filter((a) => shownAccountIds.includes(a.id)),
+    [calendarAccounts, shownAccountIds],
+  );
 
   const enableCalendar = useCallback(() => {
     setError(null);
@@ -125,23 +167,25 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
 
   const days = useMemo(() => (viewMode === 'week' ? weekDays(anchor) : [startOfDay(anchor)]), [viewMode, anchor]);
 
-  // A double-click on an empty slot: the in-app dialog when the account has a
-  // writable calendar; for an account whose calendars are Proton feeds (read
-  // only — Proton has no write API), hand the day over to Proton Calendar's
-  // own create form in the browser; nothing for other read-only feeds.
+  // A double-click on an empty slot: the in-app dialog for the accounts that
+  // can take the event (asking which in "All accounts"). A lone account whose
+  // calendars are Proton feeds (read only — Proton has no write API) hands the
+  // day straight over to Proton Calendar's own create form in the browser;
+  // nothing for other read-only feeds.
   const openCreateSlot = useCallback(
     (start: number, end: number) => {
-      const plan = planCreateSlot(calendars, start);
-      if (plan.kind === 'dialog') {
-        setCreateSlot({ start, end });
-      } else if (plan.kind === 'proton') {
+      const choices = createAccountChoices(shownAccounts, calendars, start);
+      const only = choices.length === 1 ? choices[0] : null;
+      if (only?.plan.kind === 'proton') {
         addLog('info', 'system', t('calendar:createInProton'));
-        openExternal(plan.url).catch((err) => {
+        openExternal(only.plan.url).catch((err) => {
           addLog('error', 'system', `Failed to open Proton Calendar: ${err}`);
         });
+      } else if (choices.length > 0) {
+        setCreateSlot({ start, end, choices });
       }
     },
-    [calendars, addLog, t],
+    [shownAccounts, calendars, addLog, t],
   );
 
   // Frosted full-view overlay for the account the user is "in" when its
@@ -168,7 +212,14 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
 
   // Error banner — pinned at the top of the view, above all scrollable content
   // (z-30 keeps it readable above the frosted overlay, e.g. when enabling fails).
-  const errorBanner = error && (
+  // A sync failure names its account in "All accounts".
+  const errorMessages = [
+    ...(error ? [error] : []),
+    ...syncErrors.map((e) =>
+      isAllAccounts ? `${accountById.get(e.accountId)?.email ?? e.accountId}: ${e.message}` : e.message,
+    ),
+  ];
+  const errorBanner = errorMessages.length > 0 && (
     <div className="relative z-30 flex-shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 flex items-start gap-2 text-sm text-red-800">
       <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
         <path
@@ -178,12 +229,14 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         />
       </svg>
       <div className="min-w-0 flex-1">
-        <span className="break-words">{t('calendar:syncError', { message: error })}</span>
+        {errorMessages.map((message) => (
+          <p key={message} className="break-words">
+            {t('calendar:syncError', { message })}
+          </p>
+        ))}
       </div>
       <button
-        onClick={() => {
-          setError(null);
-        }}
+        onClick={dismissErrors}
         title={t('common:actions.dismiss')}
         className="flex-shrink-0 p-0.5 text-red-600 hover:text-red-800 rounded"
       >
@@ -193,6 +246,23 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
       </button>
     </div>
   );
+
+  if (needsSetup && currentAccount) {
+    return (
+      <div className="relative flex flex-col flex-1 min-h-0 items-center justify-center gap-3 px-5 text-center bg-white">
+        <p className="text-sm font-medium text-gray-900">{t('calendar:panel.setupTitle')}</p>
+        <p className="text-xs text-gray-500 break-words">{currentAccount.email}</p>
+        <p className="text-xs text-gray-600">{t('calendar:panel.setupBody')}</p>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="px-3 py-1.5 rounded-md bg-primary-600 text-white text-xs font-medium hover:bg-primary-700"
+        >
+          {t('calendar:panel.setupButton')}
+        </button>
+      </div>
+    );
+  }
 
   if (calendarAccounts.length === 0) {
     return (
@@ -208,9 +278,13 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-white">
-      {/* Re-auth banner — friendly, actionable, no raw provider payload. */}
-      {needsReauth && (
-        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 flex items-center gap-3 text-sm text-amber-900">
+      {/* Re-auth banner — friendly, actionable, no raw provider payload. One
+          row per account that needs it ("All accounts" names the account). */}
+      {reauthAccountIds.map((reauthId) => (
+        <div
+          key={reauthId}
+          className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 flex items-center gap-3 text-sm text-amber-900"
+        >
           <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
@@ -218,16 +292,20 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
               clipRule="evenodd"
             />
           </svg>
-          <span className="min-w-0 flex-1 break-words">{t('calendar:reauthNeeded')}</span>
+          <span className="min-w-0 flex-1 break-words">
+            {isAllAccounts
+              ? t('calendar:reauthNeededAccount', { email: accountById.get(reauthId)?.email ?? reauthId })
+              : t('calendar:reauthNeeded')}
+          </span>
           <button
-            onClick={() => void runReauth()}
-            disabled={isReauthing}
+            onClick={() => void runReauth(reauthId)}
+            disabled={reauthingAccountId !== null}
             className="flex-shrink-0 px-3 py-1 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-60"
           >
-            {isReauthing ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
+            {reauthingAccountId === reauthId ? t('calendar:reauthInProgress') : t('calendar:reauthButton')}
           </button>
           <button
-            onClick={() => setNeedsReauth(false)}
+            onClick={dismissReauth}
             title={t('common:actions.dismiss')}
             className="flex-shrink-0 p-0.5 text-amber-700 hover:text-amber-900 rounded"
           >
@@ -236,7 +314,7 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
             </svg>
           </button>
         </div>
-      )}
+      ))}
       {errorBanner}
 
       {/* Header: navigation + range label + view toggle + account selector */}
@@ -293,18 +371,18 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           ))}
         </div>
         <button
-          onClick={() => selectedAccountId && runSync(selectedAccountId)}
-          disabled={isSyncing || !selectedAccountId}
+          onClick={() => void runSync()}
+          disabled={isSyncing || shownAccountIds.length === 0}
           className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
           {t('common:actions.refresh')}
         </button>
-        {/* Compact per-account selector — the calendar never offers "All accounts". */}
+        {/* Compact account selector: "All accounts" first once two have a calendar. */}
         <div className="max-w-[200px]">
           <Select
             value={selectedAccountId ?? ''}
             onChange={handleSelectAccount}
-            options={calendarAccounts.map((a) => ({ value: a.id, label: a.email }))}
+            options={calendarAccountOptions(calendarAccounts, t('calendar:allAccounts'))}
             ariaLabel={t('calendar:selectAccount')}
             placeholder={t('calendar:selectAccount')}
             align="right"
@@ -313,36 +391,39 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
       </div>
 
       {/* Calendar legend: which calendar each colour means, and a click to
-          show/hide it. Only shown when the account has more than one calendar
-          — a single-calendar account gains nothing from a one-item legend. */}
+          show/hide it. Only shown with more than one calendar — a
+          single-calendar account gains nothing from a one-item legend. In
+          "All accounts" the calendars are grouped under their account. */}
       {calendars.length > 1 && (
         <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-gray-200 flex-shrink-0 flex-wrap">
-          {calendars.map((calendar) => (
-            <button
-              key={calendar.providerCalendarId}
-              onClick={() => void toggleCalendar(calendar)}
-              title={
-                calendar.isVisible
-                  ? t('calendar:calendars.hideOne', { name: calendar.name })
-                  : t('calendar:calendars.showOne', { name: calendar.name })
-              }
-              aria-pressed={calendar.isVisible}
-              className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
-                calendar.isVisible
-                  ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  : 'border-gray-200 text-gray-400 hover:bg-gray-50'
-              }`}
-            >
-              <span
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/10"
-                style={{
-                  backgroundColor: calendar.isVisible ? colorFor(calendar.providerCalendarId) : 'transparent',
-                  borderColor: colorFor(calendar.providerCalendarId),
-                }}
-              />
-              <span className="max-w-[160px] truncate">{calendar.name || calendar.providerCalendarId}</span>
-            </button>
-          ))}
+          {isAllAccounts
+            ? calendarLegendGroups(calendars, calendarAccounts).map((group) => (
+                <div key={group.account.id} className="flex items-center gap-1.5 flex-wrap mr-2">
+                  <span className="flex items-center gap-1 text-xs font-medium text-gray-500">
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: accountColorHex(group.account.color) }}
+                    />
+                    <span className="max-w-[180px] truncate">{group.account.email}</span>
+                  </span>
+                  {group.calendars.map((calendar) => (
+                    <LegendChip
+                      key={calendar.id}
+                      calendar={calendar}
+                      color={legendColor(calendar)}
+                      onToggle={toggleCalendar}
+                    />
+                  ))}
+                </div>
+              ))
+            : calendars.map((calendar) => (
+                <LegendChip
+                  key={calendar.id}
+                  calendar={calendar}
+                  color={legendColor(calendar)}
+                  onToggle={toggleCalendar}
+                />
+              ))}
         </div>
       )}
 
@@ -372,8 +453,14 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
         <EventDetailDialog
           event={selectedEvent}
           accountId={selectedEvent.accountId}
-          provider={selectedAccount?.provider ?? ''}
-          readOnly={calendars.some((c) => c.providerCalendarId === selectedEvent.calendarId && isReadOnlyCalendar(c))}
+          accountEmail={isAllAccounts ? accountById.get(selectedEvent.accountId)?.email : undefined}
+          provider={accountById.get(selectedEvent.accountId)?.provider ?? ''}
+          readOnly={calendars.some(
+            (c) =>
+              c.accountId === selectedEvent.accountId &&
+              c.providerCalendarId === selectedEvent.calendarId &&
+              isReadOnlyCalendar(c),
+          )}
           onClose={() => setSelectedEvent(null)}
           onDeleted={(eventId, scope, recurringEventId, startTime) => {
             // Provider round-trip already happened — drop the affected
@@ -383,15 +470,14 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
           }}
           onAuthError={() => {
             setSelectedEvent(null);
-            setNeedsReauth(true);
+            markNeedsReauth(selectedEvent.accountId);
           }}
         />
       )}
 
-      {createSlot && selectedAccountId && (
+      {createSlot && (
         <NewEventDialog
-          accountId={selectedAccountId}
-          isGmail={selectedAccount?.provider === 'gmail'}
+          choices={createSlot.choices}
           initialStart={createSlot.start}
           initialEnd={createSlot.end}
           onClose={() => setCreateSlot(null)}
@@ -400,18 +486,57 @@ export function CalendarView({ accounts, defaultAccountId }: CalendarViewProps) 
             if (recurrence !== 'none') {
               // The provider stored the recurrence *master*; syncing expands it
               // into per-occurrence instances, then reloads the visible range.
-              void runSync(selectedAccountId);
+              void runSync();
             } else {
               // Provider round-trip already happened — show it immediately, no reload.
               setEvents((prev) => [...prev.filter((e) => e.id !== created.id), created]);
             }
           }}
-          onAuthError={() => {
+          onAuthError={(accountId) => {
             setCreateSlot(null);
-            setNeedsReauth(true);
+            markNeedsReauth(accountId);
           }}
         />
       )}
     </div>
+  );
+}
+
+/** One calendar in the legend: its colour swatch and name; a click shows or
+ *  hides its events. */
+function LegendChip({
+  calendar,
+  color,
+  onToggle,
+}: {
+  calendar: Calendar;
+  color: string;
+  onToggle: (calendar: Calendar) => Promise<void>;
+}) {
+  const { t } = useTranslation(['calendar']);
+  return (
+    <button
+      onClick={() => void onToggle(calendar)}
+      title={
+        calendar.isVisible
+          ? t('calendar:calendars.hideOne', { name: calendar.name })
+          : t('calendar:calendars.showOne', { name: calendar.name })
+      }
+      aria-pressed={calendar.isVisible}
+      className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs transition-colors ${
+        calendar.isVisible
+          ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
+          : 'border-gray-200 text-gray-400 hover:bg-gray-50'
+      }`}
+    >
+      <span
+        className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/10"
+        style={{
+          backgroundColor: calendar.isVisible ? color : 'transparent',
+          borderColor: color,
+        }}
+      />
+      <span className="max-w-[160px] truncate">{calendar.name || calendar.providerCalendarId}</span>
+    </button>
   );
 }

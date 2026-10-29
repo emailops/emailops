@@ -68,9 +68,11 @@ export function summarizeWork(items: AiWorkItem[]): WorkLine[] {
   return lines;
 }
 
-/** Whether the work is sending email text to OpenRouter to be embedded. */
-export function sendsMailToOpenRouter(provider: AiProviderActivity['provider'], items: AiWorkItem[]): boolean {
+/** Whether the work is sending email text to OpenRouter to be embedded:
+ *  OpenRouter is the backend computing the index, whatever runs the chat. */
+export function sendsMailToOpenRouter(activity: AiProviderActivity, items: AiWorkItem[]): boolean {
   return (
-    provider === 'openrouter' && items.some((i) => i.kind === 'embeddingsRebuild' || i.kind === 'embeddingsGeneration')
+    activity.embeddingProvider === 'openrouter' &&
+    items.some((i) => i.kind === 'embeddingsRebuild' || i.kind === 'embeddingsGeneration')
   );
 }

@@ -160,7 +160,8 @@ with a button under the group for the rest.
 ## Calendar {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Per-account month, week and day views for Google Calendar and Outlook. You get meeting
+Month, week and day views for Google Calendar and Outlook, for one account or for **All
+accounts** together, where each event takes its account's colour. You get meeting
 reminders ahead of each event with a one-click **Join** button for Meet, Teams, Webex and
 Zoom links. Calendar sync is on by default for Gmail and Outlook accounts and can be
 switched off per account, along with the notification lead time, in **Settings → Calendar**.
@@ -170,6 +171,16 @@ Every calendar on an account is synced, not just the primary one — so a calend
 colleague shared with you shows up here the same way it does in Google or Outlook. Each
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
+
+<!-- claim:feat-calendar-4 -->
+IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example
+Proton Calendar's share-via-link URL, under **Calendar feeds (IMAP accounts)** in
+**Settings → Calendar**. A feed is read-only, refreshes every few minutes, and its link is kept
+in your keychain, not in the database.
+
+<!-- claim:feat-calendar-5 -->
+Next to the inbox, the calendar also opens as a panel docked on the right, the **Agenda**;
+**Open full calendar** switches to the full view.
 
 <!-- claim:feat-calendar-3 -->
 System notifications for a reminder leave the meeting title out unless you turn on
@@ -182,6 +193,9 @@ EmailOps always shows the full meeting.
 <!-- claim:feat-attachments-view-1 -->
 One place for the attachments you care about — invoices, contracts, receipts — with preview and
 download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+<!-- claim:feat-attachments-view-9 -->
+A PDF opens in its own tab, where **Zoom in** and **Zoom out** change its size.
 
 <!-- claim:feat-attachments-view-2 -->
 The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or

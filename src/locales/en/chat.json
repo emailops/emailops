@@ -47,6 +47,50 @@
       "prompt": "Write a draft for "
     }
   },
+  "starters": {
+    "title": "Suggested requests",
+    "somethingElse": "Something else…",
+    "reply": {
+      "label": "Unanswered: {{name}} — “{{subject}}”",
+      "prompt": "In “{{subject}}”, {{name}} wrote last and I haven't answered. Do they need anything from me? If so, what and by when?"
+    },
+    "sender": {
+      "label": "What has {{name}} written to me?",
+      "prompt": "What has {{name}} written to me recently? Summarise each email in one line and cite it."
+    },
+    "thread": {
+      "label": "Summarise “{{subject}}”",
+      "prompt": "Summarise the thread “{{subject}}” and tell me whether anything in it is waiting on me."
+    },
+    "openThread": {
+      "summary": {
+        "label": "Summarise this thread",
+        "prompt": "Summarise this thread: who is involved, what has been agreed and what is still open."
+      },
+      "asks": {
+        "label": "What do they need from me here?",
+        "prompt": "What is being asked of me in this thread, and by when?"
+      },
+      "reply": {
+        "label": "Draft a reply",
+        "prompt": "Draft a reply to this thread that "
+      }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "Summarise this document",
+        "prompt": "Summarise this document: what it is, who it is from, and its key dates and amounts."
+      },
+      "keyPoints": {
+        "label": "Key points, dates and amounts",
+        "prompt": "List the key points, dates and amounts in this document."
+      },
+      "ask": {
+        "label": "Ask about this document",
+        "prompt": "About this document: "
+      }
+    }
+  },
   "message": {
     "user": "You",
     "assistant": "Assistant",
@@ -68,6 +112,7 @@
     "budgetSettings": "AI settings"
   },
   "processing": {
+    "queued": "Waiting for other AI work to finish…",
     "routing": "Routing…",
     "retrieving": "Retrieving emails…",
     "searchingContacts": "Searching contacts…",
@@ -76,6 +121,7 @@
     "generatingDraft": "Generating draft…",
     "runningTools": "Processing prompt…",
     "researching": "Researching…",
+    "readingDocument": "Reading the whole document…",
     "research": {
       "gathering": "Research: gathering emails…",
       "reading": "Research: reading emails {{read}}/{{total}} (batch {{batch}}/{{batches}})…",
@@ -170,6 +216,7 @@
         "answer": "Answer (LLM)",
         "llmCall": "LLM call",
         "llmCallN": "LLM call {{n}}/{{total}}",
+        "documentPart": "Read document part {{n}}/{{total}}",
         "budget": "Context budget"
       },
       "section": {
@@ -252,7 +299,9 @@
         "label": "This email is in {{email}}",
         "hint": "Chat is answering from a different account, so it can't read this email. Switch to ask about it.",
         "action": "Switch"
-      }
+      },
+      "hintDocument": "Answers use the text of this PDF. Remove it to ask about your inbox instead.",
+      "restoreDocument": "Use the open PDF as context"
     },
     "newChat": "New chat"
   },
