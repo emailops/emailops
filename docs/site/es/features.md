@@ -183,6 +183,16 @@ Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sob
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
 **Ajustes → Calendario**.
 
+<!-- claim:feat-calendar-4 -->
+Las cuentas IMAP tienen calendario al suscribirse a un enlace de calendario publicado (ICS), por
+ejemplo la URL para compartir por enlace de Proton Calendar, en **Feeds de calendario (cuentas
+IMAP)** dentro de **Ajustes → Calendario**. Un feed es de solo lectura, se actualiza cada pocos
+minutos y su enlace se guarda en tu llavero, no en la base de datos.
+
+<!-- claim:feat-calendar-5 -->
+Junto al buzón, el calendario también se abre como un panel acoplado a la derecha, la
+**Agenda**; **Abrir calendario completo** pasa a la vista completa.
+
 <!-- claim:feat-calendar-3 -->
 Las notificaciones del sistema de un recordatorio omiten el título de la reunión salvo que
 actives **Mostrar el título de la reunión en las notificaciones** en **Ajustes → Calendario**:
@@ -195,6 +205,9 @@ la app. El aviso dentro de EmailOps siempre muestra la reunión completa.
 Un único sitio con los adjuntos que te importan — facturas, contratos, recibos — con vista
 previa y descarga, en lugar de bucear otra vez en los hilos. Ábrela desde **Adjuntos** en la
 barra lateral.
+
+<!-- claim:feat-attachments-view-9 -->
+Un PDF se abre en su propia pestaña, donde **Acercar** y **Alejar** cambian su tamaño.
 
 <!-- claim:feat-attachments-view-2 -->
 La vista recopila adjuntos mediante **reglas**, así que empieza vacía. Pulsa **Gestionar

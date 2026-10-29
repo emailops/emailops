@@ -174,6 +174,18 @@ trouvent leur réponse dans le fil, et une question sur le reste de votre boîte
 que pour une question et n'est jamais enregistré dans la conversation : vous pouvez donc
 passer d'un e-mail à l'autre au sein d'un même chat.
 
+<!-- claim:ai-chat-mailbox-16 -->
+Avec un PDF ouvert dans un onglet, ou sélectionné dans **Pièces jointes**, la puce propose ce
+document, et le chat répond à partir de son texte. Une nouvelle conversation suggère alors
+**Résumer ce document**, **Points clés, dates et montants** et **Poser une question sur ce
+document**. Un PDF trop long pour la fenêtre de contexte du modèle est lu par parties, et la
+réponse s'appuie sur des notes prises sur chaque partie.
+
+<!-- claim:ai-chat-mailbox-17 -->
+Une conversation vide affiche des **Demandes suggérées** tirées de votre messagerie, comme le
+résumé du jour ou un fil qui attend encore votre réponse, et **Autre chose…** pour écrire la
+vôtre.
+
 <!-- claim:ai-chat-mailbox-3 -->
 Le chat interroge un compte à la fois, et un sélecteur indique lequel — une réponse ne
 provient donc jamais silencieusement de la mauvaise boîte. Chaque compte conserve sa propre

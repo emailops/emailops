@@ -189,6 +189,16 @@ Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Ra
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 **Einstellungen → Kalender**.
 
+<!-- claim:feat-calendar-4 -->
+IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)
+abonnieren, zum Beispiel den Freigabe-Link von Proton Calendar, unter **Kalender-Feeds
+(IMAP-Konten)** in **Einstellungen → Kalender**. Ein Feed ist schreibgeschützt, wird alle paar
+Minuten aktualisiert, und sein Link liegt in Ihrem Schlüsselbund, nicht in der Datenbank.
+
+<!-- claim:feat-calendar-5 -->
+Neben dem Posteingang öffnet sich der Kalender auch als rechts angedocktes Feld, die
+**Agenda**; **Vollständigen Kalender öffnen** wechselt zur vollen Ansicht.
+
 <!-- claim:feat-calendar-3 -->
 Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
 **Meeting-Titel in Benachrichtigungen anzeigen** unter **Einstellungen → Kalender**: Sie
@@ -201,6 +211,9 @@ App-Sperre. Die Erinnerung in EmailOps zeigt immer das vollständige Meeting.
 Ein Ort für die Anhänge, die Ihnen wichtig sind — Rechnungen, Verträge, Belege — mit Vorschau
 und Download, statt sich erneut durch Threads zu graben. Öffnen Sie sie über **Anhänge** in der
 Seitenleiste.
+
+<!-- claim:feat-attachments-view-9 -->
+Ein PDF öffnet sich in einem eigenen Tab, wo **Vergrößern** und **Verkleinern** seine Größe ändern.
 
 <!-- claim:feat-attachments-view-2 -->
 Die Ansicht sammelt Anhänge über **Regeln** und ist daher anfangs leer. Klicken Sie auf **Regeln

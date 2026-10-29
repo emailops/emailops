@@ -172,6 +172,16 @@ colleague shared with you shows up here the same way it does in Google or Outloo
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
 
+<!-- claim:feat-calendar-4 -->
+IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example
+Proton Calendar's share-via-link URL, under **Calendar feeds (IMAP accounts)** in
+**Settings → Calendar**. A feed is read-only, refreshes every few minutes, and its link is kept
+in your keychain, not in the database.
+
+<!-- claim:feat-calendar-5 -->
+Next to the inbox, the calendar also opens as a panel docked on the right, the **Agenda**;
+**Open full calendar** switches to the full view.
+
 <!-- claim:feat-calendar-3 -->
 System notifications for a reminder leave the meeting title out unless you turn on
 **Show the meeting title in notifications** in **Settings → Calendar**: they can appear on
@@ -183,6 +193,9 @@ EmailOps always shows the full meeting.
 <!-- claim:feat-attachments-view-1 -->
 One place for the attachments you care about — invoices, contracts, receipts — with preview and
 download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+<!-- claim:feat-attachments-view-9 -->
+A PDF opens in its own tab, where **Zoom in** and **Zoom out** change its size.
 
 <!-- claim:feat-attachments-view-2 -->
 The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or

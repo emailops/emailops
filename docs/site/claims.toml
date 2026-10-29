@@ -571,6 +571,16 @@ checks = [
   { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
 ]
 
+[feat-calendar-4]
+checks = [
+  { tests = ['services::calendar::feeds::tests::add_feed_rejects_non_imap_accounts_and_bad_urls_without_fetching', 'services::calendar::feeds::tests::add_feed_stores_the_url_in_the_vault_not_in_sqlite_and_mirrors_the_calendar'], covers = ["IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example Proton Calendar's share-via-link URL, under Calendar feeds (IMAP accounts) in Settings → Calendar.", "A feed is read-only, refreshes every few minutes, and its link is kept in your keychain, not in the database."] },
+]
+
+[feat-calendar-5]
+checks = [
+  { manual = 'The docked Agenda panel is not driven by the docs app check yet; the demo calendar account asks to sign in again.' },
+]
+
 [feat-calendar-3]
 checks = [
   { app = true },
@@ -584,6 +594,11 @@ checks = [
   { manual = 'Export (select, then Download) is not exercised.' },
 ]
 
+
+[feat-attachments-view-9]
+checks = [
+  { manual = 'Covered by src/components/Attachments/PdfViewer.test.tsx (zoom levels from the toolbar); the docs app check does not open a PDF tab yet.' },
+]
 
 [feat-attachments-view-2]
 checks = [
@@ -1031,6 +1046,17 @@ checks = [
 checks = [
   { app = true },
   { manual = 'That thread context applies to one question and is never saved onto the conversation is not exercised.' },
+]
+
+[ai-chat-mailbox-16]
+checks = [
+  { tests = ['services::chat::open_document::tests::a_document_that_fits_its_slot_is_read_whole', 'services::chat::open_document::tests::parts_cover_the_whole_text_in_order_within_the_limit', 'services::chat::open_document::tests::the_block_of_a_document_read_in_parts_says_the_notes_cover_all_of_it'], covers = ["A PDF too long for the model's context window is read in parts, and the answer is built from notes on every part."] },
+  { manual = 'The PDF chip and the three document starters are covered by src/components/Chat/ChatStarters.test.tsx ("offers requests about the open PDF while one is the context"); the docs app check does not open a PDF yet.', covers = ["With a PDF open in a tab, or selected in Attachments, the chip offers that document instead, and chat answers from its text.", "A new conversation then suggests Summarise this document, Key points, dates and amounts and Ask about this document."] },
+]
+
+[ai-chat-mailbox-17]
+checks = [
+  { manual = 'Covered by src/components/Chat/ChatStarters.test.tsx (mailbox starters, then "something else"); which starters appear depends on the mailbox, and the docs app check does not read them yet.' },
 ]
 
 [ai-chat-mailbox-3]

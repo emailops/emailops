@@ -170,6 +170,18 @@ eine Frage zum übrigen Postfach (*„Was ist heute gekommen?“*) durchsucht we
 Postfach. Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhaltung
 gespeichert — Sie können sich also innerhalb eines Chats zwischen E-Mails bewegen.
 
+<!-- claim:ai-chat-mailbox-16 -->
+Ist ein PDF in einem Tab geöffnet oder unter **Anhänge** ausgewählt, bietet der Chip dieses
+Dokument an, und der Chat antwortet aus seinem Text. Eine neue Unterhaltung schlägt dann
+**Dieses Dokument zusammenfassen**, **Kernpunkte, Daten und Beträge** und **Frage zu diesem
+Dokument** vor. Ein PDF, das zu lang für das Kontextfenster des Modells ist, wird in Teilen
+gelesen, und die Antwort stützt sich auf Notizen zu jedem Teil.
+
+<!-- claim:ai-chat-mailbox-17 -->
+Eine leere Unterhaltung zeigt **Vorgeschlagene Anfragen** aus Ihrem Postfach, etwa die
+Zusammenfassung von heute oder einen Thread, der noch auf Ihre Antwort wartet, und
+**Etwas anderes …**, um Ihre eigene zu schreiben.
+
 <!-- claim:ai-chat-mailbox-3 -->
 Der Chat durchsucht immer ein Konto, und eine Auswahl benennt welches — so stammt eine
 Antwort nie unbemerkt aus dem falschen Postfach. Jedes Konto behält seine eigene

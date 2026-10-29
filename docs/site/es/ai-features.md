@@ -166,6 +166,17 @@ sobre el resto del buzón (*"¿qué me ha llegado hoy?"*) sigue buscando en él.
 aplica a una sola pregunta y nunca se guarda en la conversación, así que puedes moverte entre
 correos dentro de un mismo chat.
 
+<!-- claim:ai-chat-mailbox-16 -->
+Con un PDF abierto en una pestaña, o seleccionado en **Adjuntos**, el chip ofrece ese documento,
+y el chat responde a partir de su texto. Una conversación nueva sugiere entonces **Resumir este
+documento**, **Puntos clave, fechas e importes** y **Preguntar sobre este documento**. Un PDF
+demasiado largo para la ventana de contexto del modelo se lee por partes, y la respuesta se
+construye con notas de cada parte.
+
+<!-- claim:ai-chat-mailbox-17 -->
+Una conversación vacía muestra **Peticiones sugeridas** sacadas de tu correo, como el resumen
+de hoy o un hilo que sigue esperando tu respuesta, y **Otra cosa…** para escribir la tuya.
+
 <!-- claim:ai-chat-mailbox-3 -->
 El chat busca en una cuenta cada vez, y un selector indica cuál — de modo que una respuesta
 nunca sale en silencio del buzón equivocado. Cada cuenta mantiene su propia conversación
