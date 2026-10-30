@@ -162,12 +162,11 @@ export const BRIDGE_SCRIPT = String.raw`
     });
     document.addEventListener('click', function(e){
       var t = e.target;
-      var a = t && t.closest ? t.closest('a') : null;
-      if (!a) return;
-      var href = a.getAttribute('href');
-      if (!href) return;
+      var link = t && t.closest ? t.closest('a, area') : null;
+      if (!link) return;
       e.preventDefault();
-      send({ type: 'link', href: href });
+      var href = link.getAttribute('href') || link.getAttribute('xlink:href');
+      if (href) send({ type: 'link', href: href });
     }, true);
     window.addEventListener('message', function(ev){
       var data = ev.data || {};

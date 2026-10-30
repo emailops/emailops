@@ -133,7 +133,9 @@ const DOMPURIFY_CONFIG: Parameters<typeof DOMPurify.sanitize>[1] = {
   ],
   ALLOW_DATA_ATTR: false,
   ADD_ATTR: ['target', 'rel'],
-  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|data):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+  // No `data:` here: DOMPurify already keeps it on inline image sources, and on
+  // a link target it would be a document the frame loads unsanitized.
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
 };
 
 export function sanitizeEmailHtml(html: string): string {
