@@ -433,6 +433,11 @@ le même nom qu'un skill inclus, le chat utilise le vôtre et le skill inclus re
 jour ne modifient jamais vos skills, et ils suivent le dossier de données. Supprimer le dossier de
 données les supprime.
 
+<!-- claim:ai-skills-7 -->
+D'autres skills, et la façon de partager les vôtres, se trouvent dans le
+[dépôt de skills d'EmailOps](https://github.com/emailops/emailops-skills). Il contient aussi des
+skills pour Hermes, Claude Code et d'autres agents qui accèdent à vos e-mails via `emailops-cli`.
+
 ## Tout désactiver {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

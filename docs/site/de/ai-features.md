@@ -425,6 +425,11 @@ einer Ihrer Skills wie ein enthaltener, verwendet der Chat Ihren, und der enthal
 Updates ändern Ihre Skills nie, und sie ziehen mit dem Datenordner um. Wer den Datenordner löscht,
 löscht auch sie.
 
+<!-- claim:ai-skills-7 -->
+Weitere Skills und die Möglichkeit, eigene zu teilen, finden Sie im
+[EmailOps-Skills-Repository](https://github.com/emailops/emailops-skills). Es enthält auch Skills
+für Hermes, Claude Code und andere Agenten, die über `emailops-cli` auf Ihre E-Mails zugreifen.
+
 ## Alles abschalten {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

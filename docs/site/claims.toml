@@ -1306,6 +1306,11 @@ checks = [
   { none = 'What deleting a folder does.', covers = ['Deleting the data folder deletes them.'] },
 ]
 
+[ai-skills-7]
+checks = [
+  { manual = 'The skills repository is a separate repo and the docs check does not fetch it.' },
+]
+
 [ai-turning-off-1]
 checks = [
   { app = true },

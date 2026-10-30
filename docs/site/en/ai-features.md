@@ -397,6 +397,11 @@ has the same name as an included one, the chat uses yours and the included one s
 updates never change your skills, and they move with the data folder. Deleting the data folder
 deletes them.
 
+<!-- claim:ai-skills-7 -->
+More skills, and the way to share your own, are in the
+[EmailOps skills repository](https://github.com/emailops/emailops-skills). It also has skills for
+Hermes, Claude Code and other agents that reach your mail through `emailops-cli`.
+
 ## Turning it all off {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

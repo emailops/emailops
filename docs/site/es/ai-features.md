@@ -417,6 +417,11 @@ como estaba, y se rechaza si ya existe una skill con ese nombre. Si una de tus s
 que una incluida, el chat usa la tuya y la incluida queda inactiva. Las actualizaciones nunca cambian
 tus skills, y estas se mueven con la carpeta de datos. Borrar la carpeta de datos las borra.
 
+<!-- claim:ai-skills-7 -->
+Hay más skills, y la forma de compartir las tuyas, en el
+[repositorio de skills de EmailOps](https://github.com/emailops/emailops-skills). También incluye
+skills para Hermes, Claude Code y otros agentes que acceden a tu correo con `emailops-cli`.
+
 ## Apagarlo todo {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
