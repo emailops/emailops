@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **Skills included with the app.** Reviewed skills you can read in full and
+  switch on one by one, with no download. They are off by default, and
+  **Edit a copy** makes one your own.
 
 ## [0.6.17] — 2026-10-29
 

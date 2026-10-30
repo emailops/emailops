@@ -4005,3 +4005,25 @@ long part — unmeasured, and it ignored the window; the late-clause eval passes
 window-sized parts. Condensing the notes in rounds
 when they outgrow the slot — each note is already capped to its share. Revisit it if
 documents of hundreds of pages turn up.
+
+## 2026-10-30 — Reviewed skills ship inside the app and are used in place
+
+**Decision:** A gallery of reviewed skills is bundled with the app, not fetched: the text
+is copied from `app-skills/` of `emailops-skills` into `src-tauri/bundled-skills/` with its
+source commit recorded, and embedded in the binary. There is no install step: each bundled
+skill is used directly through its own switch (`skills_bundled_on`, an allow list, off by
+default). Only **Edit a copy** writes to `skills/`, and the copy keeps the switch as it
+was. A skill of the user's with the same name wins, even switched off or broken. A bundled
+skill changes with app releases, and any change is called out in the release notes.
+**Context:** Installing a skill meant copying a folder by hand or pasting text into New.
+Skills are read from disk and `skills_disabled` is a deny list, so bundled skills needed
+their own preference. Adding them in `catalog_for` keeps one seam for `/name`, the planner
+and `load_skill`, and with every bundled skill off the prompts stay byte-identical.
+**Rejected:**
+- *An online gallery*: a network call in a privacy-first client, for a handful of skills.
+- *Seeding `skills/` at start-up or on update*: it would write into the user's folder and
+  either overwrite their edits or freeze old text forever.
+- *Importing a folder*: out of scope; the folder can already be opened and edited.
+- *A copy that starts on, like New*: copying a switched-off skill to read or edit it would
+  change the prompt with no switch touched.
+

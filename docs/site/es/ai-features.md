@@ -402,6 +402,20 @@ asistente carga una mientras responde, o empiezas el mensaje con `/` y el nombre
 (`/weekly-report semana pasada`; `/a /b` aplica las dos). Al escribir `/` se listan tus skills
 activas. La traza de razonamiento indica qué skill siguió el turno y quién la eligió.
 
+<!-- claim:ai-skills-5 -->
+EmailOps incluye además unas pocas skills revisadas. **Ajustes → Skills de IA** las lista con su
+nombre, su descripción y un interruptor, aunque las skills estén desactivadas; al encender una, te
+ofrece activar las skills. En la vista **Skills**, al seleccionar una ves su texto completo, de solo
+lectura, para leerla antes de usarla. Están apagadas hasta que las enciendes, y una encendida funciona
+como cualquier otra skill. Forman parte de la app: no se descarga nada ni se añade nada a la carpeta
+`skills`, y su texto puede cambiar con una actualización.
+
+<!-- claim:ai-skills-6 -->
+**Editar una copia** convierte una skill incluida en una tuya en `skills/<nombre>/`, con su interruptor
+como estaba, y se rechaza si ya existe una skill con ese nombre. Si una de tus skills se llama igual
+que una incluida, el chat usa la tuya y la incluida queda inactiva. Las actualizaciones nunca cambian
+tus skills, y estas se mueven con la carpeta de datos. Borrar la carpeta de datos las borra.
+
 ## Apagarlo todo {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

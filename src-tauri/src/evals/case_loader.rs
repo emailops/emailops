@@ -271,6 +271,10 @@ pub struct EvalCase {
     #[serde(default)]
     pub skills: Vec<crate::evals::skill_fixtures::SkillFixture>,
 
+    /// Bundled skills switched on for this case only.
+    #[serde(default)]
+    pub bundled_skills: Vec<String>,
+
     /// The skill this turn must follow, however it got there: `/name`, the
     /// query planner, or the model's own `load_skill` call.
     #[serde(default)]
@@ -349,6 +353,13 @@ mod tests {
         assert_eq!(c.skills.len(), 1);
         assert_eq!(c.skills[0].name, "vendor-support");
         assert_eq!(c.skills[0].body, "Step one.");
+    }
+
+    #[test]
+    fn bundled_skills_default_to_none_and_parse_when_given() {
+        assert!(parse_case("- id: t\n  question: q\n").bundled_skills.is_empty());
+        let c = parse_case("- id: t\n  question: q\n  bundled_skills: [inbox-triage]\n");
+        assert_eq!(c.bundled_skills, vec!["inbox-triage"]);
     }
 
     #[test]

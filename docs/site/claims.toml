@@ -1287,6 +1287,25 @@ checks = [
   { none = 'Lead-in to the three ways listed after it.', covers = ['The chat applies a skill in three ways:'] },
 ]
 
+[ai-skills-5]
+checks = [
+  { app = true },
+  { tests = ['services::skills::tests::bundled_skills_are_listed_off_while_the_feature_is_off'], covers = ['even while skills are off'] },
+  { tests = ['services::skills::tests::a_switched_on_bundled_skill_works_like_any_other', 'services::chat::tools::load_skill::tests::returns_a_switched_on_bundled_skill'], covers = ['one that is on works like any other skill'] },
+  { tests = ['services::skills::tests::nothing_bundled_is_written_to_the_skills_folder'], covers = ['nothing is downloaded or added to the skills folder'] },
+  { none = 'Consequence of the text being embedded in the binary.', covers = ['their text can change with an app update'] },
+]
+
+[ai-skills-6]
+checks = [
+  { tests = ['services::skills::tests::a_copy_is_a_normal_user_skill', 'services::skills::tests::a_copy_of_a_switched_off_bundled_skill_stays_off'], covers = ['Edit a copy turns an included skill into one of your own'] },
+  { tests = ['services::skills::tests::a_copy_refuses_a_name_that_exists_and_leaves_that_folder_alone'], covers = ['is refused if a skill with that name already exists'] },
+  { tests = ['services::skills::tests::a_user_skill_with_a_bundled_name_wins', 'services::skills::tests::a_user_skill_keeps_a_bundled_one_inactive_while_it_is_off_or_broken'], covers = ['the chat uses yours and the included one stays inactive'] },
+  { tests = ['services::data_move::tests::moving_keeps_the_users_skills_and_every_switch'], covers = ['they move with the data folder'] },
+  { tests = ['services::skills::tests::nothing_bundled_is_written_to_the_skills_folder'], covers = ['App updates never change your skills'] },
+  { none = 'What deleting a folder does.', covers = ['Deleting the data folder deletes them.'] },
+]
+
 [ai-turning-off-1]
 checks = [
   { app = true },

@@ -851,6 +851,29 @@ await step('Skills', 'vista', 'la vista Skills abre con la lista y el botón New
   await click('[data-testid="sidebar-skills"]'); await sleep(1500);
   return ok(await exists('[data-testid="skill-new"]'), 'lista y New visibles', 'la vista no muestra New');
 });
+await step('Skills', 'incluidas', 'una skill incluida sale apagada, su texto se lee antes de encenderla, y Edit a copy crea una skill editable', async () => {
+  const name = 'inbox-triage';
+  const id = (t) => `[data-testid="${t}"]`;
+  if (!(await exists(id(`bundled-row-${name}`)))) return `FAIL: no aparece ${name} entre las incluidas`;
+  const attr = () => js((s) => document.querySelector(s)?.getAttribute('aria-checked'), id(`bundled-toggle-${name}`));
+  const wasOff = (await attr()) === 'false';
+  await click(id(`bundled-row-${name}`)); await sleep(800);
+  const text = await js((s) => document.querySelector(s)?.textContent || '', id('bundled-text'));
+  const readOnly = !(await exists(id('skill-editor'))) && !(await exists(id('skill-save')));
+  await click(id(`bundled-toggle-${name}`)); await sleep(800);
+  const turnedOn = (await attr()) === 'true';
+  await click(id(`bundled-toggle-${name}`)); await sleep(800);
+  await click(id('bundled-copy')); await sleep(1200);
+  const copied = await js((s) => document.querySelector(s)?.value || '', id('skill-editor'));
+  const copyOff = await js((s) => document.querySelector(s)?.getAttribute('aria-checked'), id(`skill-toggle-${name}`));
+  const replaced = !(await exists(id(`bundled-toggle-${name}`)));
+  // La copia se borra: la BD demo y su carpeta son compartidas con otras capas.
+  await click(id('skill-delete')); await sleep(400);
+  await click(id('skill-delete-confirm')); await sleep(1000);
+  return ok(wasOff && /^---\nname: inbox-triage/.test(text) && readOnly && turnedOn && /name: inbox-triage/.test(copied) && copyOff === 'false' && replaced,
+    'apagada, texto de solo lectura, encendido propio y copia editable que sigue apagada',
+    `apagada: ${wasOff}; texto: ${text.length}; solo lectura: ${readOnly}; encendida: ${turnedOn}; copia: ${copied.length}, interruptor ${copyOff}; sustituida: ${replaced}`);
+});
 if (skillsWasOn === false) { await openSkillsTab(); await skillsSwitch('click'); await sleep(800); await click('aria/Close settings'); await sleep(800); }
 
 // ---------- Chat (último: carga el modelo) ----------

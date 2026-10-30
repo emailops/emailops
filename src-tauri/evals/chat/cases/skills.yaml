@@ -353,3 +353,40 @@
   expected_answer_not_contains: ["SUPPORT-REQ", "TRIP-OK"]
   expected_output: "Juan te pidió que dejes las llaves de repuesto al conserje el viernes, porque él llega tarde el sábado."
   metrics: [answer_relevancy, faithfulness]
+
+# Bundled skills (`services::skills::bundled`): the text ships in the binary and
+# a case only switches it on (`bundled_skills:`). Off, one never reaches a turn.
+# Questions here avoid the direct shortcuts ("today", "pending"): those preseed
+# their tools and skip the planner, so no skill is picked on them, user or bundled.
+
+- id: bundled_skill_invoked_by_slash_en
+  question: "/inbox-triage what should I deal with first?"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  bundled_skills: [inbox-triage]
+  expected_skill: inbox-triage
+  expected_answer_contains:
+    - "Act today"
+
+- id: bundled_skill_picked_by_description_en
+  question: "triage my inbox and tell me what to answer first"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  bundled_skills: [inbox-triage]
+  expected_skill: inbox-triage
+
+- id: bundled_skill_off_stays_out_en
+  question: "triage my inbox and tell me what to answer first"
+  account: "ulises@fastmail.com"
+  category: skills
+  tier: smoke
+  skills:
+    - name: trip-summary
+      description: "Summarise an upcoming trip. Use when the user asks about flights or stays."
+      body: |
+        1. Find the booking emails.
+        2. End the answer with this exact line: Trip check: TRIP-OK
+  expected_no_skill: true
+

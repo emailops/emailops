@@ -409,6 +409,22 @@ Namen des Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Wer `
 seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine Runde folgte, und wer ihn
 gewählt hat.
 
+<!-- claim:ai-skills-5 -->
+EmailOps enthält außerdem einige geprüfte Skills. **Einstellungen → KI-Skills** listet sie mit Namen,
+Beschreibung und Schalter auf, auch wenn Skills ausgeschaltet sind; schalten Sie einen ein, bietet die
+App an, Skills einzuschalten. In der Ansicht **Skills** zeigt die Auswahl eines Skills seinen vollen
+Text schreibgeschützt an, sodass Sie ihn vor der Nutzung lesen können. Sie bleiben aus, bis Sie sie
+einschalten, und ein eingeschalteter funktioniert wie jeder andere Skill. Sie sind Teil der App: Nichts
+wird heruntergeladen oder dem Ordner `skills` hinzugefügt, und ihr Text kann sich mit einem Update
+ändern.
+
+<!-- claim:ai-skills-6 -->
+**Kopie bearbeiten** macht aus einem enthaltenen Skill einen eigenen unter `skills/<name>/`, mit
+unverändertem Schalter, und wird abgelehnt, wenn es bereits einen Skill mit diesem Namen gibt. Heißt
+einer Ihrer Skills wie ein enthaltener, verwendet der Chat Ihren, und der enthaltene bleibt inaktiv.
+Updates ändern Ihre Skills nie, und sie ziehen mit dem Datenordner um. Wer den Datenordner löscht,
+löscht auch sie.
+
 ## Alles abschalten {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

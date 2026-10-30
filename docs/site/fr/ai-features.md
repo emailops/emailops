@@ -418,6 +418,21 @@ suivi du nom du skill (`/weekly-report la semaine dernière` ; `/a /b` applique 
 `/` liste vos skills actifs. La trace de raisonnement indique le skill suivi par le tour et qui
 l'a choisi.
 
+<!-- claim:ai-skills-5 -->
+EmailOps inclut aussi quelques skills vérifiés. **Paramètres → Skills IA** les liste avec un nom, une
+description et un interrupteur, même lorsque les skills sont désactivés ; en activer un propose alors
+d'activer les skills. Dans la vue **Skills**, en sélectionner un affiche son texte complet, en lecture
+seule, pour le lire avant de l'utiliser. Ils restent désactivés tant que vous ne les activez pas, et un
+skill activé fonctionne comme n'importe quel autre. Ils font partie de l'application : rien n'est
+téléchargé ni ajouté au dossier `skills`, et leur texte peut changer avec une mise à jour.
+
+<!-- claim:ai-skills-6 -->
+**Modifier une copie** transforme un skill inclus en skill personnel dans `skills/<nom>/`, avec son
+interrupteur tel quel, et est refusé si un skill de ce nom existe déjà. Quand l'un de vos skills porte
+le même nom qu'un skill inclus, le chat utilise le vôtre et le skill inclus reste inactif. Les mises à
+jour ne modifient jamais vos skills, et ils suivent le dossier de données. Supprimer le dossier de
+données les supprime.
+
 ## Tout désactiver {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

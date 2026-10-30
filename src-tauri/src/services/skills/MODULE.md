@@ -33,6 +33,9 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   `check_name` before it is stored or becomes a path; writes go through a
   temp file + rename; toggles are serialized.
 
+- **Bundled skills** (`bundled.rs`) — reviewed skills embedded in the binary
+  from `src-tauri/bundled-skills/` (see "Bundled skills" below).
+
 ## What it does NOT own
 
 - **The chat tool.** `chat::tools::load_skill` advertises the catalog and
@@ -99,3 +102,27 @@ A body enters the prompt only on a turn that uses the skill:
 
 With no skills (or the feature off) `load_skill` is hidden by `is_available`,
 so an install that never uses skills pays nothing.
+
+## Bundled skills
+
+`src-tauri/bundled-skills/` holds a copy of `app-skills/` from `emailops-skills`
+(`make bundled-skills SKILLS_REPO=…`, which records the commit in `SOURCE`), and
+`BUNDLED` embeds each `SKILL.md` with `include_str!`. A test fails if that list
+and the folder disagree, if one does not load, or if one holds a reference file:
+those are read from disk, so a bundled skill cannot have any.
+
+- **No install step.** A bundled skill is used in place, through its own switch.
+  `skills_bundled_on` is an allow list (JSON array of names), because
+  `skills_disabled` is a deny list and these are off by default. Nothing is
+  copied into `skills/`, at start-up or on update; only `copy_bundled_skill`
+  (Edit a copy) writes there.
+- **One seam.** `catalog_for` adds the switched-on ones, so `/name`, the planner,
+  the index and `load_skill` need no bundled-specific code. With none on it
+  returns the user's catalog untouched, so the prompts stay byte-identical.
+- **The user wins.** A folder of the user's with the same name, loadable or not,
+  on or off, keeps the bundled skill inactive. `overview` still lists it, as
+  `shadowed`.
+- **A copy keeps the switch.** Copying a skill that is off leaves the copy off in
+  `skills_disabled`, so reading and editing one never puts it in the prompt.
+- **It changes with releases.** A user who wants to fix a version uses Edit a
+  copy. The release skill calls out any change to the folder in the notes.

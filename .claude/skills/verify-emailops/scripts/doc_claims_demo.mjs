@@ -495,6 +495,8 @@ export default (h) => async function demoCases() {
   const byTestId = (id) => js((t) => { const e = document.querySelector(`[data-testid="${t}"]`); if (e) e.click(); return !!e; }, id);
   await tab('AI Skills');
   const skillsWasOn = (await skillsSwitch()) === 'true';
+  // Listed with the feature in whatever state it is; read while on, below.
+  const bundledListed = await js(() => !!document.querySelector('[data-testid="bundled-toggle-inbox-triage"]'));
   await closeSettings();
   const skillsInSideBefore = (await buttons()).some((x) => x === 'Skills');
   if (!skillsWasOn) {
@@ -513,6 +515,19 @@ export default (h) => async function demoCases() {
       `barra lateral antes: ${skillsInSideBefore}, después: ${skillsInSideAfter}`);
   });
   await view('Skills');
+  await byTestId('bundled-row-inbox-triage');
+  await sleep(800);
+  const bundledText = await js(() => document.querySelector('[data-testid="bundled-text"]')?.textContent || '');
+  const bundledReadOnly = await js(() => !document.querySelector('[data-testid="skill-editor"]'));
+  await claim('ai-skills-5', 'incluidas', {
+    covers: ['lists them with a name, a description and a switch', 'selecting one shows its full text, read-only'],
+    how: 'En Ajustes → AI Skills comprueba que «inbox-triage» tiene interruptor; en la vista Skills selecciónala y comprueba que su texto completo aparece sin editor.',
+  }, async ({ doc }) => {
+    doc.match(/selecting one shows its full text, read-only/);
+    return ok(bundledListed && bundledReadOnly && /^---\nname: inbox-triage/.test(bundledText),
+      'la skill incluida sale con interruptor y su texto se lee sin editor',
+      `interruptor: ${bundledListed}; solo lectura: ${bundledReadOnly}; texto: ${bundledText.length}`);
+  });
   await byTestId('skill-new');
   await sleep(500);
   await js(() => {

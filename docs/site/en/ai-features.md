@@ -383,6 +383,21 @@ the assistant loads one while answering, or you start the message with `/` and t
 (`/weekly-report last week`; `/a /b` applies both). Typing `/` lists your enabled skills. The
 reasoning trace names the skill a turn followed and who chose it.
 
+<!-- claim:ai-skills-5 -->
+EmailOps also includes a few reviewed skills. **Settings → AI Skills** lists them with a name, a
+description and a switch, even while skills are off; switching one on then offers to turn skills
+on. In the **Skills** view, selecting one shows its full text, read-only, so you can read it before
+you use it. They are off until you switch them on, and one that is on works like any other skill.
+They are part of the app: nothing is downloaded or added to the `skills` folder, and their text can
+change with an app update.
+
+<!-- claim:ai-skills-6 -->
+**Edit a copy** turns an included skill into one of your own under `skills/<name>/`, keeping its
+switch as it was, and is refused if a skill with that name already exists. When one of your skills
+has the same name as an included one, the chat uses yours and the included one stays inactive. App
+updates never change your skills, and they move with the data folder. Deleting the data folder
+deletes them.
+
 ## Turning it all off {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
