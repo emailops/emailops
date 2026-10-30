@@ -191,6 +191,13 @@ impl Database {
         // interaction_events, tag_priority.
         tx.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
 
+        // The shared-document search index has no foreign key to cascade
+        // through, so its rows go by hand, leftovers of earlier removals too.
+        tx.execute(
+            "DELETE FROM shared_docs_fts WHERE doc_id NOT IN (SELECT id FROM shared_docs)",
+            [],
+        )?;
+
         tx.commit()?;
 
         Ok(())

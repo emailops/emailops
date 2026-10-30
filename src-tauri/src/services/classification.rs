@@ -1321,7 +1321,7 @@ pub fn delete_rule(db: &Database, rule_id: &str, account_id: &str) -> Result<()>
 /// Find email IDs that match a rule's sender/subject patterns.
 pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Result<Vec<String>> {
     let conn = db.connection();
-    let mut conditions = vec!["e.account_id = ?1".to_string()];
+    let mut conditions = vec!["e.account_id = ?1".to_string(), "e.is_deleted = 0".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(rule.account_id.clone())];
     let mut idx = 2;
 
@@ -1363,6 +1363,19 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
     Ok(ids)
 }
 
+/// The emails a rule change sends back through the model: none while
+/// classification is off.
+fn emails_to_reclassify(
+    db: &Database,
+    rule: &ClassificationRule,
+    config: &ClassificationConfig,
+) -> Result<Vec<String>> {
+    if !config.enabled {
+        return Ok(Vec::new());
+    }
+    find_emails_matching_rule(db, rule)
+}
+
 /// Reclassify emails affected by a rule change (runs in background).
 pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &ClassificationRule) -> Result<u32> {
     if !db.is_ai_enabled()? {
@@ -1370,7 +1383,7 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &Classificatio
     }
     let config = get_config(db)?;
     let rules = db.get_enabled_classification_rules(&rule.account_id)?;
-    let email_ids = find_emails_matching_rule(db, rule)?;
+    let email_ids = emails_to_reclassify(db, rule, &config)?;
 
     if email_ids.is_empty() {
         emit_log(
@@ -1433,6 +1446,64 @@ mod tests {
             topics: vec!["billing".to_string()],
             categories: vec!["primary".to_string()],
         }
+    }
+
+    fn db_with_a_rule_match() -> (Database, ClassificationRule) {
+        let db = Database::new_for_testing().unwrap();
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES ('a','acct','a','Weekly digest','S','news@example.com','example.com','[]','[]',
+                         'a snippet long enough to pass the length filter',100,0,'primary',0)",
+                [],
+            )
+            .unwrap();
+        }
+        let rule = ClassificationRule {
+            id: "r".into(),
+            account_id: "acct".into(),
+            name: "r".into(),
+            sender_pattern: Some("news@example.com".into()),
+            subject_pattern: None,
+            priority: "normal".into(),
+            intent: "notification".into(),
+            topic: "operations".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+        (db, rule)
+    }
+
+    #[test]
+    fn a_rule_change_sends_mail_to_the_model_only_while_classification_is_on() {
+        let (db, rule) = db_with_a_rule_match();
+        let off = ClassificationConfig {
+            enabled: false,
+            ..test_config()
+        };
+
+        assert!(emails_to_reclassify(&db, &rule, &off).unwrap().is_empty());
+        assert_eq!(emails_to_reclassify(&db, &rule, &test_config()).unwrap(), vec!["a"]);
+    }
+
+    #[test]
+    fn a_rule_change_leaves_deleted_mail_alone() {
+        let (db, rule) = db_with_a_rule_match();
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'a'", [])
+            .unwrap();
+
+        assert!(emails_to_reclassify(&db, &rule, &test_config()).unwrap().is_empty());
     }
 
     #[test]
