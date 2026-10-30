@@ -4090,3 +4090,14 @@ narrow what a reviewer must read; they do not replace the reviewer.
 - *`hermes skills tap add` as the Hermes install*: it looks only in `skills/` at the
   repo's root, with no option for another path.
 - *Trusting the checks in the pull request itself*: a pull request can edit `scripts/`.
+
+## 2026-10-30 — Someone else's new participant holds a shared document until the user accepts
+
+**Decision:** When a message from another participant adds addresses to an active
+document, the document goes back to an invitation. Changes keep merging, and nothing is
+mailed until the user accepts with the new list on screen. The user's own Sent copies do
+not hold it: that install already agreed.
+**Context:** Consent to automatic mail is given for named recipients (2026-10-04), so a
+list that grows on its own would mail the document to people the user never agreed to.
+**Rejected:** *Holding only the new addresses as pending*: it needs a schema change and
+new UI, while the invitation state already stops the mail and shows the list.
