@@ -22,12 +22,15 @@ pub enum PdfTextError {
 pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, PdfTextError> {
     // The parser panics on some malformed files; the bytes are an attachment
     // someone sent, so a panic is an unreadable PDF, not a crash.
-    let raw = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
-        .map_err(|_| PdfTextError::Unreadable("the parser gave up on this file".to_string()))?
-        .map_err(|e| PdfTextError::Unreadable(e.to_string()))?;
-    // Glyphs without a Unicode mapping come out as NUL, and the chat runtime
-    // cannot take a prompt that holds one.
-    let text = tidy_whitespace(&raw.replace('\0', ""));
+    let raw = std::panic::catch_unwind(|| {
+        pdf_oxide::PdfDocument::from_bytes(bytes.to_vec()).and_then(|doc| doc.extract_all_text())
+    })
+    .map_err(|_| PdfTextError::Unreadable("the parser gave up on this file".to_string()))?
+    .map_err(|e| PdfTextError::Unreadable(e.to_string()))?;
+    // Pages are separated by form feeds. A glyph without any Unicode mapping
+    // can come out as NUL, and the chat runtime cannot take a prompt that
+    // holds one.
+    let text = tidy_whitespace(&raw.replace('\x0c', "\n\n").replace('\0', ""));
     if text.is_empty() {
         return Err(PdfTextError::NoText);
     }
@@ -109,6 +112,16 @@ pub(crate) mod tests {
         let text = extract_pdf_text(&pdf_with_lines(&["Glucose\0 92 mg/dL"])).unwrap();
         assert!(!text.contains('\0'), "{text:?}");
         assert!(text.contains("Glucose 92 mg/dL"), "{text:?}");
+    }
+
+    #[test]
+    fn a_glyph_missing_from_to_unicode_is_read_from_the_embedded_font() {
+        // Chrome-printed reports embed a TrueType subset whose ToUnicode map
+        // can lack a glyph; here the one for "í". The font itself still says
+        // which character the glyph draws.
+        let pdf = include_bytes!("../../tests/fixtures/pdf/missing_tounicode_glyph.pdf");
+        let text = extract_pdf_text(pdf).unwrap();
+        assert!(text.contains("Hematíes 4.71"), "{text:?}");
     }
 
     #[test]
