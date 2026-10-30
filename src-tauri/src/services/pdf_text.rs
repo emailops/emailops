@@ -16,15 +16,18 @@ pub enum PdfTextError {
     NoText,
 }
 
-/// The text of `bytes`, whitespace tidied: trailing spaces dropped and runs of
-/// blank lines folded into one, so layout padding does not eat the prompt.
+/// The text of `bytes`, whitespace tidied: NUL chars and trailing spaces
+/// dropped and runs of blank lines folded into one, so layout padding does
+/// not eat the prompt.
 pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, PdfTextError> {
     // The parser panics on some malformed files; the bytes are an attachment
     // someone sent, so a panic is an unreadable PDF, not a crash.
     let raw = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
         .map_err(|_| PdfTextError::Unreadable("the parser gave up on this file".to_string()))?
         .map_err(|e| PdfTextError::Unreadable(e.to_string()))?;
-    let text = tidy_whitespace(&raw);
+    // Glyphs without a Unicode mapping come out as NUL, and the chat runtime
+    // cannot take a prompt that holds one.
+    let text = tidy_whitespace(&raw.replace('\0', ""));
     if text.is_empty() {
         return Err(PdfTextError::NoText);
     }
@@ -97,6 +100,15 @@ pub(crate) mod tests {
         let text = extract_pdf_text(&pdf).unwrap();
         assert!(text.contains("Invoice 2041"), "{text:?}");
         assert!(text.contains("Total due: 1,250.00 EUR"), "{text:?}");
+    }
+
+    #[test]
+    fn nul_bytes_in_the_text_layer_are_dropped() {
+        // A glyph the parser cannot map comes out as NUL, which the chat
+        // runtime refuses (the prompt becomes a C string).
+        let text = extract_pdf_text(&pdf_with_lines(&["Glucose\0 92 mg/dL"])).unwrap();
+        assert!(!text.contains('\0'), "{text:?}");
+        assert!(text.contains("Glucose 92 mg/dL"), "{text:?}");
     }
 
     #[test]
