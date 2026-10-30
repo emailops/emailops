@@ -180,6 +180,47 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
     (sorted, next_token)
 }
 
+/// One page of an inbox listing, and whether the Sent folder goes with it.
+#[derive(Debug, PartialEq)]
+struct InboxPage {
+    uids: Vec<u32>,
+    next_token: Option<String>,
+    with_sent: bool,
+}
+
+/// [`select_inbox_page`], plus where the Sent folder is listed: with the last
+/// page of the pass. Sent spans the account's whole range and has no cursor of
+/// its own, so it is listed once per pass — and listed last, a large Sent
+/// folder downloads after the inbox instead of between its newest page and
+/// the rest.
+fn plan_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32) -> InboxPage {
+    let (uids, next_token) = select_inbox_page(uids, page_token, max_results);
+    let with_sent = next_token.is_none();
+    InboxPage {
+        uids,
+        next_token,
+        with_sent,
+    }
+}
+
+/// The inbox `UID SEARCH` answer of a listing, kept for its later pages.
+#[derive(Debug, Clone, PartialEq)]
+struct InboxSearch {
+    query: String,
+    uids: Vec<u32>,
+}
+
+/// The UIDs a page can take from its listing's earlier search instead of
+/// asking the server again — every page of a pass searches the same window,
+/// and only the cursor in the page token moves. The first page always
+/// searches, so each pass sees the mail that arrived since the last one.
+fn reusable_inbox_uids(cached: Option<&InboxSearch>, query: &str, page_token: Option<&str>) -> Option<Vec<u32>> {
+    match (cached, page_token) {
+        (Some(search), Some(_)) if search.query == query => Some(search.uids.clone()),
+        _ => None,
+    }
+}
+
 /// Read/write timeout on every IMAP socket, so an unresponsive server cannot
 /// hang a blocking task forever.
 const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
@@ -340,6 +381,8 @@ pub struct ImapClient {
     /// when a chunk downloads while the previous one is processed. Closed
     /// when the client is dropped.
     session: Arc<SessionSlot<ImapSession>>,
+    /// The inbox search of the listing in progress (see [`reusable_inbox_uids`]).
+    inbox_search: std::sync::Mutex<Option<InboxSearch>>,
 }
 
 type ImapSession = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
@@ -428,6 +471,7 @@ impl ImapClient {
             display_name,
             sync_from_timestamp: None,
             session: Arc::new(SessionSlot::new()),
+            inbox_search: std::sync::Mutex::new(None),
         }
     }
 
@@ -1362,27 +1406,49 @@ impl EmailProvider for ImapClient {
     ) -> Result<(Vec<MessageRef>, Option<String>)> {
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
-        // Sent is listed once per pass, on the first page only — it spans the
-        // whole account range (see below) and re-listing it per page would
-        // multiply the work for no gain.
-        let include_sent = page_token.is_none();
+        // Both bounds matter: the backfill pass asks for the window *older*
+        // than everything stored, and dropping `before` there made the server
+        // return the whole mailbox — whose newest-first cap then discarded
+        // exactly the old mail we were after.
+        let query = build_search_query(after_timestamp, before_timestamp);
+        let cached = reusable_inbox_uids(
+            self.inbox_search
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref(),
+            &query,
+            page_token,
+        );
         // The Sent listing is bounded by the *account's* floor rather than by
         // this pass's window (see below). Resolved out here so the blocking
         // closure captures a plain query string.
         let sent_query = self.sent_search_query();
-        let (inbox_uids, sent_uids): (Vec<u32>, Vec<u32>) =
-            tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, Vec<u32>)> {
+        let page_token_owned = page_token.map(str::to_string);
+        let inbox_query = query.clone();
+        let (inbox_uids, page, sent_uids): (Vec<u32>, InboxPage, Vec<u32>) =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, InboxPage, Vec<u32>)> {
+                // A later page of a listing whose search is cached and that
+                // does not carry Sent needs no round trip at all.
+                if let Some(uids) = cached.clone() {
+                    let page = plan_inbox_page(uids.clone(), page_token_owned.as_deref(), max_results);
+                    if !page.with_sent {
+                        return Ok((uids, page, Vec::new()));
+                    }
+                }
+
                 let mut session = Self::checkout_session(&slot, &creds)
                     .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
-                // Both bounds matter: the backfill pass asks for the window
-                // *older* than everything stored, and dropping `before` there
-                // made the server return the whole mailbox — whose newest-first
-                // cap then discarded exactly the old mail we were after.
-                let query = build_search_query(after_timestamp, before_timestamp);
-
-                imap_search::select(&mut session, "INBOX")?;
-                let inbox_uids = imap_search::uid_search(&mut session, &query)?;
+                let inbox_uids: Vec<u32> = match cached {
+                    Some(uids) => uids,
+                    None => {
+                        imap_search::select(&mut session, "INBOX")?;
+                        imap_search::uid_search(&mut session, &inbox_query)?
+                            .into_iter()
+                            .collect()
+                    }
+                };
+                let page = plan_inbox_page(inbox_uids.clone(), page_token_owned.as_deref(), max_results);
 
                 // Fetch Sent folder UIDs bounded only by the account's sync range.
                 //
@@ -1396,7 +1462,7 @@ impl EmailProvider for ImapClient {
                 // "last 7 days" kept pulling years of mail and the range looked ignored
                 // (issue #50).
                 let mut sent_uids: Vec<u32> = Vec::new();
-                if include_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
+                if page.with_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
                     match imap_search::uid_search(&mut session, &sent_query) {
                         Ok(uids) => sent_uids = uids,
                         // The Sent pass is best-effort — INBOX results still stand.
@@ -1407,16 +1473,28 @@ impl EmailProvider for ImapClient {
                 }
 
                 slot.checkin(session);
-                Ok((inbox_uids.into_iter().collect(), sent_uids))
+                Ok((inbox_uids, page, sent_uids))
             })
             .await
             .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
 
+        *self
+            .inbox_search
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(InboxSearch {
+            query,
+            uids: inbox_uids,
+        });
+
         // INBOX and Sent UIDs live in separate UID namespaces so sorting them together
         // is meaningless. Page through INBOX independently (newest first, resuming
-        // below the cursor), then append all Sent (no cap — already-synced ones are
-        // dropped by emails_exist_batch).
-        let (inbox_page, next_token) = select_inbox_page(inbox_uids, page_token, max_results);
+        // below the cursor); the last page appends all Sent (no cap — already-synced
+        // ones are dropped by emails_exist_batch).
+        let InboxPage {
+            uids: inbox_page,
+            next_token,
+            ..
+        } = page;
 
         let refs = inbox_page
             .into_iter()
@@ -2931,6 +3009,82 @@ mod tests {
             }
         }
         assert_eq!(pages, MAX_INBOX_PAGES_PER_SYNC as usize);
+    }
+
+    #[test]
+    fn a_listing_that_fits_one_page_carries_the_sent_folder() {
+        let page = plan_inbox_page(vec![1, 2, 3], None, 100);
+        assert_eq!(page.uids, vec![3, 2, 1]);
+        assert!(page.with_sent);
+    }
+
+    #[test]
+    fn the_sent_folder_waits_for_the_last_inbox_page() {
+        // Sent used to ride on the first page, so a large Sent folder was
+        // downloaded between the newest hundred inbox messages and the rest.
+        let first = plan_inbox_page((1..=250).collect(), None, 100);
+        assert!(!first.with_sent);
+        let second = plan_inbox_page((1..=250).collect(), first.next_token.as_deref(), 100);
+        assert!(!second.with_sent);
+        let last = plan_inbox_page((1..=250).collect(), second.next_token.as_deref(), 100);
+        assert_eq!(last.next_token, None);
+        assert!(last.with_sent);
+    }
+
+    #[test]
+    fn the_page_that_reaches_the_per_sync_cap_carries_the_sent_folder() {
+        let all: Vec<u32> = (1..=100_000).collect();
+        let mut token: Option<String> = None;
+        let mut sent_pages = 0;
+        loop {
+            let page = plan_inbox_page(all.clone(), token.as_deref(), 100);
+            sent_pages += usize::from(page.with_sent);
+            match page.next_token {
+                Some(t) => token = Some(t),
+                None => break,
+            }
+        }
+        assert_eq!(sent_pages, 1);
+    }
+
+    #[test]
+    fn the_first_page_of_a_listing_always_searches_the_server() {
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(reusable_inbox_uids(Some(&cached), "SINCE 01-Jan-2024", None), None);
+    }
+
+    #[test]
+    fn later_pages_of_the_same_listing_reuse_its_search() {
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(
+            reusable_inbox_uids(Some(&cached), "SINCE 01-Jan-2024", Some("3:1")),
+            Some(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn a_page_of_another_window_searches_again() {
+        // The backfill and the incremental pass list different windows with
+        // the same client.
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024 BEFORE 01-Jun-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(
+            reusable_inbox_uids(Some(&cached), "SINCE 01-Jun-2024", Some("3:1")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_page_with_nothing_cached_searches() {
+        assert_eq!(reusable_inbox_uids(None, "SINCE 01-Jan-2024", Some("3:1")), None);
     }
 
     #[test]
