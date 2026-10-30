@@ -439,6 +439,31 @@ macro_rules! app_commands {
     };
 }
 
+/// Copies of the database kept in `backups/`.
+#[cfg(feature = "desktop")]
+const STARTUP_BACKUPS_KEPT: usize = 3;
+
+/// Show the outcome of the startup backup in the Logs panel.
+#[cfg(feature = "desktop")]
+fn report_startup_backup(outcome: models::error::Result<db::BackupPlan>) {
+    use services::logger::log;
+    const GIB: u64 = 1024 * 1024 * 1024;
+    match outcome {
+        Ok(db::BackupPlan::Copy) => log("success", "system", "Database backup written"),
+        Ok(db::BackupPlan::Recent) => {}
+        Ok(db::BackupPlan::NoRoom { needed, free }) => log(
+            "warn",
+            "system",
+            format!(
+                "Database backup skipped: it needs {} GB of free disk and {} GB are free",
+                needed / GIB,
+                free / GIB
+            ),
+        ),
+        Err(e) => log("error", "system", format!("Database backup failed: {e}")),
+    }
+}
+
 #[allow(clippy::expect_used)]
 #[cfg(feature = "desktop")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -662,18 +687,18 @@ pub fn run() {
 
             let db = Arc::new(db);
 
-            // Kick off a non-blocking backup in the background immediately after
-            // startup so we always have a recent snapshot before any sync runs.
+            // Back up in the background, once the window can show the result
+            // in the Logs panel.
             {
                 let db_clone = db.clone();
                 let backup_dir = app_data_dir.join("backups");
-                std::thread::spawn(move || match db_clone.backup(&backup_dir, 7) {
-                    Ok(path) => {
-                        println!("[backup] Startup backup written to {}", path.display());
-                    }
-                    Err(e) => {
-                        eprintln!("[backup] Startup backup failed (non-fatal): {e}");
-                    }
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    report_startup_backup(db_clone.startup_backup(
+                        &backup_dir,
+                        STARTUP_BACKUPS_KEPT,
+                        services::clock::now_secs(),
+                    ));
                 });
             }
 
