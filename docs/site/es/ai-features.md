@@ -402,6 +402,11 @@ asistente carga una mientras responde, o empiezas el mensaje con `/` y el nombre
 (`/weekly-report semana pasada`; `/a /b` aplica las dos). Al escribir `/` se listan tus skills
 activas. La traza de razonamiento indica qué skill siguió el turno y quién la eligió.
 
+<!-- claim:ai-skills-5 -->
+Hay más skills, y la forma de compartir las tuyas, en el
+[repositorio de skills de EmailOps](https://github.com/emailops/emailops-skills). También incluye
+skills para Hermes, Claude Code y otros agentes que acceden a tu correo con `emailops-cli`.
+
 ## Apagarlo todo {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

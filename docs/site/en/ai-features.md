@@ -383,6 +383,11 @@ the assistant loads one while answering, or you start the message with `/` and t
 (`/weekly-report last week`; `/a /b` applies both). Typing `/` lists your enabled skills. The
 reasoning trace names the skill a turn followed and who chose it.
 
+<!-- claim:ai-skills-5 -->
+More skills, and the way to share your own, are in the
+[EmailOps skills repository](https://github.com/emailops/emailops-skills). It also has skills for
+Hermes, Claude Code and other agents that reach your mail through `emailops-cli`.
+
 ## Turning it all off {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

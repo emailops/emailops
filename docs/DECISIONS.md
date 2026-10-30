@@ -4020,3 +4020,27 @@ words whole. It adds about 20 crates to the lockfile.
 for every platform and slice, which the release pipeline would have to carry. Poppler
 `pdftotext` — a system install the app cannot count on. Replacing NUL with U+FFFD —
 keeps the turn alive but still shows the model a broken word.
+
+## 2026-10-30 — Community skills live in their own repo and are checked for what they can do
+
+**Decision:** Skills are collected in a public repo, `emailops/emailops-skills`:
+`app-skills/` for the chat, `agent-skills/` for Hermes and Claude Code through
+`emailops-cli`. Hermes installs agent skills one at a time; in Claude Code they stay one
+plugin, `emailops`. A skill is text a person can read in full. `make check` refuses
+header keys beyond `name` and `description`, shell snippets, hidden text, external links,
+anything in the plugin but its manifest and skills, and `emailops-cli` with `--send` or
+commands that change mail or settings. CI judges a pull request with the target branch's
+checks, and a person makes every merge.
+**Context:** A skill is a set of instructions an AI follows with access to someone's mail.
+"Nothing in a skill folder is ever run" holds in the app, but Hermes and Claude Code can
+run shell from a skill's text, and a Claude Code plugin can ship hooks, servers and
+binaries. Eight of nine planted samples passed the first checker, and the ninth failed by
+accident. A hostile skill written in plain words still passes any checker, so the checks
+narrow what a reviewer must read; they do not replace the reviewer.
+**Rejected:**
+- *One Claude Code plugin per skill*: a bad skill would reach only those who picked it, but
+  the commands become `/triage-inbox:triage-inbox`. The developer preferred the one
+  plugin and its `/emailops:` commands.
+- *`hermes skills tap add` as the Hermes install*: it looks only in `skills/` at the
+  repo's root, with no option for another path.
+- *Trusting the checks in the pull request itself*: a pull request can edit `scripts/`.

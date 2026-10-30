@@ -1287,6 +1287,11 @@ checks = [
   { none = 'Lead-in to the three ways listed after it.', covers = ['The chat applies a skill in three ways:'] },
 ]
 
+[ai-skills-5]
+checks = [
+  { manual = 'The skills repository is a separate repo and the docs check does not fetch it.' },
+]
+
 [ai-turning-off-1]
 checks = [
   { app = true },

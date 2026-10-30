@@ -418,6 +418,11 @@ suivi du nom du skill (`/weekly-report la semaine dernière` ; `/a /b` applique 
 `/` liste vos skills actifs. La trace de raisonnement indique le skill suivi par le tour et qui
 l'a choisi.
 
+<!-- claim:ai-skills-5 -->
+D'autres skills, et la façon de partager les vôtres, se trouvent dans le
+[dépôt de skills d'EmailOps](https://github.com/emailops/emailops-skills). Il contient aussi des
+skills pour Hermes, Claude Code et d'autres agents qui accèdent à vos e-mails via `emailops-cli`.
+
 ## Tout désactiver {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->

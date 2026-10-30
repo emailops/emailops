@@ -409,6 +409,11 @@ Namen des Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Wer `
 seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine Runde folgte, und wer ihn
 gewählt hat.
 
+<!-- claim:ai-skills-5 -->
+Weitere Skills und die Möglichkeit, eigene zu teilen, finden Sie im
+[EmailOps-Skills-Repository](https://github.com/emailops/emailops-skills). Es enthält auch Skills
+für Hermes, Claude Code und andere Agenten, die über `emailops-cli` auf Ihre E-Mails zugreifen.
+
 ## Alles abschalten {#turning-it-all-off}
 
 <!-- claim:ai-turning-off-1 -->
