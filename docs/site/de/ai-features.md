@@ -387,8 +387,8 @@ gekürzt; **mehr** zeigt den Rest.
 Anfrage folgt – wie Ihre Wochenzusammenfassung aussehen soll, wie einem Lieferanten zu antworten
 ist. Jeder Skill ist ein Ordner im Datenordner der App, `skills/<name>/SKILL.md`: ein kurzer Kopf
 mit `name` (dem Ordnernamen) und einer `description`, was er tut und wann er gilt, danach die
-Anweisungen in Markdown. Im Prompt des Chats stehen nur Name und Beschreibung; die Anweisungen
-werden in den Runden gelesen, die den Skill nutzen. Nichts in einem Skill-Ordner wird je
+Anweisungen in Markdown. Nichts von einem Skill erreicht den Prompt des Chats, bevor Sie ihn
+aufrufen. Nichts in einem Skill-Ordner wird je
 ausgeführt.
 
 <!-- claim:ai-skills-2 -->
@@ -403,11 +403,10 @@ Editor seit dem Öffnen geändert hat; wer `name` in der Datei ändert, benennt 
 **Löschen** verschiebt ihn nach `skills/.deleted`, von wo er sich von Hand wiederherstellen lässt.
 
 <!-- claim:ai-skills-4 -->
-Der Chat wendet einen Skill auf drei Arten an: Er wählt einen, dessen Beschreibung zu Ihrer Frage
-passt, der Assistent lädt einen beim Antworten, oder Sie beginnen die Nachricht mit `/` und dem
-Namen des Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Wer `/` tippt, sieht
-seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine Runde folgte, und wer ihn
-gewählt hat.
+Ein Skill läuft nur, wenn Sie ihn anfordern: Beginnen Sie die Nachricht mit `/` und dem Namen des
+Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Der Chat wählt nie von sich aus
+einen. Wer `/` tippt, sieht seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine
+Runde folgte.
 
 <!-- claim:ai-skills-5 -->
 EmailOps enthält außerdem einige geprüfte Skills. **Einstellungen → KI-Skills** listet sie mit Namen,
@@ -416,7 +415,8 @@ App an, Skills einzuschalten. In der Ansicht **Skills** zeigt die Auswahl eines 
 Text schreibgeschützt an, sodass Sie ihn vor der Nutzung lesen können. Sie bleiben aus, bis Sie sie
 einschalten, und ein eingeschalteter funktioniert wie jeder andere Skill. Sie sind Teil der App: Nichts
 wird heruntergeladen oder dem Ordner `skills` hinzugefügt, und ihr Text kann sich mit einem Update
-ändern.
+ändern. Die Ansicht **Skills** verlinkt außerdem die Anleitung, um einen Skill zum öffentlichen
+Repository beizutragen.
 
 <!-- claim:ai-skills-6 -->
 **Kopie bearbeiten** macht aus einem enthaltenen Skill einen eigenen unter `skills/<name>/`, mit

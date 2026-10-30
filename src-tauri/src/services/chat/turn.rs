@@ -3642,25 +3642,6 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
     Some(turn)
 }
 
-/// The planner's skill rule and the skills it may pick this turn. The rule is
-/// rendered from the whole catalog on every turn — it sits in the planner's
-/// cached head, so a turn that rendered it differently would re-prefill that
-/// head then and again on the next turn. On a turn whose skill the user
-/// invoked (`/name`) the planner's pick is ignored instead: nothing it may
-/// select.
-fn planner_skill_setup(
-    catalog: crate::services::skills::SkillCatalog,
-    slash_skill_applied: bool,
-) -> (String, crate::services::skills::SkillCatalog) {
-    let rule = crate::services::skills::render_planner_rule(&catalog.skills);
-    let selectable = if slash_skill_applied {
-        crate::services::skills::SkillCatalog::default()
-    } else {
-        catalog
-    };
-    (rule, selectable)
-}
-
 /// Run one chat turn for a "thread-bound" conversation — one that was seeded
 /// with the cleaned content of an email thread (see
 /// [`create_conversation_with_thread`]). Skips RAG retrieval because the thread
@@ -4556,7 +4537,7 @@ async fn run_chat_turn_inner(
     // title read it); the skill's instructions ride in the final user message,
     // never the cached system prefix. The folder is only read when the message
     // could be an invocation.
-    let (user_question, mut skill_block, mut applied_skills) = match plan_turn_skill(&db, &user_question) {
+    let (user_question, skill_block, applied_skills) = match plan_turn_skill(&db, &user_question) {
         Some(turn) => {
             let applied = turn
                 .skills
@@ -4889,8 +4870,6 @@ async fn run_chat_turn_inner(
         let today = now_local().format("%Y-%m-%d").to_string();
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
-        let (skill_rule, skill_catalog) =
-            planner_skill_setup(crate::services::skills::catalog_for(&db), skill_block.is_some());
         let run = super::planner::plan_search(
             provider.as_ref(),
             &template,
@@ -4902,7 +4881,6 @@ async fn run_chat_turn_inner(
             // Only forms whose feature is switched on: routing to a disabled
             // one would spend a turn opening a view the user cannot reach.
             &crate::services::forms::registry::catalog(&db),
-            &skill_rule,
         )
         .await;
         let plan_ms = t_plan.elapsed().as_millis() as i64;
@@ -4913,25 +4891,12 @@ async fn run_chat_turn_inner(
             prefill_ms: plan_prefill_ms,
             cached_prompt_tokens: plan_cached_tokens,
             aux_plan: plan_aux,
-            skill: planner_skill,
         } = run;
-        // A skill the planner matched rides in the final user message exactly
-        // like a `/name` one — decided before retrieval, so the sources can no
-        // longer tempt the model into answering without it. An unknown name is
-        // dropped; the model can still call `load_skill` itself.
-        if let Some(name) = planner_skill {
-            match skill_catalog.get(&name) {
-                Some(skill) => {
-                    emit_log("info", &format!("planner: skill {} applies to this turn", skill.name));
-                    skill_block = Some(crate::services::skills::render_skill_block(skill));
-                    applied_skills.push(AppliedSkill {
-                        name: skill.name.clone(),
-                        via: SkillVia::Planner,
-                    });
-                }
-                None => emit_log("debug", &format!("planner: named unknown skill {name}, ignored")),
-            }
-        }
+        let (plan, plan_outcome) = if skill_block.is_some() {
+            super::planner::plan_for_skill_turn(plan, plan_outcome)
+        } else {
+            (plan, plan_outcome)
+        };
         let plan_telemetry = PlannerTelemetry {
             prompt_tokens: plan_prompt_tokens,
             prefill_ms: plan_prefill_ms,
@@ -10323,45 +10288,6 @@ Preséntalos en una tabla markdown …";
         assert!(row.content.starts_with("Chat failed"), "{}", row.content);
     }
 
-    #[test]
-    fn the_planner_head_is_the_same_on_a_slash_skill_turn() {
-        // The skill rule rides in the planner's cached head: an empty rule on a
-        // `/name` turn re-prefilled that head on that turn and the next.
-        let catalog = crate::services::skills::SkillCatalog {
-            skills: vec![crate::services::skills::Skill {
-                name: "weekly-digest".to_string(),
-                description: "Summarise the week's mail".to_string(),
-                body: "Steps".to_string(),
-                path: std::path::PathBuf::new(),
-                files: Vec::new(),
-            }],
-            errors: Vec::new(),
-        };
-        let (rule_plain, selectable_plain) = planner_skill_setup(catalog.clone(), false);
-        let (rule_slash, selectable_slash) = planner_skill_setup(catalog, true);
-        let glossary = crate::services::classification::TagGlossary::defaults();
-        let template = crate::services::prompts::defaults::CHAT_QUERY_PLAN;
-        let head = |rule: &str| {
-            super::super::planner::split_planner_prompt(
-                template,
-                "me@example.com",
-                "2026-09-29",
-                "q",
-                &glossary,
-                None,
-                "- lens.create: Create a Lens",
-                rule,
-            )
-            .0
-        };
-        assert!(!rule_plain.is_empty());
-        assert_eq!(head(&rule_plain), head(&rule_slash), "byte-identical cached head");
-        assert!(selectable_plain.get("weekly-digest").is_some());
-        assert!(
-            selectable_slash.get("weekly-digest").is_none(),
-            "a skill the user already invoked is not stacked with a planner pick"
-        );
-    }
     // ── Context budget ──────────────────────────────────────────────────────
 
     /// A user row as an earlier turn prompted it: `chars` of sources, then

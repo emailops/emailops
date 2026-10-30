@@ -208,30 +208,7 @@ fn no_skills_means_no_invocation() {
     assert_eq!(plan_invocation("/weekly-summary", &[]), None);
 }
 
-// ── render_catalog / render_skill_block ────────────────────────────────
-
-#[test]
-fn catalog_lists_one_line_per_skill_in_name_order() {
-    let (text, names) = render_catalog(&[skill("b-skill", "Second."), skill("a-skill", "First.")]);
-    assert_eq!(text, "- a-skill: First.\n- b-skill: Second.");
-    assert_eq!(names, vec!["a-skill", "b-skill"]);
-}
-
-#[test]
-fn catalog_stops_at_its_budget_and_only_names_what_it_lists() {
-    let desc = "x".repeat(400);
-    let skills: Vec<Skill> = (0..20).map(|i| skill(&format!("s{i:02}"), &desc)).collect();
-    let (text, names) = render_catalog(&skills);
-    assert!(text.chars().count() <= MAX_CATALOG_CHARS, "{}", text.len());
-    assert!(!names.is_empty() && names.len() < 20);
-    assert_eq!(text.lines().count(), names.len());
-    assert_eq!(names[0], "s00");
-}
-
-#[test]
-fn empty_catalog_renders_nothing() {
-    assert_eq!(render_catalog(&[]), (String::new(), Vec::new()));
-}
+// ── render_skill_block ─────────────────────────────────────────────────
 
 #[test]
 fn skill_block_carries_the_name_and_the_body() {
@@ -393,22 +370,7 @@ fn ensure_skills_dir_errors_without_a_data_dir() {
 
 // ── skills index (system prompt) ───────────────────────────────────────
 
-#[test]
-fn the_index_lists_skills_and_tells_the_model_to_load_first() {
-    let index = render_skills_index(&[skill("vendor-support", "Find support contacts.")]).unwrap();
-    assert!(index.contains("- vendor-support: Find support contacts."), "{index}");
-    assert!(index.contains("load_skill"), "{index}");
-    assert!(index.contains("FIRST"), "{index}");
-    // It must never claim a load happened without the call.
-    assert!(index.contains("Never say you loaded a skill"), "{index}");
-}
-
-#[test]
-fn no_skills_means_no_index() {
-    assert_eq!(render_skills_index(&[]), None);
-}
-
-// ── reference files (level 2) ──────────────────────────────────────────
+// ── reference files ────────────────────────────────────────────────────
 
 #[test]
 fn loading_lists_the_skills_text_files_but_not_skill_md_or_others() {
@@ -441,29 +403,20 @@ fn the_skill_block_names_its_reference_files() {
 }
 
 #[test]
-fn the_skill_block_says_it_is_already_loaded() {
-    // A `/name` turn carries the block in the user message; without this the
-    // index's "call load_skill FIRST" made the model load it a second time.
+fn the_skill_block_tells_the_model_to_follow_it() {
     let block = render_skill_block(&skill("vendor-reply", "d"));
-    // The explicit wording measured best: softer phrasing brought back the
-    // redundant load_skill round and models dropped the skill's steps.
     assert!(
-        block.contains("already loaded — do not call load_skill for \"vendor-reply\". Follow them:"),
+        block.contains("Its instructions are already loaded — do not load them again. Follow them:"),
         "{block}"
     );
+    assert!(!block.contains("load_skill"), "{block}");
 }
 
 #[test]
-fn the_already_loaded_note_still_lets_the_model_read_reference_files() {
-    // Forbidding load_skill outright made small models skip the reference
-    // files the body relies on.
+fn only_a_skill_with_files_points_at_load_skill() {
     let mut s = skill("vendor-support", "d");
     s.files = vec!["references/escalation.md".into()];
     let block = render_skill_block(&s);
-    assert!(
-        block.contains("do not call load_skill for \"vendor-support\" except to read one of its reference files"),
-        "{block}"
-    );
     assert!(block.contains("load_skill(name=\"vendor-support\", file="), "{block}");
 }
 
@@ -498,33 +451,6 @@ fn a_long_reference_is_cut_with_a_visible_marker() {
     let text = read_reference(catalog.get("big").unwrap(), "notes.md").unwrap();
     assert!(text.ends_with("[truncated]"), "{}", &text[text.len() - 30..]);
     assert!(text.chars().count() <= MAX_BODY_CHARS + 20);
-}
-
-// ── render_planner_rule ────────────────────────────────────────────────
-
-#[test]
-fn the_planner_rule_is_empty_without_skills() {
-    // An install without skills sends the planner the same prompt as before.
-    assert_eq!(render_planner_rule(&[]), "");
-}
-
-#[test]
-fn the_planner_rule_lists_the_skills_and_how_to_name_one() {
-    let rule = render_planner_rule(&[
-        skill("travel-brief", "Brief the user on a trip."),
-        skill("a-skill", "First."),
-    ]);
-    assert!(
-        rule.contains("- a-skill: First.\n- travel-brief: Brief the user on a trip."),
-        "{rule}"
-    );
-    assert!(rule.contains(r#""skill": "<name>""#), "{rule}");
-    // It rides alongside any verdict, a defer included.
-    assert!(rule.contains(r#"{"defer": true, "skill": "<name>"}"#), "{rule}");
-    // Naming a skill must not turn a defer into an invented filter.
-    assert!(rule.contains("never changes the verdict"), "{rule}");
-    // Descriptions only — never a body in the planner prompt.
-    assert!(!rule.contains("Do the thing."), "{rule}");
 }
 
 // ── editing from the app ───────────────────────────────────────────────
@@ -890,8 +816,6 @@ fn with_every_bundled_skill_off_the_catalog_is_the_users_own() {
     let db = db_with_feature_on(&tmp);
     let dir = tmp.path().join(SKILLS_DIR);
     assert_eq!(catalog_for(&db), SkillCatalog::default());
-    assert_eq!(render_skills_index(&catalog_for(&db).skills), None);
-    assert_eq!(render_planner_rule(&catalog_for(&db).skills), "");
 
     write_skill(&dir, "alpha", &skill_md("alpha", "First.", "Body."));
     assert_eq!(catalog_for(&db), load_catalog(&dir));
@@ -910,10 +834,6 @@ fn a_switched_on_bundled_skill_works_like_any_other() {
 
     let catalog = catalog_for(&db);
     assert_eq!(catalog.names(), vec![BUNDLED_NAME, "zeta"]);
-    assert!(render_skills_index(&catalog.skills)
-        .unwrap()
-        .contains("- inbox-triage: "));
-    assert!(render_planner_rule(&catalog.skills).contains("- inbox-triage: "));
     let turn = plan_skill_turn("/inbox-triage what first?", &catalog).unwrap();
     assert_eq!(turn.skills, vec![BUNDLED_NAME]);
     assert!(turn.block.contains("list_open_threads"), "{}", turn.block);

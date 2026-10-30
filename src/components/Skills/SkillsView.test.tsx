@@ -12,6 +12,9 @@ vi.mock('@/stores/logStore', () => ({
   useLogStore: (selector: (s: { addLog: typeof addLog }) => unknown) => selector({ addLog }),
 }));
 
+const openExternal = vi.fn<(url: string) => Promise<void>>();
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: (url: string) => openExternal(url) }));
+
 const listSkills = vi.fn<() => Promise<SkillsOverview>>();
 const readSkill = vi.fn<(name: string) => Promise<string>>();
 const saveSkill = vi.fn<(name: string, content: string, base: string) => Promise<string>>();
@@ -100,12 +103,30 @@ beforeEach(() => {
   deleteSkill.mockResolvedValue();
   setBundledSkillEnabled.mockResolvedValue();
   copyBundledSkill.mockResolvedValue();
+  openExternal.mockResolvedValue();
   readBundledSkill.mockImplementation((n) => Promise.resolve(`---\nname: ${n}\n---\n**bold** <b>raw</b> of ${n}`));
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+});
+
+describe('SkillsView: contributing', () => {
+  it('opens the skills repository contribution guide', async () => {
+    listSkills.mockResolvedValue(overview([]));
+    await render();
+    await click(q('skills-contribute'));
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/emailops/emailops-skills/blob/main/CONTRIBUTING.md');
+  });
+
+  it('logs a link that fails to open', async () => {
+    listSkills.mockResolvedValue(overview([]));
+    openExternal.mockRejectedValue(new Error('no browser'));
+    await render();
+    await click(q('skills-contribute'));
+    expect(addLog).toHaveBeenCalledWith('error', 'system', expect.stringContaining('no browser'));
+  });
 });
 
 describe('SkillsView: bundled skills', () => {

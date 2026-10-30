@@ -1341,8 +1341,7 @@ pub struct ChatTrace {
     #[serde(default)]
     pub steps: Vec<TraceStep>,
     /// User skills whose instructions rode in this turn's prompt, and how they
-    /// got there. A skill the model loaded itself shows up in `tool_calls` as
-    /// a `load_skill` call instead.
+    /// got there.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub applied_skills: Vec<AppliedSkill>,
     /// The conversation's `search_emails` page as this turn left it: the next
@@ -1446,7 +1445,8 @@ pub struct AppliedSkill {
 pub enum SkillVia {
     /// The user typed `/name`.
     Slash,
-    /// The query planner matched the question to the skill's description.
+    /// The query planner picked it. Skills are `/name`-only now; kept so traces
+    /// saved before that still read back.
     Planner,
 }
 

@@ -362,9 +362,8 @@ edited by hand. Long values are cut to three lines in the table; **more** shows 
 *Experimental.* A skill is a saved procedure the chat follows for one kind of request — how
 you want a weekly summary laid out, how to answer a supplier. Each skill is a folder in the app's
 data folder, `skills/<name>/SKILL.md`: a short header with a `name` (the folder's name) and a
-`description` of what it does and when to use it, then the instructions in Markdown. Only the
-name and description stay in the chat's prompt; the instructions are read on the turns that use
-the skill. Nothing in a skill folder is ever run.
+`description` of what it does and when to use it, then the instructions in Markdown. Nothing about a
+skill reaches the chat's prompt until you invoke it. Nothing in a skill folder is ever run.
 
 <!-- claim:ai-skills-2 -->
 Skills are off by default. Turn them on in **Settings → AI Skills** with **Enable skills**; a
@@ -378,10 +377,9 @@ changing the `name` in the file renames the skill. **Delete** moves it to `skill
 where it can be restored by hand.
 
 <!-- claim:ai-skills-4 -->
-The chat applies a skill in three ways: it picks one whose description matches your question,
-the assistant loads one while answering, or you start the message with `/` and the skill's name
-(`/weekly-report last week`; `/a /b` applies both). Typing `/` lists your enabled skills. The
-reasoning trace names the skill a turn followed and who chose it.
+A skill runs only when you ask for it: start the message with `/` and the skill's name
+(`/weekly-report last week`; `/a /b` applies both). The chat never picks one on its own. Typing
+`/` lists your enabled skills. The reasoning trace names the skill a turn followed.
 
 <!-- claim:ai-skills-5 -->
 EmailOps also includes a few reviewed skills. **Settings → AI Skills** lists them with a name, a
@@ -389,7 +387,8 @@ description and a switch, even while skills are off; switching one on then offer
 on. In the **Skills** view, selecting one shows its full text, read-only, so you can read it before
 you use it. They are off until you switch them on, and one that is on works like any other skill.
 They are part of the app: nothing is downloaded or added to the `skills` folder, and their text can
-change with an app update.
+change with an app update. The **Skills** view also links to the guide for contributing a skill to
+the public repository.
 
 <!-- claim:ai-skills-6 -->
 **Edit a copy** turns an included skill into one of your own under `skills/<name>/`, keeping its

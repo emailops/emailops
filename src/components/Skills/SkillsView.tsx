@@ -1,3 +1,4 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -15,6 +16,9 @@ import {
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import { SkillSwitch } from './SkillSwitch';
+
+/** How to contribute a skill to the public skills repository. */
+export const SKILLS_CONTRIBUTE_URL = 'https://github.com/emailops/emailops-skills/blob/main/CONTRIBUTING.md';
 
 /**
  * The Skills view: every skill in `<data dir>/skills/` on the left, each with
@@ -134,6 +138,12 @@ export function SkillsView() {
     } catch (err) {
       fail(`Failed to copy bundled skill ${name}`, err);
     }
+  };
+
+  const openContributing = () => {
+    void openExternal(SKILLS_CONTRIBUTE_URL).catch((err) => {
+      addLog('error', 'system', `Failed to open ${SKILLS_CONTRIBUTE_URL}: ${errorText(err)}`);
+    });
   };
 
   const text = selected ? (drafts[selected] ?? saved[selected] ?? '') : '';
@@ -312,6 +322,16 @@ export function SkillsView() {
             </li>
           ))}
         </ul>
+        <div className="border-t border-gray-200 p-3">
+          <button
+            type="button"
+            data-testid="skills-contribute"
+            onClick={openContributing}
+            className="w-full px-3 py-1.5 text-xs font-medium rounded bg-primary-600 hover:bg-primary-500 text-white"
+          >
+            {t('settings:skills.view.contribute')}
+          </button>
+        </div>
         {overview && overview.errors.length > 0 && (
           <div className="border-t border-gray-200 px-4 py-2 space-y-1 max-h-40 overflow-y-auto">
             <p className="text-xs font-medium text-red-700">{t('settings:skills.errorsTitle')}</p>

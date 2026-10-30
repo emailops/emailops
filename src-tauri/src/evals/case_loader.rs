@@ -267,7 +267,7 @@ pub struct EvalCase {
     pub as_of: Option<AsOf>,
 
     /// Skills installed in the data dir for this case only (see
-    /// `evals::skill_fixtures`), so a case can exercise `load_skill` and `/name`.
+    /// `evals::skill_fixtures`), so a case can exercise `/name`.
     #[serde(default)]
     pub skills: Vec<crate::evals::skill_fixtures::SkillFixture>,
 
@@ -275,8 +275,7 @@ pub struct EvalCase {
     #[serde(default)]
     pub bundled_skills: Vec<String>,
 
-    /// The skill this turn must follow, however it got there: `/name`, the
-    /// query planner, or the model's own `load_skill` call.
+    /// The skill this turn must follow, invoked with `/name`.
     #[serde(default)]
     pub expected_skill: Option<String>,
 
