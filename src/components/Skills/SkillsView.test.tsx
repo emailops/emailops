@@ -203,6 +203,12 @@ describe('SkillsView: bundled skills', () => {
 });
 
 describe('SkillsView', () => {
+  it('carries no Experimental badge', async () => {
+    listSkills.mockResolvedValue(overview([]));
+    await render();
+    expect(container.textContent).not.toContain('settings:dialog.experimental');
+  });
+
   it('lists every skill and opens the first one in the editor', async () => {
     listSkills.mockResolvedValue(overview([{ name: 'alpha' }, { name: 'beta', enabled: false }]));
     await render();

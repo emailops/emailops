@@ -359,15 +359,15 @@ edited by hand. Long values are cut to three lines in the table; **more** shows 
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Experimental.* A skill is a saved procedure the chat follows for one kind of request — how
+A skill is a saved procedure the chat follows for one kind of request — how
 you want a weekly summary laid out, how to answer a supplier. Each skill is a folder in the app's
 data folder, `skills/<name>/SKILL.md`: a short header with a `name` (the folder's name) and a
 `description` of what it does and when to use it, then the instructions in Markdown. Nothing about a
 skill reaches the chat's prompt until you invoke it. Nothing in a skill folder is ever run.
 
 <!-- claim:ai-skills-2 -->
-Skills are off by default. Turn them on in **Settings → AI Skills** with **Enable skills**; a
-**Skills** entry then appears in the sidebar.
+Skills are on by default. Turn them off in **Settings → AI Skills** with **Enable skills**; the
+**Skills** entry then leaves the sidebar.
 
 <!-- claim:ai-skills-3 -->
 The **Skills** view lists every skill with its own switch and opens the selected one's

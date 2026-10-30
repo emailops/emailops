@@ -29,8 +29,8 @@ pub struct SkillFixture {
 pub struct SkillFixtureGuard<'a> {
     db: &'a Database,
     created: Vec<PathBuf>,
-    /// The preference before the case switched the (experimental, default
-    /// off) feature on; `None` when it was unset.
+    /// The preference before the case switched the feature on; `None` when
+    /// it was unset.
     enabled_before: Option<String>,
     /// The bundled skills' preference before the case; `None` when unset.
     bundled_before: Option<String>,
@@ -167,7 +167,7 @@ mod tests {
         let guard = SkillFixtureGuard::install(&db, &[], &["inbox-triage".to_string()]).unwrap();
         assert_eq!(skills::catalog_for(&db).names(), vec!["inbox-triage"]);
         drop(guard);
-        assert!(!skills::skills_enabled(&db));
+        assert_eq!(db.get_preference(skills::SKILLS_ENABLED_PREF).unwrap(), None);
         assert_eq!(db.get_preference(skills::SKILLS_BUNDLED_ON_PREF).unwrap(), None);
     }
 
@@ -177,14 +177,14 @@ mod tests {
         let db = Database::new(tmp.path().to_path_buf()).unwrap();
         let err = SkillFixtureGuard::install(&db, &[], &["not-bundled".to_string()]).unwrap_err();
         assert!(err.to_string().contains("not-bundled"), "{err}");
-        assert!(!skills::skills_enabled(&db));
+        assert_eq!(db.get_preference(skills::SKILLS_ENABLED_PREF).unwrap(), None);
     }
 
     #[test]
     fn switches_the_feature_on_for_the_case_and_restores_it() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::new(tmp.path().to_path_buf()).unwrap();
-        assert!(!skills::skills_enabled(&db));
+        db.set_preference(skills::SKILLS_ENABLED_PREF, "false").unwrap();
         let guard = SkillFixtureGuard::install(&db, &[fixture("alpha")], &[]).unwrap();
         assert!(skills::skills_enabled(&db));
         drop(guard);

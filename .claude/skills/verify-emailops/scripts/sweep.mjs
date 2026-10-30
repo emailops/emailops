@@ -820,7 +820,7 @@ await step('IA', 'barra de Logs', 'la barra de estado muestra el backend como te
   return ok(bar.backend === 'Embedded' && bar.tag === 'SPAN' && !backendSelect && modelOnly, `backend «${bar.backend}» como texto; selector: ${bar.selects.map((x) => x.label).join(', ')}`, JSON.stringify(bar));
 });
 
-// ---------- Skills (experimental, apagado por defecto) ----------
+// ---------- Skills (encendido por defecto) ----------
 // Enciende el interruptor si hacía falta, comprueba la entrada y la vista, y lo
 // deja como estaba: la BD demo es compartida con el resto de capas.
 const skillsSwitch = (action) => js((act) => {
