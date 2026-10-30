@@ -1319,11 +1319,22 @@ export interface SkillInfo {
   enabled: boolean;
 }
 
+/** A skill that ships with the app (mirrors `services::skills::BundledSkillInfo`). */
+export interface BundledSkillInfo {
+  name: string;
+  description: string;
+  /** The bundled skill's own switch, off by default. */
+  enabled: boolean;
+  /** A skill of the user's has this name, so that one is used instead. */
+  shadowed: boolean;
+}
+
 /** Mirrors `services::skills::SkillsOverview`. */
 export interface SkillsOverview {
   enabled: boolean;
   dir: string | null;
   skills: SkillInfo[];
+  bundled: BundledSkillInfo[];
   /** Skills that failed to load. `code`/`params` translate like an `AppError`. */
   errors: { path: string; message: string; code: string; params: Record<string, string> }[];
 }
@@ -1365,6 +1376,21 @@ export async function deleteSkill(name: string): Promise<void> {
 /** Create a new skill from the template. */
 export async function createSkill(name: string): Promise<void> {
   return invoke('create_skill', { name });
+}
+
+/** Switch one bundled skill on or off for the chat. */
+export async function setBundledSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke('set_bundled_skill_enabled', { name, enabled });
+}
+
+/** The full text of a bundled skill. */
+export async function readBundledSkill(name: string): Promise<string> {
+  return invoke('read_bundled_skill', { name });
+}
+
+/** Create an editable user skill from a bundled one. */
+export async function copyBundledSkill(name: string): Promise<void> {
+  return invoke('copy_bundled_skill', { name });
 }
 
 export async function listPrompts(): Promise<PromptInfo[]> {

@@ -483,18 +483,6 @@ impl ToolRegistry {
             }
         }
 
-        // The skills index, while `load_skill` is on the menu. It depends only
-        // on the skills folder, so the cached system prefix stays stable.
-        if self.get("load_skill", db).is_some() {
-            if let Some(index) =
-                crate::services::skills::render_skills_index(&crate::services::skills::catalog_for(db).skills)
-            {
-                out.push('\n');
-                out.push_str(&index);
-                out.push('\n');
-            }
-        }
-
         // Qwen 3 expects the tool catalogue as a structured `<tools>…</tools>`
         // JSON block. Before the llama-cpp-2 0.1.147 migration this was
         // injected by the Jinja template's `tools=` parameter; the plain
@@ -942,13 +930,35 @@ mod tests {
     }
 
     #[test]
-    fn the_skills_index_follows_the_tool_list_while_load_skill_is_available() {
+    fn switched_on_skills_add_nothing_to_the_system_prompt() {
+        // Skills run only through `/name`, so the model is never told which
+        // exist. The prefix stays the one an install without skills sends.
         let tmp = tempfile::tempdir().expect("tmp");
         let db = Database::new(tmp.path().to_path_buf()).expect("db");
         let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
-        // No skills yet: load_skill is hidden and so is the index.
-        assert!(!registry.render_system_prompt_section(&db).contains("Skills ("));
+        let before = registry.render_system_prompt_section(&db);
 
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
+            .expect("pref");
+        crate::services::skills::set_bundled_skill_enabled(&db, "inbox-triage", true).expect("bundled");
+        let dir = tmp
+            .path()
+            .join(crate::services::skills::SKILLS_DIR)
+            .join("vendor-reply");
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(
+            dir.join(crate::services::skills::SKILL_FILE),
+            "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
+        )
+        .expect("write");
+
+        assert_eq!(registry.render_system_prompt_section(&db), before);
+    }
+
+    #[test]
+    fn a_skill_with_reference_files_adds_the_tool_but_no_description() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db = Database::new(tmp.path().to_path_buf()).expect("db");
         db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
             .expect("pref");
         let dir = tmp
@@ -961,17 +971,13 @@ mod tests {
             "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
         )
         .expect("write");
+        std::fs::write(dir.join("tone.md"), "Formal.").expect("write");
+
+        let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
         let section = registry.render_system_prompt_section(&db);
-        let list = section.find("  - load_skill(").expect("tool line");
-        let index = section
-            .find("- vendor-reply: Reply to vendor quotes.")
-            .expect("index rendered");
-        let tools_block = section.find("<tools>").expect("tools block");
-        assert!(list < index && index < tools_block, "{section}");
-        assert!(
-            !section.contains("Be brief."),
-            "a body leaked into the prefix: {section}"
-        );
+        assert!(section.contains("  - load_skill("), "{section}");
+        assert!(!section.contains("Reply to vendor quotes."), "{section}");
+        assert!(!section.contains("Be brief."), "{section}");
     }
 
     #[test]

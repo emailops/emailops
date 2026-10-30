@@ -245,7 +245,7 @@ what is written where, are in [Privacy & security](../privacy-security/#where-yo
 
 <!-- claim:inst-uninstalling-1 -->
 Removing the app leaves your mail database and downloaded models behind on purpose, so a
-reinstall picks up where you left off. Delete the data directory too for a clean slate.
+reinstall picks up where you left off. Delete the data directory too for a clean slate; that also deletes the skills you created, as does any uninstaller option that removes app data.
 
 <!-- claim:inst-uninstalling-2 -->
 Nothing is removed from your mail provider either way — uninstalling EmailOps never touches

@@ -306,7 +306,8 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
     let _clock_guard = resolve_as_of(&db, account_id, &categories, case.as_of.as_ref())?.map(ClockGuard::install);
     let _n_ctx_guard = case.n_ctx.map(NCtxGuard::install);
     // The case's own skills, removed again when the case ends.
-    let _skills_guard = crate::evals::skill_fixtures::SkillFixtureGuard::install(&db, &case.skills)?;
+    let _skills_guard =
+        crate::evals::skill_fixtures::SkillFixtureGuard::install(&db, &case.skills, &case.bundled_skills)?;
 
     // 1. Fresh conversation. Thread-bound cases seed it with the cleaned
     //    thread (role='system' message) so `run_chat_turn` takes the

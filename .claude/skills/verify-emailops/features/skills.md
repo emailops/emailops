@@ -6,13 +6,14 @@ optional `.md`/`.txt` reference files). Experimental and **off by default**.
 
 ## Sub-features
 
-- `skills.toggle` Settings → **AI Skills** holds **Enable skills** (Experimental badge). Off: no sidebar entry, `load_skill` hidden, planner prompt unchanged.
+- `skills.toggle` Settings → **AI Skills** holds **Enable skills** (Experimental badge). Off: no sidebar entry.
 - `skills.view` Sidebar **Skills** (`data-testid="sidebar-skills"`) opens the two-pane view: list with a per-skill switch (`skill-toggle-<name>`) on the left, `SKILL.md` editor (`skill-editor`) on the right.
 - `skills.new` **New** (`skill-new`, `skill-new-name`, `skill-create`) writes a template the catalog accepts.
 - `skills.save` **Save** (`skill-save`) validates with the catalog's parser, refuses a file changed on disk since opening (`skill-reload` offers "Reload from disk"), and renames the skill when the text declares another `name:`.
 - `skills.delete` **Delete** (`skill-delete` → `skill-delete-confirm` / `skill-delete-cancel`) moves the folder to `skills/.deleted`.
+- `skills.bundled` the view and Settings list the skills included with the app (`bundled-row-<name>`, `bundled-toggle-<name>`), off by default. Selecting one shows its text read-only (`bundled-text`); **Edit a copy** (`bundled-copy`) creates a user skill. `skills-contribute` opens the contribution guide of the public skills repository. In Settings with the feature off, switching one on offers to turn the feature on (`skills-offer`, `skills-offer-yes`, `skills-offer-no`).
 - `skills.slash` typing `/` in the chat input lists enabled skills (`slash-option-<name>`); Enter/Tab fills `/name `, Escape dismisses.
-- `skills.apply` a turn applies a skill via the query planner (`"skill"` next to its verdict), `/name`, or the model's `load_skill`; the reasoning trace shows a **Skill** step.
+- `skills.apply` a skill reaches a turn only through `/name`; the reasoning trace shows a **Skill** step. With skills on and no `/name`, the chat and planner prompts match an install without skills. `load_skill` reads reference files only and is hidden unless an enabled skill has one.
 
 ## How to get to it (user POV)
 
@@ -38,10 +39,14 @@ Preconditions: demo instance (`$V launch`); the demo DB has no skills and the fe
 
 | Case | Test kind |
 |---|---|
-| parsing, naming, catalog, planner rule, block wording, delete/rename/conflict | unit (`services::skills::tests`) |
-| index placement, `load_skill` schema, trace step, history note | unit (`services::chat::*`) |
+| parsing, naming, catalog, block wording, delete/rename/conflict | unit (`services::skills::tests`) |
+| empty prompt without `/name`, `load_skill` reference files, form verdict on a `/name` turn, trace step, history note | unit (`services::chat::*`) |
 | full lifecycle on disk | integration (`skill_lifecycle_through_the_service`) |
 | view, toggle, editor races, `/` suggestions | vitest (`SkillsView`, `ChatInput.slash`, `slashSkills`) |
 | skill command arguments | contract (`src/lib/apiContract/skills.api.test.ts`) |
+| bundled catalog, list ↔ folder, shadowing, copy, switches, data move | unit (`services::skills::tests`, `services::data_move::tests`) |
+| bundled rows, read-only text, Edit a copy, the contribute link, the offer in Settings | vitest (`SkillsView`, `SkillsSettings`) |
 | sidebar entry and view | e2e (`Skills/activar`, `Skills/vista` in `sweep.mjs`) |
-| selection, `/name`, negatives on the demo mailbox | eval (`skill_*` in `src-tauri/evals/chat/cases/skills.yaml`) |
+| bundled skill listed, read, switched on, copied | e2e (`Skills/incluidas` in `sweep.mjs`) |
+| a switched-on bundled skill applied, and a switched-off one not, on the demo mailbox | eval (`bundled_skill_*` in `src-tauri/evals/chat/cases/skills.yaml`) |
+| `/name`, no skill without it, a form request on the demo mailbox | eval (`skill_*` in `src-tauri/evals/chat/cases/skills.yaml`) |

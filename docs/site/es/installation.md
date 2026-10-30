@@ -250,7 +250,8 @@ qué se escribe dónde, están en
 <!-- claim:inst-uninstalling-1 -->
 Quitar la app deja a propósito tu base de datos de correo y los modelos descargados, de modo
 que una reinstalación retoma donde lo dejaste. Borra también el directorio de datos si quieres
-empezar de cero.
+empezar de cero; eso borra también las skills que hayas creado, igual que cualquier opción del
+desinstalador que elimine los datos de la app.
 
 <!-- claim:inst-uninstalling-2 -->
 En ningún caso se elimina nada de tu proveedor de correo — desinstalar EmailOps nunca toca el

@@ -140,6 +140,9 @@ the new CHANGELOG section:
 3. `src/lib/releaseNotes.test.ts` ("ships notes for the current version") fails
    until all four files exist for the `package.json` version, so Phase 4 catches
    a missing one. Stage the folder with the release commit (Phase 6).
+4. Run `git diff --stat <previous tag> -- src-tauri/bundled-skills`. Any skill it
+   shows changes for every user who has it on, with no action of theirs, so name
+   each one and what changed in the CHANGELOG section and in all four notes.
 
 ## Phase 4 — Quality gates
 

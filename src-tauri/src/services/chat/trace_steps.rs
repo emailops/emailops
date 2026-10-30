@@ -622,6 +622,13 @@ mod tests {
     }
 
     #[test]
+    fn a_trace_saved_when_the_planner_picked_skills_still_reads_back() {
+        let applied: crate::models::AppliedSkill =
+            serde_json::from_str(r#"{"name": "weekly-report", "via": "planner"}"#).expect("old trace");
+        assert_eq!(applied.via, crate::models::SkillVia::Planner);
+    }
+
+    #[test]
     fn a_preseeded_shortcut_tool_precedes_the_round_that_consumed_it() {
         let t = trace(
             "heuristic",

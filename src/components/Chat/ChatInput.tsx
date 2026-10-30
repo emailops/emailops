@@ -1,10 +1,10 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoGrow } from '@/hooks/useAutoGrow';
-import { listSkills, type SkillInfo } from '@/lib/api';
+import { listSkills } from '@/lib/api';
 import { researchFilterParts } from '@/lib/researchFilter';
 import { formatDuration } from '@/lib/researchTime';
-import { applySuggestion, matchSkills, slashQuery } from '@/lib/slashSkills';
+import { applySuggestion, matchSkills, type SlashSkill, slashCandidates, slashQuery } from '@/lib/slashSkills';
 import { useChatStore } from '@/stores/chatStore';
 import { useSkillsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
@@ -175,10 +175,10 @@ function ResearchHint() {
  *  the first `/` is typed with the feature on, so a chat that never uses
  *  skills never asks for them. Fetched afresh for each invocation, so a skill
  *  created in the Skills view shows up the next time the user types `/`. */
-function useSlashSkills(value: string): SkillInfo[] | null {
+function useSlashSkills(value: string): SlashSkill[] | null {
   const skillsEnabled = useSkillsEnabledStore((s) => s.enabled);
   const addLog = useLogStore((s) => s.addLog);
-  const [skills, setSkills] = useState<SkillInfo[] | null>(null);
+  const [skills, setSkills] = useState<SlashSkill[] | null>(null);
   const typingSlash = skillsEnabled && slashQuery(value) !== null;
   useEffect(() => {
     if (!typingSlash) {
@@ -189,7 +189,7 @@ function useSlashSkills(value: string): SkillInfo[] | null {
     let cancelled = false;
     listSkills()
       .then((o) => {
-        if (!cancelled) setSkills(o.skills);
+        if (!cancelled) setSkills(slashCandidates(o));
       })
       .catch((err) => addLog('error', 'ai', `Failed to list skills for / suggestions: ${String(err)}`));
     return () => {

@@ -247,9 +247,7 @@ fn check_tools_not_called(forbidden: &[String], trace: Option<&ChatTrace>) -> He
     }
 }
 
-/// Which user skills reached the turn, by any path: applied before the model
-/// ran (`/name`, the planner) or loaded by the model with `load_skill`.
-/// `expected = None` asserts that none did.
+/// Which user skills reached the turn. `expected = None` asserts that none did.
 fn check_skill(expected: Option<&str>, trace: Option<&ChatTrace>) -> HeuristicCheck {
     let mut applied: Vec<(String, &'static str)> = Vec::new();
     if let Some(t) = trace {
@@ -259,10 +257,6 @@ fn check_skill(expected: Option<&str>, trace: Option<&ChatTrace>) -> HeuristicCh
                 crate::models::SkillVia::Planner => "planner",
             };
             applied.push((s.name.clone(), via));
-        }
-        for tc in t.tool_calls.iter().filter(|tc| tc.name == "load_skill") {
-            let name = tc.arguments.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            applied.push((name.to_string(), "load_skill"));
         }
     }
     let actual = if applied.is_empty() {
@@ -828,8 +822,8 @@ mod tests {
     }
 
     // ── skills ──────────────────────────────────────────────────────────
-    // A skill reaches a turn three ways — `/name`, the planner, or the model's
-    // own `load_skill` call — and a case asserts on the skill, not the path.
+    // A skill reaches a turn through `/name`. `via: planner` only reads back
+    // from traces saved before that was the one way.
 
     fn with_applied(mut t: ChatTrace, name: &str, via: crate::models::SkillVia) -> ChatTrace {
         t.applied_skills
@@ -838,38 +832,38 @@ mod tests {
     }
 
     #[test]
-    fn expected_skill_passes_whichever_way_it_was_applied() {
+    fn expected_skill_passes_when_the_skill_was_applied() {
         use crate::models::SkillVia;
-        let by_planner = with_applied(trace_with(vec![]), "travel-brief", SkillVia::Planner);
         let by_slash = with_applied(trace_with(vec![]), "travel-brief", SkillVia::Slash);
-        let by_model = trace_with(vec![tool_call(
-            "load_skill",
-            serde_json::json!({"name": "travel-brief"}),
-        )]);
-        for t in [by_planner, by_slash, by_model] {
-            let check = check_skill(Some("travel-brief"), Some(&t));
-            assert!(check.passed, "{}", check.detail);
-        }
+        let check = check_skill(Some("travel-brief"), Some(&by_slash));
+        assert!(check.passed, "{}", check.detail);
     }
 
     #[test]
     fn expected_skill_fails_on_the_wrong_skill_or_none() {
         use crate::models::SkillVia;
-        let wrong = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Planner);
+        let wrong = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Slash);
         let check = check_skill(Some("travel-brief"), Some(&wrong));
         assert!(!check.passed);
-        assert!(check.actual.contains("vendor-support (planner)"), "{}", check.actual);
+        assert!(check.actual.contains("vendor-support (slash)"), "{}", check.actual);
         assert!(!check_skill(Some("travel-brief"), Some(&trace_with(vec![]))).passed);
     }
 
     #[test]
-    fn no_skill_fails_when_any_path_applied_one() {
+    fn no_skill_fails_when_one_was_applied() {
         use crate::models::SkillVia;
         assert!(check_skill(None, Some(&trace_with(vec![]))).passed);
-        let planner = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Planner);
-        assert!(!check_skill(None, Some(&planner)).passed);
-        let model = trace_with(vec![tool_call("load_skill", serde_json::json!({"name": "x"}))]);
-        assert!(!check_skill(None, Some(&model)).passed);
+        let applied = with_applied(trace_with(vec![]), "vendor-support", SkillVia::Slash);
+        assert!(!check_skill(None, Some(&applied)).passed);
+    }
+
+    #[test]
+    fn reading_a_reference_file_does_not_count_as_applying_a_skill() {
+        let read = trace_with(vec![tool_call(
+            "load_skill",
+            serde_json::json!({"name": "x", "file": "a.md"}),
+        )]);
+        assert!(check_skill(None, Some(&read)).passed);
     }
 
     // ── help grounding ──────────────────────────────────────────────────

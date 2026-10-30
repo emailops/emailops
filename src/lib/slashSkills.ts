@@ -1,7 +1,16 @@
-import type { SkillInfo } from '@/lib/api';
+import type { SkillInfo, SkillsOverview } from '@/lib/api';
 
 /** Most suggestions shown at once under the chat input. */
 const MAX_SUGGESTIONS = 6;
+
+/** What a `/name` suggestion needs from a skill, user or bundled. */
+export type SlashSkill = Pick<SkillInfo, 'name' | 'description' | 'enabled'>;
+
+/** Every skill a `/name` could mean: the user's, then the bundled ones no
+ *  skill of the user's replaces. */
+export function slashCandidates(overview: SkillsOverview): SlashSkill[] {
+  return [...overview.skills, ...overview.bundled.filter((b) => !b.shadowed)];
+}
 
 /**
  * The skill name being typed when the message starts with `/` and the first
@@ -16,7 +25,7 @@ export function slashQuery(value: string): string | null {
 
 /** Enabled skills matching `query`: names that start with it first, then names
  *  that contain it, each group alphabetical, capped. */
-export function matchSkills(skills: SkillInfo[], query: string): SkillInfo[] {
+export function matchSkills(skills: SlashSkill[], query: string): SlashSkill[] {
   const enabled = skills.filter((s) => s.enabled).sort((a, b) => a.name.localeCompare(b.name));
   const prefix = enabled.filter((s) => s.name.startsWith(query));
   const infix = enabled.filter((s) => !s.name.startsWith(query) && s.name.includes(query));

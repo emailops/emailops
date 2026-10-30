@@ -208,30 +208,7 @@ fn no_skills_means_no_invocation() {
     assert_eq!(plan_invocation("/weekly-summary", &[]), None);
 }
 
-// ── render_catalog / render_skill_block ────────────────────────────────
-
-#[test]
-fn catalog_lists_one_line_per_skill_in_name_order() {
-    let (text, names) = render_catalog(&[skill("b-skill", "Second."), skill("a-skill", "First.")]);
-    assert_eq!(text, "- a-skill: First.\n- b-skill: Second.");
-    assert_eq!(names, vec!["a-skill", "b-skill"]);
-}
-
-#[test]
-fn catalog_stops_at_its_budget_and_only_names_what_it_lists() {
-    let desc = "x".repeat(400);
-    let skills: Vec<Skill> = (0..20).map(|i| skill(&format!("s{i:02}"), &desc)).collect();
-    let (text, names) = render_catalog(&skills);
-    assert!(text.chars().count() <= MAX_CATALOG_CHARS, "{}", text.len());
-    assert!(!names.is_empty() && names.len() < 20);
-    assert_eq!(text.lines().count(), names.len());
-    assert_eq!(names[0], "s00");
-}
-
-#[test]
-fn empty_catalog_renders_nothing() {
-    assert_eq!(render_catalog(&[]), (String::new(), Vec::new()));
-}
+// ── render_skill_block ─────────────────────────────────────────────────
 
 #[test]
 fn skill_block_carries_the_name_and_the_body() {
@@ -393,22 +370,7 @@ fn ensure_skills_dir_errors_without_a_data_dir() {
 
 // ── skills index (system prompt) ───────────────────────────────────────
 
-#[test]
-fn the_index_lists_skills_and_tells_the_model_to_load_first() {
-    let index = render_skills_index(&[skill("vendor-support", "Find support contacts.")]).unwrap();
-    assert!(index.contains("- vendor-support: Find support contacts."), "{index}");
-    assert!(index.contains("load_skill"), "{index}");
-    assert!(index.contains("FIRST"), "{index}");
-    // It must never claim a load happened without the call.
-    assert!(index.contains("Never say you loaded a skill"), "{index}");
-}
-
-#[test]
-fn no_skills_means_no_index() {
-    assert_eq!(render_skills_index(&[]), None);
-}
-
-// ── reference files (level 2) ──────────────────────────────────────────
+// ── reference files ────────────────────────────────────────────────────
 
 #[test]
 fn loading_lists_the_skills_text_files_but_not_skill_md_or_others() {
@@ -441,29 +403,20 @@ fn the_skill_block_names_its_reference_files() {
 }
 
 #[test]
-fn the_skill_block_says_it_is_already_loaded() {
-    // A `/name` turn carries the block in the user message; without this the
-    // index's "call load_skill FIRST" made the model load it a second time.
+fn the_skill_block_tells_the_model_to_follow_it() {
     let block = render_skill_block(&skill("vendor-reply", "d"));
-    // The explicit wording measured best: softer phrasing brought back the
-    // redundant load_skill round and models dropped the skill's steps.
     assert!(
-        block.contains("already loaded — do not call load_skill for \"vendor-reply\". Follow them:"),
+        block.contains("Its instructions are already loaded — do not load them again. Follow them:"),
         "{block}"
     );
+    assert!(!block.contains("load_skill"), "{block}");
 }
 
 #[test]
-fn the_already_loaded_note_still_lets_the_model_read_reference_files() {
-    // Forbidding load_skill outright made small models skip the reference
-    // files the body relies on.
+fn only_a_skill_with_files_points_at_load_skill() {
     let mut s = skill("vendor-support", "d");
     s.files = vec!["references/escalation.md".into()];
     let block = render_skill_block(&s);
-    assert!(
-        block.contains("do not call load_skill for \"vendor-support\" except to read one of its reference files"),
-        "{block}"
-    );
     assert!(block.contains("load_skill(name=\"vendor-support\", file="), "{block}");
 }
 
@@ -498,33 +451,6 @@ fn a_long_reference_is_cut_with_a_visible_marker() {
     let text = read_reference(catalog.get("big").unwrap(), "notes.md").unwrap();
     assert!(text.ends_with("[truncated]"), "{}", &text[text.len() - 30..]);
     assert!(text.chars().count() <= MAX_BODY_CHARS + 20);
-}
-
-// ── render_planner_rule ────────────────────────────────────────────────
-
-#[test]
-fn the_planner_rule_is_empty_without_skills() {
-    // An install without skills sends the planner the same prompt as before.
-    assert_eq!(render_planner_rule(&[]), "");
-}
-
-#[test]
-fn the_planner_rule_lists_the_skills_and_how_to_name_one() {
-    let rule = render_planner_rule(&[
-        skill("travel-brief", "Brief the user on a trip."),
-        skill("a-skill", "First."),
-    ]);
-    assert!(
-        rule.contains("- a-skill: First.\n- travel-brief: Brief the user on a trip."),
-        "{rule}"
-    );
-    assert!(rule.contains(r#""skill": "<name>""#), "{rule}");
-    // It rides alongside any verdict, a defer included.
-    assert!(rule.contains(r#"{"defer": true, "skill": "<name>"}"#), "{rule}");
-    // Naming a skill must not turn a defer into an invented filter.
-    assert!(rule.contains("never changes the verdict"), "{rule}");
-    // Descriptions only — never a body in the planner prompt.
-    assert!(!rule.contains("Do the thing."), "{rule}");
 }
 
 // ── editing from the app ───────────────────────────────────────────────
@@ -808,6 +734,284 @@ fn deleting_the_same_name_twice_keeps_both_copies() {
     let deleted = tmp.path().join(SKILLS_DIR).join(DELETED_DIR);
     assert!(deleted.join("alpha").is_dir());
     assert!(deleted.join("alpha-2").is_dir());
+}
+
+// ── bundled skills ─────────────────────────────────────────────────────
+
+const BUNDLED_NAME: &str = "inbox-triage";
+
+fn db_with_feature_on(tmp: &tempfile::TempDir) -> Database {
+    let db = db_in(tmp);
+    db.set_preference(SKILLS_ENABLED_PREF, "true").unwrap();
+    db
+}
+
+fn bundled_folder() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("bundled-skills")
+}
+
+#[test]
+fn every_bundled_skill_loads() {
+    let catalog = load_bundled();
+    assert_eq!(catalog.errors, Vec::new());
+    assert_eq!(catalog.names(), vec!["follow-up-check", "inbox-triage"]);
+}
+
+#[test]
+fn the_bundled_list_and_the_folder_agree() {
+    let mut on_disk: Vec<String> = fs::read_dir(bundled_folder())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    on_disk.sort();
+    assert_eq!(on_disk, load_bundled().names());
+    for name in &on_disk {
+        let file = bundled_folder().join(name).join(SKILL_FILE);
+        assert_eq!(
+            bundled_source(name),
+            Some(fs::read_to_string(file).unwrap().as_str()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_bundled_skill_holds_only_its_skill_md() {
+    // Reference files are read from disk, so one in a bundled skill would be
+    // promised to the model and never reach it.
+    for skill in load_bundled().skills {
+        let entries: Vec<String> = fs::read_dir(bundled_folder().join(&skill.name))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec![SKILL_FILE.to_string()], "{}", skill.name);
+    }
+}
+
+#[test]
+fn the_bundled_folder_records_its_source_commit() {
+    let source = fs::read_to_string(bundled_folder().join("SOURCE")).unwrap();
+    let commit = source.split_whitespace().last().unwrap_or_default();
+    assert_eq!(commit.len(), 40, "{source}");
+    assert!(commit.chars().all(|c| c.is_ascii_hexdigit()), "{source}");
+}
+
+#[test]
+fn bundled_skills_are_listed_off_while_the_feature_is_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let o = overview(&db_in(&tmp));
+    assert!(!o.enabled);
+    let listed: Vec<(&str, bool)> = o.bundled.iter().map(|b| (b.name.as_str(), b.enabled)).collect();
+    assert_eq!(listed, vec![("follow-up-check", false), ("inbox-triage", false)]);
+    assert!(!o.bundled[0].description.is_empty());
+    assert!(o.skills.is_empty());
+}
+
+#[test]
+fn with_every_bundled_skill_off_the_catalog_is_the_users_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let dir = tmp.path().join(SKILLS_DIR);
+    assert_eq!(catalog_for(&db), SkillCatalog::default());
+
+    write_skill(&dir, "alpha", &skill_md("alpha", "First.", "Body."));
+    assert_eq!(catalog_for(&db), load_catalog(&dir));
+}
+
+#[test]
+fn a_switched_on_bundled_skill_works_like_any_other() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    write_skill(
+        &tmp.path().join(SKILLS_DIR),
+        "zeta",
+        &skill_md("zeta", "Last.", "Body."),
+    );
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+
+    let catalog = catalog_for(&db);
+    assert_eq!(catalog.names(), vec![BUNDLED_NAME, "zeta"]);
+    let turn = plan_skill_turn("/inbox-triage what first?", &catalog).unwrap();
+    assert_eq!(turn.skills, vec![BUNDLED_NAME]);
+    assert!(turn.block.contains("list_open_threads"), "{}", turn.block);
+
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, false).unwrap();
+    assert_eq!(catalog_for(&db).names(), vec!["zeta"]);
+}
+
+#[test]
+fn a_switched_on_bundled_skill_needs_the_feature() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    assert_eq!(catalog_for(&db), SkillCatalog::default());
+    let listed = overview(&db);
+    assert!(listed.bundled.iter().any(|b| b.name == BUNDLED_NAME && b.enabled));
+}
+
+#[test]
+fn only_a_bundled_skill_can_be_switched_on_as_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let err = set_bundled_skill_enabled(&db, "not-bundled", true).unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err}");
+    assert_eq!(bundled_skills_on(&db), Default::default());
+}
+
+#[test]
+fn concurrent_bundled_toggles_keep_every_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(db_with_feature_on(&tmp));
+    let threads: Vec<_> = ["follow-up-check", "inbox-triage"]
+        .into_iter()
+        .map(|name| {
+            let db = db.clone();
+            std::thread::spawn(move || set_bundled_skill_enabled(&db, name, true).unwrap())
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    assert_eq!(bundled_skills_on(&db).len(), 2);
+}
+
+#[test]
+fn nothing_bundled_is_written_to_the_skills_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    catalog_for(&db);
+    overview(&db);
+    read_bundled_source(BUNDLED_NAME).unwrap();
+    assert!(!tmp.path().join(SKILLS_DIR).exists());
+}
+
+#[test]
+fn a_user_skill_with_a_bundled_name_wins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    write_skill(
+        &tmp.path().join(SKILLS_DIR),
+        BUNDLED_NAME,
+        &skill_md(BUNDLED_NAME, "Mine.", "My own steps."),
+    );
+
+    let catalog = catalog_for(&db);
+    assert_eq!(catalog.names(), vec![BUNDLED_NAME]);
+    assert_eq!(catalog.get(BUNDLED_NAME).unwrap().body, "My own steps.");
+    let listed = overview(&db);
+    let bundled = listed.bundled.iter().find(|b| b.name == BUNDLED_NAME).unwrap();
+    assert!(bundled.shadowed);
+}
+
+#[test]
+fn a_user_skill_keeps_a_bundled_one_inactive_while_it_is_off_or_broken() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let dir = tmp.path().join(SKILLS_DIR);
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+
+    write_skill(&dir, BUNDLED_NAME, &skill_md(BUNDLED_NAME, "Mine.", "Body."));
+    set_skill_enabled(&db, BUNDLED_NAME, false).unwrap();
+    assert_eq!(catalog_for(&db).names(), Vec::<&str>::new());
+
+    set_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    write_skill(&dir, BUNDLED_NAME, "no frontmatter");
+    assert_eq!(catalog_for(&db).names(), Vec::<&str>::new());
+    assert_eq!(catalog_for(&db).errors.len(), 1);
+}
+
+#[test]
+fn the_bundled_text_is_read_raw_and_only_for_bundled_names() {
+    let text = read_bundled_source(BUNDLED_NAME).unwrap();
+    assert!(text.starts_with("---\nname: inbox-triage\n"), "{text}");
+    let err = read_bundled_source("not-bundled").unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err}");
+}
+
+#[test]
+fn a_copy_is_a_normal_user_skill() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    copy_bundled_skill(&db, BUNDLED_NAME).unwrap();
+
+    let dir = tmp.path().join(SKILLS_DIR);
+    assert_eq!(load_catalog(&dir).names(), vec![BUNDLED_NAME]);
+    assert_eq!(
+        read_skill_source(&db, BUNDLED_NAME).unwrap(),
+        read_bundled_source(BUNDLED_NAME).unwrap()
+    );
+    assert!(overview(&db).skills.iter().any(|s| s.name == BUNDLED_NAME && s.enabled));
+    assert!(catalog_for(&db)
+        .get(BUNDLED_NAME)
+        .is_some_and(|s| s.path.ends_with("inbox-triage/SKILL.md")));
+}
+
+#[test]
+fn a_copy_of_a_switched_off_bundled_skill_stays_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    copy_bundled_skill(&db, BUNDLED_NAME).unwrap();
+    assert_eq!(catalog_for(&db), {
+        let mut empty = load_catalog(&tmp.path().join(SKILLS_DIR));
+        empty.skills.clear();
+        empty
+    });
+    assert!(overview(&db)
+        .skills
+        .iter()
+        .any(|s| s.name == BUNDLED_NAME && !s.enabled));
+}
+
+#[test]
+fn a_copy_refuses_a_name_that_exists_and_leaves_that_folder_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let dir = tmp.path().join(SKILLS_DIR);
+    let mine = skill_md(BUNDLED_NAME, "Mine.", "My own steps.");
+    write_skill(&dir, BUNDLED_NAME, &mine);
+    fs::write(dir.join(BUNDLED_NAME).join("notes.md"), "keep me").unwrap();
+
+    let err = copy_bundled_skill(&db, BUNDLED_NAME).unwrap_err().to_string();
+
+    assert!(err.contains("already exists"), "{err}");
+    assert_eq!(
+        fs::read_to_string(dir.join(BUNDLED_NAME).join(SKILL_FILE)).unwrap(),
+        mine
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join(BUNDLED_NAME).join("notes.md")).unwrap(),
+        "keep me"
+    );
+    assert!(disabled_skills(&db).is_empty());
+}
+
+#[test]
+fn only_a_bundled_skill_can_be_copied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let err = copy_bundled_skill(&db, "not-bundled").unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)), "{err}");
+    assert!(!tmp.path().join(SKILLS_DIR).exists());
+}
+
+#[test]
+fn an_invocation_of_a_switched_off_bundled_skill_is_recognised() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_with_feature_on(&tmp);
+    let off = switched_off_skills(&db);
+    assert_eq!(
+        invoked_disabled_skill("/inbox-triage what first?", &off),
+        Some(BUNDLED_NAME)
+    );
+    set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
+    let off = switched_off_skills(&db);
+    assert_eq!(invoked_disabled_skill("/inbox-triage what first?", &off), None);
 }
 
 #[test]
