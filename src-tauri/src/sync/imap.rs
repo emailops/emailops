@@ -333,11 +333,12 @@ pub struct ImapClient {
     /// Only the Sent listing needs it — every other pass is handed an explicit
     /// window by the caller. `None` means "All mail".
     sync_from_timestamp: Option<i64>,
-    /// The session this client's operations share. A sync pass builds one
+    /// The sessions this client's operations share. A sync pass builds one
     /// client and walks every folder and fetch chunk with it, so this turns a
     /// TCP + TLS + LOGIN per operation into one per pass (issue #181:
-    /// handshakes timing out mid-sync on an account with many folders).
-    /// Closed when the client is dropped.
+    /// handshakes timing out mid-sync on an account with many folders) — two
+    /// when a chunk downloads while the previous one is processed. Closed
+    /// when the client is dropped.
     session: Arc<SessionSlot<ImapSession>>,
 }
 

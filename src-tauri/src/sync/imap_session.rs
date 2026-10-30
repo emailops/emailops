@@ -54,40 +54,51 @@ pub(crate) fn connect_with_retry<S>(
     }
 }
 
-/// The session an `ImapClient` keeps between operations.
+/// Idle sessions a [`SessionSlot`] keeps. Two, because a sync downloads the
+/// next chunk while the current one is processed, and processing can need the
+/// server too (attachments, moves); one more would only hold logins open.
+const MAX_IDLE_SESSIONS: usize = 2;
+
+/// The sessions an `ImapClient` keeps between operations.
 pub(crate) struct SessionSlot<S> {
-    session: Mutex<Option<S>>,
+    sessions: Mutex<Vec<S>>,
 }
 
 impl<S> SessionSlot<S> {
     pub(crate) fn new() -> Self {
         Self {
-            session: Mutex::new(None),
+            sessions: Mutex::new(Vec::new()),
         }
     }
 
-    /// Take the kept session if `alive` confirms it still works, otherwise
-    /// open a new one with `connect`.
+    /// Take a kept session that `alive` confirms still works, otherwise open a
+    /// new one with `connect`. A kept session that fails the check is closed.
     pub(crate) fn checkout<E>(
         &self,
-        alive: impl FnOnce(&mut S) -> bool,
+        mut alive: impl FnMut(&mut S) -> bool,
         connect: impl FnOnce() -> Result<S, E>,
     ) -> Result<S, E> {
-        let kept = self.session.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(mut session) = kept {
+        loop {
+            let kept = self.sessions.lock().unwrap_or_else(PoisonError::into_inner).pop();
+            let Some(mut session) = kept else {
+                return connect();
+            };
             if alive(&mut session) {
                 return Ok(session);
             }
         }
-        connect()
     }
 
-    /// Keep `session` for the next operation.
+    /// Keep `session` for the next operation, unless [`MAX_IDLE_SESSIONS`]
+    /// are kept already; then it is closed.
     ///
     /// An operation that fails never checks its session back in, so a session
     /// in an unknown state is dropped rather than reused.
     pub(crate) fn checkin(&self, session: S) {
-        *self.session.lock().unwrap_or_else(PoisonError::into_inner) = Some(session);
+        let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+        if sessions.len() < MAX_IDLE_SESSIONS {
+            sessions.push(session);
+        }
     }
 }
 
@@ -116,6 +127,38 @@ mod tests {
             slot.checkin(session);
         }
         assert_eq!(connects.get(), 1);
+    }
+
+    #[test]
+    fn two_overlapping_operations_keep_their_two_connections() {
+        // A sync downloads the next chunk while the current one is processed,
+        // so two operations can hold a session at once. Both are kept, or
+        // every chunk would log in again.
+        let slot = SessionSlot::new();
+        let connects = Cell::new(0);
+        for _ in 0..3 {
+            let download = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+            let processing = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+            slot.checkin(processing);
+            slot.checkin(download);
+        }
+        assert_eq!(connects.get(), 2);
+    }
+
+    #[test]
+    fn at_most_two_idle_sessions_are_kept() {
+        let slot = SessionSlot::new();
+        let connects = Cell::new(0);
+        let sessions: Vec<Fake> = (0..3)
+            .map(|_| slot.checkout(|_| true, counting_connect(&connects)).unwrap())
+            .collect();
+        for session in sessions {
+            slot.checkin(session);
+        }
+        for _ in 0..3 {
+            let _held = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        }
+        assert_eq!(connects.get(), 4, "the third idle session is closed, not kept");
     }
 
     #[test]

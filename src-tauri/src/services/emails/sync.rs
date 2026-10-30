@@ -377,6 +377,9 @@ pub async fn sync_account_with_provider(
     email_provider: Box<dyn EmailProvider>,
 ) -> Result<()> {
     let account_id = &account.id;
+    // Shared with the background task that downloads the next chunk while the
+    // current one is processed (see `spawn_chunk_fetch`).
+    let email_provider: Arc<dyn EmailProvider> = Arc::from(email_provider);
 
     // A widened sync range leaves a reset queued for the extra mailboxes. This
     // is the first point at which applying it is safe — see the function docs.
@@ -707,21 +710,33 @@ pub async fn sync_account_with_provider(
                 ),
             );
 
-            for chunk in new_message_refs.chunks(BATCH_SIZE) {
+            // While a chunk is written, scored and its attachments downloaded,
+            // the next one is already on the wire. Dropping the set (abort, an
+            // error) cancels a download nobody will process.
+            let chunks: Vec<_> = new_message_refs.chunks(BATCH_SIZE).collect();
+            let mut prefetch = tokio::task::JoinSet::new();
+            if let Some(first) = chunks.first() {
+                let pause = if first_batch { Duration::ZERO } else { batch_pause };
+                spawn_chunk_fetch(&mut prefetch, &email_provider, first, pause);
+            }
+            first_batch = false;
+
+            for (index, chunk) in chunks.iter().enumerate() {
                 // Exit early if this run has been retired mid-flight — the account was
                 // deleted, or its sync range changed and a replacement run is queued.
                 if take_sync_abort(&sync_abort_flags, account_id) {
                     return Ok(());
                 }
 
-                if !first_batch {
-                    sleep(batch_pause).await;
+                let batch_results = match prefetch.join_next().await {
+                    Some(joined) => {
+                        joined.map_err(|e| AppError::SyncError(format!("Message download task failed: {e}")))??
+                    }
+                    None => return Err(AppError::SyncError("Message download was not started".to_string())),
+                };
+                if let Some(next) = chunks.get(index + 1) {
+                    spawn_chunk_fetch(&mut prefetch, &email_provider, next, batch_pause);
                 }
-                first_batch = false;
-
-                let ids: Vec<&str> = chunk.iter().map(|r| r.id.as_str()).collect();
-
-                let batch_results = email_provider.batch_get_messages(&ids).await?;
 
                 let mut chunk_emails: Vec<(Email, Vec<crate::sync::provider::AttachmentInfo>)> = Vec::new();
 
@@ -3206,6 +3221,38 @@ mod inter_batch_pacing_tests {
     }
 }
 
+/// What one chunk download returns: the provider's per-message results.
+type FetchedChunk = Result<
+    Vec<
+        Result<(
+            Email,
+            crate::sync::provider::EmailCategory,
+            Vec<crate::sync::provider::AttachmentInfo>,
+        )>,
+    >,
+>;
+
+/// Start downloading `chunk` in the background, `pause` after now.
+///
+/// The pause keeps the provider pacing of [`inter_batch_delay`]: a request
+/// still starts at least that long after the previous one answered.
+fn spawn_chunk_fetch(
+    set: &mut tokio::task::JoinSet<FetchedChunk>,
+    provider: &Arc<dyn EmailProvider>,
+    chunk: &[crate::sync::provider::MessageRef],
+    pause: Duration,
+) {
+    let provider = Arc::clone(provider);
+    let ids: Vec<String> = chunk.iter().map(|r| r.id.clone()).collect();
+    set.spawn(async move {
+        if !pause.is_zero() {
+            sleep(pause).await;
+        }
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        provider.batch_get_messages(&ids).await
+    });
+}
+
 /// Pause between message batches, per provider.
 ///
 /// Throttling is already handled *reactively* by the providers themselves:
@@ -5019,6 +5066,132 @@ mod interrupted_sync_status_tests {
         assert!(
             resets.is_empty(),
             "removed account must not log a reset failure, got: {resets:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod download_pipeline_tests {
+    use super::*;
+    use crate::sync::provider::{AttachmentInfo, EmailCategory, FakeEmailProvider, FakeLatency};
+
+    fn gmail_account() -> Account {
+        Account {
+            id: "acc-pipe".to_string(),
+            provider: "gmail".to_string(),
+            email: "me@example.com".to_string(),
+            name: "Me".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
+        }
+    }
+
+    fn inbox_email(id: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: "acc-pipe".to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            references: None,
+            subject: format!("subject {id}"),
+            sender: "Someone".to_string(),
+            sender_email: "someone@example.com".to_string(),
+            recipients: vec!["me@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "inbox".to_string(),
+            is_sent: false,
+            is_starred: false,
+            headers: None,
+        }
+    }
+
+    /// A new account whose provider holds `count` inbox messages, each with
+    /// one attachment the account is set to download during sync.
+    fn new_account_with_attachments(account: &Account, count: usize) -> (Arc<Database>, FakeEmailProvider) {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.connection()
+            .execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled) \
+                 VALUES (?1, ?2, ?3, ?3, 0, 0, 1)",
+                rusqlite::params![account.id, account.provider, account.email],
+            )
+            .expect("seed account");
+        let settings = crate::models::AccountSettings {
+            auto_download_attachment_categories: vec!["primary".to_string()],
+            ..Default::default()
+        };
+        db.set_preference(
+            &format!("account_settings:{}", account.id),
+            &serde_json::to_string(&settings).expect("settings json"),
+        )
+        .expect("settings");
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        for n in 0..count {
+            let id = format!("m{n}");
+            let attachment = AttachmentInfo {
+                attachment_id: format!("a{n}"),
+                filename: format!("file{n}.pdf"),
+                mime_type: "application/pdf".to_string(),
+                size: 3,
+                inline_data: None,
+            };
+            provider.add_message(
+                inbox_email(&id, 1_000 + n as i64),
+                EmailCategory::Primary,
+                vec![attachment],
+            );
+            provider.set_attachment_bytes(&id, format!("a{n}"), b"pdf".to_vec());
+        }
+        (db, provider)
+    }
+
+    async fn run_sync(db: &Arc<Database>, account: &Account, provider: FakeEmailProvider) -> Result<()> {
+        let temp = tempfile::tempdir().expect("temp dir");
+        sync_account_with_provider(
+            db,
+            account,
+            temp.path(),
+            None,
+            crate::services::task_queue::TaskQueue::new(1, "test-sync"),
+            Arc::new(Mutex::new(HashMap::new())),
+            Box::new(provider),
+        )
+        .await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_next_chunk_downloads_while_the_current_one_is_processed() {
+        // Four chunks of twenty. Fetching a chunk takes 2 s; processing it
+        // (twenty attachment downloads at 100 ms) takes another 2 s.
+        let account = gmail_account();
+        let (db, provider) = new_account_with_attachments(&account, 80);
+        provider.set_latency(FakeLatency {
+            batch_get: Duration::from_secs(2),
+            attachment: Duration::from_millis(100),
+        });
+
+        let started = tokio::time::Instant::now();
+        run_sync(&db, &account, provider).await.expect("sync");
+        let elapsed = started.elapsed();
+
+        let ids: Vec<String> = (0..80).map(|n| format!("m{n}")).collect();
+        assert_eq!(db.emails_exist_batch(&ids).expect("exists").len(), 80);
+        // One after the other: 4 × (2 s fetch + 2 s processing) + 3 × 0.5 s
+        // pause = 17.5 s. Overlapped, each chunk after the first costs the
+        // longer of the two (0.5 s pause + 2 s fetch): 2 + 3 × 2.5 + 2 = 11.5 s.
+        assert!(
+            elapsed <= Duration::from_millis(12_000),
+            "fetching and processing ran one after the other: {elapsed:?}"
         );
     }
 }
