@@ -939,6 +939,16 @@ pub struct FakeEmailProvider {
     listing_failure: std::sync::RwLock<Option<String>>,
     /// What `get_signature` answers for the profile address.
     signature: std::sync::RwLock<Option<String>>,
+    /// How long `batch_get_messages` and `fetch_attachment_bytes` take — a
+    /// provider on a real network, for tests that time a sync.
+    latency: std::sync::RwLock<FakeLatency>,
+}
+
+/// Simulated network time of a [`FakeEmailProvider`]. Zero by default.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FakeLatency {
+    pub batch_get: std::time::Duration,
+    pub attachment: std::time::Duration,
 }
 
 /// The change log of a [`FakeEmailProvider`] modelling Gmail.
@@ -1079,7 +1089,17 @@ impl FakeEmailProvider {
             send_failure: std::sync::RwLock::new(None),
             listing_failure: std::sync::RwLock::new(None),
             signature: std::sync::RwLock::new(None),
+            latency: std::sync::RwLock::new(FakeLatency::default()),
         }
+    }
+
+    /// Make every message batch and attachment download take this long.
+    pub fn set_latency(&self, latency: FakeLatency) {
+        *self.latency.write().unwrap_or_else(PoisonError::into_inner) = latency;
+    }
+
+    fn latency(&self) -> FakeLatency {
+        *self.latency.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Make `archive_message` answer `location` from now on.
@@ -1493,6 +1513,10 @@ impl EmailProvider for FakeEmailProvider {
         message_ids: &[&str],
     ) -> Result<Vec<Result<(Email, EmailCategory, Vec<AttachmentInfo>)>>> {
         self.record_call("batch_get_messages");
+        let delay = self.latency().batch_get;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let mut results = Vec::with_capacity(message_ids.len());
         for id in message_ids {
             results.push(self.get_message(id).await);
@@ -1637,6 +1661,10 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
+        let delay = self.latency().attachment;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let key = (message_id.to_string(), attachment_id.to_string());
         self.attachment_bytes
             .read()
