@@ -4006,6 +4006,21 @@ window-sized parts. Condensing the notes in rounds
 when they outgrow the slot — each note is already capped to its share. Revisit it if
 documents of hundreds of pages turn up.
 
+## 2026-10-30 — The chat reads PDF text with pdf_oxide, not pdf-extract
+
+**Decision:** `services::pdf_text` extracts the text of an open PDF with `pdf_oxide`
+(pure Rust, MIT/Apache, default features off, `legacy-crypto` on so RC4-encrypted PDFs
+still open) in place of `pdf-extract`.
+**Context:** Reports printed from Chrome embed a TrueType subset (`Type0` /
+`Identity-H`) whose ToUnicode map can lack a glyph. `pdf-extract` emitted NUL for it, so
+words lost letters ("Hemates") and split at glyph boundaries, and the model skipped rows
+it could not recognise. `pdf_oxide` falls back to the embedded font and keeps the
+words whole. It adds about 20 crates to the lockfile.
+**Rejected:** Pdfium (`pdfium-render`) — it needs a native library bundled and signed
+for every platform and slice, which the release pipeline would have to carry. Poppler
+`pdftotext` — a system install the app cannot count on. Replacing NUL with U+FFFD —
+keeps the turn alive but still shows the model a broken word.
+
 ## 2026-10-30 — Reviewed skills ship inside the app and are used in place
 
 **Decision:** A gallery of reviewed skills is bundled with the app, not fetched: the text
