@@ -1,29 +1,42 @@
+import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  copyBundledSkill,
   createSkill,
   deleteSkill,
   listSkills,
+  readBundledSkill,
   readSkill,
   type SkillsOverview,
   saveSkill,
+  setBundledSkillEnabled,
   setSkillEnabled,
 } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
+import { SkillSwitch } from './SkillSwitch';
+
+/** How to contribute a skill to the public skills repository. */
+export const SKILLS_CONTRIBUTE_URL = 'https://github.com/emailops/emailops-skills/blob/main/CONTRIBUTING.md';
 
 /**
  * The Skills view: every skill in `<data dir>/skills/` on the left, each with
  * its own on/off switch, and the selected skill's `SKILL.md` in an editor on
  * the right. The file on disk stays the source of truth — Save writes it back
  * (the backend refuses text the chat could not load) and the folder can still
- * be edited in any other editor.
+ * be edited in any other editor. Below them, the skills that ship with the app:
+ * each with its own switch and its text read-only; Edit a copy turns one into a
+ * skill of the user's.
  */
 export function SkillsView() {
   const { t } = useTranslation(['settings']);
   const addLog = useLogStore((s) => s.addLog);
   const [overview, setOverview] = useState<SkillsOverview | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // Which bundled skill is open instead, and the text of those opened so far.
+  const [selectedBundled, setSelectedBundled] = useState<string | null>(null);
+  const [bundledTexts, setBundledTexts] = useState<Record<string, string>>({});
   // Text as last read from / written to disk, and unsaved edits, per skill:
   // switching skills never throws an edit away.
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -46,6 +59,7 @@ export function SkillsView() {
   const open = useCallback(
     async (name: string) => {
       setSelected(name);
+      setSelectedBundled(null);
       setError(null);
       setStatus(null);
       try {
@@ -86,6 +100,50 @@ export function SkillsView() {
     } catch (err) {
       fail(`Failed to switch skill ${name}`, err);
     }
+  };
+
+  const openBundled = async (name: string) => {
+    setSelected(null);
+    setSelectedBundled(name);
+    setError(null);
+    setStatus(null);
+    try {
+      const body = await readBundledSkill(name);
+      setBundledTexts((t) => ({ ...t, [name]: body }));
+    } catch (err) {
+      fail(`Failed to read bundled skill ${name}`, err);
+    }
+  };
+
+  const handleBundledToggle = async (name: string, enabled: boolean) => {
+    setError(null);
+    try {
+      await setBundledSkillEnabled(name, enabled);
+      addLog('info', 'ai', `Bundled skill ${name} ${enabled ? 'enabled' : 'disabled'}`);
+      await reload();
+    } catch (err) {
+      fail(`Failed to switch bundled skill ${name}`, err);
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!selectedBundled) return;
+    const name = selectedBundled;
+    setError(null);
+    try {
+      await copyBundledSkill(name);
+      addLog('success', 'ai', `Created skill ${name} from the bundled one`);
+      await reload();
+      await open(name);
+    } catch (err) {
+      fail(`Failed to copy bundled skill ${name}`, err);
+    }
+  };
+
+  const openContributing = () => {
+    void openExternal(SKILLS_CONTRIBUTE_URL).catch((err) => {
+      addLog('error', 'system', `Failed to open ${SKILLS_CONTRIBUTE_URL}: ${errorText(err)}`);
+    });
   };
 
   const text = selected ? (drafts[selected] ?? saved[selected] ?? '') : '';
@@ -224,26 +282,56 @@ export function SkillsView() {
                 </span>
                 <span className="block text-xs text-gray-500 line-clamp-2">{s.description}</span>
               </button>
+              <SkillSwitch
+                checked={s.enabled}
+                label={t('settings:skills.view.toggle', { name: s.name })}
+                testId={`skill-toggle-${s.name}`}
+                onToggle={() => void handleToggle(s.name, !s.enabled)}
+              />
+            </li>
+          ))}
+          {overview && overview.bundled.length > 0 && (
+            <li className="px-4 pt-3 pb-1 text-xs font-medium text-gray-500">{t('settings:skills.bundledTitle')}</li>
+          )}
+          {overview?.bundled.map((b) => (
+            <li
+              key={b.name}
+              className={`flex items-start gap-2 px-4 py-2 ${selectedBundled === b.name ? 'bg-primary-50' : 'hover:bg-gray-50'}`}
+            >
               <button
                 type="button"
-                role="switch"
-                aria-checked={s.enabled}
-                aria-label={t('settings:skills.view.toggle', { name: s.name })}
-                data-testid={`skill-toggle-${s.name}`}
-                onClick={() => void handleToggle(s.name, !s.enabled)}
-                className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors ${
-                  s.enabled ? 'bg-primary-600' : 'bg-gray-300'
-                }`}
+                data-testid={`bundled-row-${b.name}`}
+                onClick={() => void openBundled(b.name)}
+                className="flex-1 min-w-0 text-left"
               >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition ${
-                    s.enabled ? 'translate-x-4' : 'translate-x-0'
-                  }`}
-                />
+                <span className={`block text-sm truncate ${b.enabled ? 'text-gray-800' : 'text-gray-500'}`}>
+                  {b.name}
+                </span>
+                <span className="block text-xs text-gray-500 line-clamp-2">
+                  {b.shadowed ? t('settings:skills.view.bundledShadowed') : b.description}
+                </span>
               </button>
+              {!b.shadowed && (
+                <SkillSwitch
+                  checked={b.enabled}
+                  label={t('settings:skills.view.toggle', { name: b.name })}
+                  testId={`bundled-toggle-${b.name}`}
+                  onToggle={() => void handleBundledToggle(b.name, !b.enabled)}
+                />
+              )}
             </li>
           ))}
         </ul>
+        <div className="border-t border-gray-200 p-3">
+          <button
+            type="button"
+            data-testid="skills-contribute"
+            onClick={openContributing}
+            className="w-full px-3 py-1.5 text-xs font-medium rounded bg-primary-600 hover:bg-primary-500 text-white"
+          >
+            {t('settings:skills.view.contribute')}
+          </button>
+        </div>
         {overview && overview.errors.length > 0 && (
           <div className="border-t border-gray-200 px-4 py-2 space-y-1 max-h-40 overflow-y-auto">
             <p className="text-xs font-medium text-red-700">{t('settings:skills.errorsTitle')}</p>
@@ -330,6 +418,30 @@ export function SkillsView() {
             />
             <p className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-200">
               {t('settings:skills.view.hint')}
+            </p>
+          </>
+        ) : selectedBundled ? (
+          <>
+            <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-200">
+              <code className="flex-1 min-w-0 truncate text-xs text-gray-500">{selectedBundled}/SKILL.md</code>
+              <button
+                type="button"
+                data-testid="bundled-copy"
+                onClick={() => void handleCopy()}
+                disabled={overview?.bundled.some((b) => b.name === selectedBundled && b.shadowed)}
+                className="px-3 py-1 text-xs rounded bg-primary-600 hover:bg-primary-500 disabled:opacity-40 text-white"
+              >
+                {t('settings:skills.view.editCopy')}
+              </button>
+            </div>
+            <pre
+              data-testid="bundled-text"
+              className="flex-1 min-h-0 w-full overflow-y-auto whitespace-pre-wrap break-words bg-gray-50 text-gray-800 font-mono text-[13px] leading-5 p-4"
+            >
+              {bundledTexts[selectedBundled] ?? ''}
+            </pre>
+            <p className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-200">
+              {t('settings:skills.view.bundledHint')}
             </p>
           </>
         ) : (

@@ -624,6 +624,19 @@ pub fn render_skills(overview: &crate::services::skills::SkillsOverview, style: 
     for s in &overview.skills {
         println!("  {} {}", paint(&format!("/{}", s.name), "1", color), s.description);
     }
+    for b in &overview.bundled {
+        let state = match (b.shadowed, b.enabled) {
+            (true, _) => "bundled, replaced by your skill",
+            (false, true) => "bundled, on",
+            (false, false) => "bundled, off",
+        };
+        println!(
+            "  {} {} {}",
+            paint(&format!("/{}", b.name), "1", color),
+            dim(&format!("({state})"), color),
+            b.description
+        );
+    }
     for e in &overview.errors {
         println!(
             "  {} {}: {}",

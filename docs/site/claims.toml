@@ -1258,7 +1258,7 @@ checks = [
 [ai-skills-1]
 checks = [
   { tests = ['services::skills::tests::parses_name_description_and_body', 'services::skills::tests::rejects_a_name_that_does_not_match_its_folder'], covers = ["a short header with a name (the folder's name) and a description of what it does and when to use it, then the instructions in Markdown"] },
-  { tests = ['services::chat::tools::tests::the_skills_index_follows_the_tool_list_while_load_skill_is_available'], covers = ["Only the name and description stay in the chat's prompt; the instructions are read on the turns that use the skill."] },
+  { tests = ['services::chat::tools::tests::switched_on_skills_add_nothing_to_the_system_prompt', 'services::chat::planner::tests::the_planner_prompt_has_no_skill_rule'], covers = ["Nothing about a skill reaches the chat's prompt until you invoke it."] },
   { manual = 'That nothing in a skill folder runs is a property of the code (only .md/.txt files are ever read); no check can observe an absence.', covers = ['Nothing in a skill folder is ever run.'] },
   { none = "What a skill is for, in the reader's terms.", covers = ['A skill is a saved procedure the chat follows for one kind of request — how you want a weekly summary laid out, how to answer a supplier.'] },
 ]
@@ -1280,11 +1280,30 @@ checks = [
 [ai-skills-4]
 checks = [
   { app = true },
-  { tests = ['services::skills::tests::a_stacked_turn_carries_every_block_in_order', 'services::skills::tests::a_skill_turn_asks_the_rest_and_carries_the_block'], covers = ["you start the message with / and the skill's name (/weekly-report last week; /a /b applies both)"] },
-  { tests = ['services::chat::planner::tests::a_skill_rides_alongside_any_verdict'], covers = ['it picks one whose description matches your question'] },
-  { tests = ['services::chat::tools::load_skill::tests::returns_the_skill_body_for_a_known_name'], covers = ['the assistant loads one while answering'] },
-  { tests = ['services::chat::trace_steps::tests::an_applied_skill_shows_right_after_the_planner_that_picked_it'], covers = ['The reasoning trace names the skill a turn followed and who chose it.'] },
-  { none = 'Lead-in to the three ways listed after it.', covers = ['The chat applies a skill in three ways:'] },
+  { tests = ['services::skills::tests::a_stacked_turn_carries_every_block_in_order', 'services::skills::tests::a_skill_turn_asks_the_rest_and_carries_the_block'], covers = ["start the message with / and the skill's name (/weekly-report last week; /a /b applies both)"] },
+  { tests = ['services::chat::tools::load_skill::tests::never_returns_a_skills_instructions', 'services::chat::tools::tests::switched_on_skills_add_nothing_to_the_system_prompt'], covers = ['The chat never picks one on its own.'] },
+  { tests = ['services::chat::trace_steps::tests::an_applied_skill_shows_right_after_the_planner_that_picked_it'], covers = ['The reasoning trace names the skill a turn followed.'] },
+  { none = 'Lead-in to how a skill is invoked.', covers = ['A skill runs only when you ask for it:'] },
+]
+
+[ai-skills-5]
+checks = [
+  { app = true },
+  { tests = ['services::skills::tests::bundled_skills_are_listed_off_while_the_feature_is_off'], covers = ['even while skills are off'] },
+  { tests = ['services::skills::tests::a_switched_on_bundled_skill_works_like_any_other'], covers = ['one that is on works like any other skill'] },
+  { tests = ['services::skills::tests::nothing_bundled_is_written_to_the_skills_folder'], covers = ['nothing is downloaded or added to the skills folder'] },
+  { none = 'Consequence of the text being embedded in the binary.', covers = ['their text can change with an app update'] },
+  { file = 'src/components/Skills/SkillsView.tsx', has = 'emailops-skills/blob/main/CONTRIBUTING.md', covers = ['also links to the guide for contributing a skill'] },
+]
+
+[ai-skills-6]
+checks = [
+  { tests = ['services::skills::tests::a_copy_is_a_normal_user_skill', 'services::skills::tests::a_copy_of_a_switched_off_bundled_skill_stays_off'], covers = ['Edit a copy turns an included skill into one of your own'] },
+  { tests = ['services::skills::tests::a_copy_refuses_a_name_that_exists_and_leaves_that_folder_alone'], covers = ['is refused if a skill with that name already exists'] },
+  { tests = ['services::skills::tests::a_user_skill_with_a_bundled_name_wins', 'services::skills::tests::a_user_skill_keeps_a_bundled_one_inactive_while_it_is_off_or_broken'], covers = ['the chat uses yours and the included one stays inactive'] },
+  { tests = ['services::data_move::tests::moving_keeps_the_users_skills_and_every_switch'], covers = ['they move with the data folder'] },
+  { tests = ['services::skills::tests::nothing_bundled_is_written_to_the_skills_folder'], covers = ['App updates never change your skills'] },
+  { none = 'What deleting a folder does.', covers = ['Deleting the data folder deletes them.'] },
 ]
 
 [ai-turning-off-1]

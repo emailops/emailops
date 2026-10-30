@@ -11,15 +11,13 @@
 //! Group the mail by client, one heading each, newest first…
 //! ```
 //!
-//! The load-bearing decision is *progressive disclosure* (see `MODULE.md`):
-//! only the one-line catalog (`name: description`) rides in the chat prompt,
-//! inside the `load_skill` tool's schema; the body enters the prompt only on a
-//! turn that uses the skill — when the model calls `load_skill`, or when the
-//! user types `/name` at the start of a message.
+//! The load-bearing decision is that a skill runs only when the user asks for
+//! it (see `MODULE.md`): `/name` at the start of a message puts the body in that
+//! turn's final user message, and nothing about skills reaches the prompt on any
+//! other turn. The model never picks one.
 //!
 //! Split as pure planners (`parse_skill_md`, `plan_invocation`,
-//! `render_catalog`, `render_skill_block`) plus one thin I/O executor
-//! (`load_catalog`).
+//! `render_skill_block`) plus one thin I/O executor (`load_catalog`).
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +26,12 @@ use serde::{Deserialize, Serialize};
 use crate::db::Database;
 use crate::models::error::AppError;
 
+mod bundled;
 mod problem;
+pub use bundled::{
+    bundled_skills_on, bundled_source, copy_bundled_skill, load_bundled, read_bundled_source,
+    set_bundled_skill_enabled, BundledSkillInfo, SKILLS_BUNDLED_ON_PREF,
+};
 pub use problem::SkillProblem;
 
 /// File every skill folder must contain.
@@ -55,17 +58,12 @@ pub const MAX_NAME_CHARS: usize = 64;
 pub const MAX_DESCRIPTION_CHARS: usize = 1024;
 
 /// Longest accepted body. A skill body rides in the final user message of
-/// every turn that uses it, and the smallest supported machine runs an
+/// every turn that invokes it, and the smallest supported machine runs an
 /// 8192-token window shared with the system prompt, the tools, the sources and
 /// the answer. ~8000 chars is ~2000 tokens: room for real instructions without
 /// front-truncating the prompt. A longer skill is rejected, never cut, so the
 /// model never follows half of a procedure.
 pub const MAX_BODY_CHARS: usize = 8000;
-
-/// Budget for the whole catalog advertised in the `load_skill` schema. It sits
-/// in the system prompt on every turn, so it is capped; skills past the cap
-/// stay usable via `/name`.
-pub const MAX_CATALOG_CHARS: usize = 2000;
 
 /// Most supporting files listed per skill, and how deep under the skill
 /// folder they are looked for (`references/escalation.md` is depth 2).
@@ -333,61 +331,6 @@ pub fn plan_skill_turn(message: &str, catalog: &SkillCatalog) -> Option<SkillTur
     })
 }
 
-/// The catalog lines advertised to the model: `- name: description`, sorted,
-/// capped at `MAX_CATALOG_CHARS`. Returns the text and the names it lists.
-pub fn render_catalog(skills: &[Skill]) -> (String, Vec<String>) {
-    let mut sorted: Vec<&Skill> = skills.iter().collect();
-    sorted.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut lines: Vec<String> = Vec::new();
-    let mut names = Vec::new();
-    let mut used = 0;
-    for s in sorted {
-        let line = format!("- {}: {}", s.name, s.description);
-        // +1 for the newline that joins it to the previous line.
-        let cost = line.chars().count() + usize::from(!lines.is_empty());
-        if used + cost > MAX_CATALOG_CHARS {
-            break;
-        }
-        used += cost;
-        lines.push(line);
-        names.push(s.name.clone());
-    }
-    (lines.join("\n"), names)
-}
-
-/// The system-prompt section listing the skills, Hermes-style: the catalog
-/// plus the instruction to load a matching skill before answering. `None`
-/// with no skills.
-pub fn render_skills_index(skills: &[Skill]) -> Option<String> {
-    let (lines, names) = render_catalog(skills);
-    if names.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "Skills (the user's saved procedures):\n{lines}\n\
-Before replying, scan the skills above. If one matches the request, call load_skill with its name FIRST and follow the instructions it returns. Never say you loaded a skill without calling load_skill."
-    ))
-}
-
-/// The query planner's skills rule: the same catalog as the index, and how to
-/// name a matching skill next to whatever verdict the planner gives. Empty
-/// with no skills, so an install without them sends the planner the prompt it
-/// always did. Depends only on the folder, so it stays in the planner's cached
-/// head.
-pub fn render_planner_rule(skills: &[Skill]) -> String {
-    let (lines, names) = render_catalog(skills);
-    if names.is_empty() {
-        return String::new();
-    }
-    format!(
-        "- The user has saved skills, procedures for some kinds of request:\n{lines}\n  \
-First decide the verdict exactly as the rules above say. Then, when one of these skills clearly \
-matches the question, add \"skill\": \"<name>\" to that same output — {{\"defer\": true, \"skill\": \"<name>\"}} \
-for a question that is not a single email search. A skill never changes the verdict: do not invent a \
-filter for it. Omit it when none matches — most questions match none.\n"
-    )
-}
-
 /// Read one of `skill`'s supporting files. Only a path listed in
 /// `skill.files` is served, so nothing outside the skill folder is reachable.
 pub fn read_reference(skill: &Skill, file: &str) -> Result<String, String> {
@@ -473,16 +416,10 @@ pub fn render_skill_block(skill: &Skill) -> String {
             skill.files.join(", ")
         )
     };
-    // The explicit "do not call load_skill" wording measured best (softer
-    // phrasing brought back a redundant load round and dropped steps); with
-    // reference files it must still allow reading them.
-    let exception = if skill.files.is_empty() {
-        ""
-    } else {
-        " except to read one of its reference files"
-    };
+    // The wording is measured: without "already loaded — do not load them again"
+    // the small model dropped steps and took an extra tool round.
     format!(
-        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already loaded — do not call load_skill for \"{0}\"{exception}. Follow them:\n\n{1}{files}\n</skill>",
+        "<skill name=\"{0}\">\nThe user's skill \"{0}\" applies to this request. Its instructions are already loaded — do not load them again. Follow them:\n\n{1}{files}\n</skill>",
         skill.name, skill.body
     )
 }
@@ -514,6 +451,21 @@ pub fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
         .flatten()
         .and_then(|v| serde_json::from_str(&v).ok())
         .unwrap_or_default()
+}
+
+/// Every skill a `/name` could mean that is off: the user's switched-off ones
+/// and the bundled ones not switched on.
+pub fn switched_off_skills(db: &Database) -> std::collections::BTreeSet<String> {
+    let on = bundled_skills_on(db);
+    let mut off = disabled_skills(db);
+    off.extend(
+        load_bundled()
+            .skills
+            .into_iter()
+            .map(|s| s.name)
+            .filter(|n| !on.contains(n)),
+    );
+    off
 }
 
 /// Switch one skill on or off for the chat. It stays in the folder and in the
@@ -590,8 +542,10 @@ pub fn catalog_for(db: &Database) -> SkillCatalog {
         return SkillCatalog::default();
     }
     let mut catalog = skills_dir(db).map(|d| load_catalog(&d)).unwrap_or_default();
+    let taken = bundled::user_names(&catalog);
     let disabled = disabled_skills(db);
     catalog.skills.retain(|s| !disabled.contains(&s.name));
+    bundled::merge_active(&mut catalog, &bundled_skills_on(db), &taken);
     catalog
 }
 
@@ -614,15 +568,20 @@ pub struct SkillsOverview {
     /// Where skills live; `None` only without a data dir (tests).
     pub dir: Option<PathBuf>,
     pub skills: Vec<SkillInfo>,
+    /// The skills that ship with the app.
+    pub bundled: Vec<BundledSkillInfo>,
     pub errors: Vec<SkillLoadError>,
 }
 
-/// List the skills folder whether or not the feature is on, so the user can
-/// see what turning it on would give the chat.
+/// List the skills folder and the bundled skills whether or not the feature is
+/// on, so the user can see what turning it on would give the chat.
 pub fn overview(db: &Database) -> SkillsOverview {
     let dir = skills_dir(db);
-    let catalog = dir.as_deref().map(load_catalog).unwrap_or_default();
+    let mut catalog = dir.as_deref().map(load_catalog).unwrap_or_default();
     let disabled = disabled_skills(db);
+    let taken = bundled::user_names(&catalog);
+    let shipped = load_bundled();
+    catalog.errors.extend(shipped.errors);
     SkillsOverview {
         enabled: skills_enabled(db),
         dir,
@@ -636,6 +595,7 @@ pub fn overview(db: &Database) -> SkillsOverview {
                 path: s.path,
             })
             .collect(),
+        bundled: bundled::list_bundled(shipped.skills, &bundled_skills_on(db), &taken),
         errors: catalog.errors,
     }
 }

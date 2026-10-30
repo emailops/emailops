@@ -256,7 +256,8 @@ exacts par plateforme, et ce qui est écrit où, figurent dans
 <!-- claim:inst-uninstalling-1 -->
 Supprimer l'application laisse volontairement votre base de courrier et les modèles
 téléchargés en place : une réinstallation reprend là où vous en étiez. Supprimez aussi le
-répertoire de données pour repartir de zéro.
+répertoire de données pour repartir de zéro ; cela supprime aussi les skills que vous avez créés,
+comme toute option du désinstalleur qui efface les données de l'application.
 
 <!-- claim:inst-uninstalling-2 -->
 Rien n'est supprimé chez votre fournisseur de messagerie dans un cas comme dans l'autre —

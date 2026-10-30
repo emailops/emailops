@@ -4020,3 +4020,50 @@ words whole. It adds about 20 crates to the lockfile.
 for every platform and slice, which the release pipeline would have to carry. Poppler
 `pdftotext` — a system install the app cannot count on. Replacing NUL with U+FFFD —
 keeps the turn alive but still shows the model a broken word.
+
+## 2026-10-30 — Reviewed skills ship inside the app and are used in place
+
+**Decision:** A gallery of reviewed skills is bundled with the app, not fetched: the text
+is copied from `app-skills/` of `emailops-skills` into `src-tauri/bundled-skills/` with its
+source commit recorded, and embedded in the binary. There is no install step: each bundled
+skill is used directly through its own switch (`skills_bundled_on`, an allow list, off by
+default). Only **Edit a copy** writes to `skills/`, and the copy keeps the switch as it
+was. A skill of the user's with the same name wins, even switched off or broken. A bundled
+skill changes with app releases, and any change is called out in the release notes.
+**Context:** Installing a skill meant copying a folder by hand or pasting text into New.
+Skills are read from disk and `skills_disabled` is a deny list, so bundled skills needed
+their own preference. Adding them in `catalog_for` keeps one seam for `/name`.
+**Rejected:**
+- *An online gallery*: a network call in a privacy-first client, for a handful of skills.
+- *Seeding `skills/` at start-up or on update*: it would write into the user's folder and
+  either overwrite their edits or freeze old text forever.
+- *Importing a folder*: out of scope; the folder can already be opened and edited.
+- *A copy that starts on, like New*: copying a switched-off skill to read or edit it would
+  change the prompt with no switch touched.
+
+## 2026-10-30 — Skills run only when the user types /name
+
+**Decision:** A skill reaches a turn only through `/name`. The chat never picks one: the
+skills index in the system prompt, the planner's skill rule and its `skill` field are gone,
+so with skills on the chat and planner prompts are byte-identical to an install without
+them. `load_skill` stays for reference files only, never returns a skill's instructions,
+and is hidden unless an enabled skill has such a file. The rest of a `/name` turn is
+unchanged (shortcuts, routing, planner, RAG, tool loop), except that the planner's form
+verdict becomes a defer, because stopping at a form dropped the skill the user had just asked
+for. A help verdict stands: it keeps the skill, and turning it into a defer gave a worse answer.
+This reverses the 27/09 rejection of "slash commands only" and the planner selection of 29/09.
+**Context:** Bundling `inbox-triage` showed that the direct shortcuts run before the planner,
+so the phrases a skill is written for ("what needs my attention", "¿qué tengo pendiente?")
+skip selection, for user and bundled skills alike, and the skill silently does not apply.
+Fixing that meant a planner call on shortcut turns, and it risked starter buttons firing
+skills. The developer chose predictability and less prompt over the chat choosing alone: the
+feature is experimental and off by default, and `/` lists the enabled skills. The price is
+that the user has to remember a skill exists.
+**Rejected:**
+- *Running the planner before the shortcuts when a skill is on*: about 3 s more on those
+  turns, plus the starter-button risk, to keep a selection that still misses silently.
+- *Dropping `load_skill` altogether*: reference files are too long to send on every use.
+- *Skipping the planner and RAG on a `/name` turn*: a skill that only sets a format still
+  needs the mail. Unmeasured; worth trying only with an eval showing replies do not get worse.
+- *A per-skill "automatic" flag*: a switch for a path that is being removed.
+
