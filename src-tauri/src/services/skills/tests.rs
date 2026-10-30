@@ -778,6 +778,15 @@ fn the_bundled_list_and_the_folder_agree() {
 }
 
 #[test]
+fn the_bundled_text_is_the_same_on_every_platform() {
+    // Embedded as checked out, so a CRLF checkout on Windows would ship a
+    // different text. `.gitattributes` pins these files to LF.
+    for skill in load_bundled().skills {
+        assert!(!bundled_source(&skill.name).unwrap().contains('\r'), "{}", skill.name);
+    }
+}
+
+#[test]
 fn a_bundled_skill_holds_only_its_skill_md() {
     // Reference files are read from disk, so one in a bundled skill would be
     // promised to the model and never reach it.
