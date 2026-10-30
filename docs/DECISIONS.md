@@ -4090,3 +4090,20 @@ narrow what a reviewer must read; they do not replace the reviewer.
 - *`hermes skills tap add` as the Hermes install*: it looks only in `skills/` at the
   repo's root, with no option for another path.
 - *Trusting the checks in the pull request itself*: a pull request can edit `scripts/`.
+
+## 2026-10-30 — Skills are on by default and no longer experimental
+
+**Decision:** `skills_enabled` defaults to on and Skills lose the Experimental badge. The
+switch stays in Settings → AI Skills, and a stored `false` is honoured, so whoever turned
+skills off keeps them off. Skills included with the app keep their own switches, off by
+default.
+**Context:** Skills run only through `/name`, so the chat and planner prompts of an install
+with skills on match one without them. The default changes what a user can see, the
+**Skills** sidebar entry and the `/` list of enabled skills, and not what a turn sends; the
+one addition is `load_skill`, for an enabled skill that has reference files. A folder a user
+already placed in `skills/` becomes usable through `/name` without a further step.
+**Rejected:**
+- *Switching the included skills on too*: a user should be able to read one before it can
+  run, and the request was about the feature.
+- *Removing the switch*: it is the way to drop the sidebar entry, and removing it would
+  overrule anyone who turned skills off.

@@ -936,6 +936,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let db = Database::new(tmp.path().to_path_buf()).expect("db");
         let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "false")
+            .expect("pref");
         let before = registry.render_system_prompt_section(&db);
 
         db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")

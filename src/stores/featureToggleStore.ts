@@ -63,10 +63,10 @@ export const useTranslationEnabledStore = createBoolPrefStore('ai_translation_en
 // questions about EmailOps from the bundled guides, and open the matching
 // settings tab or view when the answer cites a section.
 export const useHelpDocsEnabledStore = createBoolPrefStore('help_docs_enabled', true);
-// Mirrors `services::skills::skills_enabled` (experimental, default off): the
-// chat may apply the user's skills from `<data dir>/skills/`, `/name` invokes
-// one, and the sidebar shows the Skills view.
-export const useSkillsEnabledStore = createBoolPrefStore('skills_enabled', false);
+// Mirrors `services::skills::skills_enabled` (default on): `/name` applies one of
+// the user's skills from `<data dir>/skills/` or an included one that is switched
+// on, and the sidebar shows the Skills view.
+export const useSkillsEnabledStore = createBoolPrefStore('skills_enabled', true);
 // Mirrors `services::shared_docs::is_enabled` (experimental, default on):
 // documents and sheets edited together by email, and the EO Docs view.
 export const useSharedDocsEnabledStore = createBoolPrefStore('shared_docs_enabled', true);

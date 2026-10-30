@@ -223,9 +223,6 @@ export function SkillsView() {
       <aside className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col min-h-0">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-gray-800 flex-1">{t('settings:skills.view.title')}</h2>
-          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold uppercase">
-            {t('settings:dialog.experimental')}
-          </span>
           <button
             type="button"
             data-testid="skill-new"

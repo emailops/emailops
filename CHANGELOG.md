@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Skills run only when you ask.** Start a message with `/name` to apply one;
   the chat no longer picks a skill on its own.
+- **Skills are on by default.** They left the experimental stage. The skills
+  included with the app stay off until you switch them on, and if you turned
+  skills off they stay off.
 
 ## [0.6.17] — 2026-10-29
 

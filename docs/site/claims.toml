@@ -1266,7 +1266,7 @@ checks = [
 [ai-skills-2]
 checks = [
   { app = true },
-  { tests = ['services::skills::tests::catalog_for_is_empty_when_the_feature_is_off_or_there_is_no_data_dir'], covers = ['Skills are off by default.'] },
+  { tests = ['services::skills::tests::skills_are_on_until_the_user_switches_them_off'], covers = ['Skills are on by default.'] },
 ]
 
 [ai-skills-3]

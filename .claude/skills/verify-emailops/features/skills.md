@@ -2,11 +2,11 @@
 
 Saved procedures the chat follows for one kind of request. Each skill is a folder in the
 data dir, `skills/<name>/SKILL.md` (frontmatter `name` + `description`, then instructions;
-optional `.md`/`.txt` reference files). Experimental and **off by default**.
+optional `.md`/`.txt` reference files). **On by default**; a stored `false` keeps it off.
 
 ## Sub-features
 
-- `skills.toggle` Settings → **AI Skills** holds **Enable skills** (Experimental badge). Off: no sidebar entry.
+- `skills.toggle` Settings → **AI Skills** holds **Enable skills**, on by default. Off: no sidebar entry.
 - `skills.view` Sidebar **Skills** (`data-testid="sidebar-skills"`) opens the two-pane view: list with a per-skill switch (`skill-toggle-<name>`) on the left, `SKILL.md` editor (`skill-editor`) on the right.
 - `skills.new` **New** (`skill-new`, `skill-new-name`, `skill-create`) writes a template the catalog accepts.
 - `skills.save` **Save** (`skill-save`) validates with the catalog's parser, refuses a file changed on disk since opening (`skill-reload` offers "Reload from disk"), and renames the skill when the text declares another `name:`.
@@ -17,15 +17,15 @@ optional `.md`/`.txt` reference files). Experimental and **off by default**.
 
 ## How to get to it (user POV)
 
-- Settings (gear, `aria/Application settings`) → **AI Skills** → **Enable skills** on.
+- Settings (gear, `aria/Application settings`) → **AI Skills** → **Enable skills** (on unless the user turned it off).
 - Sidebar → AI Features → **Skills**.
 - In the chat, start a message with `/`.
 
 ## Driving it with verify.sh
 
-Preconditions: demo instance (`$V launch`); the demo DB has no skills and the feature off unless a previous run left them (check `ls .emailops-demo-data/skills` and `sqlite3 .emailops-demo-data/emailops.db "select key,value from user_preferences where key like 'skills%'"`). Handles confirmed live on 29/09/2026.
+Preconditions: demo instance (`$V launch`); the demo DB has no skills and the feature on unless a previous run switched it off (check `ls .emailops-demo-data/skills` and `sqlite3 .emailops-demo-data/emailops.db "select key,value from user_preferences where key like 'skills%'"`). Handles confirmed live on 29/09/2026.
 
-- Turn on → `$V wd click 'aria/Application settings'`, click the last button containing `AI Skills`, then the `[role=switch]` in the row labelled `Enable skills`; close → `$V wd exists '[data-testid="sidebar-skills"]'` is present and `skills_enabled|true` is in `user_preferences`.
+- Turn off → `$V wd click 'aria/Application settings'`, click the last button containing `AI Skills`, then the `[role=switch]` in the row labelled `Enable skills`; close → `$V wd exists '[data-testid="sidebar-skills"]'` is absent and `skills_enabled|false` is in `user_preferences`. Turn it back on the same way before the steps below.
 - Create → `$V wd click '[data-testid="sidebar-skills"]'`, `$V wd click '[data-testid="skill-new"]'`, `$V wd type '[data-testid="skill-new-name"]' 'weekly-digest'`, `$V wd click '[data-testid="skill-create"]'` → `.emailops-demo-data/skills/weekly-digest/SKILL.md` exists and the editor shows the template.
 - Invalid save → type text without the `---` block, `$V wd click '[data-testid="skill-save"]'` → `$V wd text '[data-testid="skills-error"]'` names the missing frontmatter and the file hash is unchanged.
 - Switch off → `$V wd click '[data-testid="skill-toggle-weekly-digest"]'` → `skills_disabled|["weekly-digest"]`.

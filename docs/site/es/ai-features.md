@@ -377,7 +377,7 @@ tabla; **más** muestra el resto.
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Experimental.* Una skill es un procedimiento guardado que el chat sigue para un tipo de
+Una skill es un procedimiento guardado que el chat sigue para un tipo de
 petición: cómo quieres el resumen semanal, cómo contestar a un proveedor. Cada skill es una
 carpeta en la carpeta de datos de la app, `skills/<nombre>/SKILL.md`: una cabecera corta con un
 `name` (el nombre de la carpeta) y una `description` de lo que hace y cuándo usarla, y después
@@ -386,8 +386,8 @@ prompt del chat hasta que la invocas. Nada de lo que hay en la carpeta de una
 skill se ejecuta nunca.
 
 <!-- claim:ai-skills-2 -->
-Las skills vienen apagadas. Actívalas en **Ajustes → Skills de IA** con **Activar skills**; entonces
-aparece **Skills** en la barra lateral.
+Las skills vienen activadas. Apágalas en **Ajustes → Skills de IA** con **Activar skills**; entonces
+**Skills** desaparece de la barra lateral.
 
 <!-- claim:ai-skills-3 -->
 La vista **Skills** lista todas las skills, cada una con su interruptor, y abre el `SKILL.md` de la

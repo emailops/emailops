@@ -86,7 +86,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'aidrafts', needsAi: true },
   { id: 'aitranslation', needsAi: true },
   { id: 'aisearch', needsAi: true },
-  { id: 'skills', experimental: true, needsAi: true },
+  { id: 'skills', needsAi: true },
   { id: 'documents', experimental: true },
   { id: 'privacy' },
   { id: 'about' },
