@@ -188,6 +188,43 @@ fn moving_copies_everything_and_points_the_next_launch_there() {
 }
 
 #[test]
+fn moving_keeps_the_users_skills_and_every_switch() {
+    use crate::services::skills;
+
+    let d = dirs();
+    let db = seeded_data_dir(&d.current);
+    let mine = d.current.join("skills/weekly-digest");
+    std::fs::create_dir_all(mine.join("references")).unwrap();
+    std::fs::write(mine.join("SKILL.md"), "my skill").unwrap();
+    std::fs::write(mine.join("references/tone.md"), "my tone").unwrap();
+    let deleted = d.current.join("skills/.deleted/old-skill");
+    std::fs::create_dir_all(&deleted).unwrap();
+    std::fs::write(deleted.join("SKILL.md"), "deleted skill").unwrap();
+    db.set_preference(skills::SKILLS_ENABLED_PREF, "true").unwrap();
+    skills::set_skill_enabled(&db, "weekly-digest", false).unwrap();
+    skills::set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
+
+    move_data_dir(&db, &d.current, &d.target, &d.default, &mut |_, _| {}).unwrap();
+
+    let moved = Database::new(d.target.clone()).unwrap();
+    assert_eq!(
+        std::fs::read(d.target.join("skills/weekly-digest/SKILL.md")).unwrap(),
+        b"my skill"
+    );
+    assert_eq!(
+        std::fs::read(d.target.join("skills/weekly-digest/references/tone.md")).unwrap(),
+        b"my tone"
+    );
+    assert_eq!(
+        std::fs::read(d.target.join("skills/.deleted/old-skill/SKILL.md")).unwrap(),
+        b"deleted skill"
+    );
+    assert!(skills::skills_enabled(&moved));
+    assert!(skills::disabled_skills(&moved).contains("weekly-digest"));
+    assert!(skills::bundled_skills_on(&moved).contains("inbox-triage"));
+}
+
+#[test]
 fn moving_does_not_carry_the_instance_lock() {
     let d = dirs();
     let db = seeded_data_dir(&d.current);

@@ -662,6 +662,11 @@
     "reload": "Neu laden",
     "listTitle": "Verfügbare Skills",
     "empty": "Noch keine Skills. Öffne den Ordner und füge einen hinzu.",
+    "bundledTitle": "In der App enthalten",
+    "bundledDesc": "Geprüfte Skills, die mit EmailOps ausgeliefert werden. Sie bleiben aus, bis du einen einschaltest, und ändern sich mit App-Updates.",
+    "offer": "Skills sind ausgeschaltet. Einschalten, um {{name}} zu verwenden?",
+    "offerYes": "Skills einschalten",
+    "offerNo": "Nicht jetzt",
     "errorsTitle": "Nicht geladen",
     "view": {
       "title": "Skills",
@@ -677,6 +682,9 @@
       "hint": "SKILL.md: ein Frontmatter-Block mit name (dem Ordnernamen) und description, danach die Anweisungen. Änderungen gelten ab der nächsten Chat-Nachricht.",
       "reloadFromDisk": "Von der Festplatte neu laden",
       "delete": "Löschen",
+      "bundledShadowed": "Stattdessen wird dein eigener Skill mit diesem Namen verwendet.",
+      "editCopy": "Kopie bearbeiten",
+      "bundledHint": "In der App enthalten und schreibgeschützt. Ändert sich mit App-Updates; mit Kopie bearbeiten behältst du deine eigene Version.",
       "deleteConfirm": "Diesen Skill löschen? Er wird nach skills/.deleted verschoben.",
       "deleteYes": "Löschen",
       "deleteNo": "Abbrechen"

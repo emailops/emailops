@@ -662,6 +662,11 @@
     "reload": "Recargar",
     "listTitle": "Skills disponibles",
     "empty": "Aún no hay skills. Abre la carpeta y añade una.",
+    "bundledTitle": "Incluidas en la app",
+    "bundledDesc": "Skills revisadas que vienen con EmailOps. Están apagadas hasta que enciendes una, y cambian con las actualizaciones de la app.",
+    "offer": "Las skills están desactivadas. ¿Quieres activarlas para usar {{name}}?",
+    "offerYes": "Activar skills",
+    "offerNo": "Ahora no",
     "errorsTitle": "No cargadas",
     "view": {
       "title": "Skills",
@@ -677,6 +682,9 @@
       "hint": "SKILL.md: un bloque de cabecera con name (el nombre de la carpeta) y description, y después las instrucciones. Los cambios se aplican al siguiente mensaje del chat.",
       "reloadFromDisk": "Recargar del disco",
       "delete": "Borrar",
+      "bundledShadowed": "Se usa tu propia skill con este nombre.",
+      "editCopy": "Editar una copia",
+      "bundledHint": "Incluida en la app y de solo lectura. Cambia con las actualizaciones de la app; usa Editar una copia para conservar tu propia versión.",
       "deleteConfirm": "¿Borrar esta skill? Se mueve a skills/.deleted.",
       "deleteYes": "Borrar",
       "deleteNo": "Cancelar"

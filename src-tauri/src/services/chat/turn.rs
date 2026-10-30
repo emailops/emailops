@@ -3626,8 +3626,8 @@ fn plan_turn_skill(db: &Database, message: &str) -> Option<crate::services::skil
         );
     }
     let Some(turn) = crate::services::skills::plan_skill_turn(message, &catalog) else {
-        let disabled = crate::services::skills::disabled_skills(db);
-        if let Some(name) = crate::services::skills::invoked_disabled_skill(message, &disabled) {
+        let off = crate::services::skills::switched_off_skills(db);
+        if let Some(name) = crate::services::skills::invoked_disabled_skill(message, &off) {
             emit_log(
                 "warn",
                 &format!("skill {name} is switched off in the Skills view, so /{name} was sent as plain text"),

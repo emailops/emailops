@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { listSkills, openSkillsFolder, type SkillsOverview } from '@/lib/api';
+import { listSkills, openSkillsFolder, type SkillsOverview, setBundledSkillEnabled } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useSkillsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
+import { SkillSwitch } from '../Skills/SkillSwitch';
 import { SettingsPanel } from './SettingsPanel';
 
 /**
  * Settings panel for chat skills: the feature toggle (the `skills_enabled`
  * preference the backend gates on), the skills folder, and what was found in
  * it. Skills are edited on disk — each is a folder holding a `SKILL.md` — so
- * this panel only lists them, opens the folder and re-reads it.
+ * this panel only lists them, opens the folder and re-reads it. It also lists
+ * the skills that ship with the app, even with the feature off: switching one
+ * on then offers to turn the feature on, and changes nothing until accepted.
  */
 export function SkillsSettings() {
   const { t } = useTranslation(['common', 'settings']);
@@ -18,6 +21,8 @@ export function SkillsSettings() {
   const { enabled, isLoading, setEnabled, refresh } = useSkillsEnabledStore();
   const [overview, setOverview] = useState<SkillsOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The bundled skill waiting for the user to accept turning the feature on.
+  const [offered, setOffered] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -38,6 +43,41 @@ export function SkillsSettings() {
   const handleToggle = () => {
     setError(null);
     setEnabled(!enabled).catch((err) => setError(errorText(err)));
+  };
+
+  const switchBundled = async (name: string, on: boolean) => {
+    setError(null);
+    try {
+      await setBundledSkillEnabled(name, on);
+      addLog('info', 'ai', `Bundled skill ${name} ${on ? 'enabled' : 'disabled'}`);
+      await reload();
+    } catch (err) {
+      const msg = errorText(err);
+      setError(msg);
+      addLog('error', 'ai', `Failed to switch bundled skill ${name}: ${msg}`);
+    }
+  };
+
+  const handleBundledToggle = (name: string, on: boolean) => {
+    if (on && !enabled) {
+      setOffered(name);
+      return;
+    }
+    void switchBundled(name, on);
+  };
+
+  const handleAcceptOffer = async () => {
+    if (!offered) return;
+    const name = offered;
+    setOffered(null);
+    setError(null);
+    try {
+      await setEnabled(true);
+    } catch (err) {
+      setError(errorText(err));
+      return;
+    }
+    await switchBundled(name, true);
   };
 
   const handleOpenFolder = async () => {
@@ -135,6 +175,57 @@ export function SkillsSettings() {
           </div>
         )}
       </section>
+
+      {overview && overview.bundled.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-medium text-gray-700">{t('settings:skills.bundledTitle')}</h3>
+          <p className="text-xs text-gray-500">{t('settings:skills.bundledDesc')}</p>
+          {offered && (
+            <div
+              data-testid="skills-offer"
+              className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800"
+            >
+              <span className="flex-1">{t('settings:skills.offer', { name: offered })}</span>
+              <button
+                type="button"
+                data-testid="skills-offer-yes"
+                onClick={() => void handleAcceptOffer()}
+                className="px-3 py-1.5 text-xs rounded bg-primary-600 hover:bg-primary-500 text-white"
+              >
+                {t('settings:skills.offerYes')}
+              </button>
+              <button
+                type="button"
+                data-testid="skills-offer-no"
+                onClick={() => setOffered(null)}
+                className="px-3 py-1.5 text-xs rounded bg-gray-100 hover:bg-gray-200 text-gray-800"
+              >
+                {t('settings:skills.offerNo')}
+              </button>
+            </div>
+          )}
+          <ul className="space-y-2">
+            {overview.bundled.map((b) => (
+              <li key={b.name} className="flex items-start gap-3 text-sm">
+                <div className="flex-1 min-w-0">
+                  <code className="text-primary-600">/{b.name}</code>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {b.shadowed ? t('settings:skills.view.bundledShadowed') : b.description}
+                  </p>
+                </div>
+                {!b.shadowed && (
+                  <SkillSwitch
+                    checked={b.enabled}
+                    label={t('settings:skills.view.toggle', { name: b.name })}
+                    testId={`bundled-toggle-${b.name}`}
+                    onToggle={() => handleBundledToggle(b.name, !b.enabled)}
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </SettingsPanel>
   );
 }

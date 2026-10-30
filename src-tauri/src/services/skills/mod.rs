@@ -28,7 +28,12 @@ use serde::{Deserialize, Serialize};
 use crate::db::Database;
 use crate::models::error::AppError;
 
+mod bundled;
 mod problem;
+pub use bundled::{
+    bundled_skills_on, bundled_source, copy_bundled_skill, load_bundled, read_bundled_source,
+    set_bundled_skill_enabled, BundledSkillInfo, SKILLS_BUNDLED_ON_PREF,
+};
 pub use problem::SkillProblem;
 
 /// File every skill folder must contain.
@@ -516,6 +521,21 @@ pub fn disabled_skills(db: &Database) -> std::collections::BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// Every skill a `/name` could mean that is off: the user's switched-off ones
+/// and the bundled ones not switched on.
+pub fn switched_off_skills(db: &Database) -> std::collections::BTreeSet<String> {
+    let on = bundled_skills_on(db);
+    let mut off = disabled_skills(db);
+    off.extend(
+        load_bundled()
+            .skills
+            .into_iter()
+            .map(|s| s.name)
+            .filter(|n| !on.contains(n)),
+    );
+    off
+}
+
 /// Switch one skill on or off for the chat. It stays in the folder and in the
 /// listing either way.
 pub fn set_skill_enabled(db: &Database, name: &str, enabled: bool) -> crate::models::error::Result<()> {
@@ -590,8 +610,10 @@ pub fn catalog_for(db: &Database) -> SkillCatalog {
         return SkillCatalog::default();
     }
     let mut catalog = skills_dir(db).map(|d| load_catalog(&d)).unwrap_or_default();
+    let taken = bundled::user_names(&catalog);
     let disabled = disabled_skills(db);
     catalog.skills.retain(|s| !disabled.contains(&s.name));
+    bundled::merge_active(&mut catalog, &bundled_skills_on(db), &taken);
     catalog
 }
 
@@ -614,15 +636,20 @@ pub struct SkillsOverview {
     /// Where skills live; `None` only without a data dir (tests).
     pub dir: Option<PathBuf>,
     pub skills: Vec<SkillInfo>,
+    /// The skills that ship with the app.
+    pub bundled: Vec<BundledSkillInfo>,
     pub errors: Vec<SkillLoadError>,
 }
 
-/// List the skills folder whether or not the feature is on, so the user can
-/// see what turning it on would give the chat.
+/// List the skills folder and the bundled skills whether or not the feature is
+/// on, so the user can see what turning it on would give the chat.
 pub fn overview(db: &Database) -> SkillsOverview {
     let dir = skills_dir(db);
-    let catalog = dir.as_deref().map(load_catalog).unwrap_or_default();
+    let mut catalog = dir.as_deref().map(load_catalog).unwrap_or_default();
     let disabled = disabled_skills(db);
+    let taken = bundled::user_names(&catalog);
+    let shipped = load_bundled();
+    catalog.errors.extend(shipped.errors);
     SkillsOverview {
         enabled: skills_enabled(db),
         dir,
@@ -636,6 +663,7 @@ pub fn overview(db: &Database) -> SkillsOverview {
                 path: s.path,
             })
             .collect(),
+        bundled: bundled::list_bundled(shipped.skills, &bundled_skills_on(db), &taken),
         errors: catalog.errors,
     }
 }

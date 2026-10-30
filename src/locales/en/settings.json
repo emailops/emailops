@@ -662,6 +662,11 @@
     "reload": "Reload",
     "listTitle": "Available skills",
     "empty": "No skills yet. Open the folder and add one.",
+    "bundledTitle": "Included with the app",
+    "bundledDesc": "Reviewed skills that ship with EmailOps. They are off until you switch one on, and they change with app updates.",
+    "offer": "Skills are turned off. Turn them on to use {{name}}?",
+    "offerYes": "Turn on skills",
+    "offerNo": "Not now",
     "errorsTitle": "Not loaded",
     "view": {
       "title": "Skills",
@@ -677,6 +682,9 @@
       "hint": "SKILL.md: a frontmatter block with name (the folder name) and description, then the instructions. Changes apply to the next chat message.",
       "reloadFromDisk": "Reload from disk",
       "delete": "Delete",
+      "bundledShadowed": "Your own skill with this name is used instead.",
+      "editCopy": "Edit a copy",
+      "bundledHint": "Included with the app and read-only. It changes with app updates; Edit a copy to keep your own version.",
       "deleteConfirm": "Delete this skill? It moves to skills/.deleted.",
       "deleteYes": "Delete",
       "deleteNo": "Cancel"

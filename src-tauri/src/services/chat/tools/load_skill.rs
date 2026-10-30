@@ -170,6 +170,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_bundled_skill_shows_the_tool_only_while_it_is_on() {
+        let (_tmp, db) = db_with_skills(&[]);
+        assert!(!LoadSkillTool.is_available(&db));
+        skills::set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
+        assert!(LoadSkillTool.is_available(&db));
+        assert_eq!(
+            LoadSkillTool.parameters_schema_for(&db)["properties"]["name"]["enum"],
+            json!(["inbox-triage"])
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_a_switched_on_bundled_skill() {
+        let (_tmp, db) = db_with_skills(&[]);
+        skills::set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
+        let out = LoadSkillTool
+            .execute(&ctx(&db), json!({"name": "inbox-triage"}))
+            .await
+            .unwrap();
+        assert!(out.text.contains("<skill name=\"inbox-triage\">"), "{}", out.text);
+        assert!(out.text.contains("list_open_threads"), "{}", out.text);
+    }
+
     #[tokio::test]
     async fn returns_the_skill_body_for_a_known_name() {
         let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Always ask for the PO number.")]);

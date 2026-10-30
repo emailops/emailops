@@ -662,6 +662,11 @@
     "reload": "Recharger",
     "listTitle": "Skills disponibles",
     "empty": "Aucune skill pour l'instant. Ouvrez le dossier et ajoutez-en une.",
+    "bundledTitle": "Incluses dans l'application",
+    "bundledDesc": "Des skills vérifiées fournies avec EmailOps. Elles restent désactivées tant que vous n'en activez pas une, et elles changent avec les mises à jour de l'application.",
+    "offer": "Les skills sont désactivées. Les activer pour utiliser {{name}} ?",
+    "offerYes": "Activer les skills",
+    "offerNo": "Pas maintenant",
     "errorsTitle": "Non chargées",
     "view": {
       "title": "Skills",
@@ -677,6 +682,9 @@
       "hint": "SKILL.md : un bloc d'en-tête avec name (le nom du dossier) et description, puis les instructions. Les modifications s'appliquent au prochain message du chat.",
       "reloadFromDisk": "Recharger depuis le disque",
       "delete": "Supprimer",
+      "bundledShadowed": "Votre propre skill portant ce nom est utilisée à la place.",
+      "editCopy": "Modifier une copie",
+      "bundledHint": "Incluse dans l'application et en lecture seule. Elle change avec les mises à jour de l'application ; utilisez Modifier une copie pour garder votre version.",
       "deleteConfirm": "Supprimer ce skill ? Il est déplacé vers skills/.deleted.",
       "deleteYes": "Supprimer",
       "deleteNo": "Annuler"
