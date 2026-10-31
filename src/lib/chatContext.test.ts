@@ -33,6 +33,7 @@ function attachmentTab(overrides: { mimeType: string; filename: string }) {
     id: 'att-1',
     accountId: 'acct-pdf',
     emailId: 'e9',
+    senderEmail: 'sender@example.com',
     dataUrl: '',
     isLoading: false,
     ...overrides,

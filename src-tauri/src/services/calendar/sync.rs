@@ -195,7 +195,7 @@ pub fn build_calendar_provider(db: &Database, account: &Account) -> Result<Box<d
             crate::sync::ics_feed_calendar::IcsFeedCalendarProvider::from_db(
                 db,
                 &account.id,
-                Arc::new(crate::sync::ics_feed_calendar::ReqwestIcsFetcher::default()),
+                Arc::new(crate::sync::ics_feed_calendar::ReqwestIcsFetcher),
             )?,
         )),
         CalendarKind::Google => {

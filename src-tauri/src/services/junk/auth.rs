@@ -167,6 +167,17 @@ pub enum ServerSpamVerdict {
     Unknown,
 }
 
+/// Can an `X-Spam-*` header on this provider's mail be the receiving server's
+/// own verdict?
+///
+/// Gmail and Outlook do not write these headers, so on those accounts every one
+/// came with the message, from its sender or a relay, and says nothing about
+/// what this mailbox's server decided. A self-hosted server is where SpamAssassin
+/// and rspamd run, which leaves IMAP as the one place they can count.
+pub fn provider_writes_spam_headers(provider: &str) -> bool {
+    provider.eq_ignore_ascii_case("imap")
+}
+
 /// Interpret the collected `X-Spam-*` / rspamd headers.
 pub fn parse_server_spam(spam_headers: Option<&str>) -> ServerSpamVerdict {
     let Some(raw) = spam_headers else {

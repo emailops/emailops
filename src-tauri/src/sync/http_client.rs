@@ -16,13 +16,16 @@ pub(crate) const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// take minutes on a slow link.
 pub(crate) const MAIL_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// A `reqwest::Client` with a connect timeout and a whole-request timeout.
-pub(crate) fn provider_http_client(request_timeout: Duration) -> reqwest::Client {
-    match reqwest::Client::builder()
+/// A client builder with a connect timeout and a whole-request timeout.
+pub(crate) fn timed_client_builder(request_timeout: Duration) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(request_timeout)
-        .build()
-    {
+}
+
+/// A `reqwest::Client` with a connect timeout and a whole-request timeout.
+pub(crate) fn provider_http_client(request_timeout: Duration) -> reqwest::Client {
+    match timed_client_builder(request_timeout).build() {
         Ok(client) => client,
         Err(e) => {
             // Only fails when the TLS backend cannot initialise, which the

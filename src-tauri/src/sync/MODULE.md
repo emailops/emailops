@@ -20,7 +20,7 @@ Provider-specific email synchronisation adapters plus the shared `EmailProvider`
 - **calendar_provider.rs** — `CalendarProvider` trait + `FakeCalendarProvider`. One method (`list_events(window)`) returning provider-expanded recurrence instances; v1 has no sync tokens (full-window fetch each cycle — see `services/calendar/sync.rs`).
 - **gmail_calendar.rs** — Google Calendar v3 adapter (`events.list` with `singleEvents=true`; pure `parse_google_event`)
 - **outlook_calendar.rs** — Graph calendar adapter (`/me/calendarView` with `Prefer: outlook.timezone="UTC"`; pure `parse_graph_event`)
-- **ics_feed_calendar.rs** — read-only `CalendarProvider` over subscribed ICS feeds (IMAP accounts, e.g. Proton Calendar "share via link"): `IcsFetcher` seam (reqwest impl, https only, bounded body, errors name the host — the URL carries the feed key and lives in the secrets vault), pure `expand_events` (RRULE/EXDATE via the `rrule` crate, RECURRENCE-ID overrides, cancelled dropped, per-event instance cap); writes return `AppError::ReadOnlyCalendar`
+- **ics_feed_calendar.rs** — read-only `CalendarProvider` over subscribed ICS feeds (IMAP accounts, e.g. Proton Calendar "share via link"): `IcsFetcher` seam (reqwest impl, https only, redirects only to https on public hosts, bounded body, errors name the host — the URL carries the feed key and lives in the secrets vault), pure `expand_events` (RRULE/EXDATE via the `rrule` crate, RECURRENCE-ID overrides, cancelled dropped, per-event instance cap); writes return `AppError::ReadOnlyCalendar`
 - **mod.rs** — re-exports
 
 ## Key design decisions

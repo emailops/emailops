@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use super::{Tool, ToolCtx, ToolError, ToolOutput};
 use crate::services::attachments;
 
+const NO_ATTACHMENTS: &str = "No attachments on this email.";
+
 pub struct GetAttachmentsTool;
 
 #[async_trait]
@@ -39,13 +41,19 @@ impl Tool for GetAttachmentsTool {
             return Ok(ToolOutput::text("Error: missing email_id"));
         }
 
+        match ctx.readable_email(email_id) {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(ToolOutput::text(NO_ATTACHMENTS)),
+            Err(e) => return Ok(ToolOutput::text(format!("Error: {e}"))),
+        }
+
         // The service helper returns both the canonical meta list and the
         // rule-matched table — the chat tool needs both so the user can see
         // every attachment, with the right namespace prefix for the open URL.
         let (metas, rule_matched) = attachments::list_for_email(ctx.db, email_id).unwrap_or_default();
 
         if metas.is_empty() && rule_matched.is_empty() {
-            return Ok(ToolOutput::text("No attachments on this email."));
+            return Ok(ToolOutput::text(NO_ATTACHMENTS));
         }
 
         // Two ID namespaces tell the UI which open command to call:

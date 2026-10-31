@@ -11,6 +11,25 @@ export function dataUrlToBase64(dataUrl: string): string {
 }
 
 /**
+ * The text a base64 data URL carries; empty when the payload is not base64.
+ * Bytes that are not UTF-8 read as Windows-1252, a browser's default for
+ * unlabelled text.
+ */
+export function decodeDataUrlText(dataUrl: string): string {
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(atob(dataUrlToBase64(dataUrl)), (c) => c.charCodeAt(0));
+  } catch {
+    return '';
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
+
+/**
  * Save attachment bytes to the user's Downloads folder via the backend, then
  * toast a completion notification with a "Show in Finder" action. Failures
  * are logged to the output panel; the returned promise never rejects, so

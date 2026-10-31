@@ -392,6 +392,9 @@ export interface AttachmentViewTab {
   emailId: string;
   filename: string;
   mimeType: string;
+  /** Sender of the email it came from: an HTML attachment follows the same
+   *  trusted-sender policy for remote content as that email. */
+  senderEmail: string;
   dataUrl: string;
   isLoading: boolean;
 }
@@ -473,7 +476,7 @@ interface EmailStore {
   setPendingChatDraft: (draft: PendingChatDraft) => void;
   consumePendingChatDraft: () => void;
   openTab: (email: Email, focusId?: string) => Promise<void>;
-  openAttachmentTab: (meta: EmailAttachmentMeta) => Promise<void>;
+  openAttachmentTab: (meta: EmailAttachmentMeta, senderEmail: string) => Promise<void>;
   openComposeTab: (
     accountId: string,
     toAddresses?: string[],
@@ -710,7 +713,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
   },
 
-  openAttachmentTab: async (meta) => {
+  openAttachmentTab: async (meta, senderEmail) => {
     const existing = get().tabs.find((t) => t.id === meta.id);
     if (existing) {
       set({ activeTabId: meta.id });
@@ -727,6 +730,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       emailId: meta.emailId,
       filename: meta.filename,
       mimeType,
+      senderEmail,
       dataUrl: '',
       isLoading: true,
     };

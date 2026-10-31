@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::services::junk::auth::expected_authserv;
+use crate::services::junk::auth::{expected_authserv, provider_writes_spam_headers};
 use crate::services::junk::model::{self, ModelAxis, NaiveBayes};
 use crate::services::junk::tokens;
 use crate::services::junk::verdict::JunkSignals;
@@ -29,6 +29,8 @@ pub struct AccountContext {
     pub known_contact_domains: Vec<String>,
     pub known_contact_names: Vec<String>,
     pub trusted_authserv: Option<String>,
+    /// Whether `X-Spam-*` on this account can be its server's own verdict.
+    pub reads_spam_headers: bool,
     /// Trained models, when they exist and clear the sample floor. `None` means
     /// the deterministic layer runs alone.
     pub spam_model: Option<NaiveBayes>,
@@ -88,6 +90,7 @@ impl AccountContext {
             // Authentication-Results we should believe, so we believe none of
             // them. That yields Unknown rather than a false confident verdict.
             trusted_authserv: expected_authserv(&provider).map(str::to_string),
+            reads_spam_headers: provider_writes_spam_headers(&provider),
         })
     }
 }
@@ -106,9 +109,14 @@ pub fn materialize(db: &Arc<Database>, ctx: &AccountContext, email_id: &str) -> 
     // supplies bodies directly, showed nothing wrong.
     let body = db.get_email_body(&email.id).unwrap_or_default();
 
-    let headers = db
+    let mut headers = db
         .get_email_headers_batch(std::slice::from_ref(&email.id))?
         .remove(&email.id);
+    if !ctx.reads_spam_headers {
+        if let Some(headers) = headers.as_mut() {
+            headers.spam_headers = None;
+        }
+    }
 
     let attachment_names = db
         .get_email_attachment_metas(&email.id)
@@ -169,9 +177,75 @@ pub fn materialize(db: &Arc<Database>, ctx: &AccountContext, email_id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::junk::verdict::{judge, JunkAxis, ReasonCode, Weights};
 
     // The base rates are configuration: a valid probability from the
     // preferences replaces the default, anything else keeps it.
+    fn seeded_with_spam_headers(provider: &str, spam_headers: &str) -> (Arc<Database>, AccountContext) {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', ?1, 'me@example.com', 'Me', 0)",
+                [provider],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES ('e1','acct','t1','Offer','Promo','promo@example.net','example.net',
+                         '[]','[]','snip',100,0,'primary',0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO email_headers (email_id, account_id, from_raw, spam_headers, captured_at)
+                 VALUES ('e1', 'acct', 'Promo <promo@example.net>', ?1, 0)",
+                [spam_headers],
+            )
+            .unwrap();
+        }
+        let ctx = AccountContext::load(&db, "acct").unwrap();
+        (db, ctx)
+    }
+
+    fn judged_spam_codes(provider: &str, spam_headers: &str) -> Vec<ReasonCode> {
+        let (db, ctx) = seeded_with_spam_headers(provider, spam_headers);
+        let signals = materialize(&db, &ctx, "e1").unwrap().unwrap();
+        judge(&signals, &Weights::default()).reason_codes_for(JunkAxis::Spam)
+    }
+
+    /// The spam score of a message the local model dislikes, so a clearance
+    /// has something to take off.
+    fn judged_spam_score(provider: &str, spam_headers: &str) -> f32 {
+        let (db, ctx) = seeded_with_spam_headers(provider, spam_headers);
+        let mut signals = materialize(&db, &ctx, "e1").unwrap().unwrap();
+        signals.statistical_spam = Some(0.95);
+        judge(&signals, &Weights::default()).spam.score
+    }
+
+    const FLAGGED: &str = "x-spam-flag: YES\nx-spam-status: Yes, score=9.8 required=5.0";
+    const CLEARED: &str = "x-spam-status: No, score=-2.0 required=5.0";
+    const NOTHING: &str = "x-spam-checker-version: 4.0";
+
+    #[test]
+    fn spam_headers_count_only_where_the_receiving_server_can_have_written_them() {
+        for (provider, counts) in [("gmail", false), ("outlook", false), ("imap", true)] {
+            let codes = judged_spam_codes(provider, FLAGGED);
+            assert_eq!(
+                codes.contains(&ReasonCode::ServerSpamFlag),
+                counts,
+                "{provider}: {codes:?}"
+            );
+
+            let cleared = judged_spam_score(provider, CLEARED);
+            let baseline = judged_spam_score(provider, NOTHING);
+            assert_eq!(cleared < baseline, counts, "{provider}: {cleared} vs {baseline}");
+        }
+    }
+
     #[test]
     fn a_configured_prior_replaces_the_default_only_when_it_is_a_probability() {
         let db = Arc::new(Database::new_for_testing().unwrap());
