@@ -916,6 +916,8 @@ export interface ChatTrace {
   /** What was cut from the prompt to fit the context window; absent when
    *  nothing was. */
   budget?: BudgetTrace | null;
+  /** The answer stopped at the model's token limit, so it ends mid-way. */
+  answerTruncated?: boolean;
 }
 
 /** Mirrors `BudgetCut`: one thing cut from a chat prompt, in the order applied. */

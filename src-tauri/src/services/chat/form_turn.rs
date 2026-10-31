@@ -138,6 +138,7 @@ pub fn form_fill_trace(
         steps: Vec::new(),
         search_page: None,
         budget: None,
+        answer_truncated: false,
     })
 }
 

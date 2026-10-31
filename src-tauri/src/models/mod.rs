@@ -1353,6 +1353,10 @@ pub struct ChatTrace {
     /// nothing was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetTrace>,
+    /// The answer stopped at the model's token limit, so it ends mid-way. Kept
+    /// here and not in the answer text, which later turns replay to the model.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub answer_truncated: bool,
 }
 
 /// One thing the context budget cut from a chat prompt so it fits the window

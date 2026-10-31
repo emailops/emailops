@@ -99,6 +99,10 @@ pub struct ChatStreamResult {
     /// `None` from the local backends, and from a reply cancelled before its
     /// usage arrived.
     pub cost_usd: Option<f64>,
+    /// The model stopped because it reached its token limit, not because it
+    /// had finished: the text ends mid-way. `false` when a backend does not
+    /// say, and for a reply its caller stopped.
+    pub truncated: bool,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -130,6 +134,8 @@ pub struct ToolStreamResult {
     pub dropped_front_tokens: Option<u32>,
     /// See [`ChatStreamResult::cost_usd`].
     pub cost_usd: Option<f64>,
+    /// See [`ChatStreamResult::truncated`].
+    pub truncated: bool,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -313,6 +319,7 @@ pub trait AIProvider: Send + Sync {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: false,
         })
     }
 
@@ -365,6 +372,7 @@ pub trait AIProvider: Send + Sync {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: false,
         })
     }
 
@@ -586,6 +594,9 @@ pub struct FakeAiProvider {
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
     /// When set, chat calls never return, like a model that has hung.
     chats_hang: RwLock<bool>,
+    /// Which chat calls (1-based) report their reply as stopped at the token
+    /// limit.
+    truncated_chat_calls: RwLock<std::collections::HashSet<usize>>,
     embed_calls: RwLock<Vec<String>>,
     /// Called at the end of each `embed` with the number of calls so far.
     embed_hook: RwLock<Option<EmbedHook>>,
@@ -621,6 +632,7 @@ impl FakeAiProvider {
             completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
             chats_hang: RwLock::new(false),
+            truncated_chat_calls: RwLock::new(std::collections::HashSet::new()),
             embed_calls: RwLock::new(Vec::new()),
             embed_hook: RwLock::new(None),
             prewarm_calls: RwLock::new(Vec::new()),
@@ -728,6 +740,27 @@ impl FakeAiProvider {
     /// Make every later chat call hang, sending no token and no reply.
     pub fn hang_chats(&self) {
         *self.chats_hang.write().unwrap_or_else(PoisonError::into_inner) = true;
+    }
+
+    /// [`Self::push_chat_message`] for a reply the backend reports as stopped
+    /// at its token limit.
+    pub fn push_truncated_chat_message(&self, msg: AiMessage) {
+        let queued = self.chats.read().unwrap_or_else(PoisonError::into_inner).len();
+        let made = self.chat_calls.read().unwrap_or_else(PoisonError::into_inner).len();
+        self.truncated_chat_calls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(made + queued + 1);
+        self.push_chat_message(msg);
+    }
+
+    /// Whether the chat call made last is one queued as truncated.
+    fn last_chat_truncated(&self) -> bool {
+        let made = self.chat_calls.read().unwrap_or_else(PoisonError::into_inner).len();
+        self.truncated_chat_calls
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&made)
     }
 
     pub fn push_chat_message(&self, msg: AiMessage) {
@@ -987,6 +1020,35 @@ impl AIProvider for FakeAiProvider {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: self.last_chat_truncated(),
+        })
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        let message = self.chat_with_tools(&messages, &tools).await?;
+        let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+        if !has_tool_calls && !message.content.is_empty() {
+            let _ = on_token(message.content.clone());
+        }
+        Ok(ToolStreamResult {
+            message,
+            eval_count: None,
+            prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            cost_usd: None,
+            truncated: self.last_chat_truncated(),
         })
     }
 }
