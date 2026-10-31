@@ -839,6 +839,7 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
         );
     }
     let providers = AppOutboxProviders { app: app.clone() };
+    let mut doc_retries = crate::services::shared_docs::FlushRetries::default();
     let mut ticker = tokio::time::interval(OUTBOX_DISPATCH_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -864,7 +865,7 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
             Err(e) => crate::services::logger::log("error", "sync", format!("Queued messages could not be sent: {e}")),
         }
         // Shared documents whose edits have paused go out on the same tick.
-        crate::services::shared_docs::flush_due(&db, now, &providers).await;
+        crate::services::shared_docs::flush_due(&db, now, &providers, &mut doc_retries).await;
     }
 }
 
