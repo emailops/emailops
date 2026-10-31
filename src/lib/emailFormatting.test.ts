@@ -28,6 +28,18 @@ describe('senderName', () => {
 // sanitizeEmailHtmlFull — remote-content gating
 // ---------------------------------------------------------------------------
 
+describe('sanitizeEmailHtmlFull link targets', () => {
+  it.each([
+    ['an image-map area', '<map name="m"><area href="data:text/html,x"></map>', 'area'],
+    ['an anchor', '<a href="data:text/html,x">y</a>', 'a'],
+  ])('drops a data: target on %s', (_name, input, selector) => {
+    const { html: clean } = sanitizeEmailHtmlFull(input, false);
+
+    const parsed = new DOMParser().parseFromString(clean, 'text/html');
+    expect(parsed.querySelector(selector)?.hasAttribute('href')).toBe(false);
+  });
+});
+
 describe('sanitizeEmailHtmlFull remote-content gating', () => {
   // Regression: the blocking hook only inspected IMG and SOURCE, so a sender
   // could get a guaranteed read-receipt through <video>/<audio> even with
