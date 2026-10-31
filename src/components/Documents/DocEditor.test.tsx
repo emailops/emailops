@@ -10,6 +10,7 @@ import * as Y from 'yjs';
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
+vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn() }));
 
 import { DOC_FIELD, DocEditor } from './DocEditor';
 
@@ -21,6 +22,13 @@ function remoteParagraph(base: Y.Doc, text: string): Uint8Array {
   p.insert(0, [new Y.XmlText(text)]);
   other.getXmlFragment(DOC_FIELD).insert(other.getXmlFragment(DOC_FIELD).length, [p]);
   return Y.encodeStateAsUpdate(other, Y.encodeStateVector(base));
+}
+
+/** A document holding one Yjs element, as a message from someone else would. */
+function docWith(element: Y.XmlElement): Y.Doc {
+  const doc = new Y.Doc();
+  doc.getXmlFragment(DOC_FIELD).insert(0, [element]);
+  return doc;
 }
 
 // The toolbar focuses the editor, which scrolls the caret into view; jsdom has
@@ -45,6 +53,47 @@ describe('DocEditor', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it('asks before leaving through a link in a read-only document', async () => {
+    const paragraph = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    paragraph.insert(0, [text]);
+    text.insert(0, 'read this', { link: { href: 'https://example.com/a', target: '_self' } });
+
+    await act(async () => {
+      root.render(<DocEditor doc={docWith(paragraph)} editable={false} onEditor={(e) => (editor = e)} />);
+    });
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    await act(async () => {
+      container.querySelector('a')?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(container.querySelector('[data-testid="external-link-open"]')).not.toBeNull();
+  });
+
+  it('never gives a remote image in a document an address to fetch', async () => {
+    const image = new Y.XmlElement('image');
+    image.setAttribute('src', 'https://example.com/pixel.png');
+
+    await act(async () => {
+      root.render(<DocEditor doc={docWith(image)} editable={false} onEditor={(e) => (editor = e)} />);
+    });
+
+    expect(container.querySelector('img')?.hasAttribute('src')).toBe(false);
+  });
+
+  it('shows an image carried in the document', async () => {
+    const data = 'data:image/png;base64,iVBORw0KGgo=';
+    const image = new Y.XmlElement('image');
+    image.setAttribute('src', data);
+
+    await act(async () => {
+      root.render(<DocEditor doc={docWith(image)} editable={false} onEditor={(e) => (editor = e)} />);
+    });
+
+    expect(container.querySelector('img')?.getAttribute('src')).toBe(data);
   });
 
   it('shows what another person wrote and records local typing in the doc', async () => {

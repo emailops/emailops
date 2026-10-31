@@ -3,6 +3,23 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import type { Extensions } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 
+/**
+ * Only images carried in the document get an address: a remote one would be a
+ * request to someone else's server, made by opening a document anyone can send.
+ */
+const InlineImage = Image.extend({
+  addAttributes() {
+    const attributes = this.parent?.() ?? {};
+    return {
+      ...attributes,
+      src: {
+        ...attributes.src,
+        renderHTML: ({ src }) => (typeof src === 'string' && src.startsWith('data:image/') ? { src } : {}),
+      },
+    };
+  },
+});
+
 /** The field of the Yjs document an EO Docs text lives in. */
 export const DOC_FIELD = 'body';
 
@@ -18,5 +35,5 @@ export const docSchemaExtensions: Extensions = [
   TableRow,
   TableHeader,
   TableCell,
-  Image.configure({ allowBase64: true }),
+  InlineImage.configure({ allowBase64: true }),
 ];
