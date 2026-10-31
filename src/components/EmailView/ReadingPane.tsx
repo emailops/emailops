@@ -1,5 +1,6 @@
+import { useRef } from 'react';
 import { AttachmentTabView } from '@/components/EmailView/AttachmentTabView';
-import { ComposeTabView } from '@/components/EmailView/ComposeTabView';
+import { type ComposeTabHandle, ComposeTabView } from '@/components/EmailView/ComposeTabView';
 import { EmailTabBar } from '@/components/EmailView/EmailTabBar';
 import { EmailView } from '@/components/EmailView/EmailView';
 import type { EmailTab } from '@/stores/emailStore';
@@ -82,6 +83,12 @@ export function ReadingPane({
   const attachmentTabs = tabs.filter((tab) => tab.type === 'attachment');
   // Compose tabs too: what the user typed lives in the tab's own component.
   const composeTabs = tabs.filter((tab) => tab.type === 'compose');
+  const composers = useRef(new Map<string, ComposeTabHandle>());
+  const closeTab = (id: string) => {
+    // Its question cannot show from behind another tab.
+    if (composers.current.get(id)?.askBeforeClosing()) onSelectTab(id);
+    else onCloseTab(id);
+  };
 
   return (
     <div className={className}>
@@ -93,7 +100,7 @@ export function ReadingPane({
           activeTabId={activeTabId}
           onSelectMainTab={onSelectMainTab}
           onSelectTab={onSelectTab}
-          onCloseTab={onCloseTab}
+          onCloseTab={closeTab}
         />
       )}
 
@@ -109,7 +116,15 @@ export function ReadingPane({
         ))}
         {composeTabs.map((tab) => (
           <div key={tab.id} className={`absolute inset-0 flex flex-col ${tab.id === activeTabId ? '' : 'invisible'}`}>
-            <ComposeTabView tab={tab} accounts={accounts} onClose={() => onCloseTab(tab.id)} />
+            <ComposeTabView
+              ref={(handle) => {
+                if (handle) composers.current.set(tab.id, handle);
+                else composers.current.delete(tab.id);
+              }}
+              tab={tab}
+              accounts={accounts}
+              onClose={() => onCloseTab(tab.id)}
+            />
           </div>
         ))}
         {activeTab?.type === 'attachment' || activeTab?.type === 'compose' ? null : (

@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { InlineError } from '@/components/common/InlineError';
 import { Modal } from '@/components/common/Modal';
@@ -39,10 +39,17 @@ import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
 
+/** What the tab bar needs to close this tab the way its own × does. */
+export interface ComposeTabHandle {
+  /** Whether closing has to wait for the user, who has just been asked. */
+  askBeforeClosing: () => boolean;
+}
+
 interface ComposeTabViewProps {
   tab: ComposeTab;
   accounts: Account[];
   onClose: () => void;
+  ref?: Ref<ComposeTabHandle>;
 }
 
 function getDomain(email: string): string {
@@ -54,7 +61,7 @@ function extractEmail(raw: string): string {
   return (match ? match[1] : raw).trim().toLowerCase();
 }
 
-export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) {
+export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewProps) {
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
@@ -75,6 +82,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const [isDiscarding, setIsDiscarding] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
@@ -421,6 +429,15 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const handleSend = () => void submit(null);
   const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
 
+  // The autosaved draft keeps the text, not the files: those live here until
+  // the message goes out, so closing the tab with some asks first.
+  const askBeforeClosing = () => {
+    if (attachments.length === 0 || sent) return false;
+    setConfirmingClose(true);
+    return true;
+  };
+  useImperativeHandle(ref, () => ({ askBeforeClosing }));
+
   /** The autosave has already written the message: discarding it means
    *  removing that draft. Closing the tab is what keeps it. */
   const handleDiscard = async () => {
@@ -523,7 +540,10 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
         <button
           type="button"
-          onClick={onClose}
+          data-testid="compose-tab-close"
+          onClick={() => {
+            if (!askBeforeClosing()) onClose();
+          }}
           className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -728,6 +748,32 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         }
       >
         <p className="text-sm text-gray-700">{t('compose:discardHint')}</p>
+      </Modal>
+      <Modal
+        open={confirmingClose}
+        onClose={() => setConfirmingClose(false)}
+        title={t('compose:closeWithFiles.title')}
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingClose(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
+              {t('compose:closeWithFiles.keep')}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+            >
+              {t('common:actions.close')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('compose:closeWithFiles.body')}</p>
       </Modal>
     </div>
   );
