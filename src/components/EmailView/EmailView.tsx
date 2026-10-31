@@ -168,6 +168,7 @@ export function EmailView({
   // opens, and kept current as the reply panel saves, so reopening Reply
   // continues the same draft instead of starting a second one.
   const [threadDraft, setThreadDraft] = useState<Draft | null>(null);
+  const [chatDraftId, setChatDraftId] = useState<string | undefined>(undefined);
   const [replyBody, setReplyBody] = useState('');
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
@@ -361,6 +362,7 @@ export function EmailView({
     setIsReplyOpen(false);
     setReplyBody('');
     setThreadDraft(null);
+    setChatDraftId(undefined);
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -389,6 +391,7 @@ export function EmailView({
     setReplyMode('reply');
     const draft = pendingChatDraft!;
     setReplyBody((existing) => prependDraftBody(draft.body, existing));
+    setChatDraftId(draft.draftId);
     setIsReplyOpen(true);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -818,6 +821,7 @@ export function EmailView({
               defaultAccountId={activeAccountId || latestEmail.accountId}
               mode={replyMode}
               restoredDraft={replyMode === 'forward' ? null : threadDraft}
+              adoptDraftId={replyMode === 'forward' ? undefined : chatDraftId}
               onDraftSaved={setThreadDraft}
               initialBody={replyBody}
               initialAttachments={forwardAttachments}

@@ -55,6 +55,9 @@ interface ReplyComposeProps {
   /** A reply draft saved earlier for this thread: the panel opens with its
    *  recipients and text, and keeps saving into the same draft. */
   restoredDraft?: Draft | null;
+  /** The draft the chat saved for this reply. The panel takes it over: edits
+   *  save into it, and sending or cancelling removes it. */
+  adoptDraftId?: string;
   /** Called with the draft after every successful save. */
   onDraftSaved?: (draft: Draft) => void;
   initialBody: string;
@@ -182,6 +185,7 @@ export function ReplyCompose({
   defaultAccountId,
   onSend,
   onCancel,
+  adoptDraftId,
   initialBody,
   mode,
   initialAttachments = [],
@@ -275,6 +279,9 @@ export function ReplyCompose({
   const debouncedRef = useRef<DebouncedDraftSaver>(
     createDebouncedDraftSaver((state) => autosaverRef.current?.save(state) ?? Promise.resolve(), 800),
   );
+  useEffect(() => {
+    if (adoptDraftId) autosaverRef.current?.adopt(adoptDraftId);
+  }, [adoptDraftId]);
   // What the panel opened with. Opening Reply prefills the recipients (and an
   // AI draft may fill the body), so only a change from this is the user
   // writing something worth keeping.

@@ -71,7 +71,7 @@ export function DraftRefPill({ draftId, accountId, label, onOpenEmail }: DraftRe
         // uses when a freshly-generated reply arrives. Seed the pending
         // draft BEFORE navigating so `EmailView` consumes it on the same
         // render pass that mounts the thread.
-        setPendingChatDraft({ emailId: draft.emailId, body: draft.body });
+        setPendingChatDraft({ emailId: draft.emailId, body: draft.body, draftId: draft.id });
         await navigateToEmail(accountId, draft.emailId);
         onOpenEmail?.();
       } else {

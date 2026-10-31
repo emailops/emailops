@@ -153,6 +153,21 @@ describe('ReplyCompose drafts', () => {
     await leave();
   });
 
+  it('takes over a draft the chat saved, so sending removes it', async () => {
+    const onSend = vi.fn(async () => {});
+    render({ onSend, adoptDraftId: 'draft-chat', initialBody: 'Hola Alice' });
+    await act(async () => button('Send Reply').click());
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'draft-chat' }));
+    await leave();
+  });
+
+  it('keeps saving into a draft the chat saved', async () => {
+    render({ adoptDraftId: 'draft-chat', initialBody: 'Hola Alice' });
+    await typeBody('<p>Hola Alice, te llamo</p>');
+    await leave();
+    expect(api.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ id: 'draft-chat' }));
+  });
+
   it('hands the draft id to the send so it is removed with the reply', async () => {
     const onSend = vi.fn(async () => {});
     render({ onSend });

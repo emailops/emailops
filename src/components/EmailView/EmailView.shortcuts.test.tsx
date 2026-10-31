@@ -20,12 +20,28 @@ vi.mock('@/lib/api', () => ({
 }));
 vi.mock('./ThreadEmailItem', () => ({ ThreadEmailItem: () => null }));
 vi.mock('./ReplyCompose', () => ({
-  ReplyCompose: ({ mode, initialBody }: { mode: string; initialBody: string }) => {
+  ReplyCompose: ({
+    mode,
+    initialBody,
+    adoptDraftId,
+  }: {
+    mode: string;
+    initialBody: string;
+    adoptDraftId?: string;
+  }) => {
     const [instance] = useState(() => {
       composers.mounted += 1;
       return composers.mounted;
     });
-    return <div data-testid="reply-compose" data-mode={mode} data-body={initialBody} data-instance={instance} />;
+    return (
+      <div
+        data-testid="reply-compose"
+        data-mode={mode}
+        data-body={initialBody}
+        data-instance={instance}
+        data-adopt={adoptDraftId}
+      />
+    );
   },
 }));
 
@@ -97,6 +113,14 @@ async function command(c: Parameters<ReturnType<typeof useShortcutStore.getState
 }
 
 const reply = () => container.querySelector('[data-testid="reply-compose"]');
+
+describe('EmailView chat drafts', () => {
+  it('hands the draft the chat saved to the reply it opens', async () => {
+    useEmailStore.setState({ pendingChatDraft: { emailId: email.id, body: 'Hola', draftId: 'draft-chat' } });
+    await render();
+    expect(reply()?.getAttribute('data-adopt')).toBe('draft-chat');
+  });
+});
 
 describe('EmailView pane commands', () => {
   it('r opens the reply composer, a reply-all, f a forward', async () => {
