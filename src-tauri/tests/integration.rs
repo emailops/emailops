@@ -1038,6 +1038,7 @@ async fn when_both_sides_edited_a_draft_the_local_one_wins_and_is_pushed() {
         updated_at: Some(1_700_000_500),
         provider_message_id: Some("msg-elsewhere".to_string()),
         in_reply_to: None,
+        attachments: Vec::new(),
     });
     // ...and offline here.
     compose_draft(
@@ -1109,6 +1110,7 @@ async fn a_clean_draft_edited_upstream_is_pulled() {
         updated_at: Some(1_700_000_500),
         provider_message_id: Some("msg-elsewhere".to_string()),
         in_reply_to: None,
+        attachments: Vec::new(),
     });
 
     pull_provider_drafts(&db, &account, &provider).await.unwrap();

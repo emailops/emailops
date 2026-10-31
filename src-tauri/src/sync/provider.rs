@@ -1402,6 +1402,20 @@ impl FakeEmailProvider {
 
 use std::sync::PoisonError;
 
+/// The attachments a pushed draft reads back with, their bytes in the listing.
+fn pushed_attachments(attachments: &[EmailAttachment], seq: u64) -> Vec<crate::models::ProviderDraftAttachment> {
+    attachments
+        .iter()
+        .map(|att| crate::models::ProviderDraftAttachment {
+            message_id: format!("fake-msg-{seq}"),
+            attachment_id: String::new(),
+            filename: att.filename.clone(),
+            mime_type: att.mime_type.clone(),
+            inline_data: Some(att.data.clone()),
+        })
+        .collect()
+}
+
 #[async_trait]
 impl EmailProvider for FakeEmailProvider {
     async fn get_profile(&self) -> Result<(String, String)> {
@@ -2008,7 +2022,7 @@ impl EmailProvider for FakeEmailProvider {
         cc_emails: &[String],
         subject: &str,
         body: &EmailBody,
-        _attachments: &[EmailAttachment],
+        attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         self.draft_write_result()?;
@@ -2024,6 +2038,7 @@ impl EmailProvider for FakeEmailProvider {
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
             in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
+            attachments: pushed_attachments(attachments, seq),
         };
         self.drafts
             .write()
@@ -2040,7 +2055,7 @@ impl EmailProvider for FakeEmailProvider {
         cc_emails: &[String],
         subject: &str,
         body: &EmailBody,
-        _attachments: &[EmailAttachment],
+        attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
         self.draft_write_result()?;
@@ -2067,6 +2082,7 @@ impl EmailProvider for FakeEmailProvider {
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
             in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
+            attachments: pushed_attachments(attachments, seq),
         };
         self.drafts
             .write()

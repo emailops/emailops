@@ -802,9 +802,9 @@ pub struct ProviderDraft {
     #[serde(default)]
     pub updated_at: Option<i64>,
     /// Provider token that changes whenever the draft's content changes. Gmail
-    /// mints a new message id on every draft save, so it doubles as an ETag:
-    /// the pull pass stores it and skips the full read while it stays the same.
-    /// `None` for providers that don't report one.
+    /// mints a new message id on every draft save, so it doubles as an ETag;
+    /// Graph reports a `changeKey`. The pull pass stores it and skips the full
+    /// read while it stays the same. `None` for providers that don't report one.
     #[serde(default)]
     pub provider_message_id: Option<String>,
     /// RFC 5322 `Message-ID` of the email this draft replies to, as the
@@ -813,6 +813,32 @@ pub struct ProviderDraft {
     /// for a new message, or a provider that does not report it.
     #[serde(default)]
     pub in_reply_to: Option<String>,
+    /// The attachments the provider copy carries. A draft is pushed back with
+    /// exactly the files stored locally, so one left out here is removed from
+    /// the provider by the next edit.
+    #[serde(default)]
+    pub attachments: Vec<ProviderDraftAttachment>,
+}
+
+/// One attachment of a [`ProviderDraft`], as the provider reports it.
+///
+/// `filename` comes from outside: it is a label, never a path component.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDraftAttachment {
+    /// The provider message holding the attachment: what
+    /// `EmailProvider::fetch_attachment_bytes` takes. Not the change token,
+    /// which on Outlook is no message id at all.
+    pub message_id: String,
+    /// Empty when the listing carried the bytes in `inline_data`, or when the
+    /// provider offers no way to download them. With neither, the draft has a
+    /// file this app cannot hold, and it must not be pushed without it.
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    /// Base64 content, for an attachment small enough to come with the listing.
+    #[serde(default)]
+    pub inline_data: Option<String>,
 }
 
 // AI config and usage types

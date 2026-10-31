@@ -917,8 +917,8 @@ impl GmailClient {
             // Take the token from the content we actually read, not from the
             // listing: if the draft was saved in between, storing the listed id
             // would pin us to content we never fetched.
-            let message_id = Some(msg.id.clone());
-            let (email, _cat, _atts) = self.parse_message(msg).await?;
+            let message_id = msg.id.clone();
+            let (email, _cat, atts) = self.parse_message(msg).await?;
             // The parsed body is HTML; split it so the composer renders the rich
             // source instead of escaping it as literal text.
             let (body, body_html) = crate::util::html::split_draft_body(&email.body);
@@ -933,7 +933,17 @@ impl GmailClient {
                 // Gmail's `internalDate`, already parsed onto the message —
                 // for a draft that's when it was last saved.
                 updated_at: Some(email.timestamp),
-                provider_message_id: message_id,
+                attachments: atts
+                    .into_iter()
+                    .map(|att| crate::models::ProviderDraftAttachment {
+                        message_id: message_id.clone(),
+                        attachment_id: att.attachment_id,
+                        filename: att.filename,
+                        mime_type: att.mime_type,
+                        inline_data: att.inline_data,
+                    })
+                    .collect(),
+                provider_message_id: Some(message_id),
                 in_reply_to,
             });
         }
@@ -3570,6 +3580,56 @@ mod tests {
             .filter(|r| r.url.path().starts_with("/users/me/drafts/"))
             .count();
         assert_eq!(gets, 2, "the second pull must add zero drafts.get calls");
+    }
+
+    #[tokio::test]
+    async fn a_draft_reports_its_attachments_under_its_message_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(drafts_list_page(&[("d-1", "m-1")], None), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        let full = r#"{"id":"d-1","message":{"id":"m-1","threadId":"t-1","labelIds":["DRAFT"],
+            "internalDate":"1700000000000","snippet":"",
+            "payload":{"mimeType":"multipart/mixed",
+              "headers":[{"name":"Subject","value":"With a file"},{"name":"To","value":"dest@example.com"}],
+              "body":{"size":0},
+              "parts":[
+                {"mimeType":"text/plain","filename":"","headers":[],"body":{"size":2,"data":"aGk"}},
+                {"mimeType":"application/pdf","filename":"report.pdf","headers":[],
+                 "body":{"size":16,"attachmentId":"att-1"}},
+                {"mimeType":"text/csv","filename":"small.csv","headers":[],
+                 "body":{"size":3,"data":"YSxi"}}
+              ]}}}"#;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts/d-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(full, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        let attachments = &pull.changed[0].attachments;
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(
+            attachments[0].message_id, "m-1",
+            "bytes are fetched by message, not draft"
+        );
+        assert_eq!(attachments[0].attachment_id, "att-1");
+        assert_eq!(attachments[0].filename, "report.pdf");
+        assert_eq!(attachments[0].mime_type, "application/pdf");
+        assert_eq!(attachments[1].attachment_id, "");
+        assert_eq!(attachments[1].inline_data.as_deref(), Some("YSxi"));
     }
 
     #[tokio::test]

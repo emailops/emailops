@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included with the app stay off until you switch them on, and if you turned
   skills off they stay off.
 
+### Fixed
+
+- **Drafts from Gmail and Outlook keep their attachments.** A draft written
+  elsewhere now arrives with its files, and editing or sending it keeps them.
+  Before, the first edit removed them from the provider and the send went out
+  without them. Until a file has been downloaded, the draft cannot be sent, and
+  your edits wait here without touching the provider's copy.
+
 ## [0.6.17] — 2026-10-29
 
 ### Added

@@ -840,6 +840,8 @@ export function EmailView({
                 await outbox.send(message, {
                   // A queued reply's draft leaves Drafts with the queueing.
                   draftId,
+                  // This panel does not hold the draft's file attachments.
+                  draftHoldsFiles: !!draftId && (threadDraft?.attachments?.length ?? 0) > 0,
                   sendDirect: async () => {
                     addLog(
                       'info',

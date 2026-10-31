@@ -1,5 +1,6 @@
 mod attachment_backfill;
 mod compose;
+mod draft_files;
 mod drafts;
 mod events;
 mod folders;
@@ -25,6 +26,7 @@ use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
 pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
+pub(crate) use compose::draft_attachments_pulled_key;
 pub(crate) use compose::load_attachments as load_draft_attachments;
 pub use compose::{
     check_webview_draft_attachments, compose_draft, delete_draft, plan_compose, pull_provider_drafts,
