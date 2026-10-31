@@ -720,7 +720,7 @@ impl Database {
             limit,
             false,
             query.trim().is_empty(),
-            false,
+            scope.unread_only,
             false,
             None,
             SearchShape::SearchBox(scope),
@@ -1260,6 +1260,8 @@ pub struct SearchBoxScope<'a> {
     pub domain: Option<&'a str>,
     /// `ext:` — an attachment file extension, without the dot.
     pub attachment_ext: Option<&'a str>,
+    /// `is:unread` — only mail not read yet.
+    pub unread_only: bool,
 }
 
 /// The column a shape sorts threads by: the matching email itself, or — in

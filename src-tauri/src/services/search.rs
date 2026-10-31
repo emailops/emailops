@@ -535,6 +535,7 @@ async fn structured_search(
             mailbox,
             domain: parsed.domain_filter.as_deref(),
             attachment_ext: parsed.attachment_ext.as_deref(),
+            unread_only: parsed.is_unread == Some(true),
         },
         100,
     )?;
@@ -1611,6 +1612,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(search_ids(&token), ["genuine"]);
+    }
+
+    #[tokio::test]
+    async fn is_unread_keeps_only_mail_not_read_yet() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_account(&db, "acc1", "a1@example.com", true);
+        seed_searchable_email(&db, "unread", "acc1", "t1", "Quarterly report", 200);
+        seed_searchable_email(&db, "read", "acc1", "t2", "Quarterly report again", 100);
+        db.connection()
+            .execute("UPDATE emails SET is_read = 1 WHERE id = 'read'", [])
+            .unwrap();
+
+        for query in ["is:unread", "is:unread subject:quarterly", "is:unread quarterly"] {
+            let got = search_emails(&db, Some("acc1"), query, false, None, None, None)
+                .await
+                .unwrap();
+            assert_eq!(search_ids(&got), ["unread"], "{query}");
+        }
     }
 
     #[tokio::test]
