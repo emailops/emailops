@@ -1001,7 +1001,7 @@ impl GmailClient {
         let cc = split_address_list(&cc_header);
 
         // Get body content
-        let body = self.extract_body(&msg.id, &msg.payload).await;
+        let body = self.extract_body(&msg.id, &msg.payload).await?;
 
         // Collect file attachment metadata
         let attachment_infos = Self::collect_attachment_infos(&msg.payload);
@@ -1182,7 +1182,10 @@ impl GmailClient {
         decode_base64_url_bytes(&att.data)
     }
 
-    async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> String {
+    /// `Err` when a part of the body could not be fetched: a stored message is
+    /// never downloaded again, so storing it incomplete would be for good. A
+    /// part Gmail no longer has cannot be waited for, and is left out.
+    async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> Result<String> {
         // Try to get HTML body first, fall back to plain text (inline data)
         // A proper (unnamed, inline) body part always wins; only when none
         // exists does a named text part count, since some mailers put a
@@ -1216,20 +1219,22 @@ impl GmailClient {
             if let Some(att_id) = html_att {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = data,
-                    Err(e) => crate::services::logger::log(
+                    Err(e @ AppError::NotFound(_)) => crate::services::logger::log(
                         "error",
                         "sync",
-                        format!("Gmail: could not fetch the HTML body of {message_id}: {e}"),
+                        format!("Gmail: the HTML body of {message_id} is gone: {e}"),
                     ),
+                    Err(e) => return Err(e),
                 }
             } else if let Some(att_id) = plain_att() {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = plain_text_to_html(&data),
-                    Err(e) => crate::services::logger::log(
+                    Err(e @ AppError::NotFound(_)) => crate::services::logger::log(
                         "error",
                         "sync",
-                        format!("Gmail: could not fetch the text body of {message_id}: {e}"),
+                        format!("Gmail: the text body of {message_id} is gone: {e}"),
                     ),
+                    Err(e) => return Err(e),
                 }
             }
         }
@@ -1254,7 +1259,8 @@ impl GmailClient {
                                 use base64::{engine::general_purpose::STANDARD, Engine};
                                 STANDARD.encode(&bytes)
                             }
-                            Err(_) => continue,
+                            Err(AppError::NotFound(_)) => continue,
+                            Err(e) => return Err(e),
                         },
                         None => continue,
                     },
@@ -1264,7 +1270,7 @@ impl GmailClient {
             }
         }
 
-        html
+        Ok(html)
     }
 }
 
@@ -2114,9 +2120,11 @@ impl EmailProvider for GmailClient {
             .send_batch_and_parse(message_ids, "full", BOUNDARY, "batch get messages")
             .await?;
 
-        // Slot results by original index. 429s are tracked for retry.
+        // Slot results by original index. Transient failures are tracked for retry.
         let mut final_results: Vec<Option<ProviderResult>> = (0..message_ids.len()).map(|_| None).collect();
         let mut rate_limited: Vec<usize> = Vec::new();
+        let mut delay_ms = GMAIL_INITIAL_BACKOFF_MS;
+        let mut retry_plan = plan_batch_wait(&initial_parts, delay_ms, crate::services::clock::now_secs());
 
         for (idx, part) in slot_batch_parts(initial_parts, message_ids.len())
             .into_iter()
@@ -2127,7 +2135,7 @@ impl EmailProvider for GmailClient {
                 // fill-in below, so one gap costs one message, not the chunk.
                 None => {}
                 Some(Ok(json)) => final_results[idx] = Some(self.parse_batch_part_json(&json).await),
-                Some(Err(429)) => rate_limited.push(idx),
+                Some(Err(status)) if is_retryable_batch_status(status) => rate_limited.push(idx),
                 Some(Err(status)) => {
                     final_results[idx] = Some(Err(AppError::SyncError(format!(
                         "Batch sub-request failed with HTTP {}",
@@ -2137,20 +2145,29 @@ impl EmailProvider for GmailClient {
             }
         }
 
-        // Retry any 429-rate-limited sub-requests with exponential backoff.
-        let mut delay_ms = GMAIL_INITIAL_BACKOFF_MS;
+        // Retry sub-requests that failed transiently, for as long as they ask.
         for attempt in 0..GMAIL_MAX_RETRIES {
             if rate_limited.is_empty() {
                 break;
             }
 
+            let wait_ms = match retry_plan {
+                RetryPlan::Wait(wait_ms) => wait_ms,
+                RetryPlan::GateUntil(until_secs) => {
+                    if let Some(account_id) = &self.account_id {
+                        set_rate_limit_gate(account_id, until_secs);
+                    }
+                    self.emit_rate_limit_gate_log("batch get messages", StatusCode::TOO_MANY_REQUESTS, until_secs);
+                    break;
+                }
+            };
             self.emit_retry_log(
                 &format!("{} rate-limited batch sub-request(s)", rate_limited.len()),
                 attempt + 1,
-                delay_ms,
+                wait_ms,
                 StatusCode::TOO_MANY_REQUESTS,
             );
-            sleep(Duration::from_millis(delay_ms.min(GMAIL_MAX_BACKOFF_MS))).await;
+            sleep(Duration::from_millis(wait_ms)).await;
             delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
 
             let retry_ids: Vec<&str> = rate_limited.iter().map(|&i| message_ids[i]).collect();
@@ -2170,6 +2187,8 @@ impl EmailProvider for GmailClient {
                 }
             };
 
+            retry_plan = plan_batch_wait(&retry_parts, delay_ms, crate::services::clock::now_secs());
+
             // The retry re-sends only the rate-limited ids, so a part's index is
             // a position within `rate_limited`, not within `message_ids`.
             let mut still_limited: Vec<usize> = Vec::new();
@@ -2182,7 +2201,7 @@ impl EmailProvider for GmailClient {
                     // Still unanswered — keep it queued for the next attempt.
                     None => still_limited.push(original_idx),
                     Some(Ok(json)) => final_results[original_idx] = Some(self.parse_batch_part_json(&json).await),
-                    Some(Err(429)) => still_limited.push(original_idx),
+                    Some(Err(status)) if is_retryable_batch_status(status) => still_limited.push(original_idx),
                     Some(Err(status)) => {
                         final_results[original_idx] = Some(Err(AppError::SyncError(format!(
                             "Batch sub-request failed with HTTP {}",
@@ -2194,10 +2213,10 @@ impl EmailProvider for GmailClient {
             rate_limited = still_limited;
         }
 
-        // Any remaining 429s after all retry attempts → permanent error for this sync.
+        // Whatever still fails after the retries → permanent error for this sync.
         for idx in rate_limited {
             final_results[idx] = Some(Err(AppError::SyncError(
-                "Batch sub-request rate limited — retries exhausted".to_string(),
+                "Batch sub-request still failing — retries exhausted".to_string(),
             )));
         }
 
@@ -2234,8 +2253,12 @@ pub(crate) struct BatchPart {
     /// usable Content-ID, which leaves position as the only way to attribute
     /// the part.
     pub index: Option<usize>,
-    /// `Ok(json)` for a 2xx sub-response, `Err(http_status)` otherwise.
+    /// `Ok(json)` for a 2xx sub-response, `Err(http_status)` otherwise. A 403
+    /// about the quota reads as 429, which is what it means.
     pub outcome: std::result::Result<String, u16>,
+    /// What a failed sub-response says about retrying: its `Retry-After`
+    /// header and its body, the two places Gmail puts the hint.
+    pub failure: Option<(reqwest::header::HeaderMap, String)>,
 }
 
 /// Split a multipart/mixed `body` on `boundary` and extract JSON from each part.
@@ -2251,16 +2274,39 @@ fn parse_batch_parts(body: &str, boundary: &str) -> Vec<BatchPart> {
         }
 
         let index = batch_part_index(part);
-        let outcome = match extract_json_from_batch_part(part) {
-            Some((status, json)) if (200..300).contains(&status) => Ok(json),
-            Some((status, _)) => Err(status),
+        let (outcome, failure) = match extract_json_from_batch_part(part) {
+            Some((status, json)) if (200..300).contains(&status) => (Ok(json), None),
+            Some((403, json)) if is_retryable_gmail_error(StatusCode::FORBIDDEN, &json) => {
+                (Err(429), Some((batch_part_retry_after(part), json)))
+            }
+            Some((status, json)) => (Err(status), Some((batch_part_retry_after(part), json))),
             // Malformed part — treat as an unknown server error
-            None => Err(0),
+            None => (Err(0), None),
         };
-        results.push(BatchPart { index, outcome });
+        results.push(BatchPart {
+            index,
+            outcome,
+            failure,
+        });
     }
 
     results
+}
+
+/// The `Retry-After` of a part's inner response, as a header map for
+/// [`plan_rate_limit_wait`].
+fn batch_part_retry_after(part: &str) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let value = part.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("retry-after")
+            .then(|| value.trim().parse().ok())?
+    });
+    if let Some(value) = value {
+        headers.insert(reqwest::header::RETRY_AFTER, value);
+    }
+    headers
 }
 
 /// Read the sub-request index out of a part's `Content-ID` header.
@@ -2391,6 +2437,33 @@ enum RetryPlan {
     /// instant. Every in-window retry is itself a quota-charged API call, so
     /// continuing the ladder only digs the rate-limit hole deeper.
     GateUntil(i64),
+}
+
+/// Whether a sub-response is worth asking for again. A 403 about the quota has
+/// already been read as 429 by [`parse_batch_parts`].
+fn is_retryable_batch_status(status: u16) -> bool {
+    StatusCode::from_u16(status).is_ok_and(|status| is_retryable_gmail_error(status, ""))
+}
+
+/// How long to wait before re-sending a batch's failed parts: one request
+/// carries them all, so the longest wait any of them asked for applies. Parts
+/// that will not be retried have no say.
+fn plan_batch_wait(parts: &[BatchPart], fallback_delay_ms: u64, now_secs: i64) -> RetryPlan {
+    let mut wait_ms = fallback_delay_ms.min(GMAIL_MAX_BACKOFF_MS);
+    let mut gate_until: Option<i64> = None;
+    for part in parts {
+        let (Err(status), Some((headers, body))) = (&part.outcome, &part.failure) else {
+            continue;
+        };
+        if !is_retryable_batch_status(*status) {
+            continue;
+        }
+        match plan_rate_limit_wait(headers, body, fallback_delay_ms, now_secs) {
+            RetryPlan::Wait(asked) => wait_ms = wait_ms.max(asked),
+            RetryPlan::GateUntil(until) => gate_until = gate_until.max(Some(until)),
+        }
+    }
+    gate_until.map_or(RetryPlan::Wait(wait_ms), RetryPlan::GateUntil)
 }
 
 /// Pick the wait strategy for a retryable response. The provider's own hint
@@ -3811,6 +3884,62 @@ mod tests {
         );
     }
 
+    /// A body too large to travel inline arrives as an attachment id.
+    fn payload_with_body_behind_an_attachment() -> GmailPayload {
+        make_payload(
+            "multipart/alternative",
+            None,
+            Some(vec![make_part_with_attachment("text/html", "att-1")]),
+        )
+    }
+
+    /// `status` for the body fetch, on a client pointed at a mock Gmail.
+    async fn client_whose_attachments_answer(status: u16) -> (GmailClient, wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages/m-1/attachments/att-1"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        (client, server)
+    }
+
+    /// Stored without its body the message could never be repaired: the sync
+    /// skips every id it holds. Failing it puts it on the retry list.
+    #[tokio::test]
+    async fn a_body_that_could_not_be_fetched_fails_the_message() {
+        let (client, _server) = client_whose_attachments_answer(403).await;
+        let payload = payload_with_body_behind_an_attachment();
+
+        assert!(client.extract_body("m-1", &payload).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_body_gmail_no_longer_has_leaves_the_message_empty() {
+        let (client, _server) = client_whose_attachments_answer(404).await;
+        let payload = payload_with_body_behind_an_attachment();
+
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn an_inline_image_that_could_not_be_fetched_fails_the_message() {
+        let (client, _server) = client_whose_attachments_answer(403).await;
+        let mut image = make_part_with_attachment("image/png", "att-1");
+        image.headers = Some(vec![GmailHeader {
+            name: "Content-ID".to_string(),
+            value: "<img-1>".to_string(),
+        }]);
+        let html = make_part("text/html", Some(&encode(r#"<img src="cid:img-1">"#)), None);
+        let payload = make_payload("multipart/related", None, Some(vec![html, image]));
+
+        assert!(client.extract_body("m-1", &payload).await.is_err());
+    }
+
     /// Some mailers put a name on the ONLY html part. Skipping named parts
     /// must not leave such a message with an empty body.
     #[tokio::test]
@@ -3819,7 +3948,7 @@ mod tests {
         let mut named = make_part("text/html", Some(&encode("<p>only body</p>")), None);
         named.filename = Some("body.html".to_string());
         let payload = make_payload("multipart/mixed", None, Some(vec![named]));
-        assert_eq!(client.extract_body("m-1", &payload).await, "<p>only body</p>");
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "<p>only body</p>");
     }
 
     #[tokio::test]
@@ -3832,7 +3961,7 @@ mod tests {
             None,
             Some(vec![named, make_part("text/plain", Some(&encode("real body")), None)]),
         );
-        let body = client.extract_body("m-1", &payload).await;
+        let body = client.extract_body("m-1", &payload).await.unwrap();
         assert!(body.contains("real body"), "{body}");
         assert!(!body.contains("attached page"), "{body}");
     }
@@ -3844,7 +3973,7 @@ mod tests {
         named.filename = Some("body.html".to_string());
         let forwarded = make_part("message/rfc822", None, Some(vec![named]));
         let payload = make_payload("multipart/mixed", None, Some(vec![forwarded]));
-        assert_eq!(client.extract_body("m-1", &payload).await, "");
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "");
     }
 
     #[test]
@@ -4062,14 +4191,14 @@ mod tests {
                 make_part("text/html", Some(&encode("<b>html</b>")), None),
             ]),
         );
-        assert_eq!(client.extract_body("msg1", &payload).await, "<b>html</b>");
+        assert_eq!(client.extract_body("msg1", &payload).await.unwrap(), "<b>html</b>");
     }
 
     #[tokio::test]
     async fn extract_body_converts_plain_to_html() {
         let client = gmail_client();
         let payload = make_payload("text/plain", Some(&encode("line1\nline2")), None);
-        let body = client.extract_body("msg2", &payload).await;
+        let body = client.extract_body("msg2", &payload).await.unwrap();
         assert!(body.contains("line1"));
         assert!(body.contains("line2"));
         assert!(body.contains("<br>"));
@@ -4088,7 +4217,7 @@ mod tests {
             parts: None,
             mime_type: Some("multipart/mixed".to_string()),
         };
-        assert!(client.extract_body("msg3", &payload).await.is_empty());
+        assert!(client.extract_body("msg3", &payload).await.unwrap().is_empty());
     }
 
     // --- plain_text_to_html tests ---
@@ -4783,6 +4912,118 @@ mod batch_slotting_tests {
         }
         body.push_str("--bnd--\r\n");
         body
+    }
+
+    const QUOTA_403: &str = r#"{"error":{"code":403,"errors":[{"reason":"rateLimitExceeded"}]}}"#;
+    const DENIED_403: &str = r#"{"error":{"code":403,"errors":[{"reason":"forbidden"}]}}"#;
+    const MESSAGE: &str = r#"{"id":"m","threadId":"t","labelIds":["INBOX"],"snippet":"","internalDate":"1700000000000",
+        "payload":{"mimeType":"text/plain","headers":[],"body":{"size":0}}}"#;
+
+    #[test]
+    fn a_403_about_the_quota_reads_as_rate_limited() {
+        let body = envelope(&[part(0, 403, QUOTA_403), part(1, 403, DENIED_403)]);
+
+        let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 2);
+
+        assert!(matches!(slotted[0], Some(Err(429))), "{:?}", slotted[0]);
+        assert!(matches!(slotted[1], Some(Err(403))), "{:?}", slotted[1]);
+    }
+
+    fn part_retrying_after(i: usize, seconds: u64) -> String {
+        format!(
+            "\r\nContent-Type: application/http\r\nContent-ID: <response-item{i}>\r\n\r\nHTTP/1.1 429 X\r\nRetry-After: {seconds}\r\n\r\n{{}}\r\n"
+        )
+    }
+
+    #[test]
+    fn the_wait_before_a_batch_retry_follows_the_longest_hint_of_its_parts() {
+        const NOW: i64 = 1_753_366_000;
+        let plan = |parts: &[String]| plan_batch_wait(&parse_batch_parts(&envelope(parts), "bnd"), 1_000, NOW);
+
+        assert_eq!(plan(&[part(0, 200, "{}"), part(1, 503, "{}")]), RetryPlan::Wait(1_000));
+        assert_eq!(
+            plan(&[part_retrying_after(0, 5), part_retrying_after(1, 12)]),
+            RetryPlan::Wait(12_000)
+        );
+        assert_eq!(
+            plan(&[part_retrying_after(0, 5), part_retrying_after(1, 300)]),
+            RetryPlan::GateUntil(NOW + 300)
+        );
+        // A part that is not retried has no say in how long the others wait.
+        let denied =
+            "\r\nContent-ID: <response-item0>\r\n\r\nHTTP/1.1 400 X\r\nRetry-After: 300\r\n\r\n{}\r\n".to_string();
+        assert_eq!(plan(&[denied]), RetryPlan::Wait(1_000));
+    }
+
+    /// A chunk answering `first`, then `second` to anything sent after it.
+    async fn gmail_batching(first: String, second: String) -> (wiremock::MockServer, GmailClient) {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let answer = |body: String| ResponseTemplate::new(200).set_body_raw(body, "multipart/mixed; boundary=bnd");
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(answer(first))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(answer(second))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, Some(format!("batch-{}", server.address())))
+            .with_base_url(server.uri());
+        (server, client)
+    }
+
+    #[tokio::test]
+    async fn a_part_that_failed_transiently_is_fetched_again() {
+        for failed in [part(1, 503, "{}"), part(1, 403, QUOTA_403)] {
+            let (server, client) = gmail_batching(
+                envelope(&[part(0, 200, MESSAGE), failed]),
+                envelope(&[part(0, 200, MESSAGE)]),
+            )
+            .await;
+
+            let results = provider::EmailProvider::batch_get_messages(&client, &["m-1", "m-2"])
+                .await
+                .expect("batch");
+
+            assert!(results.iter().all(Result::is_ok), "{results:?}");
+            assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_part_that_failed_for_good_is_not_fetched_again() {
+        let (server, client) = gmail_batching(envelope(&[part(0, 403, DENIED_403)]), String::new()).await;
+
+        let results = provider::EmailProvider::batch_get_messages(&client, &["m-1"])
+            .await
+            .expect("batch");
+
+        assert!(results[0].is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// Every retry inside the provider's window is charged against the quota
+    /// it says is exhausted.
+    #[tokio::test]
+    async fn a_part_told_to_wait_for_minutes_pauses_the_account_instead_of_retrying() {
+        let (server, client) = gmail_batching(envelope(&[part_retrying_after(0, 600)]), String::new()).await;
+
+        let results = tokio::time::timeout(
+            Duration::from_secs(5),
+            provider::EmailProvider::batch_get_messages(&client, &["m-1"]),
+        )
+        .await
+        .expect("must not sleep through the backoff ladder")
+        .expect("batch");
+
+        assert!(results[0].is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        let account = format!("batch-{}", server.address());
+        assert!(rate_limit_gate_until(&account, crate::services::clock::now_secs()).is_some());
     }
 
     /// The request labels every sub-request `Content-ID: <item{i}>` and Gmail

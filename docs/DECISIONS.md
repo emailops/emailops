@@ -4120,3 +4120,20 @@ another sync is dropped, and a server without IDLE never raises one. Retries run
 consecutive syncs, so a count alone was spent in minutes by a short outage.
 **Rejected:** *Reporting the cap through a new return value*: it changes the listing contract
 of every provider for a limit only IMAP had, and later slices are already bounded per batch.
+
+## 2026-10-31 — A sync only deletes, skips or moves past what it has checked
+
+**Decision:** A soft delete needs a lookup that finished: any IMAP step of `locate_message`
+that fails is an error, and a vanished row with no Message-ID is left alone. A failed OAuth
+refresh asks the user to sign in only when the provider refused the grant. A folder pass keeps
+its position for a failed download for up to 24 hours, then moves on. An inbox backfill keeps
+its ceiling until a run lists the window to its end. Gmail mail that gains `INBOX` while hidden
+or not stored is brought in by the change-log pass, within the account's categories and date.
+**Context:** Each of these read a failure to find out as an answer: a dropped connection as a
+deleted message, an outage page as an expired session, a failed download as a finished page.
+IMAP lists by UID, so the oldest stored row says nothing about how far a walk got.
+**Rejected:** *Holding a folder position with no limit*: one message nothing can download would
+stop the history below it for good. *The seven-day window of the failed-download list*: a folder
+would wait a week for such a message. *Filing failed folder downloads on that list*: it has no
+mailbox column, and the provider's own parse cannot always say which folder a message is in.
+*Deleting a vanished row with no Message-ID*: it hid live mail that was only moved.

@@ -555,8 +555,8 @@ impl ImapClient {
     /// the pure planner's [`ListedFolder`] shape (attributes rendered back to
     /// their wire spelling, SPECIAL-USE attrs arrive via
     /// `NameAttribute::Custom`).
-    fn list_entries_blocking(
-        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    fn list_entries_blocking<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
     ) -> std::result::Result<Vec<ListedFolder>, imap::Error> {
         let names = session.list(None, Some("*"))?;
         Ok(names
@@ -654,8 +654,8 @@ impl ImapClient {
     /// [`Self::select_folder_blocking`] for listings: `Ok(false)` only when the
     /// folder is not there. Anything else is an error, because the backfill
     /// reads an empty listing as having reached the start of the folder.
-    fn select_folder_checked(
-        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    fn select_folder_checked<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
         folder: &ImapFolder,
     ) -> Result<bool> {
         match folder {
@@ -680,6 +680,55 @@ impl ImapClient {
                 Ok(false)
             }
         }
+    }
+
+    /// The blocking half of [`EmailProvider::locate_message`]. `Ok(None)` only
+    /// once every place was searched: the sync reads that as the message being
+    /// gone, so a step that could not be answered is an error, never a miss.
+    fn locate_on_session<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
+        source: &ImapFolder,
+        uid: u32,
+        header: Option<&str>,
+    ) -> Result<Option<(ImapFolder, u32)>> {
+        if Self::select_folder_checked(session, source)?
+            && imap_search::uid_search(session, &format!("UID {uid}"))?.contains(&uid)
+        {
+            return Ok(Some((source.clone(), uid)));
+        }
+
+        let Some(header) = header.map(str::trim).filter(|h| !h.is_empty()) else {
+            return Ok(None);
+        };
+        // Quotes inside a Message-ID would break the SEARCH syntax.
+        if header.contains('"') {
+            return Err(AppError::SyncError(
+                "This Message-ID cannot be searched for on an IMAP server".to_string(),
+            ));
+        }
+        // Custom folders count too: "not spam any more" often means "filed
+        // somewhere". Bounded so a mailbox with many folders cannot turn one
+        // lookup into a hundred SELECTs.
+        let entries =
+            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let custom = folder_plan::plan_folders(&entries)
+            .custom
+            .into_iter()
+            .take(MAX_LOCATE_FOLDERS)
+            .map(|f| ImapFolder::Custom(f.raw_name));
+        for folder in [ImapFolder::Inbox, ImapFolder::Trash, ImapFolder::Spam]
+            .into_iter()
+            .chain(custom)
+        {
+            if !Self::select_folder_checked(session, &folder)? {
+                continue;
+            }
+            let hits = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\""))?;
+            if let Some(new_uid) = hits.into_iter().max() {
+                return Ok(Some((folder, new_uid)));
+            }
+        }
+        Ok(None)
     }
 
     /// Move `uid` out of the selected folder into `target`: `UID MOVE` when the
@@ -2192,12 +2241,7 @@ impl EmailProvider for ImapClient {
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
-        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
-        // don't occur in practice, so we just skip the header lookup for them.
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let header = message_id_header.map(str::to_string);
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
         let source = source.clone();
@@ -2206,45 +2250,9 @@ impl EmailProvider for ImapClient {
             tokio::task::spawn_blocking(move || -> Result<Option<(ImapFolder, u32)>> {
                 let mut session = Self::checkout_session(&slot, &creds)
                     .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-
-                if Self::select_folder_blocking(&mut session, &source) {
-                    if let Ok(hits) = imap_search::uid_search(&mut session, &format!("UID {uid}")) {
-                        if hits.contains(&uid) {
-                            slot.checkin(session);
-                            return Ok(Some((source, uid)));
-                        }
-                    }
-                }
-
-                let mut located = None;
-                if let Some(h) = header {
-                    // Custom folders count too: "not spam any more" often means
-                    // "filed somewhere". Bounded so a mailbox with many folders
-                    // cannot turn one lookup into a hundred SELECTs.
-                    let mut candidates = vec![ImapFolder::Inbox, ImapFolder::Trash];
-                    if let Ok(entries) = Self::list_entries_blocking(&mut session) {
-                        candidates.extend(
-                            folder_plan::plan_folders(&entries)
-                                .custom
-                                .into_iter()
-                                .take(MAX_LOCATE_FOLDERS)
-                                .map(|f| ImapFolder::Custom(f.raw_name)),
-                        );
-                    }
-                    for folder in candidates {
-                        if !Self::select_folder_blocking(&mut session, &folder) {
-                            continue;
-                        }
-                        if let Ok(hits) = imap_search::uid_search(&mut session, &format!("HEADER Message-ID \"{h}\"")) {
-                            if let Some(new_uid) = hits.into_iter().max() {
-                                located = Some((folder, new_uid));
-                                break;
-                            }
-                        }
-                    }
-                }
+                let found = Self::locate_on_session(&mut session, &source, uid, header.as_deref())?;
                 slot.checkin(session);
-                Ok(located)
+                Ok(found)
             })
             .await
             .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
@@ -2511,6 +2519,122 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    // ── locate_message ────────────────────────────────────────────────────
+
+    const SELECTED: &str = "{tag} OK [READ-WRITE] done\r\n";
+    const NO_HITS: &str = "* SEARCH\r\n{tag} OK done\r\n";
+    const LISTED: &str = "* LIST () \"/\" \"INBOX\"\r\n\
+                          * LIST () \"/\" \"Trash\"\r\n\
+                          * LIST () \"/\" \"Junk\"\r\n\
+                          * LIST () \"/\" \"Projects\"\r\n\
+                          {tag} OK done\r\n";
+
+    /// A session whose server answers each command with the next reply; `{tag}`
+    /// stands for that command's tag. Past the last reply the connection is
+    /// gone, as when a server drops it mid-operation.
+    fn session_answering(replies: &[&str]) -> imap::Session<ScriptedServer> {
+        let mut script = "a1 OK Logged in.\r\n".to_string();
+        for (i, reply) in replies.iter().enumerate() {
+            script.push_str(&reply.replace("{tag}", &format!("a{}", i + 2)));
+        }
+        match imap::Client::new(ScriptedServer::new(&script)).login("u", "p") {
+            Ok(session) => session,
+            Err((e, _)) => panic!("scripted login failed: {e}"),
+        }
+    }
+
+    fn locate(replies: &[&str], header: Option<&str>) -> Result<Option<(ImapFolder, u32)>> {
+        ImapClient::locate_on_session(&mut session_answering(replies), &ImapFolder::Inbox, 7, header)
+    }
+
+    /// Every step of a lookup that ends in "the provider does not have it".
+    const NOT_FOUND_ANYWHERE: [&str; 13] = [
+        SELECTED, NO_HITS, // INBOX, by UID
+        LISTED,  //
+        SELECTED, NO_HITS, // INBOX, by header
+        LISTED, SELECTED, NO_HITS, // Trash
+        LISTED, SELECTED, NO_HITS, // Junk
+        SELECTED, NO_HITS, // Projects
+    ];
+
+    #[test]
+    fn a_lookup_that_searched_everywhere_reports_the_message_gone() {
+        assert!(matches!(locate(&NOT_FOUND_ANYWHERE, Some("<m@example.com>")), Ok(None)));
+    }
+
+    /// The caller soft-deletes on "not found", so a lookup cut short at any
+    /// step has to say it could not finish.
+    #[test]
+    fn a_lookup_cut_short_at_any_step_is_not_a_not_found() {
+        for answered in 0..NOT_FOUND_ANYWHERE.len() {
+            let result = locate(&NOT_FOUND_ANYWHERE[..answered], Some("<m@example.com>"));
+            assert!(
+                result.is_err(),
+                "connection lost after {answered} replies, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_the_server_refused_is_not_a_not_found() {
+        let refused = "{tag} NO [SERVERBUG] Internal error\r\n";
+        for step in (1..NOT_FOUND_ANYWHERE.len()).filter(|i| NOT_FOUND_ANYWHERE[*i] == NO_HITS) {
+            let mut replies = NOT_FOUND_ANYWHERE;
+            replies[step] = refused;
+            let result = locate(&replies, Some("<m@example.com>"));
+            assert!(result.is_err(), "search {step} refused, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_the_server_cannot_open_right_now_is_not_a_not_found() {
+        let unavailable = "{tag} NO [UNAVAILABLE] Try again later\r\n";
+        for step in (0..NOT_FOUND_ANYWHERE.len()).filter(|i| NOT_FOUND_ANYWHERE[*i] == SELECTED) {
+            let mut replies = NOT_FOUND_ANYWHERE;
+            replies[step] = unavailable;
+            let result = locate(&replies, Some("<m@example.com>"));
+            assert!(result.is_err(), "SELECT {step} unavailable, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_that_does_not_exist_is_skipped() {
+        let missing = "{tag} NO Mailbox does not exist\r\n";
+        let replies = [
+            SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, missing,
+        ];
+        assert!(matches!(locate(&replies, Some("<m@example.com>")), Ok(None)));
+    }
+
+    #[test]
+    fn a_message_still_at_its_uid_is_found_there() {
+        let at_its_uid = "* SEARCH 7\r\n{tag} OK done\r\n";
+        let found = locate(&[SELECTED, at_its_uid], Some("<m@example.com>")).expect("lookup");
+        assert_eq!(found, Some((ImapFolder::Inbox, 7)));
+    }
+
+    #[test]
+    fn a_message_moved_to_junk_is_found_there() {
+        // Filing a message as spam in another client re-keys it like any move.
+        let hit = "* SEARCH 40\r\n{tag} OK done\r\n";
+        let replies = [
+            SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, hit,
+        ];
+        let found = locate(&replies, Some("<m@example.com>")).expect("lookup");
+        assert_eq!(found, Some((ImapFolder::Spam, 40)));
+    }
+
+    #[test]
+    fn a_message_id_that_cannot_be_searched_is_not_a_not_found() {
+        let replies = [SELECTED, NO_HITS];
+        assert!(locate(&replies, Some("<\"quoted\"@example.com>")).is_err());
+    }
+
+    #[test]
+    fn without_a_message_id_only_its_uid_can_be_checked() {
+        assert!(matches!(locate(&[SELECTED, NO_HITS], None), Ok(None)));
     }
 
     #[test]

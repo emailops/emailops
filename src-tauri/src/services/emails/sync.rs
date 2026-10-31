@@ -305,6 +305,23 @@ fn take_sync_abort(sync_abort_flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>
     requested
 }
 
+/// Close a run retired mid-flight: whoever asked for it sees its progress stream
+/// end, and the poll loop does not skip an account left "syncing". A removed
+/// account has no status row left to write.
+fn close_stopped_sync(db: &Database, account_id: &str) {
+    emit_progress(account_id, "complete", 0, 0, "Sync stopped");
+    if !matches!(db.get_account(account_id), Ok(Some(_))) {
+        return;
+    }
+    if let Err(e) = db.upsert_sync_status(account_id, "idle", None, None) {
+        crate::services::logger::log(
+            "error",
+            "sync",
+            format!("failed to close the stopped sync of {account_id}: {e}"),
+        );
+    }
+}
+
 /// End-of-sync attachment upkeep, non-fatal: the one-time backfill of
 /// attachment metadata lost to an old sync bug (see
 /// `attachment_backfill`), then a re-mine of attachment rule suggestions
@@ -503,6 +520,15 @@ pub async fn sync_account_with_provider(
     /// until the window is exhausted, so a full history still completes in one
     /// run rather than being spread over later syncs.
     const BACKFILL_PAGES_PER_SLICE: u32 = 10;
+
+    if let (Some(_), Some(ceiling)) = (backfill_after_timestamp, backfill_before_timestamp) {
+        set_sync_preference(
+            db,
+            account,
+            &inbox_backfill_ceiling_key(account_id),
+            &ceiling.to_string(),
+        );
+    }
 
     let mut synced_count: u32 = 0;
     let mut all_new_ids: Vec<String> = Vec::new();
@@ -711,6 +737,7 @@ pub async fn sync_account_with_provider(
                 // Exit early if this run has been retired mid-flight — the account was
                 // deleted, or its sync range changed and a replacement run is queued.
                 if take_sync_abort(&sync_abort_flags, account_id) {
+                    close_stopped_sync(db, account_id);
                     return Ok(());
                 }
 
@@ -991,6 +1018,17 @@ pub async fn sync_account_with_provider(
         }
     }
 
+    if backfill_after_timestamp.is_some() {
+        if let Err(e) = db.delete_preference(&inbox_backfill_ceiling_key(account_id)) {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!("Failed to clear the inbox backfill ceiling: {e}"),
+            );
+        }
+    }
+
     // "Swept back to the floor" is only true when the whole window was listed
     // and held nothing new. Slicing cannot weaken that: any slice that ingested
     // mail sets `saw_new_backfill`, so a partial run never latches — which is
@@ -1066,6 +1104,7 @@ pub async fn sync_account_with_provider(
 
         for chunk in retryable.chunks(BATCH_SIZE) {
             if take_sync_abort(&sync_abort_flags, account_id) {
+                close_stopped_sync(db, account_id);
                 return Ok(());
             }
             let chunk_ids: Vec<&str> = chunk.iter().map(|(id, _, _)| id.as_str()).collect();
@@ -1644,6 +1683,48 @@ const FAILED_DOWNLOAD_RETRY_WINDOW_SECS: i64 = 7 * 24 * 60 * 60;
 /// Pure: whether a failed download has had its tries and its time.
 fn failed_download_exhausted(retry_count: i32, failed_at: i64, now: i64) -> bool {
     retry_count >= MAX_RETRY_COUNT && now - failed_at >= FAILED_DOWNLOAD_RETRY_WINDOW_SECS
+}
+
+/// How long a folder pass keeps its position for a download that fails. Long
+/// enough for an outage to pass, short enough that one message nothing can
+/// download holds the rest of the folder back for a day at most.
+const FAILED_FOLDER_DOWNLOAD_HOLD_SECS: i64 = 24 * 60 * 60;
+
+/// Whether a folder pass stays at `position` so its next run lists a failed
+/// download again. A failed message has no timestamp to tell where it sat, so
+/// any position past the listing would strand it. The hold starts with the
+/// first failure at `position` and ends after
+/// [`FAILED_FOLDER_DOWNLOAD_HOLD_SECS`].
+fn hold_for_failed_downloads(db: &Database, account: &Account, target: &SyncTarget, position: i64) -> bool {
+    let key = extra_mailbox_failure_hold_key(&account.id, target);
+    let now = crate::services::clock::now_secs();
+    let held_since = db
+        .get_preference(&key)
+        .ok()
+        .flatten()
+        .as_deref()
+        .and_then(parse_forward_gap)
+        .filter(|(held_at, _)| *held_at == position)
+        .map(|(_, since)| since);
+    match held_since {
+        None => {
+            set_sync_preference(db, account, &key, &format!("{position}:{now}"));
+            true
+        }
+        Some(since) if now - since < FAILED_FOLDER_DOWNLOAD_HOLD_SECS => true,
+        Some(_) => {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!(
+                    "Moving on in {}: some messages could not be downloaded for a day",
+                    target.mailbox_value()
+                ),
+            );
+            false
+        }
+    }
 }
 /// Upper bound on backfill pages walked in a single periodic sync. The
 /// pagination is bounded so a stale mailbox with 10k+ history doesn't make
@@ -2592,6 +2673,12 @@ fn extra_mailbox_forward_gap_key(account_id: &str, target: &SyncTarget) -> Strin
     format!("extra_mailbox_forward_gap:{}:{}", account_id, target.mailbox_value())
 }
 
+/// Where a folder pass is holding for a failed download, persisted as
+/// `"<position>:<since>"`.
+fn extra_mailbox_failure_hold_key(account_id: &str, target: &SyncTarget) -> String {
+    format!("extra_mailbox_failure_hold:{}:{}", account_id, target.mailbox_value())
+}
+
 fn parse_forward_gap(raw: &str) -> Option<(i64, i64)> {
     let (ceiling, high) = raw.split_once(':')?;
     Some((ceiling.parse().ok()?, high.parse().ok()?))
@@ -2706,7 +2793,8 @@ fn set_sync_preference(db: &Database, account: &Account, key: &str, value: &str)
 /// the pass records the unlisted part as a gap (see
 /// [`extra_mailbox_forward_gap_key`]) and works it off on the following runs
 /// before listing forward again. A window with a failed download keeps the
-/// watermark, so the next run lists that message again.
+/// watermark, and a full listing or catch-up window with one stays where it is
+/// (see [`hold_for_failed_downloads`]), so the next run lists that message again.
 async fn sync_extra_mailbox_incremental(
     db: &Arc<Database>,
     account: &Account,
@@ -2746,6 +2834,9 @@ async fn sync_extra_mailbox_incremental(
         else {
             return;
         };
+        if window.outcome.failed > 0 && hold_for_failed_downloads(db, account, target, ceiling) {
+            return;
+        }
         if window.truncated {
             match window.oldest {
                 Some(oldest) if oldest < ceiling => {
@@ -2812,6 +2903,10 @@ async fn sync_extra_mailbox_incremental(
 
     let newest = after_timestamp.unwrap_or(0).max(window.outcome.max_timestamp);
     if window.truncated {
+        // A gap would start below the failed download and never list it again.
+        if window.outcome.failed > 0 && hold_for_failed_downloads(db, account, target, after_timestamp.unwrap_or(0)) {
+            return;
+        }
         // The watermark stays; the unlisted, older part becomes the gap.
         if let Some(oldest) = window.oldest {
             set_sync_preference(db, account, &gap_key, &format!("{oldest}:{newest}"));
@@ -2959,6 +3054,19 @@ async fn sync_extra_mailbox_backfill(
         )
         .await;
         total_inserted += outcome.inserted;
+
+        if outcome.failed > 0 && hold_for_failed_downloads(db, account, target, before_timestamp) {
+            emit_account_log(
+                "warn",
+                "sync",
+                &account.email,
+                &format!(
+                    "Backfill of {} paused: {} message(s) could not be downloaded",
+                    mailbox_name, outcome.failed
+                ),
+            );
+            break;
+        }
 
         // Determine how far the window actually reached so we can advance
         // strictly backward. Prefer the freshly-inserted min timestamp.
@@ -3309,8 +3417,37 @@ pub(super) fn resolve_sync_plan(db: &Database, account: &Account, account_id: &s
     );
     plan.incremental_after_timestamp =
         incremental_after_with_resume(plan.incremental_after_timestamp, resume, effective_sync_from);
+    let ceiling = db
+        .get_preference(&inbox_backfill_ceiling_key(account_id))?
+        .and_then(|raw| raw.parse::<i64>().ok());
+    let plan = backfill_under_ceiling(plan, ceiling, effective_sync_from);
     let repair_done = db.get_preference(&inbox_gap_repair_key(account_id))?.is_some();
     Ok(apply_inbox_gap_repair(plan, repair_done, effective_sync_from))
+}
+
+/// Preference holding the ceiling of an inbox backfill window a sync has not
+/// finished.
+fn inbox_backfill_ceiling_key(account_id: &str) -> String {
+    format!("inbox_backfill_ceiling:{account_id}")
+}
+
+/// Keep an unfinished backfill window at its original ceiling.
+///
+/// The planned ceiling is the oldest stored inbox message, which only tracks a
+/// walk that goes down the dates. IMAP walks down the UIDs, and a message
+/// imported late has a high UID and an old date: stored first, it would drop
+/// the next run's ceiling to its date and strand everything in between. The
+/// ceiling is recorded before downloading and dropped once a run lists the
+/// window to its end; already-stored ids are skipped on the way.
+pub(super) fn backfill_under_ceiling(plan: SyncPlan, ceiling: Option<i64>, floor: Option<i64>) -> SyncPlan {
+    match (ceiling, floor) {
+        (Some(ceiling), Some(floor)) if floor < ceiling => SyncPlan {
+            backfill_after_timestamp: Some(floor),
+            backfill_before_timestamp: Some(ceiling),
+            ..plan
+        },
+        _ => plan,
+    }
 }
 
 /// Preference holding the floor of an inbox incremental window that a sync
@@ -3638,6 +3775,140 @@ mod extra_mailbox_window_tests {
             stored_ids(&db),
             vec!["b1".to_string()],
             "the backfill must retry the page"
+        );
+    }
+
+    /// A page where only some downloads failed still moved the cursor below
+    /// them, so the next run never listed the failed message again.
+    #[tokio::test]
+    async fn backfill_lists_a_page_again_when_one_of_its_downloads_failed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let messages = |provider: &FakeEmailProvider| {
+            provider.add_message(sent_email("older", FLOOR + 10), EmailCategory::Primary, vec![]);
+            provider.add_message(sent_email("newer", FLOOR + 20), EmailCategory::Primary, vec![]);
+        };
+
+        let flaky = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&flaky);
+        flaky.fail_message("newer");
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &flaky, &mut budget, None).await;
+        assert_eq!(stored_ids(&db), vec!["older".to_string()]);
+
+        let healthy = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&healthy);
+        let mut budget = MAX_BACKFILL_PAGES_PER_SYNC;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &healthy, &mut budget, None).await;
+        assert_eq!(
+            stored_ids(&db),
+            vec!["older".to_string(), "newer".to_string()],
+            "the failed message must be retried"
+        );
+    }
+
+    /// One message that can never be downloaded must not hold the history
+    /// below it back for good.
+    #[tokio::test]
+    async fn backfill_moves_past_a_download_that_keeps_failing() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = account_synced_from(Some(FLOOR));
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let cursor = FLOOR + 100;
+        db.set_preference(
+            &extra_mailbox_backfill_cursor_key(&account.id, &target),
+            &cursor.to_string(),
+        )
+        .unwrap();
+        let now = crate::services::clock::now_secs();
+        let held_since = now - FAILED_FOLDER_DOWNLOAD_HOLD_SECS;
+        db.set_preference(
+            &extra_mailbox_failure_hold_key(&account.id, &target),
+            &format!("{cursor}:{held_since}"),
+        )
+        .unwrap();
+
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(sent_email("oldest", FLOOR + 10), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("older", FLOOR + 20), EmailCategory::Primary, vec![]);
+        provider.add_message(sent_email("poison", FLOOR + 30), EmailCategory::Primary, vec![]);
+        provider.fail_message("poison");
+        let mut budget = 1;
+        sync_extra_mailbox_backfill(&db, &account, &account.id, &target, &provider, &mut budget, None).await;
+
+        assert_eq!(
+            db.get_preference(&extra_mailbox_backfill_cursor_key(&account.id, &target))
+                .unwrap(),
+            Some((FLOOR + 10).to_string()),
+            "the cursor moves on once the hold has run out"
+        );
+    }
+
+    /// The window a truncated listing left behind was closed whatever became
+    /// of its downloads, moving the watermark past the ones that failed.
+    #[tokio::test]
+    async fn catch_up_window_lists_again_when_one_of_its_downloads_failed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let mut account = account_synced_from(Some(FLOOR));
+        account.provider = "imap".to_string();
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let messages = |provider: &FakeEmailProvider| {
+            for i in 1..=(MAX_EXTRA_MAILBOX_EMAILS as i64 + 20) {
+                provider.add_message(sent_email(&format!("s{i}"), FLOOR + i), EmailCategory::Primary, vec![]);
+            }
+        };
+
+        let flaky = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&flaky);
+        flaky.fail_message("s5");
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &flaky, None).await;
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &flaky, None).await;
+        assert!(!stored_ids(&db).contains(&"s5".to_string()));
+
+        let healthy = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&healthy);
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &healthy, None).await;
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &healthy, None).await;
+        assert!(
+            stored_ids(&db).contains(&"s5".to_string()),
+            "the failed message must be retried"
+        );
+    }
+
+    /// The same for a listing that came back full and has a failed download
+    /// of its own: the gap below it used to be all that was left to list.
+    #[tokio::test]
+    async fn a_full_listing_is_repeated_when_one_of_its_downloads_failed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let mut account = account_synced_from(Some(FLOOR));
+        account.provider = "imap".to_string();
+        seed_account_row(&db, &account);
+        let target = SyncTarget::Canonical(ExtraMailbox::Sent);
+        let burst = MAX_EXTRA_MAILBOX_EMAILS as i64 + 20;
+        let messages = |provider: &FakeEmailProvider| {
+            for i in 1..=burst {
+                provider.add_message(sent_email(&format!("s{i}"), FLOOR + i), EmailCategory::Primary, vec![]);
+            }
+        };
+
+        let flaky = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&flaky);
+        flaky.fail_message("s100");
+        sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &flaky, None).await;
+
+        let healthy = FakeEmailProvider::new("me@example.com", "Me");
+        messages(&healthy);
+        for _ in 0..3 {
+            sync_extra_mailbox_incremental(&db, &account, &account.id, &target, &healthy, None).await;
+        }
+        assert_eq!(
+            stored_ids(&db).len(),
+            burst as usize,
+            "the failed message must be retried"
         );
     }
 
@@ -5031,6 +5302,177 @@ mod interrupted_sync_status_tests {
             resets.is_empty(),
             "removed account must not log a reset failure, got: {resets:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod interrupted_run_tests {
+    use super::*;
+    use crate::services::events::seam_test_lock;
+    use crate::sync::provider::{EmailCategory, FakeEmailProvider};
+
+    fn planned() -> SyncPlan {
+        SyncPlan {
+            backfill_after_timestamp: None,
+            backfill_before_timestamp: Some(2_000),
+            run_incremental: true,
+            incremental_after_timestamp: Some(9_000),
+        }
+    }
+
+    #[test]
+    fn an_unfinished_backfill_window_stays_open_up_to_its_ceiling() {
+        let plan = backfill_under_ceiling(planned(), Some(5_000), Some(1_000));
+        assert_eq!(plan.backfill_after_timestamp, Some(1_000));
+        assert_eq!(plan.backfill_before_timestamp, Some(5_000));
+        assert_eq!(
+            plan.incremental_after_timestamp,
+            Some(9_000),
+            "the forward pass is not its business"
+        );
+    }
+
+    #[test]
+    fn nothing_changes_without_a_ceiling_or_with_a_range_narrowed_past_it() {
+        assert_eq!(backfill_under_ceiling(planned(), None, Some(1_000)), planned());
+        assert_eq!(backfill_under_ceiling(planned(), Some(5_000), Some(6_000)), planned());
+    }
+
+    fn account(id: &str) -> Account {
+        Account {
+            id: id.to_string(),
+            provider: "imap".to_string(),
+            email: "me@example.com".to_string(),
+            name: "Me".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: Some(1_000),
+            color: crate::models::AccountColor::Blue,
+        }
+    }
+
+    fn inbox_email(account_id: &str, id: &str, timestamp: i64) -> Email {
+        Email {
+            id: id.to_string(),
+            account_id: account_id.to_string(),
+            thread_id: format!("t-{id}"),
+            message_id: None,
+            references: None,
+            subject: "subject".to_string(),
+            sender: "Someone".to_string(),
+            sender_email: "someone@example.com".to_string(),
+            recipients: vec!["me@example.com".to_string()],
+            cc: Vec::new(),
+            body: "body".to_string(),
+            snippet: "snip".to_string(),
+            timestamp,
+            is_read: true,
+            triage_status: None,
+            category: "primary".to_string(),
+            mailbox: "inbox".to_string(),
+            is_sent: false,
+            is_starred: false,
+            headers: None,
+        }
+    }
+
+    fn database_with(account: &Account) -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.seed_test_account(&account.id);
+        db.upsert_sync_status(&account.id, "syncing", None, None).unwrap();
+        db
+    }
+
+    async fn run_sync(
+        db: &Arc<Database>,
+        account: &Account,
+        flags: &Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+        provider: FakeEmailProvider,
+    ) {
+        let temp = tempfile::tempdir().expect("temp dir");
+        sync_account_with_provider(
+            db,
+            account,
+            temp.path(),
+            None,
+            crate::services::task_queue::TaskQueue::new(1, "test-sync"),
+            flags.clone(),
+            Box::new(provider),
+        )
+        .await
+        .expect("sync");
+    }
+
+    /// An IMAP listing runs by UID, and a message imported late has a high UID
+    /// and an old date. Stored first, it became the oldest row, the next run's
+    /// ceiling dropped to its date, and everything between was never listed.
+    #[tokio::test]
+    async fn a_backfill_stopped_half_way_resumes_under_its_original_ceiling() {
+        let account = account("acc-resume");
+        let db = database_with(&account);
+        db.set_preference(&inbox_gap_repair_key(&account.id), "1").unwrap();
+        let newest_stored = inbox_email(&account.id, "stored", 100_000);
+        db.insert_email(&newest_stored).expect("seed");
+        let by_uid = || {
+            let provider = FakeEmailProvider::new("me@example.com", "Me");
+            provider.list_by_arrival();
+            provider.add_message(newest_stored.clone(), EmailCategory::Primary, vec![]);
+            for i in 0..24 {
+                let email = inbox_email(&account.id, &format!("m{i}"), 50_000 + i);
+                provider.add_message(email, EmailCategory::Primary, vec![]);
+            }
+            let imported = inbox_email(&account.id, "imported", 2_000);
+            provider.add_message(imported, EmailCategory::Primary, vec![]);
+            provider
+        };
+        let flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+
+        let stopped = by_uid();
+        let abort = (flags.clone(), account.id.clone());
+        stopped.after_batch(move || request_sync_abort(&abort.0, &abort.1));
+        run_sync(&db, &account, &flags, stopped).await;
+        let live = |db: &Database| db.count_emails_in_mailbox(&account.id, "inbox").unwrap();
+        assert_eq!(live(&db), 21, "precondition: the first chunk, then the stop");
+
+        run_sync(&db, &account, &flags, by_uid()).await;
+
+        assert_eq!(live(&db), 26, "the rest of the window must still be listed");
+    }
+
+    /// The contract of every other way out: whoever asked for a sync sees its
+    /// progress stream close, and the poll loop skips an account left "syncing".
+    // Synchronous on purpose: `seam_test_lock` must not be held across an await.
+    #[test]
+    fn a_sync_stopped_half_way_closes_its_progress_and_leaves_no_syncing_status() {
+        let _seam = seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        crate::services::logger::install_for_testing();
+
+        let account = account("acc-stopped");
+        let db = database_with(&account);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_message(inbox_email(&account.id, "m1", 50_000), EmailCategory::Primary, vec![]);
+        let flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+        request_sync_abort(&flags, &account.id);
+
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run_sync(&db, &account, &flags, provider));
+
+        let statuses: Vec<String> = sink
+            .payloads_for("sync-progress")
+            .into_iter()
+            .filter(|p| p.get("accountId").and_then(|v| v.as_str()) == Some("acc-stopped"))
+            .filter_map(|p| p.get("status")?.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(statuses.last().map(String::as_str), Some("complete"), "{statuses:?}");
+        assert_eq!(db.get_sync_status(&account.id).unwrap().status, "idle");
+
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+        crate::services::logger::install(Arc::new(crate::services::logger::NoopLogger));
     }
 }
 
