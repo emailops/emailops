@@ -44,7 +44,11 @@ afterEach(() => {
 });
 
 describe('SettingsDialog', () => {
-  it('closes on Escape', () => {
+  it('closes on Escape, which the window consumes', () => {
+    // The app-wide shortcut handler registers first and consumes every Escape
+    // that reaches the window.
+    const consume = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', consume);
     const onClose = vi.fn();
     act(() =>
       root.render(
@@ -63,8 +67,9 @@ describe('SettingsDialog', () => {
       ),
     );
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
+    window.removeEventListener('keydown', consume);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -94,7 +99,7 @@ describe('SettingsDialog', () => {
     );
 
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
 
     expect(closeConfirmation).toHaveBeenCalledTimes(1);

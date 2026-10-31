@@ -34,6 +34,24 @@ const pressKey = (target: EventTarget, key: string, shiftKey = false) =>
   });
 
 describe('Modal accessibility', () => {
+  // The app-wide shortcut handler consumes every Escape that reaches the window
+  // and was registered first, so a dialog listening on the window never sees it.
+  it('closes on Escape while the window consumes that key', async () => {
+    const consume = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', consume);
+    const onClose = vi.fn();
+    await render(
+      <Modal open onClose={onClose} title="Delete rule">
+        <p>Body</p>
+      </Modal>,
+    );
+
+    await pressKey(document.body, 'Escape');
+    window.removeEventListener('keydown', consume);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('is named by its title', async () => {
     await render(
       <Modal open onClose={() => {}} title="Delete rule">
@@ -166,7 +184,7 @@ describe('Escape with dialogs on top of each other', () => {
       </>,
     );
 
-    await pressKey(window, 'Escape');
+    await pressKey(document.body, 'Escape');
 
     expect(closeTop).toHaveBeenCalledTimes(1);
     expect(closeUnder).not.toHaveBeenCalled();
@@ -185,7 +203,7 @@ describe('Escape with dialogs on top of each other', () => {
       </>,
     );
 
-    await pressKey(window, 'Escape');
+    await pressKey(document.body, 'Escape');
 
     expect(closeUnder).toHaveBeenCalledTimes(1);
   });

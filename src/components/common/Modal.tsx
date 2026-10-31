@@ -105,8 +105,10 @@ export function Modal({
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) openerRef.current = document.activeElement;
   wasOpenRef.current = open;
-  // Escape-to-close. Bound to window so focused inputs don't swallow it. Only
-  // the top overlay answers, and it marks the key as used for the one below.
+  // Escape-to-close. Bound to the document so focused inputs don't swallow it,
+  // and it runs before the app-wide handler on the window, which consumes every
+  // Escape. Only the top overlay answers, and it marks the key as used for the
+  // one below.
   useEffect(() => {
     if (!open || disableEscape) return;
     const handler = (e: KeyboardEvent) => {
@@ -114,8 +116,8 @@ export function Modal({
       e.preventDefault();
       onClose();
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, [open, disableEscape, onClose, isTopOverlay]);
 
   // Focus moves in on open (unless a field already took it) and back to where

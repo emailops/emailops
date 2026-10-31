@@ -126,15 +126,16 @@ export function SettingsDialog({
   const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
 
   // Escape closes, like every dialog built on the shared Modal: only when
-  // nothing is open on top of it (a password or confirmation dialog).
+  // nothing is open on top of it (a password or confirmation dialog). On the
+  // document, as the app-wide handler on the window consumes the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
       e.preventDefault();
       onClose();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [onClose, isTopOverlay]);
 
   const handleOverlayClick = useCallback(
