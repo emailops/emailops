@@ -1271,7 +1271,7 @@ pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToo
             Some(_) if !explicitly_closed => continue,
             Some(s) => s + FN_OPEN.len(),
             None => {
-                if let Some(call) = parse_json_tool_call_block(block) {
+                if let Some(call) = parse_json_tool_call_block(block, explicitly_closed) {
                     out.push(call);
                 }
                 continue;
@@ -1373,16 +1373,28 @@ fn repair_name_equals(inner: &str) -> std::borrow::Cow<'_, str> {
 /// `arguments` when there is no top-level one, treats top-level keys beside
 /// `name` as the arguments when the `arguments` wrapper was dropped, defaults
 /// truly absent arguments to an empty object, and tolerates trailing garbage
-/// after the object. Returns `None` when the block is not a well-formed
-/// object or carries no resolvable tool name.
-fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
-    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+/// after the object, reads through OpenAI's `function` wrapper, and adds the
+/// braces a block the model closed (`explicitly_closed`) is short of. Returns
+/// `None` when the block is not a well-formed object or carries no resolvable
+/// tool name.
+fn parse_json_tool_call_block(inner: &str, explicitly_closed: bool) -> Option<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{close_open_objects, AiToolCall, AiToolCallFunction};
 
     let inner = repair_name_equals(inner);
     let inner = inner.as_ref();
     let value = parse_first_json_value(inner)
-        .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))?;
+        .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))
+        .or_else(|| {
+            explicitly_closed
+                .then(|| close_open_objects(inner))
+                .flatten()
+                .and_then(|fixed| parse_first_json_value(&fixed))
+        })?;
     let obj = value.as_object()?;
+    let obj = match obj.get("function").and_then(|f| f.as_object()) {
+        Some(function) if !obj.contains_key("name") => function,
+        _ => obj,
+    };
     let mut arguments = obj.get("arguments").cloned().unwrap_or_else(|| {
         // Flattened shape: the model dropped the `arguments` wrapper and put
         // the args at top level next to `name` — collect everything else.
@@ -9638,6 +9650,23 @@ Preséntalos en una tabla markdown …";
             calls[0].function.arguments,
             serde_json::json!({"unread":true,"order":"oldest","limit":1})
         );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_reads_a_function_wrapper_one_brace_short() {
+        // Verbatim production emission (Qwen 3.6 35B). Mirrors the runtime
+        // parser's repair.
+        let text = r#"<tool_call>{"function":{"name":"list_calendar_events","arguments":{"days":7}} </tool_call>"#;
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "list_calendar_events");
+        assert_eq!(calls[0].function.arguments, serde_json::json!({"days":7}));
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_does_not_complete_a_block_the_stream_cut_off() {
+        let text = r#"<tool_call>{"name":"search_emails","arguments":{"limit":25}"#;
+        assert!(parse_xml_tool_calls(text).is_empty());
     }
 
     #[test]

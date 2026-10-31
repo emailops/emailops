@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The chat no longer skips a tool the local model called slightly wrong.** A
+  call one brace short used to run nothing, and the answer made up a result.
 - **Forwarding is safer.** Send waits for the forwarded files, and files or text
   that finish loading after you moved on no longer reach another conversation.
 - **Discard in a compose tab now removes the draft**, after asking. Closing a

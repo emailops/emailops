@@ -41,6 +41,25 @@ impl std::fmt::Display for ProviderType {
 /// 8 is the largest batch seen in a round of a passing verified run.
 pub const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
 
+/// Close the objects a `<tool_call>` body left open: Qwen 3.6 35B can end the
+/// block one brace short. Only for a block the model closed itself: one the
+/// stream cut off may be half written. `None` when nothing is open, or when a
+/// string is.
+pub(crate) fn close_open_objects(body: &str) -> Option<String> {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for c in body.chars() {
+        match (in_string, c) {
+            (true, _) if escaped => escaped = false,
+            (true, '\\') => escaped = true,
+            (true, '"') | (false, '"') => in_string = !in_string,
+            (false, '{') => depth += 1,
+            (false, '}') => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth > 0 && !in_string).then(|| format!("{body}{}", "}".repeat(depth)))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiMessage {
     pub role: String,

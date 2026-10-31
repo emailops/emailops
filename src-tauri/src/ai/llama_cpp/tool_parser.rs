@@ -32,8 +32,11 @@
 //   - Missing `</tool_call>` (newline-batched calls) → the next open tag or
 //     end of text is an implicit close; incomplete JSON still yields nothing.
 //   - `{"name="x",…}` (`=` typed for `":"`) → repaired before parsing.
+//   - `{"function":{"name":"x","arguments":{…}}}` (OpenAI's wrapper) → read
+//     through it.
+//   - A closed block one brace short → the brace is added.
 
-use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+use crate::ai::provider::{close_open_objects, AiToolCall, AiToolCallFunction};
 
 pub(super) use crate::ai::provider::MAX_TOOL_CALLS_PER_ROUND;
 
@@ -55,11 +58,11 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         // JSON parse below rejects incomplete bodies, so a genuinely
         // truncated stream still yields nothing rather than a bogus call.
         let rest = &text[after_open..];
-        let (close, next_cursor) = match (rest.find(CLOSE_TAG), rest.find(OPEN_TAG)) {
-            (Some(c), Some(o)) if c < o => (after_open + c, after_open + c + CLOSE_TAG.len()),
-            (Some(c), None) => (after_open + c, after_open + c + CLOSE_TAG.len()),
-            (_, Some(o)) => (after_open + o, after_open + o),
-            (None, None) => (text.len(), text.len()),
+        let (close, next_cursor, closed) = match (rest.find(CLOSE_TAG), rest.find(OPEN_TAG)) {
+            (Some(c), Some(o)) if c < o => (after_open + c, after_open + c + CLOSE_TAG.len(), true),
+            (Some(c), None) => (after_open + c, after_open + c + CLOSE_TAG.len(), true),
+            (_, Some(o)) => (after_open + o, after_open + o, false),
+            (None, None) => (text.len(), text.len(), false),
         };
         let inner = repair_name_equals(text[after_open..close].trim());
         let inner = inner.as_ref();
@@ -71,14 +74,27 @@ pub(super) fn parse_qwen_tool_calls(text: &str) -> Vec<AiToolCall> {
         // `from_str` would reject, dropping an otherwise-good call. A block
         // with no leading parseable value is malformed — skip and keep
         // scanning.
-        let Some(value) = first_json_value(inner).or_else(|| {
-            // Qwen 3.6 also drops the `,"arguments"` key, leaving the args
-            // object hanging off the name: `{"name":"x":{…}}`.
-            repair_missing_arguments_key(inner).and_then(|fixed| first_json_value(&fixed))
-        }) else {
+        let Some(value) = first_json_value(inner)
+            .or_else(|| {
+                // Qwen 3.6 also drops the `,"arguments"` key, leaving the args
+                // object hanging off the name: `{"name":"x":{…}}`.
+                repair_missing_arguments_key(inner).and_then(|fixed| first_json_value(&fixed))
+            })
+            .or_else(|| {
+                closed
+                    .then(|| close_open_objects(inner))
+                    .flatten()
+                    .and_then(|fixed| first_json_value(&fixed))
+            })
+        else {
             continue;
         };
         let Some(obj) = value.as_object() else { continue };
+        // OpenAI's shape: the call sits inside a `function` object.
+        let obj = match obj.get("function").and_then(|f| f.as_object()) {
+            Some(function) if !obj.contains_key("name") => function,
+            _ => obj,
+        };
         // `arguments` is conventionally an object, but some emitters use the
         // empty object `{}`, omit it entirely, or FLATTEN the args to the top
         // level next to `name` (`{"name":"search_emails","from":"x"}`). When
@@ -498,6 +514,43 @@ mod tests {
             calls[0].function.arguments,
             json!({"unread":true,"order":"oldest","limit":1})
         );
+    }
+
+    #[test]
+    fn a_call_in_a_function_wrapper_is_read_even_one_brace_short() {
+        // Verbatim production emission (Qwen 3.6 35B): OpenAI's wrapper, and
+        // the model closed the block before the last brace. Before the repair
+        // no tool ran and the answer made a meeting up.
+        let text = r#"<tool_call>{"function":{"name":"list_calendar_events","arguments":{"days":7}} </tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "list_calendar_events");
+        assert_eq!(calls[0].function.arguments, json!({"days":7}));
+    }
+
+    #[test]
+    fn a_complete_function_wrapper_is_read() {
+        let text = r#"<tool_call>{"function":{"name":"get_thread","arguments":{"thread_id":"t1"}}}</tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "get_thread");
+        assert_eq!(calls[0].function.arguments, json!({"thread_id":"t1"}));
+    }
+
+    #[test]
+    fn a_brace_inside_a_string_is_not_counted_as_open() {
+        let text = r#"<tool_call>{"name":"search_emails","arguments":{"query":"a{b \"c{"}</tool_call>"#;
+        let calls = parse_qwen_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.arguments, json!({"query":"a{b \"c{"}));
+    }
+
+    #[test]
+    fn a_block_the_stream_cut_off_is_not_completed() {
+        // No closing tag: the arguments may be half written, so running the
+        // call could act on the wrong ones.
+        let text = r#"<tool_call>{"name":"search_emails","arguments":{"limit":25}"#;
+        assert!(parse_qwen_tool_calls(text).is_empty());
     }
 
     #[test]
