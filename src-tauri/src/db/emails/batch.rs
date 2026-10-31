@@ -38,8 +38,16 @@ impl Database {
             let sender_domain = extract_sender_domain(&email.sender_email);
             let mailbox = normalize_mailbox(&email.mailbox);
             // The FTS table is not a child of `emails` (no FK), so its stale row
-            // is cleared by hand.
-            tx.execute("DELETE FROM emails_fts WHERE email_id = ?1", params![email.id])?;
+            // is cleared by hand. `email_id` is UNINDEXED and this delete scans
+            // the whole index, so a new email, with nothing to clear, skips it.
+            let stored: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM emails WHERE id = ?1)",
+                params![email.id],
+                |row| row.get(0),
+            )?;
+            if stored {
+                tx.execute("DELETE FROM emails_fts WHERE email_id = ?1", params![email.id])?;
+            }
             // UPSERT, deliberately **not** `INSERT OR REPLACE`.
             //
             // REPLACE resolves a conflict by deleting the existing row first,
