@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -13,6 +13,8 @@ use crate::ai::provider::{
     CompletionOptions, CompletionResult, EmbeddingResult, ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
 use crate::models::error::{AppError, Result};
+use crate::services::chat::{local_date, local_day_start_in};
+use crate::services::clock::Clock;
 
 const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
 
@@ -1466,32 +1468,35 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         has_filter = true;
     }
 
+    let clock = crate::services::clock::current();
+    let clock = clock.as_ref();
+
     if let Some(value) = operator_value(&tokens, &["after:", "despues:", "después:"]) {
-        if let Some(ts) = parse_date_to_timestamp(&value) {
-            parsed.after_timestamp = Some(ts);
+        if let Some(date) = parse_typed_date(&value) {
+            parsed.after_timestamp = Some(local_day_start_in(date, clock));
             has_filter = true;
         }
     }
 
     if let Some(value) = operator_value(&tokens, &["before:", "antes:"]) {
-        if let Some(ts) = parse_date_to_timestamp(&value) {
-            parsed.before_timestamp = Some(end_of_day_timestamp(ts));
+        if let Some(end) = parse_typed_date(&value).and_then(|date| end_of_day_in(date, clock)) {
+            parsed.before_timestamp = Some(end);
             has_filter = true;
         }
     }
 
     if has_word("today") || has_word("hoy") {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_today_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(Some(start_of_today_in(clock)));
         has_filter = true;
     }
 
     if has_seq(&["this", "week"]) || has_seq(&["esta", "semana"]) {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_week_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(Some(start_of_week_in(clock)));
         has_filter = true;
     }
 
     if has_seq(&["this", "month"]) || has_seq(&["este", "mes"]) {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_month_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(start_of_month_in(clock));
         has_filter = true;
     }
 
@@ -1705,7 +1710,7 @@ fn normalize_token(token: &str) -> String {
 /// `DD-MM-YYYY`, and `DD/MM/YYYY` (and their `/`-separated / `-`-separated
 /// equivalents). The format is inferred from the size of the first part —
 /// four digits is a year, one-or-two digits is a day-of-month.
-fn parse_date_to_timestamp(date_str: &str) -> Option<i64> {
+fn parse_typed_date(date_str: &str) -> Option<NaiveDate> {
     let parts: Vec<&str> = date_str.split(['-', '/']).collect();
     if parts.len() != 3 {
         return None;
@@ -1730,34 +1735,32 @@ fn parse_date_to_timestamp(date_str: &str) -> Option<i64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let date = NaiveDate::from_ymd_opt(year, month, day)?;
-    let datetime = NaiveDateTime::new(date, NaiveTime::from_hms_opt(0, 0, 0)?);
-    Some(datetime.and_utc().timestamp())
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
-fn start_of_today_timestamp() -> Option<i64> {
-    Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .map(|dt| dt.and_utc().timestamp())
+/// The last second of `date` in the clock's zone. Measured from the next
+/// midnight, because a day with a daylight-saving change is not 24 hours long.
+fn end_of_day_in(date: NaiveDate, clock: &dyn Clock) -> Option<i64> {
+    date.succ_opt().map(|next| local_day_start_in(next, clock) - 1)
 }
 
-fn start_of_week_timestamp() -> Option<i64> {
-    let now = Utc::now();
-    let days_since_monday = now.weekday().num_days_from_monday();
-    let monday = now.date_naive() - chrono::Duration::days(days_since_monday as i64);
-    monday.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc().timestamp())
+fn today_in(clock: &dyn Clock) -> NaiveDate {
+    local_date(clock.now_secs(), clock.utc_offset_secs())
 }
 
-fn start_of_month_timestamp() -> Option<i64> {
-    let now = Utc::now();
-    NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|dt| dt.and_utc().timestamp())
+fn start_of_today_in(clock: &dyn Clock) -> i64 {
+    local_day_start_in(today_in(clock), clock)
 }
 
-fn end_of_day_timestamp(timestamp: i64) -> i64 {
-    timestamp + 86_399
+fn start_of_week_in(clock: &dyn Clock) -> i64 {
+    let today = today_in(clock);
+    let days_since_monday = today.weekday().num_days_from_monday();
+    local_day_start_in(today - chrono::Duration::days(days_since_monday as i64), clock)
+}
+
+fn start_of_month_in(clock: &dyn Clock) -> Option<i64> {
+    let today = today_in(clock);
+    NaiveDate::from_ymd_opt(today.year(), today.month(), 1).map(|first| local_day_start_in(first, clock))
 }
 
 fn deserialize_optional_after_timestamp<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
@@ -1786,14 +1789,14 @@ where
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::Number(number)) => Ok(number.as_i64()),
         Some(serde_json::Value::String(text)) => {
-            let parsed = parse_date_to_timestamp(&text).map(|timestamp| {
+            let clock = crate::services::clock::current();
+            Ok(parse_typed_date(&text).and_then(|date| {
                 if end_of_day {
-                    end_of_day_timestamp(timestamp)
+                    end_of_day_in(date, clock.as_ref())
                 } else {
-                    timestamp
+                    Some(local_day_start_in(date, clock.as_ref()))
                 }
-            });
-            Ok(parsed)
+            }))
         }
         Some(other) => Err(serde::de::Error::custom(format!(
             "unsupported timestamp value: {}",
@@ -1804,47 +1807,96 @@ where
 
 #[cfg(test)]
 mod date_parser_tests {
-    use super::parse_date_to_timestamp;
+    use super::*;
+    use crate::services::clock::ZonedClock;
+    use chrono::DateTime;
+
+    fn at(rfc3339: &str) -> i64 {
+        DateTime::parse_from_rfc3339(rfc3339).expect("a valid date").timestamp()
+    }
+
+    fn madrid(now: &str) -> ZonedClock {
+        ZonedClock::new(at(now), chrono_tz::Europe::Madrid)
+    }
+
+    fn day(text: &str) -> NaiveDate {
+        parse_typed_date(text).expect("a valid day")
+    }
+
+    #[test]
+    fn a_typed_day_runs_from_local_midnight_to_local_midnight() {
+        let clock = madrid("2026-01-15T12:00:00Z");
+        assert_eq!(
+            local_day_start_in(day("2026-01-10"), &clock),
+            at("2026-01-09T23:00:00Z")
+        );
+        assert_eq!(
+            end_of_day_in(day("2026-01-10"), &clock),
+            Some(at("2026-01-10T22:59:59Z"))
+        );
+    }
+
+    #[test]
+    fn a_day_that_loses_an_hour_ends_at_its_own_midnight() {
+        // Madrid moves to summer time on 29/03/2026: that day has 23 hours.
+        let clock = madrid("2026-01-15T12:00:00Z");
+        assert_eq!(
+            end_of_day_in(day("2026-03-29"), &clock),
+            Some(at("2026-03-29T21:59:59Z"))
+        );
+    }
+
+    #[test]
+    fn today_is_the_users_day_not_utcs() {
+        // Half past midnight in Madrid, still the day before in UTC.
+        let clock = madrid("2026-01-10T23:30:00Z");
+        assert_eq!(start_of_today_in(&clock), at("2026-01-10T23:00:00Z"));
+    }
+
+    #[test]
+    fn this_week_starts_on_the_users_monday() {
+        // Sunday 23:30 UTC on 11/01 is already Monday 00:30 in Madrid.
+        let clock = madrid("2026-01-11T23:30:00Z");
+        assert_eq!(start_of_week_in(&clock), at("2026-01-11T23:00:00Z"));
+    }
+
+    #[test]
+    fn this_month_starts_on_the_users_first_day() {
+        // 31/01 at 23:30 UTC is already 01/02 in Madrid.
+        let clock = madrid("2026-01-31T23:30:00Z");
+        assert_eq!(start_of_month_in(&clock), Some(at("2026-01-31T23:00:00Z")));
+    }
 
     #[test]
     fn parses_iso_format() {
-        assert!(parse_date_to_timestamp("2025-01-01").is_some());
+        assert!(parse_typed_date("2025-01-01").is_some());
     }
 
     #[test]
     fn parses_dmy_dash_format() {
         // 01-01-2025 → 2025-01-01
-        assert_eq!(
-            parse_date_to_timestamp("01-01-2025"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("01-01-2025"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn parses_dmy_slash_format() {
-        assert_eq!(
-            parse_date_to_timestamp("01/01/2025"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("01/01/2025"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn parses_iso_slash_format() {
-        assert_eq!(
-            parse_date_to_timestamp("2025/01/01"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("2025/01/01"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn rejects_invalid_month() {
-        assert!(parse_date_to_timestamp("2025-13-01").is_none());
+        assert!(parse_typed_date("2025-13-01").is_none());
     }
 
     #[test]
     fn rejects_junk() {
-        assert!(parse_date_to_timestamp("yesterday").is_none());
-        assert!(parse_date_to_timestamp("2025-01").is_none());
+        assert!(parse_typed_date("yesterday").is_none());
+        assert!(parse_typed_date("2025-01").is_none());
     }
 }
 
