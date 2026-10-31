@@ -96,11 +96,13 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
 }
 
 /// Pure: `Ok(false)` when the server refused the mailbox, an error when the
-/// answer could not be obtained at all.
+/// answer could not be obtained at all. A refusal that carries an RFC 5530 code
+/// other than `NONEXISTENT` (`UNAVAILABLE`, `INUSE`…) says why the mailbox did
+/// not open right now, not that it is missing.
 fn select_outcome(outcome: std::result::Result<(), imap::Error>) -> Result<bool> {
     match outcome {
         Ok(()) => Ok(true),
-        Err(imap::Error::No(_)) => Ok(false),
+        Err(imap::Error::No(reason)) if !reason.starts_with('[') || reason.starts_with("[NONEXISTENT]") => Ok(false),
         Err(e) => Err(AppError::SyncError(format!("IMAP SELECT failed: {e}"))),
     }
 }
@@ -584,10 +586,16 @@ mod tests {
             select_outcome(Err(imap::Error::No("no such mailbox".into()))),
             Ok(false)
         ));
+        assert!(matches!(
+            select_outcome(Err(imap::Error::No("[NONEXISTENT] Unknown Mailbox".into()))),
+            Ok(false)
+        ));
         for failure in [
             imap::Error::ConnectionLost,
             imap::Error::Bad("try later".into()),
             imap::Error::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            imap::Error::No("[UNAVAILABLE] Try again later".into()),
+            imap::Error::No("[INUSE] Mailbox is locked".into()),
         ] {
             assert!(select_outcome(Err(failure)).is_err());
         }

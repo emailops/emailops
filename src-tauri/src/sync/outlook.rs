@@ -360,6 +360,9 @@ impl OutlookClient {
             Some(false) => (Vec::new(), Vec::new()),
             _ => match self.list_attachments(&msg.id).await {
                 Ok(found) => found,
+                // The connection, not the message: it must come back for its
+                // attachments, and a stored id is never downloaded again.
+                Err(e @ AppError::HttpError(_)) => return Err(e),
                 // Non-fatal for the message, but never silent: an error here
                 // stores the email with no attachment rows at all.
                 Err(e) => {
@@ -1349,6 +1352,10 @@ impl EmailProvider for OutlookClient {
                     break;
                 }
 
+                // The longest `Retry-After` of the throttled sub-responses:
+                // the next request carries them all.
+                let mut asked_wait_ms = 0;
+
                 let ids: Vec<&str> = pending.iter().map(|i| chunk[*i]).collect();
                 let payload = build_message_batch_payload(&ids);
                 let url = format!("{}/$batch", self.base_url);
@@ -1378,6 +1385,7 @@ impl EmailProvider for OutlookClient {
                     } else if StatusCode::from_u16(sub.status).is_ok_and(is_retryable_graph_status)
                         && attempt < MAX_RETRIES
                     {
+                        asked_wait_ms = asked_wait_ms.max(sub.retry_after_ms.unwrap_or(0));
                         still_pending.push(chunk_slot);
                     } else {
                         slots[offset + chunk_slot] = Some(Err(AppError::SyncError(format!(
@@ -1397,7 +1405,7 @@ impl EmailProvider for OutlookClient {
 
                 pending = still_pending;
                 if !pending.is_empty() && attempt < MAX_RETRIES {
-                    sleep(Duration::from_millis(delay_ms.min(MAX_BACKOFF_MS))).await;
+                    sleep(Duration::from_millis(delay_ms.max(asked_wait_ms).min(MAX_BACKOFF_MS))).await;
                     delay_ms = (delay_ms * 2).min(MAX_BACKOFF_MS);
                 }
             }
@@ -1939,6 +1947,8 @@ struct GraphBatchSubResponse {
     status: u16,
     /// `None` for a non-200: Graph puts an error object there, not a message.
     body: Option<serde_json::Value>,
+    /// The sub-response's own `Retry-After`, in milliseconds.
+    retry_after_ms: Option<u64>,
 }
 
 /// Build the JSON body for a `$batch` of message GETs.
@@ -2019,7 +2029,18 @@ fn parse_batch_response(payload: &serde_json::Value) -> Vec<GraphBatchSubRespons
             } else {
                 None
             };
-            Some(GraphBatchSubResponse { index, status, body })
+            let retry_after_ms = entry
+                .get("headers")
+                .and_then(|headers| headers.get("Retry-After"))
+                .and_then(|value| value.as_str())
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(|secs| secs.saturating_mul(1000));
+            Some(GraphBatchSubResponse {
+                index,
+                status,
+                body,
+                retry_after_ms,
+            })
         })
         .collect()
 }
@@ -2261,6 +2282,65 @@ mod tests {
     /// is `internetMessageId` (`<abc@host>`) — a different identifier for a
     /// different lookup. Graph rejects it, so replying from an Outlook account
     /// hit a resource that does not exist.
+    /// Stored without its attachments the message could never be repaired:
+    /// the sync skips every id it holds, and a dropped connection says nothing
+    /// about the message. Failing it puts it on the retry list.
+    #[tokio::test(start_paused = true)]
+    async fn a_connection_lost_while_listing_attachments_fails_the_message() {
+        let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a free port")
+            .port();
+        let client =
+            OutlookClient::new("tok".into(), None, None, None).with_base_url(format!("http://127.0.0.1:{closed_port}"));
+        let msg: GraphMessage = serde_json::from_value(serde_json::json!({
+            "id": "m1",
+            "hasAttachments": true,
+            "receivedDateTime": "2026-09-01T10:00:00Z"
+        }))
+        .expect("message");
+
+        assert!(client.finalize_message(msg).await.is_err());
+    }
+
+    /// Graph says how long to back off inside each throttled sub-response, and
+    /// re-sending sooner only extends the throttling.
+    #[tokio::test]
+    async fn a_batch_waits_as_long_as_a_throttled_sub_response_asked() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/$batch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "responses": [{ "id": "0", "status": 429, "headers": { "Retry-After": "2" } }]
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/$batch"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "responses": [{ "id": "0", "status": 200, "body": {
+                    "id": "m1",
+                    "hasAttachments": false,
+                    "receivedDateTime": "2026-09-01T10:00:00Z"
+                } }]
+            })))
+            .mount(&server)
+            .await;
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+
+        let started = std::time::Instant::now();
+        let results = EmailProvider::batch_get_messages(&client, &["m1"])
+            .await
+            .expect("batch");
+
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        assert!(started.elapsed() >= Duration::from_secs(2), "{:?}", started.elapsed());
+    }
+
     /// A message whose attachments cannot be listed is still stored — with
     /// no attachment rows, and a log line saying so.
     #[tokio::test]
