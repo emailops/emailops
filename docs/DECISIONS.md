@@ -4107,3 +4107,18 @@ already placed in `skills/` becomes usable through `/name` without a further ste
   run, and the request was about the feature.
 - *Removing the switch*: it is the way to drop the sidebar entry, and removing it would
   overrule anyone who turned skills off.
+
+## 2026-10-30 — The startup backup runs once a day and keeps three copies
+
+**Decision:** The startup backup copies the database in one read snapshot, at most once
+every 24 hours, keeps three copies, and is skipped with a warning in Logs when the copy
+would leave less than 2 GiB free.
+**Context:** The paced copy (5 pages every 250 ms) restarted whenever another connection
+committed, so on a real mailbox it never finished and no copy existed. Once it finishes,
+a copy per launch of a multi-GB database would rotate good copies out within a few
+restarts, and seven of them could fill the disk the live database writes to.
+**Rejected:**
+- *`VACUUM INTO`*: it needs its own code path, while the Online Backup API is already used
+  and one step gives the same single snapshot.
+- *Keeping seven copies*: on an 11 GB mailbox that is 77 GB of disk.
+- *Showing the last backup in Settings*: a new surface; the Logs panel is enough for now.
