@@ -1,8 +1,11 @@
-import { format } from 'date-fns';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
+import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import type { SyncProgress } from '@/stores/accountStore';
+import { useLogStore } from '@/stores/logStore';
 import type { Account, Draft } from '@/types';
 
 interface DraftsViewProps {
@@ -15,10 +18,14 @@ interface DraftsViewProps {
 }
 
 export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab }: DraftsViewProps) {
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
+  const fmt = useFormatters();
+  const addLog = useLogStore((s) => s.addLog);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // `silent` skips the spinner so a background sync refresh doesn't flash the
   // list — same reasoning as the mail list's silent refetch in App.tsx.
@@ -26,19 +33,22 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
     async (silent = false) => {
       if (!accountId) {
         setDrafts([]);
+        setLoadError(null);
         return;
       }
       if (!silent) setIsLoading(true);
       try {
         const result = await api.listDrafts(accountId);
         setDrafts(result);
+        setLoadError(null);
       } catch (err) {
-        console.error('Failed to load drafts:', err);
+        setLoadError(errorText(err));
+        addLog('error', 'sync', `Could not load the drafts: ${errorText(err)}`);
       } finally {
         if (!silent) setIsLoading(false);
       }
     },
-    [accountId],
+    [accountId, addLog],
   );
 
   // Show what is already stored, then ask the provider for anything edited in
@@ -46,6 +56,7 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
   // invisible until the next account sync, which can be minutes away.
   useEffect(() => {
     let cancelled = false;
+    setDeleteError(null);
     void (async () => {
       await loadDrafts();
       if (!accountId || cancelled) return;
@@ -55,13 +66,13 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
       } catch (err) {
         // Never fatal: an unreachable provider just means the local list is
         // what we have.
-        console.error('Draft refresh failed:', err);
+        addLog('error', 'sync', `Could not refresh the drafts from the provider: ${errorText(err)}`);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [loadDrafts, accountId]);
+  }, [loadDrafts, accountId, addLog]);
 
   // A sync's draft pull writes provider-side edits straight into SQLite. Without
   // this the open list keeps rendering the snapshot it took on mount, so a draft
@@ -75,11 +86,13 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
   const handleDelete = async (draft: Draft) => {
     if (!accountId) return;
     setDeletingId(draft.id);
+    setDeleteError(null);
     try {
       await api.deleteDraft(draft.id, accountId);
       setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
     } catch (err) {
-      console.error('Failed to delete draft:', err);
+      setDeleteError(errorText(err));
+      addLog('error', 'sync', `Could not delete the draft: ${errorText(err)}`);
     } finally {
       setDeletingId(null);
     }
@@ -92,11 +105,18 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
       <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-gray-900">{t('compose:drafts.title')}</h1>
         {drafts.length > 0 && (
-          <span className="text-sm text-gray-500">
-            {drafts.length} draft{drafts.length !== 1 ? 's' : ''}
-          </span>
+          <span className="text-sm text-gray-500">{t('compose:drafts.count', { count: drafts.length })}</span>
         )}
       </div>
+
+      <InlineError
+        message={loadError && t('compose:drafts.loadFailed', { error: loadError })}
+        className="mx-6 mt-3 flex-shrink-0"
+      />
+      <InlineError
+        message={deleteError && t('compose:drafts.deleteFailed', { error: deleteError })}
+        className="mx-6 mt-3 flex-shrink-0"
+      />
 
       {isLoading ? (
         <div className="flex items-center justify-center flex-1">
@@ -106,7 +126,7 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
         <div className="flex items-center justify-center flex-1 text-sm text-gray-500">
           {t('compose:drafts.selectAccount')}
         </div>
-      ) : drafts.length === 0 ? (
+      ) : drafts.length === 0 && loadError ? null : drafts.length === 0 ? (
         <div className="flex flex-col items-center justify-center flex-1 text-center p-8">
           <svg className="h-12 w-12 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -142,16 +162,22 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
                 title={t('compose:drafts.continueEditing')}
               >
                 <div className="flex items-baseline gap-2 mb-1">
-                  <span className="text-sm font-medium text-gray-900 truncate">{draft.subject || '(no subject)'}</span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
-                    {format(new Date(draft.updatedAt * 1000), 'MMM d, yyyy')}
+                  <span className="text-sm font-medium text-gray-900 truncate">
+                    {draft.subject || t('common:labels.noSubject')}
                   </span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{fmt.date(draft.updatedAt)}</span>
                 </div>
                 {draft.toAddresses.length > 0 && (
-                  <div className="text-xs text-gray-500 mb-1">To: {draft.toAddresses.join(', ')}</div>
+                  <div className="text-xs text-gray-500 mb-1">
+                    {t('compose:drafts.toLine', { recipients: draft.toAddresses.join(', ') })}
+                  </div>
                 )}
-                <div className="text-sm text-gray-400 truncate">{draft.body.slice(0, 120) || '(empty)'}</div>
-                <div className="text-xs text-gray-400 mt-1">From: {getAccountEmail(draft.accountId)}</div>
+                <div className="text-sm text-gray-400 truncate">
+                  {draft.body.slice(0, 120) || t('compose:drafts.noBody')}
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {t('compose:drafts.fromLine', { account: getAccountEmail(draft.accountId) })}
+                </div>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
@@ -160,7 +186,7 @@ export function DraftsView({ accountId, accounts, syncProgress, onOpenComposeTab
                   className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
                   title={t('compose:drafts.continueEditing')}
                 >
-                  Edit
+                  {t('compose:drafts.edit')}
                 </button>
                 <button
                   type="button"

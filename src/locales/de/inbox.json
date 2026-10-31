@@ -24,6 +24,15 @@
     "unread": "Ungelesen",
     "empty": "Keine ungelesenen E-Mails"
   },
+  "emptyState": {
+    "syncing": "E-Mails werden synchronisiert...",
+    "noSearchResults": "Keine E-Mails passen zu deiner Suche",
+    "noFilterResults": "Keine E-Mails passen zu den ausgewählten Filtern",
+    "noEmails": "Noch keine E-Mails – synchronisiere oder füge ein Konto hinzu",
+    "showAll": "Alle E-Mails anzeigen",
+    "showAllCategories": "Alle Kategorien anzeigen",
+    "syncNow": "Jetzt synchronisieren"
+  },
   "noEmailSelected": "Keine E-Mail ausgewählt",
   "selectEmailHint": "Wähle eine E-Mail aus der Liste, um sie hier anzuzeigen.",
   "categoryFilter": {
@@ -124,7 +133,14 @@
     "unstar": "Stern entfernen",
     "archive": "Archivieren",
     "moveToInbox": "In den Posteingang verschieben",
-    "notSpam": "Kein Spam — in den Posteingang verschieben"
+    "notSpam": "Kein Spam — in den Posteingang verschieben",
+    "noPreview": "(Keine Vorschau)",
+    "toLine": "An: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Zurück",
+    "messageCount_one": "{{count}} Nachricht",
+    "messageCount_other": "{{count}} Nachrichten",
+    "messageCount_many": "{{count}} Nachrichten"
   },
   "compose": {
     "open": "Verfassen",

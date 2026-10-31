@@ -71,7 +71,7 @@ const selectedTabs = () => tabs().filter((t) => t.getAttribute('aria-selected') 
 describe('Inbox category tabs during a search', () => {
   it('keeps the chosen tab selected when no search is active', async () => {
     await mount(null);
-    expect(selectedTabs().map((t) => t.textContent)).toEqual(['Primary']);
+    expect(selectedTabs().map((t) => t.textContent)).toEqual(['inbox:categoryFilter.primary']);
   });
 
   it('shows "All" as selected while a search is active', async () => {

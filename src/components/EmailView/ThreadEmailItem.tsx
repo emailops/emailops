@@ -1,6 +1,6 @@
-import { format } from 'date-fns';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { senderName } from '@/lib/emailFormatting';
 import { useAiStore } from '@/stores/aiStore';
@@ -43,7 +43,8 @@ export function ThreadEmailItem({
   onToggle,
   onOpenAttachment,
 }: ThreadEmailItemProps) {
-  const { t } = useTranslation(['common']);
+  const { t } = useTranslation(['common', 'inbox']);
+  const fmt = useFormatters();
   const itemRef = useRef<HTMLDivElement>(null);
   // Body is fetched lazily on expand. The store pre-loads the body for the selected
   // email so it is available immediately; collapsed older emails fetch on demand.
@@ -83,8 +84,8 @@ export function ThreadEmailItem({
     [onSearchMatches, email.id],
   );
 
-  const formattedDate = format(new Date(email.timestamp * 1000), 'PPpp');
-  const shortDate = format(new Date(email.timestamp * 1000), 'MMM d');
+  const formattedDate = fmt.dateTime(email.timestamp);
+  const shortDate = fmt.date(email.timestamp, { month: 'short', day: 'numeric' });
 
   if (!isExpanded) {
     return (
@@ -102,7 +103,7 @@ export function ThreadEmailItem({
               <span className="font-medium text-sm text-gray-900 truncate">{senderName(email)}</span>
               <span className="text-xs text-gray-400">{shortDate}</span>
             </div>
-            <p className="text-sm text-gray-500 truncate">{email.snippet || '(No preview)'}</p>
+            <p className="text-sm text-gray-500 truncate">{email.snippet || t('inbox:emailView.noPreview')}</p>
           </div>
           <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -133,9 +134,15 @@ export function ThreadEmailItem({
               </div>
               <div className="text-xs text-gray-500 mt-0.5">{formattedDate}</div>
               {email.recipients.length > 0 && (
-                <div className="text-xs text-gray-400 mt-1">To: {email.recipients.join(', ')}</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {t('inbox:emailView.toLine', { recipients: email.recipients.join(', ') })}
+                </div>
               )}
-              {email.cc.length > 0 && <div className="text-xs text-gray-400 mt-0.5">Cc: {email.cc.join(', ')}</div>}
+              {email.cc.length > 0 && (
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {t('inbox:emailView.ccLine', { recipients: email.cc.join(', ') })}
+                </div>
+              )}
             </div>
           </div>
           {!isLast && (

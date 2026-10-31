@@ -147,7 +147,7 @@ describe('ReplyCompose drafts', () => {
     const onCancel = vi.fn();
     render({ onCancel });
     await typeBody('<p>Hola</p>');
-    await act(async () => button('Cancel').click());
+    await act(async () => button('common:actions.cancel').click());
     expect(api.deleteDraft).toHaveBeenCalledWith('draft-new', 'a1');
     expect(onCancel).toHaveBeenCalled();
     await leave();
@@ -157,7 +157,7 @@ describe('ReplyCompose drafts', () => {
     const onSend = vi.fn(async () => {});
     render({ onSend });
     await typeBody('<p>Hola Alice, te llamo mañana</p>');
-    await act(async () => button('Send Reply').click());
+    await act(async () => button('compose:sendReply').click());
     expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'draft-new' }));
     await leave();
     expect(api.saveDraft).toHaveBeenCalledTimes(1);

@@ -139,7 +139,7 @@ describe('openTab with an out-of-order thread response', () => {
     vi.mocked(api.getThread).mockReturnValueOnce(slow.promise).mockResolvedValueOnce([a, a2]);
 
     const first = useEmailStore.getState().openTab(a);
-    useEmailStore.getState().closeTab('thread-a');
+    useEmailStore.getState().closeTab(useEmailStore.getState().tabs[0].id);
     await useEmailStore.getState().openTab(a);
     slow.reject(new Error('boom'));
     await first;

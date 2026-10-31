@@ -27,7 +27,7 @@ import { ErrorBanner } from '@/components/ErrorBanner/ErrorBanner';
 import type { RulePrefill } from '@/components/Inbox/EmailRow';
 import { Inbox } from '@/components/Inbox/Inbox';
 import { LensesView } from '@/components/Lenses/LensesView';
-import { LockScreen } from '@/components/LockScreen';
+import { LockGate } from '@/components/LockGate';
 import { LogPanel } from '@/components/LogPanel/LogPanel';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -179,9 +179,6 @@ const UPDATE_TOAST_HOST: UpdateToastHost = {
 };
 
 function App() {
-  const [isLocked, setIsLocked] = useState(false);
-  const [lockChecked, setLockChecked] = useState(false);
-
   // An archive/delete still inside its undo window is sent before the page
   // goes away (reload, window close where the webview fires it). A quit that
   // skips the event drops the action: it simply never happened.
@@ -191,17 +188,11 @@ function App() {
     return () => window.removeEventListener('beforeunload', flush);
   }, []);
 
-  useEffect(() => {
-    api.hasMainPassword().then((has) => {
-      setIsLocked(has);
-      setLockChecked(true);
-    });
-  }, []);
-
-  if (!lockChecked) return null;
-  if (isLocked) return <LockScreen onUnlock={() => setIsLocked(false)} />;
-
-  return <AppInner />;
+  return (
+    <LockGate>
+      <AppInner />
+    </LockGate>
+  );
 }
 
 function AppInner() {
@@ -1890,6 +1881,7 @@ function AppInner() {
                     isChatPanelOpen={isChatPanelOpen}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
+                    onSync={() => void handleSync()}
                   />
                 );
 

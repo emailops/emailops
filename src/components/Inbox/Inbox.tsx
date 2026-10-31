@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
+import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
@@ -66,11 +67,12 @@ interface InboxProps {
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
   onSearch?: (query: string) => void;
+  /** Sync now, offered by the empty list of an account with no mail yet. */
+  onSync?: () => void;
 }
 
 interface CategoryTabConfig {
   key: EmailCategory;
-  label: string;
   /** Tailwind color classes for the active tab (text + bottom-border). */
   activeColor: string;
   icon: ReactNode;
@@ -79,7 +81,6 @@ interface CategoryTabConfig {
 const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'primary',
-    label: 'Primary',
     activeColor: 'text-blue-600 border-blue-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -93,7 +94,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'social',
-    label: 'Social',
     activeColor: 'text-pink-600 border-pink-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -107,7 +107,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'updates',
-    label: 'Updates',
     activeColor: 'text-amber-600 border-amber-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -121,7 +120,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'forums',
-    label: 'Forums',
     activeColor: 'text-purple-600 border-purple-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -135,7 +133,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'promotions',
-    label: 'Promotions',
     activeColor: 'text-emerald-600 border-emerald-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -177,8 +174,9 @@ export function Inbox({
   isChatPanelOpen = true,
   accountId,
   onSearch,
+  onSync,
 }: InboxProps) {
-  const { t } = useTranslation(['inbox', 'common', 'chat']);
+  const { t } = useTranslation(['inbox', 'common', 'chat', 'sidebar']);
   // Only render tabs for categories the active account is actually
   // syncing. Unspecified → render no tabs. Previously this fell back to a
   // hard-coded Primary/Social/Updates trio, which on a fresh app start
@@ -193,6 +191,9 @@ export function Inbox({
 
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const unreadOnly = useEmailStore((s) => s.unreadOnly);
+  const setUnreadOnly = useEmailStore((s) => s.setUnreadOnly);
+  const loadMoreFailed = useEmailStore((s) => s.loadMoreFailed);
+  const retryLoadMore = useEmailStore((s) => s.retryLoadMore);
 
   // Active tab selection model:
   // - "all" while a search is active: search spans every category, and the
@@ -462,14 +463,24 @@ export function Inbox({
   // free-text search, which the Unread toggle does not apply to.
   const isTextSearch = Boolean(searchQuery?.trim()) && !filterFromQuery(searchQuery);
   const emptyStateMessage: string = isSyncing
-    ? 'Syncing emails...'
+    ? t('inbox:emptyState.syncing')
     : isTextSearch
-      ? 'No emails match your search'
+      ? t('inbox:emptyState.noSearchResults')
       : unreadOnly
         ? t('inbox:readFilter.empty')
         : hasActiveFilter || hasCategoryFilter
-          ? 'No emails match the selected filters'
-          : 'No emails yet — try syncing or adding an account';
+          ? t('inbox:emptyState.noFilterResults')
+          : t('inbox:emptyState.noEmails');
+  // A search has its own way out (ActiveSearchNotice) and a sync is filling
+  // the list, so neither gets a button here.
+  const emptyStateAction = (() => {
+    if (isSyncing || hasActiveFilter) return undefined;
+    if (unreadOnly) return { label: t('inbox:emptyState.showAll'), onClick: () => setUnreadOnly(false) };
+    if (hasCategoryFilter) {
+      return { label: t('inbox:emptyState.showAllCategories'), onClick: () => handleTabClick('all') };
+    }
+    return onSync ? { label: t('inbox:emptyState.syncNow'), onClick: onSync } : undefined;
+  })();
 
   const showTabs = showCategoryFilter && visibleCategories.length > 0;
   return (
@@ -489,7 +500,7 @@ export function Inbox({
                 All / Unread toggle and Load more). */}
             <div className="flex items-center gap-1.5 max-w-[45%] min-w-0">
               <h2 className="text-lg font-semibold text-gray-900 truncate">
-                {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
+                {title ?? mailboxTitle('inbox', accountName, (key) => t(key as 'sidebar:inbox'))}
               </h2>
               {isSyncing && (
                 <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
@@ -515,7 +526,11 @@ export function Inbox({
               {!isTextSearch && <ReadFilterToggle />}
               {hasMore && !isLoadingMore && (
                 <button
-                  onClick={onLoadMore}
+                  onClick={() => {
+                    // A click asks again after a failed page; scrolling does not.
+                    if (loadMoreFailed) retryLoadMore();
+                    onLoadMore();
+                  }}
                   className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
                 >
                   {t('inbox:loadMore')}
@@ -593,14 +608,14 @@ export function Inbox({
                 }
               />
             )}
-            {visibleCategories.map(({ key, label, activeColor, icon }) => (
+            {visibleCategories.map(({ key, activeColor, icon }) => (
               <CategoryTab
                 key={key}
                 isActive={activeTabKey === key}
                 disabled={Boolean(searchQuery)}
                 onClick={() => handleTabClick(key)}
                 activeColor={activeColor}
-                label={label}
+                label={t(`inbox:categoryFilter.${key}` as const)}
                 icon={icon}
               />
             ))}
@@ -632,6 +647,7 @@ export function Inbox({
         hasMore={hasMore}
         isSyncing={isSyncing}
         emptyStateMessage={emptyStateMessage}
+        emptyStateAction={emptyStateAction}
         onSelectEmail={handleSelectEmail}
         onLoadMore={onLoadMore}
         onAddSenderFilter={onAddSenderFilter}

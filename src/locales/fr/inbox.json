@@ -24,6 +24,15 @@
     "unread": "Non lus",
     "empty": "Aucun e-mail non lu"
   },
+  "emptyState": {
+    "syncing": "Synchronisation des courriels...",
+    "noSearchResults": "Aucun courriel ne correspond à votre recherche",
+    "noFilterResults": "Aucun courriel ne correspond aux filtres sélectionnés",
+    "noEmails": "Aucun courriel pour l'instant — essayez de synchroniser ou d'ajouter un compte",
+    "showAll": "Afficher tous les courriels",
+    "showAllCategories": "Afficher toutes les catégories",
+    "syncNow": "Synchroniser maintenant"
+  },
   "noEmailSelected": "Aucun courriel sélectionné",
   "selectEmailHint": "Sélectionnez un courriel dans la liste pour l'afficher ici.",
   "categoryFilter": {
@@ -124,7 +133,14 @@
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
     "moveToInbox": "Déplacer vers la boîte de réception",
-    "notSpam": "Pas un spam — déplacer vers la boîte de réception"
+    "notSpam": "Pas un spam — déplacer vers la boîte de réception",
+    "noPreview": "(Aucun aperçu)",
+    "toLine": "À : {{recipients}}",
+    "ccLine": "Cc : {{recipients}}",
+    "backLabel": "Retour",
+    "messageCount_one": "{{count}} message",
+    "messageCount_other": "{{count}} messages",
+    "messageCount_many": "{{count}} messages"
   },
   "compose": {
     "open": "Nouveau message",

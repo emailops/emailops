@@ -69,7 +69,7 @@ export function EmailRow({
   selectionActive = false,
   onCheck,
 }: EmailRowProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   // Search and smart-filter rows are dated by their thread's latest activity.
   const receivedTime = formatReceptionTime(email.threadLatestAt ?? email.timestamp);
   // Hide classification chips when the master AI switch is off — the tags
@@ -237,10 +237,12 @@ export function EmailRow({
             <span
               className={`truncate min-w-0 ${email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'}`}
               title={
-                companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : email.subject || '(No subject)'
+                companyTag
+                  ? `${companyTag} — ${email.subject || t('common:labels.noSubject')}`
+                  : email.subject || t('common:labels.noSubject')
               }
             >
-              {email.subject || '(No subject)'}
+              {email.subject || t('common:labels.noSubject')}
             </span>
             <span className="text-gray-500 truncate min-w-0 flex-1" title={email.snippet}>
               — {email.snippet}
@@ -334,14 +336,14 @@ export function EmailRow({
           </div>
           <h3
             className={`text-sm mt-0.5 truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}
-            title={companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : undefined}
+            title={companyTag ? `${companyTag} — ${email.subject || t('common:labels.noSubject')}` : undefined}
           >
             {companyTag && (
               <span className="inline-block rounded-full font-medium text-sm px-2 py-0.5 bg-gray-100 text-gray-700 mr-1.5 align-middle">
                 {companyTag}
               </span>
             )}
-            {email.subject || '(No subject)'}
+            {email.subject || t('common:labels.noSubject')}
           </h3>
           <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{email.snippet}</p>
           {/* Tag/triage row is always rendered with a *fixed* height (not min-h)
@@ -371,7 +373,7 @@ function RowCheckbox({
   alwaysVisible: boolean;
   onCheck: (opts: { range: boolean }) => void;
 }) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   return (
     <input
       type="checkbox"
@@ -395,7 +397,7 @@ function RowCheckbox({
 
 /** The row's star: toggles the conversation's star without opening it. */
 function StarToggle({ email }: { email: Email }) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const label = email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star');
   return (

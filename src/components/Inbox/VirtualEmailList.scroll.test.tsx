@@ -372,6 +372,45 @@ describe('VirtualEmailList scroll position across a display:none hide', () => {
     expect(el.scrollTop).toBe(1200);
   });
 
+  // The same for the focused email: it outlives a background refresh, and the
+  // refresh must not take a user who scrolled away back to it.
+  it('scrolls to the focused email once, not on every refresh of the list', () => {
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const renderWithFocus = (emails: Email[]) =>
+      act(() => {
+        root.render(
+          <VirtualEmailList
+            emails={emails}
+            selectedEmailId={null}
+            focusEmailId="e30"
+            scrollContainerRef={scrollContainerRef}
+            isLoadingMore={false}
+            hasMore={false}
+            isSyncing={false}
+            onSelectEmail={() => {}}
+            onLoadMore={() => {}}
+          />,
+        );
+      });
+    renderWithFocus(manyEmails);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const scrollTo = vi.fn((opts: ScrollToOptions) => {
+      if (opts.top !== undefined) el.scrollTop = opts.top;
+    });
+    el.scrollTo = scrollTo as unknown as typeof el.scrollTo;
+    showAndSettle(el);
+    scrollTo.mockClear();
+
+    renderWithFocus([...manyEmails]);
+
+    expect(scrollTo, 'a refreshed list must not scroll back to the focused row').not.toHaveBeenCalled();
+    raf.mockRestore();
+  });
+
   // Supporting invariant: the scroll container is a single stable DOM node, so
   // the effect attached on mount keeps observing the right element even as the
   // list flips between its empty and populated branches.

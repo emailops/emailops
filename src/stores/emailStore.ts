@@ -459,9 +459,11 @@ interface EmailStore {
   skipNextFetch: boolean;
   currentFetchId: number;
   loadMoreLock: boolean;
-  /** A load-more failed: paging stays off until the list is fetched again, so
-   *  the scroll-triggered load-more does not retry in a tight loop. */
+  /** A load-more failed: paging stays off until the list is fetched again or
+   *  the user asks for more, so the scroll-triggered load-more does not retry
+   *  in a tight loop. */
   loadMoreFailed: boolean;
+  retryLoadMore: () => void;
   tabs: EmailTab[];
   activeTabId: string | null;
   /**
@@ -640,6 +642,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   currentFetchId: 0,
   loadMoreLock: false,
   loadMoreFailed: false,
+  retryLoadMore: () => set({ loadMoreFailed: false }),
   tabs: [],
   activeTabId: null,
   pendingChatDraft: null,
@@ -657,24 +660,24 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   openTab: async (email, focusId) => {
     if (!email.isRead) void get().markAsRead(email.accountId, email.id);
 
-    const existing = get().tabs.find((t) => t.id === email.threadId);
+    // Thread ids are only unique per account.
+    const tabId = keyOf(email);
+    const existing = get().tabs.find((t) => t.id === tabId);
     if (existing) {
       // Opening another email of an open thread shows that email.
       set((state) => ({
-        activeTabId: email.threadId,
+        activeTabId: tabId,
         tabs:
           focusId === undefined
             ? state.tabs
-            : state.tabs.map((t) =>
-                t.type === 'thread' && t.id === email.threadId ? { ...t, focusEmailId: focusId } : t,
-              ),
+            : state.tabs.map((t) => (t.type === 'thread' && t.id === tabId ? { ...t, focusEmailId: focusId } : t)),
       }));
       return;
     }
 
     const newTab: EmailThreadTab = {
       type: 'thread',
-      id: email.threadId,
+      id: tabId,
       threadId: email.threadId,
       accountId: email.accountId,
       subject: email.subject,
@@ -682,10 +685,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       isLoading: true,
       focusEmailId: focusId ?? null,
     };
-    set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: email.threadId }));
+    set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: tabId }));
     const loadId = ++threadRequestSeq;
-    tabLoadIds.set(email.threadId, loadId);
-    const isCurrentLoad = () => tabLoadIds.get(email.threadId) === loadId;
+    tabLoadIds.set(tabId, loadId);
+    const isCurrentLoad = () => tabLoadIds.get(tabId) === loadId;
 
     try {
       const [threadEmails, selectedBody] = await Promise.all([
@@ -697,14 +700,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const withBody = threadEmails.map((e) => (e.id === email.id ? { ...e, body: selectedBody } : e));
       set((state) => ({
         tabs: state.tabs.map((t) =>
-          t.type === 'thread' && t.id === email.threadId ? { ...t, threadEmails: withBody, isLoading: false } : t,
+          t.type === 'thread' && t.id === tabId ? { ...t, threadEmails: withBody, isLoading: false } : t,
         ),
       }));
     } catch {
       if (!isCurrentLoad()) return;
       set((state) => ({
         tabs: state.tabs.map((t) =>
-          t.type === 'thread' && t.id === email.threadId ? { ...t, threadEmails: [email], isLoading: false } : t,
+          t.type === 'thread' && t.id === tabId ? { ...t, threadEmails: [email], isLoading: false } : t,
         ),
       }));
     }
@@ -795,18 +798,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({ skipNextFetch: false });
       return;
     }
-    // Opening a list (another mailbox, a filter, a search) may depend on an
-    // archive/delete still in its undo window — e.g. the Archive view must
-    // show what was just archived — so it commits first.
-    if (!silent && pendingThreadActions.pendingCount() > 0) {
-      await pendingThreadActions.flushAll();
-    }
     // Increment fetch ID to track this operation and cancel stale ones
     const fetchId = get().currentFetchId + 1;
     const { searchQuery, unreadOnly } = get();
     const source = planListSource(searchQuery, mailbox ?? 'inbox');
 
-    // Silent mode: background refresh after sync — never show loading or clear the list.
+    // Silent mode: background refresh after sync — never show loading or clear the list,
+    // and leave what the user is looking at alone: the focused email, a navigated list
+    // and an error they have not read yet are not this refresh's to clear.
     // Non-silent: show loading indicator. Clear the email list only when a filter or
     // search is active (because results will be completely different). When switching
     // to an empty inbox with no filter/search, keep whatever is in the list so there
@@ -822,10 +821,19 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         focusEmailId: null,
       });
     } else {
-      set({ error: null, currentFetchId: fetchId, navigationMode: false, focusEmailId: null });
+      set({ currentFetchId: fetchId });
     }
 
     set({ listScope: source.kind === 'search' ? 'search' : source.kind === 'filter' ? 'inbox' : (mailbox ?? 'inbox') });
+
+    // Opening a list (another mailbox, a filter, a search) may depend on an
+    // archive/delete still in its undo window — e.g. the Archive view must
+    // show what was just archived — so it commits first. The fetch id is taken
+    // by now: a list opened during the wait replaces this one, not the reverse.
+    if (!silent && pendingThreadActions.pendingCount() > 0) {
+      await pendingThreadActions.flushAll();
+      if (get().currentFetchId !== fetchId) return;
+    }
 
     // A background refresh is meant to be transparent, so it has to come back
     // with everything the user had already paged in — see refetchLimit.
@@ -1316,6 +1324,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   applySearchResults: (query, emails) => {
     // Pre-seed emails and mark the next effect-triggered fetchEmails as a no-op.
+    // Only a changed query triggers that effect: with the same one the skip
+    // would wait for, and swallow, whichever load comes next.
     // Also bump fetchId so any already-in-flight fetch's response is discarded.
     set((state) => ({
       searchQuery: query,
@@ -1323,7 +1333,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       totalCount: emails.length,
       hasMore: false,
       isLoading: false,
-      skipNextFetch: true,
+      skipNextFetch: state.searchQuery !== query,
       currentFetchId: state.currentFetchId + 1,
       // The bumped fetchId makes an in-flight navigateToEmail bail out
       // before it clears its own flag; the list is ours now.

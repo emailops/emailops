@@ -1,6 +1,8 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
+import { Modal } from '@/components/common/Modal';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -53,7 +55,7 @@ function extractEmail(raw: string): string {
 }
 
 export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) {
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
@@ -72,6 +74,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [isDiscarding, setIsDiscarding] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
@@ -156,7 +160,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       // saves. When there are none, leave the field undefined so a text-only
       // save doesn't clear anything.
       attachments: hasDraftAttachments ? draftAttachments : undefined,
-      isSending,
+      // A save landing after Discard would bring the draft back.
+      isSending: isSending || isDiscarding,
       sent,
     };
     // A body holding only the inserted signature is not something to save.
@@ -173,6 +178,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     bodyHtml,
     fromAccountId,
     isSending,
+    isDiscarding,
     sent,
     draftAttachments,
     hasDraftAttachments,
@@ -412,6 +418,20 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const handleSend = () => void submit(null);
   const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
 
+  /** The autosave has already written the message: discarding it means
+   *  removing that draft. Closing the tab is what keeps it. */
+  const handleDiscard = async () => {
+    setConfirmingDiscard(false);
+    setIsDiscarding(true);
+    const draftId = await autosaverRef.current?.flush();
+    if (draftId) {
+      await api
+        .deleteDraft(draftId, fromAccountId)
+        .catch((err) => addLog('error', 'sync', `Could not delete the draft: ${errorText(err)}`));
+    }
+    onClose();
+  };
+
   const renderTokenInput = (
     field: 'to' | 'cc',
     label: string,
@@ -509,6 +529,14 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         </button>
       </div>
 
+      {/* Outside the scrolling body, to be seen without scrolling past the message. */}
+      <InlineError message={sendError} className="mx-5 mt-3 flex-shrink-0" />
+      {sent && (
+        <div className="mx-5 mt-3 flex-shrink-0 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+          {t('compose:sentConfirm')}
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-5">
         {/* From */}
@@ -525,7 +553,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           </div>
         </div>
 
-        {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}
+        {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
         {!showCc && (
           <button
@@ -533,10 +561,10 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             onClick={() => setShowCc(true)}
             className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
           >
-            + Cc
+            + {t('compose:cc')}
           </button>
         )}
-        {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
+        {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
 
         <div className="flex items-center gap-2 mb-3">
           <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:subject')}</span>
@@ -599,17 +627,6 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             ))}
           </div>
         )}
-
-        {sendError && (
-          <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-            {sendError}
-          </div>
-        )}
-        {sent && (
-          <div className="mt-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-            {t('compose:sentConfirm')}
-          </div>
-        )}
       </div>
 
       {/* Footer */}
@@ -669,11 +686,11 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         <div className="flex-1" />
         <button
           type="button"
-          onClick={onClose}
-          disabled={isSending || sent}
+          onClick={() => setConfirmingDiscard(true)}
+          disabled={isSending || sent || isDiscarding}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
         >
-          Discard
+          {t('compose:discardDraft')}
         </button>
         <SendSplitButton
           testId="compose-tab-send"
@@ -683,6 +700,32 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           disabled={isSending || sent || !readyToSend}
         />
       </div>
+      <Modal
+        open={confirmingDiscard}
+        onClose={() => setConfirmingDiscard(false)}
+        title={t('compose:discardConfirm')}
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingDiscard(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
+              {t('common:actions.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDiscard()}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+            >
+              {t('compose:discardDraft')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('compose:discardHint')}</p>
+      </Modal>
     </div>
   );
 }

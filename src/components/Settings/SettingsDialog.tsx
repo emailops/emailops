@@ -107,7 +107,7 @@ export function SettingsDialog({
   onChangeLensesEnabled,
   onClose,
 }: SettingsDialogProps) {
-  useOverlay();
+  const isTopOverlay = useOverlay();
   // Both AI Tasks and AI Memory are always visible in Settings now: each tab
   // owns its experimental enable toggle in its own panel. The underlying
   // sidebar visibility flags (`tasksEnabled` / `memoriesEnabled`) are still
@@ -125,14 +125,17 @@ export function SettingsDialog({
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(activeAccountId);
   const [pendingAccountId, setPendingAccountId] = useState<string | null>(null);
 
-  // Escape closes, like every dialog built on the shared Modal.
+  // Escape closes, like every dialog built on the shared Modal: only when
+  // nothing is open on top of it (a password or confirmation dialog).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, isTopOverlay]);
 
   const handleOverlayClick = useCallback(
     (e: React.MouseEvent) => {
