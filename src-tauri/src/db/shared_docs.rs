@@ -672,6 +672,21 @@ mod tests {
         assert!(db.shared_doc_participants("d1").unwrap().is_empty());
     }
 
+    #[test]
+    fn deleting_the_account_leaves_no_text_in_the_search_index() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        db.index_shared_doc("d1", "Plan", "Ferry times").unwrap();
+
+        db.delete_account("acc-1").unwrap();
+
+        let indexed: i64 = db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM shared_docs_fts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(indexed, 0);
+    }
+
     fn folder(id: &str, parent: Option<&str>, name: &str) -> DocFolder {
         DocFolder {
             id: id.into(),
