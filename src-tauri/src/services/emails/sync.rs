@@ -1041,13 +1041,12 @@ pub async fn sync_account_with_provider(
     // ── Retry previously failed emails ───────────────────────────────────────────
     // Runs whether or not this sync found new mail: an idle account would
     // otherwise keep its failed downloads forever.
-    const MAX_RETRY_COUNT: i32 = 3;
-
-    let (retryable, exhausted): (Vec<_>, Vec<_>) = failed_emails_to_retry
+    let now = crate::services::clock::now_secs();
+    let (exhausted, retryable): (Vec<_>, Vec<_>) = failed_emails_to_retry
         .into_iter()
-        .partition(|(_, retry_count)| *retry_count < MAX_RETRY_COUNT);
+        .partition(|(_, retry_count, failed_at)| failed_download_exhausted(*retry_count, *failed_at, now));
 
-    for (id, count) in &exhausted {
+    for (id, count, _) in &exhausted {
         emit_account_log(
             "warn",
             "sync",
@@ -1069,10 +1068,10 @@ pub async fn sync_account_with_provider(
             if take_sync_abort(&sync_abort_flags, account_id) {
                 return Ok(());
             }
-            let chunk_ids: Vec<&str> = chunk.iter().map(|(id, _)| id.as_str()).collect();
+            let chunk_ids: Vec<&str> = chunk.iter().map(|(id, _, _)| id.as_str()).collect();
             match email_provider.batch_get_messages(&chunk_ids).await {
                 Ok(retry_results) => {
-                    for ((email_id, _), result) in chunk.iter().zip(retry_results) {
+                    for ((email_id, _, _), result) in chunk.iter().zip(retry_results) {
                         match result {
                             Ok((mut email, category, attachment_infos)) => {
                                 if skip_promotions && category.is_promotions() {
@@ -1634,6 +1633,18 @@ async fn enqueue_lens_incremental(
 // ── Constants shared by extra-mailbox sync paths ─────────────────────────────
 
 const MAX_EXTRA_MAILBOX_EMAILS: u32 = 500;
+
+/// Tries a failed download gets before it can be given up on.
+const MAX_RETRY_COUNT: i32 = 3;
+
+/// How long after its first failure a download can be given up on. Retries run
+/// on consecutive syncs, so a count alone would be spent in minutes by an outage.
+const FAILED_DOWNLOAD_RETRY_WINDOW_SECS: i64 = 7 * 24 * 60 * 60;
+
+/// Pure: whether a failed download has had its tries and its time.
+fn failed_download_exhausted(retry_count: i32, failed_at: i64, now: i64) -> bool {
+    retry_count >= MAX_RETRY_COUNT && now - failed_at >= FAILED_DOWNLOAD_RETRY_WINDOW_SECS
+}
 /// Upper bound on backfill pages walked in a single periodic sync. The
 /// pagination is bounded so a stale mailbox with 10k+ history doesn't make
 /// one sync take an hour — subsequent syncs resume where this one left off
@@ -5020,5 +5031,19 @@ mod interrupted_sync_status_tests {
             resets.is_empty(),
             "removed account must not log a reset failure, got: {resets:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod failed_download_tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_download_is_given_up_only_after_its_tries_and_its_time() {
+        let now = 1_800_000_000;
+        let window_ago = now - FAILED_DOWNLOAD_RETRY_WINDOW_SECS;
+        assert!(!failed_download_exhausted(MAX_RETRY_COUNT - 1, window_ago, now));
+        assert!(!failed_download_exhausted(MAX_RETRY_COUNT, now - 60, now));
+        assert!(failed_download_exhausted(MAX_RETRY_COUNT, window_ago, now));
     }
 }
