@@ -207,11 +207,15 @@ impl Database {
     }
 
     pub fn update_account_order(&self, account_ids: &[String]) -> Result<()> {
-        let conn = self.connection();
-        let mut stmt = conn.prepare("UPDATE accounts SET sort_order = ?1 WHERE id = ?2")?;
-        for (idx, id) in account_ids.iter().enumerate() {
-            stmt.execute(params![idx as i32, id])?;
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE accounts SET sort_order = ?1 WHERE id = ?2")?;
+            for (idx, id) in account_ids.iter().enumerate() {
+                stmt.execute(params![idx as i32, id])?;
+            }
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -491,6 +495,42 @@ mod user_address_tests {
             db.user_addresses("a").unwrap(),
             vec!["me@mail.example".to_string(), "me@work.example".to_string()]
         );
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use crate::db::Database;
+
+    fn order(db: &Database) -> Vec<(String, i32)> {
+        let conn = db.connection();
+        let mut stmt = conn.prepare("SELECT id, sort_order FROM accounts ORDER BY id").unwrap();
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows
+    }
+
+    #[test]
+    fn a_reorder_that_fails_halfway_changes_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a");
+        db.seed_test_account("b");
+        db.connection()
+            .execute_batch(
+                "UPDATE accounts SET sort_order = 5 WHERE id = 'a';
+                 CREATE TRIGGER block_b BEFORE UPDATE ON accounts WHEN NEW.id = 'b'
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+        let before = order(&db);
+
+        let result = db.update_account_order(&["a".to_string(), "b".to_string()]);
+
+        assert!(result.is_err());
+        assert_eq!(order(&db), before);
     }
 }
 

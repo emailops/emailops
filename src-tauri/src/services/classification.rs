@@ -1246,14 +1246,23 @@ async fn classify_email_ids(
         message: format!("Classification complete: {} emails classified", classified),
     });
 
-    emit_log(
-        "success",
-        &format!(
-            "Classified {} emails ({} by rules, {} by AI, {} errors)",
-            classified, rule_matched, ai_classified, errors
-        ),
-    );
+    let (level, summary) = batch_summary(classified, rule_matched, ai_classified, errors);
+    emit_log(level, &summary);
     Ok(decisions)
+}
+
+/// Log level and text of a finished batch. An email that failed stays
+/// unclassified for the next run, so a batch with failures is no success.
+fn batch_summary(classified: u32, rule_matched: u32, ai_classified: u32, errors: u32) -> (&'static str, String) {
+    let level = match (classified, errors) {
+        (_, 0) => "success",
+        (0, _) => "error",
+        _ => "warn",
+    };
+    (
+        level,
+        format!("Classified {classified} emails ({rule_matched} by rules, {ai_classified} by AI, {errors} errors)"),
+    )
 }
 
 fn extract_json(text: &str) -> String {
@@ -1267,8 +1276,8 @@ fn extract_json(text: &str) -> String {
         text.to_string()
     };
 
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
+    if let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) {
+        if end >= start {
             return text[start..=end].to_string();
         }
     }
@@ -1419,6 +1428,28 @@ pub fn get_email_tags_batch(db: &Database, email_ids: &[String]) -> Result<Vec<c
 
 pub fn count_unclassified(db: &Database, account_id: &str) -> Result<i32> {
     db.count_unclassified_emails(account_id)
+}
+
+#[cfg(test)]
+mod reply_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn a_closing_brace_before_the_opening_one_is_not_a_json_span() {
+        assert_eq!(extract_json("} not json {"), "} not json {");
+    }
+
+    #[test]
+    fn the_json_span_is_cut_out_of_the_prose_around_it() {
+        assert_eq!(extract_json("Sure: {\"a\": 1} done"), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn a_batch_with_failures_is_not_reported_as_a_success() {
+        assert_eq!(batch_summary(3, 2, 1, 0).0, "success");
+        assert_eq!(batch_summary(3, 2, 1, 2).0, "warn");
+        assert_eq!(batch_summary(0, 0, 0, 5).0, "error");
+    }
 }
 
 #[cfg(test)]

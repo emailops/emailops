@@ -904,6 +904,7 @@ pub struct FakeEmailProvider {
     /// When `Some`, `create_draft` / `update_draft` fail with this message —
     /// simulates a provider that is reachable but refusing draft writes.
     draft_write_failure: std::sync::RwLock<Option<String>>,
+    draft_delete_failure: std::sync::RwLock<Option<String>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
@@ -1067,6 +1068,7 @@ impl FakeEmailProvider {
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
             draft_write_failure: std::sync::RwLock::new(None),
+            draft_delete_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
             reports_message_states: std::sync::atomic::AtomicBool::new(false),
@@ -1269,6 +1271,15 @@ impl FakeEmailProvider {
     /// them through again with `None`.
     pub fn fail_draft_writes(&self, message: Option<&str>) {
         *self.draft_write_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
+    /// Make every subsequent draft delete fail with `message`, or let them
+    /// through again with `None`.
+    pub fn fail_draft_deletes(&self, message: Option<&str>) {
+        *self
+            .draft_delete_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
     }
 
     fn draft_write_result(&self) -> Result<()> {
@@ -2076,6 +2087,14 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        if let Some(message) = self
+            .draft_delete_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            return Err(AppError::SyncError(message.to_string()));
+        }
         self.drafts
             .write()
             .unwrap_or_else(PoisonError::into_inner)

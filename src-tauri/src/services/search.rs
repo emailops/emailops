@@ -1298,8 +1298,8 @@ Return JSON only, no markdown."#,
 }
 
 fn extract_json_payload(text: &str) -> String {
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
+    if let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) {
+        if end >= start {
             return text[start..=end].to_string();
         }
     }
@@ -1336,6 +1336,16 @@ pub async fn get_ai_model(db: &Database) -> Result<String> {
 
 pub fn set_ai_model(db: &Database, model: &str) -> Result<()> {
     db.set_preference("ai_model", model)
+}
+
+#[cfg(test)]
+mod reply_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn a_closing_brace_before_the_opening_one_is_not_a_json_span() {
+        assert_eq!(extract_json_payload("} not json {"), "} not json {");
+    }
 }
 
 #[cfg(test)]

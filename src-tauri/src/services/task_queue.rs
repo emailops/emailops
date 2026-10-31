@@ -321,6 +321,12 @@ impl TaskQueue {
             .count()
     }
 
+    /// Whether no task is running or waiting.
+    pub fn is_idle(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.running.is_empty() && state.pending.is_empty()
+    }
+
     /// Snapshot of the queue's current running + pending tasks plus the most
     /// recent history. History is returned newest-first.
     pub fn snapshot(&self) -> QueueStateSnapshot {

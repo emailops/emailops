@@ -19,7 +19,9 @@ use chrono::TimeZone;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
-use crate::services::calendar::ics::{parse_ics_time, parse_vcalendar, unescape_text, ParsedCalendar, RawVEvent};
+use crate::services::calendar::ics::{
+    parse_ics_time, parse_vcalendar, unescape_text, with_iana_tzid, ParsedCalendar, RawVEvent,
+};
 use crate::sync::calendar_provider::{
     CalendarProvider, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -491,7 +493,7 @@ fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -
             } else {
                 let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
                 let head = std::iter::once(name.to_string())
-                    .chain(params)
+                    .chain(params.iter().map(|p| with_iana_tzid(p)))
                     .collect::<Vec<_>>()
                     .join(";");
                 lines.push(format!("{head}:{}", prop.value.trim()));
@@ -676,6 +678,23 @@ mod tests {
     }
 
     const WEEKLY: &str = "UID:w@x\nDTSTART;TZID=Europe/Madrid:20260728T073000\nDTEND;TZID=Europe/Madrid:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Weekly";
+
+    /// The `rrule` parser rejects a Windows zone name, which left a recurring
+    /// event with its first occurrence only.
+    #[test]
+    fn a_recurring_event_in_a_windows_zone_keeps_all_its_occurrences() {
+        let weekly = "UID:w@x\nDTSTART;TZID=Romance Standard Time:20260728T073000\nDTEND;TZID=Romance Standard Time:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Weekly";
+        let out = expand(&[weekly], utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+        assert_eq!(
+            out.iter().map(|e| e.start_time).collect::<Vec<_>>(),
+            vec![
+                utc(2026, 7, 28, 5, 30),
+                utc(2026, 8, 4, 5, 30),
+                utc(2026, 8, 11, 5, 30),
+                utc(2026, 8, 18, 5, 30),
+            ]
+        );
+    }
 
     // ── expansion planner ────────────────────────────────────────────────
 

@@ -19,7 +19,7 @@ use crate::services::ai::AiService;
 use crate::services::memory::config::MemoryConfig;
 
 pub use crate::services::tasks::extractor::ExtractedTask;
-use crate::services::tasks::extractor::{lenient_items, reply_object};
+use crate::services::tasks::extractor::{lenient_items, reply_object, BatchOutcome};
 
 const MAX_BODY_CHARS: usize = 1500;
 
@@ -38,7 +38,7 @@ pub async fn extract_new_emails(db: &Arc<Database>, app: &AppHandle, account_id:
         emit_log(app, "info", "memory", "Skipped: memory extraction is disabled");
         return Ok(0);
     }
-    extract_batch(db, app, account_id, &cfg, None).await
+    Ok(extract_batch(db, app, account_id, &cfg, None).await?.extracted)
 }
 
 pub async fn extract_batch(
@@ -47,13 +47,13 @@ pub async fn extract_batch(
     account_id: &str,
     cfg: &MemoryConfig,
     cancel: Option<&AtomicBool>,
-) -> Result<u32> {
+) -> Result<BatchOutcome> {
     if !cfg.enabled {
-        return Ok(0);
+        return Ok(BatchOutcome::default());
     }
     let ids = db.get_memory_unextracted_email_ids(account_id, cfg.backfill_batch_size, &cfg.categories, None)?;
     if ids.is_empty() {
-        return Ok(0);
+        return Ok(BatchOutcome::default());
     }
 
     let owner_email = match db.get_account(account_id)? {
@@ -65,7 +65,7 @@ pub async fn extract_batch(
                 "memory",
                 &format!("extractor: account {account_id} not found; skipping"),
             );
-            return Ok(0);
+            return Ok(BatchOutcome::default());
         }
     };
 
@@ -84,36 +84,49 @@ pub async fn extract_batch(
                 "memory",
                 &format!("memory extractor disabled (no AI provider): {e}"),
             );
-            return Ok(0);
+            return Ok(BatchOutcome {
+                failed: ids.len() as u32,
+                ..BatchOutcome::default()
+            });
         }
     };
 
-    let mut ok = 0;
-    for email_id in &ids {
+    let outcome = run_batch(db, &ai, &owner_email, &ids, cfg, cancel).await;
+    emit_log(
+        app,
+        if outcome.failed > 0 { "warn" } else { "success" },
+        "memory",
+        &format!("Extracted memories for {}/{} emails", outcome.extracted, ids.len()),
+    );
+    Ok(outcome)
+}
+
+async fn run_batch(
+    db: &Arc<Database>,
+    ai: &AiService,
+    owner_email: &str,
+    email_ids: &[String],
+    cfg: &MemoryConfig,
+    cancel: Option<&AtomicBool>,
+) -> BatchOutcome {
+    let mut outcome = BatchOutcome::default();
+    for email_id in email_ids {
         // Stopped by its own Cancel button, or from the queue because the AI
         // provider or model is about to change.
         if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) || crate::services::task_queue::cancel_requested() {
-            emit_log(app, "info", "memory", "Memory extraction cancelled mid-batch");
+            crate::services::logger::log("info", "memory", "Memory extraction cancelled mid-batch");
             break;
         }
-        match process_email(db, &ai, &owner_email, email_id, cfg).await {
-            Ok(true) => ok += 1,
-            Ok(false) => {}
-            Err(e) => emit_log(
-                app,
-                "warn",
-                "memory",
-                &format!("memory extractor skipped {email_id}: {e}"),
-            ),
+        match process_email(db, ai, owner_email, email_id, cfg).await {
+            Ok(true) => outcome.extracted += 1,
+            Ok(false) => outcome.skipped += 1,
+            Err(e) => {
+                outcome.failed += 1;
+                crate::services::logger::log("warn", "memory", format!("memory extractor skipped {email_id}: {e}"));
+            }
         }
     }
-    emit_log(
-        app,
-        "success",
-        "memory",
-        &format!("Extracted memories for {ok}/{} emails", ids.len()),
-    );
-    Ok(ok)
+    outcome
 }
 
 async fn process_email(
@@ -601,6 +614,23 @@ mod process_tests {
             assert!(res.is_err(), "reply {reply:?}");
             assert!(is_pending(&db, "e1"), "reply {reply:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_batch_counts_the_emails_whose_call_failed() {
+        let (db, fake, ai, cfg) = setup();
+        fake.fail_completions(Some("model offline"));
+        let ids = vec!["e1".to_string()];
+
+        let batch = run_batch(&db, &ai, "me@example.com", &ids, &cfg, None).await;
+
+        assert_eq!(
+            batch,
+            BatchOutcome {
+                failed: 1,
+                ..BatchOutcome::default()
+            }
+        );
     }
 
     #[tokio::test]

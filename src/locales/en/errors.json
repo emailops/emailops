@@ -83,6 +83,7 @@
     "data_move_not_empty": "{{path}} already has files in it. Choose an empty folder, or delete the old copy there first.",
     "data_move_not_writable": "EmailOps cannot write to {{path}}.",
     "data_move_not_enough_space": "Not enough free space there: {{needed}} needed, {{available}} available.",
-    "data_move_copy_mismatch": "The copy in {{path}} does not match the original ({{detail}}). Nothing was changed."
+    "data_move_copy_mismatch": "The copy in {{path}} does not match the original ({{detail}}). Nothing was changed.",
+    "data_move_background_work_running": "Background work did not stop in time, so nothing was moved. Try again in a moment. Restart EmailOps to resume syncing."
   }
 }
