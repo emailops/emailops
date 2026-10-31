@@ -1,5 +1,5 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
@@ -63,10 +63,21 @@ export function EventDetailDialog({
   onDeleted,
   onAuthError,
 }: EventDetailDialogProps) {
-  useOverlay();
+  const isTopOverlay = useOverlay();
   const { t } = useTranslation(['calendar', 'common']);
   const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
+
+  // On the document, as the app-wide handler on the window consumes the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, isTopOverlay]);
 
   const joinUrl = event.meetingLink ? getSafeExternalUrl(event.meetingLink) : null;
   const htmlLinkUrl = event.htmlLink ? getSafeExternalUrl(event.htmlLink) : null;
