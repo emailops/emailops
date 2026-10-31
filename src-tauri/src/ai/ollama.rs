@@ -49,6 +49,12 @@ const EMBEDDING_MODEL: &str = "nomic-embed-text";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const EMBEDDING_TIMEOUT: Duration = Duration::from_secs(30);
 const GENERATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long Ollama may take to start a streamed reply. It sends nothing while
+/// it loads the model and prefills the prompt, which on a laptop can take
+/// minutes.
+const STREAM_FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a streamed reply may stay silent once it has started.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Default `keep_alive` window sent to Ollama. Ollama defaults to 5 minutes,
 /// which on a constrained M1 with 16 GB RAM means the model is frequently
@@ -378,6 +384,21 @@ pub struct OllamaClient {
     /// but the caller (AiService) may override it from the
     /// `chat.keep_alive_seconds` user preference.
     keep_alive: String,
+    first_token_timeout: Duration,
+    stream_idle_timeout: Duration,
+}
+
+/// The next chunk of a streamed reply, `None` at its end. A stream silent for
+/// `wait` is an error: a stuck model would otherwise hold the AI queue for good.
+async fn next_stream_chunk<S, B>(stream: &mut S, wait: Duration, what: &str) -> Result<Option<B>>
+where
+    S: futures::Stream<Item = reqwest::Result<B>> + Unpin,
+{
+    tokio::time::timeout(wait, stream.next())
+        .await
+        .map_err(|_| super::openrouter::stream_stalled(wait, "Ollama"))?
+        .transpose()
+        .map_err(|e| AppError::AiError(format!("Ollama {what} read error: {e}")))
 }
 
 impl OllamaClient {
@@ -400,6 +421,8 @@ impl OllamaClient {
             model: model.unwrap_or(DEFAULT_MODEL).to_string(),
             embedding_model: embedding_model.unwrap_or(EMBEDDING_MODEL).to_string(),
             keep_alive: DEFAULT_KEEP_ALIVE.to_string(),
+            first_token_timeout: STREAM_FIRST_TOKEN_TIMEOUT,
+            stream_idle_timeout: STREAM_IDLE_TIMEOUT,
         }
     }
 
@@ -762,12 +785,10 @@ impl OllamaClient {
             format: None,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
+        let send = self.client.post(&url).json(&request).send();
+        let response = tokio::time::timeout(self.first_token_timeout, send)
             .await
+            .map_err(|_| super::openrouter::stream_stalled(self.first_token_timeout, "Ollama"))?
             .map_err(|e| AppError::AiError(format!("Failed to connect to Ollama for chat stream: {}", e)))?;
 
         if !response.status().is_success() {
@@ -783,11 +804,16 @@ impl OllamaClient {
         let mut stream = response.bytes_stream();
         let mut lines = NdjsonLines::default();
 
+        let mut started = false;
         loop {
-            let (batch, ended) = match stream.next().await {
-                Some(chunk) => {
-                    let bytes =
-                        chunk.map_err(|e| AppError::AiError(format!("Ollama chat stream read error: {}", e)))?;
+            let wait = if started {
+                self.stream_idle_timeout
+            } else {
+                self.first_token_timeout
+            };
+            let (batch, ended) = match next_stream_chunk(&mut stream, wait, "chat stream").await? {
+                Some(bytes) => {
+                    started = true;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -850,12 +876,10 @@ impl OllamaClient {
             format: None,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
+        let send = self.client.post(&url).json(&request).send();
+        let response = tokio::time::timeout(self.first_token_timeout, send)
             .await
+            .map_err(|_| super::openrouter::stream_stalled(self.first_token_timeout, "Ollama"))?
             .map_err(|e| AppError::AiError(format!("Failed to connect to Ollama for tool stream: {}", e)))?;
 
         if !response.status().is_success() {
@@ -881,11 +905,16 @@ impl OllamaClient {
             thinking: String::new(),
         };
 
+        let mut started = false;
         loop {
-            let (batch, ended) = match stream.next().await {
-                Some(chunk) => {
-                    let bytes =
-                        chunk.map_err(|e| AppError::AiError(format!("Ollama tool stream read error: {}", e)))?;
+            let wait = if started {
+                self.stream_idle_timeout
+            } else {
+                self.first_token_timeout
+            };
+            let (batch, ended) = match next_stream_chunk(&mut stream, wait, "tool stream").await? {
+                Some(bytes) => {
+                    started = true;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -2150,6 +2179,79 @@ mod stream_line_tests {
                 .expect("a complete reply");
         assert_eq!(result.content, "Hi");
         assert_eq!(result.eval_count, Some(3));
+    }
+}
+
+#[cfg(test)]
+mod stream_stall_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A server that sends one line of a reply, then stays connected in silence.
+    async fn server_that_goes_quiet() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let line = "{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{line}\r\n",
+                line.len()
+            );
+            socket.write_all(head.as_bytes()).await.expect("write");
+            std::future::pending::<()>().await;
+        });
+        url
+    }
+
+    /// A server that accepts the request and never answers.
+    async fn server_that_never_answers() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+        });
+        url
+    }
+
+    fn client(url: String) -> OllamaClient {
+        OllamaClient {
+            base_url: Ok(url),
+            first_token_timeout: Duration::from_millis(200),
+            stream_idle_timeout: Duration::from_millis(200),
+            ..OllamaClient::new(Some("m"))
+        }
+    }
+
+    fn stalled<T: std::fmt::Debug>(result: &Result<T>) -> bool {
+        matches!(result, Err(AppError::AiError(m)) if m.contains("stopped responding"))
+    }
+
+    #[tokio::test]
+    async fn a_chat_stream_that_goes_quiet_is_given_up_on() {
+        let result = client(server_that_goes_quiet().await)
+            .chat_stream_internal(vec![("user".into(), "hi".into())], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_tool_stream_that_goes_quiet_is_given_up_on() {
+        let result = client(server_that_goes_quiet().await)
+            .chat_stream_with_tools_internal(&[], &[], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_given_up_on() {
+        let result = client(server_that_never_answers().await)
+            .chat_stream_with_tools_internal(&[], &[], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
     }
 }
 

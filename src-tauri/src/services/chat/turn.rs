@@ -9,7 +9,7 @@ use std::time::Duration;
 use chrono::{Datelike, Utc};
 use tokio::time::timeout;
 
-use crate::ai::provider::{AIProvider, AiMessage};
+use crate::ai::provider::{AIProvider, AiMessage, MAX_TOOL_CALLS_PER_ROUND};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
@@ -1787,6 +1787,74 @@ fn dedupe_tool_calls(calls: Vec<crate::ai::provider::AiToolCall>) -> (Vec<crate:
     (kept, dropped)
 }
 
+/// How often a model call checks the Cancel flag from outside.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+/// How long a cancelled call gets to stop by itself before it is dropped: its
+/// token callback has said no, and a provider that ends normally still reports
+/// what the call used.
+const CANCEL_GRACE: Duration = Duration::from_secs(1);
+
+/// Await a model call until Cancel. The token callback only runs when a token
+/// arrives, so it cannot stop a provider that has gone silent; dropping the
+/// call can, on every provider.
+async fn until_cancelled<T>(
+    call: impl std::future::Future<Output = Result<T>>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<T> {
+    tokio::pin!(call);
+    while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::select! {
+            result = &mut call => return result,
+            () = tokio::time::sleep(CANCEL_POLL) => {}
+        }
+    }
+    timeout(CANCEL_GRACE, call).await.unwrap_or(Err(AppError::Cancelled))
+}
+
+/// When a streamed model call last sent a token.
+#[derive(Clone)]
+struct StreamPulse(Arc<std::sync::Mutex<tokio::time::Instant>>);
+
+impl StreamPulse {
+    fn new() -> Self {
+        Self(Arc::new(std::sync::Mutex::new(tokio::time::Instant::now())))
+    }
+
+    fn beat(&self) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .elapsed()
+    }
+}
+
+/// Await a streamed model call for as long as it keeps sending tokens: a long
+/// answer on a slow model is healthy, and only `limit` of silence means stuck.
+async fn until_silent<T>(
+    call: impl std::future::Future<Output = Result<T>>,
+    pulse: &StreamPulse,
+    limit: Duration,
+) -> Result<T> {
+    tokio::pin!(call);
+    loop {
+        let silent = pulse.silent_for();
+        if silent >= limit {
+            return Err(AppError::AiError(format!(
+                "The model sent nothing for {}s and may be stuck. Try a smaller model.",
+                limit.as_secs()
+            )));
+        }
+        tokio::select! {
+            result = &mut call => return result,
+            () = tokio::time::sleep(limit - silent) => {}
+        }
+    }
+}
+
 fn tool_call_key(tc: &crate::ai::provider::AiToolCall) -> String {
     format!("{}|{}", tc.function.name, canonical_json(&tc.function.arguments))
 }
@@ -2967,8 +3035,11 @@ async fn run_tool_loop(
             let cancel_flag = Arc::clone(&cancel);
             Box::new(move |_token: String| !cancel_flag.load(std::sync::atomic::Ordering::Relaxed))
         };
-        let call_result =
-            AiService::chat_stream_with_tools(db, provider, messages.clone(), tools.clone(), on_token).await;
+        let call_result = until_cancelled(
+            AiService::chat_stream_with_tools(db, provider, messages.clone(), tools.clone(), on_token),
+            &cancel,
+        )
+        .await;
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
@@ -3021,6 +3092,9 @@ async fn run_tool_loop(
                     trace.input = Some(input_snapshot);
                 }
                 llm_calls.push(trace);
+                if is_cancelled() {
+                    break;
+                }
                 let msg = format!("tool-call round {} failed: {}", round, e);
                 emit_log("warn", &msg);
                 abort_error = Some(e.to_string());
@@ -3210,11 +3284,15 @@ async fn run_tool_loop(
         }
 
         // A repeated call in the same round adds nothing but tool-result tokens.
-        let (tool_calls, dropped_repeats) = dedupe_tool_calls(tool_calls);
-        let response = if dropped_repeats > 0 {
+        let (mut tool_calls, dropped_repeats) = dedupe_tool_calls(tool_calls);
+        let over_cap = tool_calls.len().saturating_sub(MAX_TOOL_CALLS_PER_ROUND);
+        tool_calls.truncate(MAX_TOOL_CALLS_PER_ROUND);
+        let response = if dropped_repeats + over_cap > 0 {
             emit_log(
                 "info",
-                &format!("tool_loop: dropped {dropped_repeats} repeated tool call(s) in this round"),
+                &format!(
+                    "tool_loop: dropped {dropped_repeats} repeated and {over_cap} over-cap tool call(s) in this round"
+                ),
             );
             AiMessage {
                 tool_calls: Some(tool_calls.clone()),
@@ -3912,11 +3990,14 @@ async fn run_thread_bound_turn(
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
         let cancel_flag = Arc::clone(&cancel);
+        let pulse = StreamPulse::new();
+        let token_pulse = pulse.clone();
         let stream_fut = AiService::chat_stream(
             &db,
             provider.as_ref(),
             ai_messages,
             Box::new(move |token| {
+                token_pulse.beat();
                 let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
                 if !forward.is_empty() {
                     crate::services::events::emit(
@@ -3936,13 +4017,7 @@ async fn run_thread_bound_turn(
                 !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             }),
         );
-        let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
-            Ok(res) => res,
-            Err(_) => Err(AppError::AiError(format!(
-                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-                STREAM_TIMEOUT.as_secs()
-            ))),
-        };
+        let res = until_silent(until_cancelled(stream_fut, &cancel), &pulse, STREAM_TIMEOUT).await;
         if let Ok(r) = &res {
             turn_budget.record_call(prompt_chars, r.prompt_eval_count, r.dropped_front_tokens);
         }
@@ -4102,11 +4177,14 @@ async fn run_gated_synthesis_stream(
     let conv_for_token = conversation_id.to_string();
     let msg_for_token = assistant_message_id.to_string();
     let cancel_flag = Arc::clone(cancel);
+    let pulse = StreamPulse::new();
+    let token_pulse = pulse.clone();
     let stream_fut = AiService::chat_stream(
         db,
         provider,
         messages,
         Box::new(move |token| {
+            token_pulse.beat();
             // On the (unreachable) lock-poison case, forward the raw token
             // rather than drop content — persistence still strips markup as
             // the final safety net.
@@ -4129,13 +4207,7 @@ async fn run_gated_synthesis_stream(
             !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
         }),
     );
-    let res = match timeout(stream_timeout, stream_fut).await {
-        Ok(res) => res,
-        Err(_) => Err(AppError::AiError(format!(
-            "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-            stream_timeout.as_secs()
-        ))),
-    };
+    let res = until_silent(until_cancelled(stream_fut, cancel), &pulse, stream_timeout).await;
     // Flush any prose the gate held back while waiting to see if a trailing
     // chunk completed a tool-call tag.
     if let Ok(mut g) = gate.lock() {
@@ -4172,7 +4244,11 @@ fn finish_cancelled_stream(
     if !cancelled {
         return result;
     }
-    let mut result = result?;
+    let mut result = match result {
+        // The call was dropped: nothing of it came back.
+        Err(AppError::Cancelled) => crate::ai::provider::ChatStreamResult::default(),
+        other => other?,
+    };
     let shown = strip_tool_call_markup(&result.content);
     let content = super::cancel::cancelled_answer(&shown, language_code);
     let note = content.get(shown.trim_end().len()..).unwrap_or(&content).to_string();
@@ -4459,8 +4535,7 @@ pub async fn run_chat_turn(
     // parameter per feature.
     context: TurnContext,
 ) -> Result<()> {
-    let started = std::time::Instant::now();
-    let result = run_chat_turn_inner(
+    let turn = Box::pin(run_chat_turn_inner(
         Arc::clone(&db),
         registry,
         conversation_id.clone(),
@@ -4472,16 +4547,24 @@ pub async fn run_chat_turn(
         history,
         categories,
         context,
-    )
-    .await;
+    ));
+    report_turn_outcome(&db, &conversation_id, &assistant_message_id, turn).await
+}
+
+/// Await a turn and report its failure; a panic counts as one, so it cannot
+/// leave the bubble spinning. The panic's text never reaches the bubble: it can
+/// quote message text.
+async fn report_turn_outcome(
+    db: &Database,
+    conversation_id: &str,
+    message_id: &str,
+    turn: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let crashed = AppError::AiError("the turn hit an internal error".to_string());
+    let result = crate::util::panic_guard::run_isolated_as(crashed, turn).await;
     if let Err(e) = &result {
-        report_turn_failure(
-            &db,
-            &conversation_id,
-            &assistant_message_id,
-            started.elapsed().as_millis() as i64,
-            e,
-        );
+        report_turn_failure(db, conversation_id, message_id, started.elapsed().as_millis() as i64, e);
     }
     result
 }
@@ -10179,6 +10262,168 @@ Preséntalos en una tabla markdown …";
         .await;
         assert!(result.is_ok());
         assert!(provider.chat_calls().is_empty(), "no model call after the cancel");
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_a_tool_round_on_a_model_that_has_gone_silent() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(Vec::new()));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.hang_chats();
+        let raise = Arc::clone(&cancel);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            raise.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::clone(&cancel),
+        )
+        .await;
+        assert!(outcome.cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_round_runs_no_more_tool_calls_than_the_cap() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        })
+            as Arc<dyn tools::Tool>]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let calls = (0..MAX_TOOL_CALLS_PER_ROUND + 4)
+            .map(|i| {
+                let mut call = ai_tool_call("search_emails");
+                call.function.arguments = serde_json::json!({"query": format!("q{i}")});
+                call
+            })
+            .collect();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(calls),
+        });
+        provider.push_chat_response("Done.");
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), MAX_TOOL_CALLS_PER_ROUND);
+        let second_round = &provider.chat_calls()[1];
+        let announced = second_round
+            .iter()
+            .find_map(|m| m.tool_calls.as_ref())
+            .expect("the assistant's calls stay in the history");
+        assert_eq!(
+            announced.len(),
+            MAX_TOOL_CALLS_PER_ROUND,
+            "the history lists only the calls that ran"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_turn_is_reported_without_its_text() {
+        let db = Database::new_for_testing().expect("test db");
+        db.seed_test_account("a1");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let message = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+        let result = report_turn_outcome(&db, &conv.id, &message.id, async { panic!("subject: private text") }).await;
+        assert!(result.is_err());
+        let stored = db
+            .get_recent_chat_turns(&conv.id, 1)
+            .expect("turns")
+            .pop()
+            .expect("the row");
+        assert!(stored.content.starts_with("Chat failed"), "{}", stored.content);
+        assert!(!stored.content.contains("private text"), "{}", stored.content);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_call_is_dropped_shortly_after_a_cancel() {
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let result = until_cancelled(std::future::pending::<Result<()>>(), &cancel).await;
+        assert!(matches!(result, Err(AppError::Cancelled)), "{result:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_call_that_stops_by_itself_keeps_its_result() {
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let call = async {
+            tokio::time::sleep(CANCEL_GRACE / 2).await;
+            Ok(7)
+        };
+        assert_eq!(until_cancelled(call, &cancel).await.unwrap(), 7);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_long_answer_outlives_the_silence_limit_while_tokens_flow() {
+        let limit = Duration::from_secs(90);
+        let pulse = StreamPulse::new();
+        let beats = pulse.clone();
+        let call = async move {
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                beats.beat();
+            }
+            Ok(7)
+        };
+        assert_eq!(until_silent(call, &pulse, limit).await.unwrap(), 7);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_stream_is_given_up_on() {
+        let pulse = StreamPulse::new();
+        let result = until_silent(std::future::pending::<Result<()>>(), &pulse, Duration::from_secs(90)).await;
+        assert!(
+            matches!(&result, Err(AppError::AiError(m)) if m.contains("sent nothing for 90s")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_synthesis_dropped_by_a_cancel_ends_with_the_note() {
+        let out = finish_cancelled_stream(Err(AppError::Cancelled), true, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "_Cancelled by the user._");
     }
 
     #[test]

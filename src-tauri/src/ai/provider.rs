@@ -30,6 +30,17 @@ impl std::fmt::Display for ProviderType {
 // ── Shared message types ─────────────────────────────────────────────────────
 
 /// A single message in an AI conversation, provider-neutral.
+/// Most tool calls one round may run, on every provider. The model can ask for
+/// more in the next round, once it has read these results.
+///
+/// A round has no other bound than the generation budget: greedy decoding can
+/// tip into listing one distinct search after another and never emit the
+/// end-of-turn token (observed on Qwen 3.6 35B: 106 `search_emails` calls in
+/// one round). Every call was executed and the results overflowed the context
+/// window, which dropped the system prompt and the question from the front.
+/// 8 is the largest batch seen in a round of a passing verified run.
+pub const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiMessage {
     pub role: String,
@@ -573,6 +584,8 @@ pub struct FakeAiProvider {
     completion_calls: RwLock<Vec<String>>,
     completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
+    /// When set, chat calls never return, like a model that has hung.
+    chats_hang: RwLock<bool>,
     embed_calls: RwLock<Vec<String>>,
     /// Called at the end of each `embed` with the number of calls so far.
     embed_hook: RwLock<Option<EmbedHook>>,
@@ -607,6 +620,7 @@ impl FakeAiProvider {
             completion_calls: RwLock::new(Vec::new()),
             completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
+            chats_hang: RwLock::new(false),
             embed_calls: RwLock::new(Vec::new()),
             embed_hook: RwLock::new(None),
             prewarm_calls: RwLock::new(Vec::new()),
@@ -711,6 +725,11 @@ impl FakeAiProvider {
     /// Queue a fully-formed canned chat response (e.g. one carrying
     /// `tool_calls`). Returned in FIFO order from `chat_with_tools` /
     /// `chat_stream_with_tools`.
+    /// Make every later chat call hang, sending no token and no reply.
+    pub fn hang_chats(&self) {
+        *self.chats_hang.write().unwrap_or_else(PoisonError::into_inner) = true;
+    }
+
     pub fn push_chat_message(&self, msg: AiMessage) {
         self.chats
             .write()
@@ -929,6 +948,10 @@ impl AIProvider for FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(messages.to_vec());
+        let hangs = *self.chats_hang.read().unwrap_or_else(PoisonError::into_inner);
+        if hangs {
+            std::future::pending::<()>().await;
+        }
         Ok(self
             .chats
             .write()

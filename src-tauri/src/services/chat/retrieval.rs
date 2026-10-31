@@ -896,6 +896,20 @@ pub(crate) fn smart_body_slice(body: &str, query: &str, max_chars: usize) -> Str
     smart_body_slice_indexed(body, query, max_chars).text
 }
 
+/// The index in `text` of the char that lowercases to byte `lowered_byte` of
+/// its lowercased form. The two forms do not line up byte for byte: `İ` takes
+/// two bytes and lowercases to three.
+fn char_index_at_lowered_byte(text: &str, lowered_byte: usize) -> usize {
+    let mut lowered_len = 0;
+    for (index, c) in text.chars().enumerate() {
+        lowered_len += c.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if lowered_len > lowered_byte {
+            return index;
+        }
+    }
+    text.chars().count()
+}
+
 /// Like [`smart_body_slice`] but also returns the anchor offset so callers
 /// can insert a visible "relevant region" marker at the right spot when the
 /// snippet was pulled around a query-term match. Used by `build_prompt` to
@@ -947,7 +961,7 @@ pub(crate) fn smart_body_slice_indexed(body: &str, query: &str, max_chars: usize
         };
     };
 
-    let char_pos = body_trim[..byte_pos].chars().count();
+    let char_pos = char_index_at_lowered_byte(body_trim, byte_pos);
     let start_char = char_pos.saturating_sub(SNIPPET_LEAD_CHARS);
 
     let window: String = body_trim.chars().skip(start_char).take(max_chars).collect();
@@ -1057,6 +1071,25 @@ mod category_scope_tests {
 mod tests {
     use super::*;
     use crate::ai::provider::ProviderType;
+
+    #[test]
+    fn a_body_that_grows_when_lowercased_still_slices_around_the_match() {
+        // `İ` takes two bytes and lowercases to three, so an offset into the
+        // lowered text runs past the same spot in the original.
+        let body = format!("{} target {}", "İ".repeat(2000), "x".repeat(200));
+        let sliced = smart_body_slice_indexed(&body, "target", 1000);
+        let anchor = sliced.anchor_char.expect("the match anchors the slice");
+        let at_anchor: String = sliced.text.chars().skip(anchor).take(6).collect();
+        assert_eq!(at_anchor, "target");
+    }
+
+    #[test]
+    fn a_match_on_a_multibyte_char_after_a_growing_one_does_not_panic() {
+        // The lowered offset lands in the middle of the original `é`.
+        let body = format!("İ {} éclair {}", "x".repeat(2000), "y".repeat(2000));
+        let sliced = smart_body_slice_indexed(&body, "éclair", 1000);
+        assert!(sliced.text.contains("éclair"));
+    }
 
     /// With no embedding model set up (OpenRouter before one is chosen) the
     /// question is not embedded at all: keyword search alone answers.

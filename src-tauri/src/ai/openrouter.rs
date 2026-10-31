@@ -210,7 +210,7 @@ fn stream_request_error(status: u16, body: &str, model: &str, server: &str) -> A
     request_error(status, body, model, &format!("{what} (HTTP {status})"))
 }
 
-fn stream_stalled(idle: Duration, server: &str) -> AppError {
+pub(super) fn stream_stalled(idle: Duration, server: &str) -> AppError {
     AppError::AiError(format!(
         "{server} stopped responding ({}s without data)",
         idle.as_secs_f32()

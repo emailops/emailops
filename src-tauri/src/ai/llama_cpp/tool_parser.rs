@@ -35,6 +35,8 @@
 
 use crate::ai::provider::{AiToolCall, AiToolCallFunction};
 
+pub(super) use crate::ai::provider::MAX_TOOL_CALLS_PER_ROUND;
+
 const OPEN_TAG: &str = "<tool_call>";
 const CLOSE_TAG: &str = "</tool_call>";
 
@@ -167,17 +169,6 @@ fn repair_missing_arguments_key(inner: &str) -> Option<String> {
     let (name, after) = (&rest[..end], rest[end + 1..].trim_start().strip_prefix(':')?);
     Some(format!("{{\"name\":\"{name}\",\"arguments\":{after}"))
 }
-
-/// Most tool calls one generation may carry. The model can ask for more in
-/// the next round, once it has read these results.
-///
-/// A round has no other bound than the generation budget: greedy decoding can
-/// tip into listing one distinct search after another and never emit the
-/// end-of-turn token (observed on Qwen 3.6 35B: 106 `search_emails` calls in
-/// one round). Every call was executed and the results overflowed the context
-/// window, which dropped the system prompt and the question from the front.
-/// 8 is the largest batch seen in a round of a passing verified run.
-pub(super) const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
 
 /// True when the raw generation `text` has just completed a tool call that
 /// repeats (same name, same arguments) one already emitted earlier in it.
