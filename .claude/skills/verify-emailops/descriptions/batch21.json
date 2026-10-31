@@ -388,6 +388,11 @@
     "src/components/common/Modal.a11y.test.tsx::closes the one underneath once it is on top again": "Cuando el diálogo superior desaparece, Escape cierra el que quedó debajo.",
     "src/components/shared/EmailHtmlFrame.links.test.ts::hands an anchor to the parent instead of navigating": "En el HTML de un correo, pulsar un enlace se entrega a la app en vez de navegar dentro del marco.",
     "src/components/shared/EmailHtmlFrame.links.test.ts::hands an image-map area to the parent instead of navigating": "En el HTML de un correo, pulsar un área de mapa de imagen se entrega a la app en vez de navegar dentro del marco.",
-    "src/components/shared/EmailHtmlFrame.links.test.ts::hands an SVG xlink:href link to the parent instead of navigating": "En el HTML de un correo, pulsar un enlace SVG (xlink:href) se entrega a la app en vez de navegar dentro del marco."
+    "src/components/shared/EmailHtmlFrame.links.test.ts::hands an SVG xlink:href link to the parent instead of navigating": "En el HTML de un correo, pulsar un enlace SVG (xlink:href) se entrega a la app en vez de navegar dentro del marco.",
+    "src/components/shared/ExternalLinkDialog.test.tsx::closes on Escape without opening anything, though the window consumes the key": "Escape cierra el diálogo de enlace externo sin abrir nada, aunque el gestor global en window consuma la tecla.",
+    "src/components/shared/ExternalLinkDialog.test.tsx::takes the focus on Cancel, the choice that leaves nothing open": "El diálogo de enlace externo toma el foco en Cancel: abierto desde un correo, sin eso Escape se quedaría dentro del marco del correo.",
+    "src/components/shared/ExternalLinkDialog.test.tsx::closes alone when it sits on top of another dialog": "Con el diálogo de enlace sobre otro diálogo, Escape cierra solo el de enlace.",
+    "src/components/Calendar/EventDetailDialog.escape.test.tsx::closes, though the window consumes the key": "Escape cierra el detalle de un evento del calendario, aunque el gestor global en window consuma la tecla.",
+    "src/components/Calendar/EventDetailDialog.escape.test.tsx::leaves Escape to a dialog open on top of it": "Con otro diálogo abierto encima del detalle del evento, Escape cierra ese diálogo y el detalle sigue abierto."
   }
 }

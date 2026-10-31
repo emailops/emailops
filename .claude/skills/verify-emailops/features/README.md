@@ -17,7 +17,7 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 - The instance holds no remote-provider key: `launch` starts it with `OPENROUTER_API_KEY` set and empty, so the
   developer's key in `.env.local` is not loaded and nothing in the UI can reach OpenRouter.
 - Verification fixtures (`insert_verification_fixtures` in `scripts/generate_demo_db.py`): a trashed quote and its
-  correction (Larkspur Freight, with a shortcut and a web-page attachment), a renewal notice and a junk-marked
+  correction (Larkspur Freight, with a shortcut and a web-page attachment that holds a remote image), a renewal notice and a junk-marked
   lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly) whose `email_headers` carry
   RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote and one
   archived message (*Studio key handover confirmed*).

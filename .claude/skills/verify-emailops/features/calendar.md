@@ -37,6 +37,7 @@ Preconditions: baseline; the credential-less Gmail account `ulises.emailopslabs@
 - Creating, deleting and answering events need provider credentials: not drivable on the demo instance.
 - Subscribing a feed needs network (the backend fetches the URL once): not drivable on the demo instance either — assert the setup prompt and the Settings form, and test a real feed manually.
 - Demo events are re-anchored to "now" on every run (`ensure_demo_db.sh` → `--refresh-calendar`); assert on titles, never on dates.
+- The all-day step writes its event with SQL as the providers store it (UTC midnights, end exclusive) and removes it: the chat evals read the demo calendar.
 - The agenda and the full view are never mounted together (the dock hides its calendar while the full view is open), but switching between them runs `sync_calendar_now` twice in a row.
 
 | Case | Test kind |
@@ -49,4 +50,5 @@ Preconditions: baseline; the credential-less Gmail account `ulises.emailopslabs@
 | calendar command arguments, `Calendar` / `CalendarFeed` / `CalendarInvite` shapes | contract (`src/lib/apiContract/calendario.api.test.ts`, `db::calendar*` round trips) |
 | right dock mode, rail order, agenda panel states, feeds settings form, read-only dialog, Proton create link | vitest (`src/lib/rightDockLayout`, `src/components/RightDock`, `Calendar/CalendarPanel`, `Settings/CalendarSettings.feeds`, `Calendar/EventDetailDialog.readOnly`, `src/lib/calendarFeeds`) |
 | the panel and the view | e2e (`Vistas/Calendar`) |
+| an all-day event sits on its own date in several zones; Escape closes its detail | vitest (`calendarGrid.allDay`, `EventDetailDialog.escape`) + e2e in the real grid (`Calendario/evento de día completo en su fecha`) |
 | chat answers about events | eval (`calendar_*` in `src-tauri/evals/chat/cases/calendar_routing.yaml`) |

@@ -261,6 +261,18 @@ await step('Búsqueda', 'limpiar', 'la ✕ vacía el cuadro y restaura la lista'
   return ok(v === '' && await rows() > 5, `${await rows()} filas`, `valor "${v}", ${await rows()} filas`);
 });
 
+await step('Búsqueda', 'is:unread lista solo lo no leído', 'is:unread en el cuadro deja las conversaciones sin leer de la cuenta, las mismas que la BD, y limpiar devuelve la lista', async () => {
+  const unread = sql("SELECT DISTINCT thread_id, subject FROM emails WHERE account_id = 'demo-acct-work' AND mailbox = 'inbox' AND is_read = 0 AND is_deleted = 0");
+  if (!unread.length) return 'FAIL: la BD demo no tiene correo sin leer en la bandeja';
+  await type('input[placeholder^="Search…"]', 'is:unread'); await enter(); await sleep(1500);
+  const listed = await js(() => [...document.querySelectorAll('div[role="button"]')].filter((r) => r.querySelector('[data-testid="row-select"]')).map((r) => r.innerText.replace(/\n/g, ' ')));
+  await click('form:has(input[placeholder^="Search…"]) button'); await sleep(1500);
+  const after = await rows();
+  const missing = unread.filter((u) => !listed.some((r) => r.includes(u.subject))).map((u) => u.subject);
+  return ok(listed.length === unread.length && !missing.length && after > 5, `${listed.length} conversaciones sin leer, las de la BD; la lista vuelve a ${after} filas`,
+    `${listed.length} filas para ${unread.length} hilos sin leer; faltan: ${missing.join(' // ')}; tras limpiar ${after} filas`);
+});
+
 // ---------- Smart filters → cuadro de búsqueda (DECISIONS 2026-10-08) ----------
 const searchValue = () => js(() => document.querySelector('input[placeholder^="Search…"]')?.value ?? null);
 // First filter of a sidebar tag group (heading = the tag type), as { value, active }.
@@ -330,14 +342,19 @@ await step('Adjuntos', 'tipo peligroso pide confirmación', 'abrir un acceso dir
   const opened = /Opening attachment 'larkspur-client-portal/.test(await bodyText());
   return ok(named && closed && !opened, 'diálogo con nombre y tipo; Cancel lo cierra', `nombre y tipo=${named}, cerrado=${closed}, abierto=${opened}; texto: ${text.replace(/\n/g, ' ').slice(0, 160)}`);
 });
-await step('Adjuntos', 'página web en vista previa aislada', 'un adjunto HTML se abre dentro de la app, en un iframe con sandbox vacío, sin diálogo ni aplicación externa', async () => {
+await step('Adjuntos', 'página web como el cuerpo de un correo', 'un adjunto HTML se abre dentro de la app como un correo: marco aislado, su imagen remota sin dirección y el aviso «Show images», sin diálogo ni aplicación externa', async () => {
   const chip = 'button[title^="larkspur-renewal-terms.html"]';
   if (!(await exists(chip))) return 'FAIL: el correo no muestra el adjunto larkspur-renewal-terms.html';
   await click(chip); await sleep(1500);
-  const frame = await js(() => { const i = document.querySelector('iframe[title="larkspur-renewal-terms.html"]'); return i ? { sandbox: i.getAttribute('sandbox'), src: (i.getAttribute('src') || '').slice(0, 22) } : null; });
+  const r = await js(() => {
+    const frame = document.querySelector('iframe[title="Email content"]'); const doc = frame?.getAttribute('srcdoc') || '';
+    return { sandbox: frame?.getAttribute('sandbox'), terms: doc.includes('renewal terms'), img: (doc.match(/<img[^>]*>/) || [''])[0], banner: /Remote images were blocked/.test(document.body.innerText),
+      show: [...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Show images' && x.offsetParent) };
+  });
   const dialog = await exists('[data-testid="cancel-open-attachment"]');
+  // Never "Show images": that would ask the sender's server for the picture.
   await js(() => document.querySelector('button[title="Close"]')?.click()); await sleep(800);
-  return ok(!!frame && frame.sandbox === '' && frame.src === 'data:text/html;base64,' && !dialog, JSON.stringify(frame), `iframe=${JSON.stringify(frame)}, diálogo=${dialog}`);
+  return ok(r.sandbox === 'allow-scripts' && r.terms && r.img !== '' && !/\ssrc=/.test(r.img) && r.banner && r.show && !dialog, JSON.stringify(r), `${JSON.stringify(r)}, diálogo=${dialog}`);
 });
 const LARKSPUR = 'Corrected Larkspur Freight renewal quote';
 const larkspurState = () => sql(`SELECT mailbox, MAX(is_starred) AS starred FROM emails WHERE subject = '${LARKSPUR}' GROUP BY mailbox`);
@@ -465,6 +482,21 @@ await step('Cuentas', 'estrella en GitHub', 'el botón de estrella junto a Give 
   return ok(!(await exists('[role="dialog"]')), 'diálogo con el repositorio, cerrado con Cancel', 'el diálogo sigue abierto tras Cancel');
 });
 
+await step('Atajos', 'Modal retiene el foco y Escape lo cierra', 'al abrir un diálogo el foco entra en él, Tab desde el último control vuelve al primero, Escape lo cierra y el foco vuelve al botón que lo abrió', async () => {
+  await js(() => document.querySelector('[aria-label="Star on GitHub"]').focus());
+  await click('aria/Star on GitHub'); await sleep(700);
+  const inside = () => js(() => !!document.activeElement?.closest('[data-testid="modal-overlay"]'));
+  const moved = await inside();
+  const wrapped = await js(() => { const all = [...document.querySelectorAll('[data-testid="modal-overlay"] button')]; all[all.length - 1].focus(); return all.length; });
+  await b.keys('Tab'); await sleep(250);
+  const first = await js(() => document.activeElement === document.querySelector('[data-testid="modal-overlay"] button'));
+  await b.keys('Escape'); await sleep(600);
+  const closed = !(await exists('[data-testid="modal-overlay"]'));
+  const back = await js(() => document.activeElement?.getAttribute('aria-label'));
+  if (!closed) await js(() => [...document.querySelectorAll('[data-testid="modal-overlay"] button')].find((x) => x.textContent.trim() === 'Cancel')?.click());
+  return ok(moved && wrapped > 1 && first && closed && back === 'Star on GitHub', `foco dentro; Tab vuelve al primero de ${wrapped}; Escape cierra; foco en «${back}»`, `foco dentro=${moved}, Tab al primero=${first}, cerrado=${closed}, foco en «${back}»`);
+});
+
 // ---------- Otras vistas ----------
 if (!(await exists('button=Spam'))) { await click('button=Other Views'); await sleep(800); }
 const optional = {};
@@ -485,6 +517,86 @@ for (const view of ['Tag Board', 'Attachments', 'Drafts', 'Scheduled', 'Sent', '
     return ok(t.length > 20, t.slice(0, 120), `vista casi vacía: "${t.slice(0, 60)}"`);
   });
 }
+
+// ---------- Calendario: día completo ----------
+// Stored as the providers give it: the UTC midnights of the date, the end exclusive. Written here because it needs
+// today's date and the grid, and removed afterwards: the chat evals read the demo calendar.
+const ALL_DAY = 'Verification all-day event';
+const dayEvents = () => js((title) => [...document.querySelectorAll(`button[title^="${title}"]`)].map((x) => { const r = x.getBoundingClientRect(); return { x: r.left + r.width / 2, title: x.title }; }), ALL_DAY);
+await step('Calendario', 'evento de día completo en su fecha', 'un evento de día completo de hoy sale una sola vez, en la columna de hoy, sin pasar al día siguiente, en la semana y en el mes; su detalle dice All day y Escape lo cierra', async () => {
+  const today = new Date(); const start = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) / 1000; const now = Math.floor(Date.now() / 1000);
+  sql(`INSERT OR REPLACE INTO calendar_events (id, account_id, provider_event_id, calendar_id, title, description, location, start_time, end_time, is_all_day, timezone, organizer, attendees_json, status, created_at, updated_at)
+       VALUES ('verify-all-day', 'demo-acct-calendar', 'verify-all-day', 'demo-cal-work', '${ALL_DAY}', '', '', ${start}, ${start + 86400}, 1, NULL, 'ulises.emailopslabs@gmail.com', '[]', 'confirmed', ${now}, ${now})`);
+  try {
+    await click('button=Inbox'); await sleep(600);
+    await click('button*=ulises.emailopslabs@gmail.com'); await sleep(1500);
+    await click('button*=Calendar'); await sleep(1800);
+    await click('button[aria-label="Open full calendar"]'); await sleep(2000);
+    await click('button=Week'); await sleep(1200); await click('button=Today'); await sleep(1000);
+    const weekday = today.toLocaleDateString('en-US', { weekday: 'short' });
+    const column = await js((wanted) => { const h = [...document.querySelectorAll('[data-testid="time-grid"] *')].find((x) => x.children.length <= 2 && x.textContent.replace(/\s+/g, ' ').trim() === wanted); if (!h) return null; const r = h.getBoundingClientRect(); return { left: r.left, right: r.right }; }, `${weekday} ${today.getDate()}`);
+    if (!column) return `FAIL: la semana no muestra la columna de hoy (${weekday} ${today.getDate()})`;
+    const week = await dayEvents();
+    const inColumn = week.length === 1 && week[0].x >= column.left - 1 && week[0].x <= column.right + 1;
+    await click('button=Month'); await sleep(1200);
+    const month = await dayEvents();
+    await click('button=Week'); await sleep(1000);
+    await js((title) => document.querySelector(`button[title^="${title}"]`)?.click(), ALL_DAY); await sleep(900);
+    const eventDialog = () => js((title) => [...document.querySelectorAll('.fixed')].find((d) => d.innerText.includes(title))?.innerText.replace(/\n+/g, ' | ') || '', ALL_DAY);
+    const detail = await eventDialog();
+    await b.keys('Escape'); await sleep(700);
+    const closed = !(await eventDialog());
+    return ok(inColumn && month.length === 1 && /All day/.test(detail) && detail.includes(String(today.getDate())) && closed, `una vez en ${weekday} ${today.getDate()} (semana) y una vez en el mes; detalle «${detail.slice(0, 80)}»; Escape lo cierra`,
+      `semana ${JSON.stringify(week)}, columna ${JSON.stringify(column)}, mes ${month.length}, detalle «${detail.slice(0, 120)}», cerrado=${closed}`);
+  } finally {
+    sql("DELETE FROM calendar_events WHERE id = 'verify-all-day'");
+    await js((title) => [...document.querySelectorAll('.fixed')].find((d) => d.innerText.includes(title))?.querySelector('button[title="Close"]')?.click(), ALL_DAY); await sleep(600);
+    await click('button*=ulises@emailopslabs.dev'); await sleep(1200);
+  }
+});
+
+// ---------- EO Docs ----------
+const DOC_TITLE = 'Verification document';
+const docRow = () => sql(`SELECT id, status, length(state) AS size FROM shared_docs WHERE title = '${DOC_TITLE}'`)[0] || null;
+await step('EO Docs', 'crear y abrir un documento', 'New crea el documento, que se abre en el editor, y lo escrito se guarda en shared_docs', async () => {
+  await click('button=Inbox'); await sleep(600);
+  if (!(await exists('[data-testid="sidebar-documents"]'))) return 'FAIL: no hay entrada EO Docs en la barra lateral';
+  await click('[data-testid="sidebar-documents"]'); await sleep(1500);
+  await click('[data-testid="shared-doc-new"]'); await sleep(600);
+  await type('[data-testid="shared-doc-new-title"]', DOC_TITLE); await sleep(200);
+  await click('[data-testid="shared-doc-create"]'); await sleep(1800);
+  const created = docRow(); if (!created) return 'FAIL: el documento no llegó a shared_docs';
+  const listed = await js((t) => [...document.querySelectorAll('[data-testid^="shared-doc-row-"]')].some((r) => r.innerText.includes(t)), DOC_TITLE);
+  await (await b.$('[data-testid="shared-doc-editor"]')).click(); await sleep(200);
+  await js(() => document.execCommand('insertText', false, 'Plain text in the document. ')); await sleep(1500);
+  const saved = docRow(); const text = await js(() => document.querySelector('[data-testid="shared-doc-editor"]')?.innerText || '');
+  return ok(listed && created.status === 'active' && /Plain text/.test(text) && saved.size > created.size, `documento activo; ${created.size} → ${saved.size} bytes de estado`, `listado=${listed}, fila=${JSON.stringify(saved)}, texto «${text.slice(0, 60)}»`);
+});
+await step('EO Docs', 'enlace e imagen de otra persona', 'pegar un enlace con target propio lo deja en _blank y una imagen remota no conserva su dirección; en una versión de solo lectura el enlace pide confirmación con la dirección real y Cancel no abre nada', async () => {
+  if (!(await exists('[data-testid="shared-doc-editor"]'))) return 'FAIL: el editor no está abierto';
+  const pasted = await js(() => { const ed = document.querySelector('[data-testid="shared-doc-editor"]'); const dt = new DataTransfer();
+    dt.setData('text/html', '<a href="https://example.com/terms" target="_self">the terms</a> <img src="https://images.example.com/header.png" alt="header">'); dt.setData('text/plain', 'the terms');
+    ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); const a = ed.querySelector('a'); return { href: a?.getAttribute('href'), target: a?.getAttribute('target'), remoteImages: ed.querySelectorAll('img[src^="http"]').length }; });
+  await sleep(1500);
+  await click('[data-testid="shared-doc-history-toggle"]'); await sleep(1500);
+  if (!(await exists('[data-testid^="shared-doc-version-"]'))) return `FAIL: el historial no tiene versiones (${JSON.stringify(pasted)})`;
+  await js(() => document.querySelector('[data-testid^="shared-doc-version-"]').click()); await sleep(1200);
+  const readOnly = await js(() => document.querySelector('[data-testid="shared-doc-editor"]')?.getAttribute('contenteditable'));
+  await js(() => document.querySelector('[data-testid="shared-doc-editor"] a')?.click()); await sleep(800);
+  const dialog = await js(() => document.querySelector('[data-testid="external-link-open"]')?.closest('.fixed').innerText.replace(/\n+/g, ' | ') || null);
+  // Never "Open in browser": that hands the address to the OS.
+  await js(() => [...(document.querySelector('[data-testid="external-link-open"]')?.closest('.fixed').querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === 'Cancel')?.click()); await sleep(600);
+  const closed = !(await exists('[data-testid="external-link-open"]'));
+  return ok(pasted.href === 'https://example.com/terms' && pasted.target === '_blank' && pasted.remoteImages === 0 && readOnly === 'false' && /https:\/\/example\.com\/terms/.test(dialog || '') && closed,
+    `${JSON.stringify(pasted)}; diálogo «${dialog}»`, `${JSON.stringify(pasted)}, solo lectura=${readOnly}, diálogo=${dialog}, cerrado=${closed}`);
+});
+await step('EO Docs', 'borrar un documento', 'Delete pide confirmación, quita el documento de la lista y de shared_docs', async () => {
+  if (!docRow()) return 'FAIL: no hay documento que borrar';
+  await click('[data-testid="shared-doc-delete"]'); await sleep(700);
+  await click('[data-testid="delete-doc-confirm"]'); await sleep(1200);
+  const listed = await js((t) => [...document.querySelectorAll('[data-testid^="shared-doc-row-"]')].some((r) => r.innerText.includes(t)), DOC_TITLE);
+  return ok(!listed && !docRow(), 'fuera de la lista y de la BD', `listado=${listed}, fila=${JSON.stringify(docRow())}`);
+});
 
 // ---------- Tag Board ----------
 await click('button=Tag Board'); await sleep(1800);
@@ -684,6 +796,121 @@ await step('Compose', 'enviar sin credenciales', 'Send en la cuenta demo sin cre
   await closeToasts(); await click('button=Inbox'); await sleep(800);
   return ok(!!err && row?.status === 'failed' && /Authentication required/.test(row.last_error || '') && /Not sent/.test(shown || '') && cleaned === 'cancelled',
     `aviso: ${err?.slice(0, 110)}; outbox failed; Scheduled «Not sent»; borrado`, `aviso=${err}, fila=${JSON.stringify(row)}, Scheduled=${shown}, tras borrar=${cleaned}`);
+});
+// ---------- Compose: pestañas, archivos y el borrador del chat ----------
+// Feeds the composer's hidden file input a file built in the page (WebDriver cannot pick files from a dialog).
+const attachToComposer = (name) => js((n) => { const box = document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed'); const input = box?.querySelector('input[type="file"]'); if (!input) return false; const dt = new DataTransfer(); dt.items.add(new File(['synthetic verification file'], n, { type: 'text/plain' })); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true })); return true; }, name);
+const composerState = () => js(() => {
+  const subject = document.querySelector('input[placeholder^="Email subject"]');
+  const shown = !!subject && getComputedStyle(subject).visibility === 'visible';
+  return { subject: subject?.value ?? null, shown, body: [...document.querySelectorAll('[contenteditable="true"]')].find((e) => getComputedStyle(e).visibility === 'visible')?.innerText.trim() ?? null,
+    file: [...document.querySelectorAll('*')].some((e) => e.children.length === 0 && e.textContent.trim() === 'verify-notes.txt' && getComputedStyle(e).visibility === 'visible'),
+    confirm: [...document.querySelectorAll('[data-testid="modal-overlay"]')].map((d) => d.innerText.replace(/\n+/g, ' | ')).join(' // '), tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => t.innerText.trim()) };
+});
+const dialogAction = (label) => js((l) => { const x = [...document.querySelectorAll('[data-testid="modal-overlay"] button')].find((y) => y.textContent.trim() === l); if (!x) return false; x.click(); return true; }, label);
+const COMPOSE_TAB = 'Verification run in a tab';
+const firstRow = () => js(() => { const r = [...document.querySelectorAll('div[role="button"]')].find((x) => x.querySelector('[data-testid="row-select"]')); r?.click(); return r ? r.innerText.replace(/\n/g, ' ').slice(0, 60) : null; });
+await step('Compose', 'cerrar con archivos pregunta', 'con un archivo adjunto, Escape pide confirmación; otro Escape cierra solo esa pregunta y el compositor sigue con su archivo; Cancel vuelve a preguntar y Close lo cierra', async () => {
+  await click('button=Inbox'); await sleep(800);
+  await click('button=Compose'); await sleep(1500);
+  if (!(await attachToComposer('verify-notes.txt'))) return 'FAIL: el compositor no tiene selector de archivos';
+  await sleep(1000);
+  await b.keys('Escape'); await sleep(700); const asked = await composerState();
+  await b.keys('Escape'); await sleep(700); const under = await composerState();
+  await js(() => [...document.querySelector('input[placeholder^="Email subject"]').closest('.fixed').querySelectorAll('button')].find((x) => x.textContent.trim() === 'Cancel')?.click()); await sleep(700);
+  const again = await composerState();
+  const closedBy = await dialogAction('Close'); await sleep(900); const gone = await composerState();
+  return ok(/Close without your files/.test(asked.confirm) && asked.subject !== null && !under.confirm && under.subject !== null && under.file && /Close without your files/.test(again.confirm) && closedBy && gone.subject === null,
+    'Escape pregunta; el segundo solo cierra la pregunta; Cancel pregunta; Close cierra', `1.º ${JSON.stringify(asked)}, 2.º ${JSON.stringify(under)}, Cancel ${JSON.stringify(again)}, Close=${closedBy}, ${JSON.stringify(gone)}`);
+});
+await step('Compose', 'la pestaña conserva texto y archivos', 'un mensaje pasado a pestaña lleva asunto, cuerpo y archivo; al abrir una conversación queda detrás y al volver sigue igual', async () => {
+  await fillCompose(COMPOSE_TAB, 'half a sentence');
+  await attachToComposer('verify-notes.txt'); await sleep(1000);
+  await js(() => [...document.querySelectorAll('button')].find((x) => x.title === 'Open in tab')?.click()); await sleep(1800);
+  const inTab = await composerState();
+  const opened = await firstRow(); await sleep(1500);
+  const behind = await composerState(); const thread = await h1Text();
+  await js(() => document.querySelector('[role="tab"]').click()); await sleep(1000);
+  const back = await composerState();
+  const same = (x) => x.subject === COMPOSE_TAB && /half a sentence/.test(x.body || '') && x.file && x.shown;
+  return ok(same(inTab) && !!opened && !behind.shown && thread !== '' && same(back), `pestaña «${back.tabs.join(', ')}»; detrás de «${thread.slice(0, 40)}»; texto y archivo intactos`, `en pestaña ${JSON.stringify(inTab)}, detrás ${JSON.stringify(behind)}, hilo «${thread}», al volver ${JSON.stringify(back)}`);
+});
+await step('Compose', 'cerrar una pestaña con archivos pregunta', 'la × de la barra de pestañas pregunta mientras hay archivos; Escape cierra solo la pregunta y la pestaña sigue; Close cierra la pestaña y el texto queda en Drafts', async () => {
+  await js(() => document.querySelector('[aria-label="Close tab"]')?.click()); await sleep(800);
+  const asked = await composerState();
+  await b.keys('Escape'); await sleep(700);
+  const kept = await composerState();
+  await js(() => document.querySelector('[data-testid="compose-tab-close"]')?.click()); await sleep(800);
+  const again = await composerState();
+  const closedBy = await dialogAction('Close'); await sleep(1000);
+  const gone = await composerState();
+  const draft = sql(`SELECT COUNT(*) AS n FROM drafts WHERE subject = '${COMPOSE_TAB}'`)[0]?.n;
+  return ok(/Close without your files/.test(asked.confirm) && !kept.confirm && kept.tabs.length === 1 && kept.file && /Close without your files/.test(again.confirm) && closedBy && !gone.tabs.includes(COMPOSE_TAB) && draft === 1,
+    'la barra y la × del compositor preguntan; Escape no cierra la pestaña; Close la cierra y el borrador queda', `barra ${JSON.stringify(asked)}, tras Escape ${JSON.stringify(kept)}, × ${JSON.stringify(again)}, Close=${closedBy}, ${JSON.stringify(gone)}, borradores=${draft}`);
+});
+await step('Compose', 'Discard en una pestaña borra el borrador', 'Discard en una pestaña pregunta, cierra la pestaña y quita el borrador que el autoguardado ya había escrito', async () => {
+  const subject = 'Verification run discarded in a tab';
+  await fillCompose(subject, 'hello from the verifier'); await sleep(1200);
+  await js(() => [...document.querySelectorAll('button')].find((x) => x.title === 'Open in tab')?.click()); await sleep(1500);
+  const saved = sql(`SELECT COUNT(*) AS n FROM drafts WHERE subject = '${subject}'`)[0]?.n;
+  await js(() => { const box = document.querySelector('input[placeholder^="Email subject"]').closest('.absolute'); [...box.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Discard')?.click(); }); await sleep(800);
+  const asked = await composerState();
+  const hit = await dialogAction('Discard'); await sleep(1200);
+  const left = sql(`SELECT COUNT(*) AS n FROM drafts WHERE subject = '${subject}'`)[0]?.n; const after = await composerState();
+  return ok(saved === 1 && /Discard/.test(asked.confirm) && hit && left === 0 && !after.tabs.includes(subject), 'pregunta; pestaña cerrada; borrador fuera de la BD', `guardado=${saved}, pregunta «${asked.confirm}», confirmado=${hit}, quedan ${left}, ${JSON.stringify(after.tabs)}`);
+});
+// A turn the chat answered: a reply draft with its pill and a link to somewhere else. Written here, as the app's own
+// chat tool leaves them, because sending the reply consumes the draft and the next run needs it again.
+const CHAT_DRAFT = 'verify-chat-draft', CHAT_CONV = 'verify-chat-conv', CHAT_TITLE = 'Verification chat draft';
+const nadia = () => sql("SELECT id, subject, sender_email FROM emails WHERE sender = 'Nadia Brunner'")[0];
+const replyDrafts = (emailId) => sql(`SELECT id, status FROM drafts WHERE email_id = ${ids([emailId])}`);
+await step('Chat', 'enlace del chat pide confirmación', 'un enlace en una respuesta del chat no navega: abre el diálogo con la dirección real y el foco en Cancel, y Escape lo cierra sin abrir nada', async () => {
+  const mail = nadia(); if (!mail) return 'FAIL: no hay correo de Nadia Brunner';
+  const now = Math.floor(Date.now() / 1000);
+  sql(`INSERT OR REPLACE INTO drafts (id, email_id, account_id, to_addresses_json, subject, body, ai_generated, status, created_at, updated_at) VALUES ('${CHAT_DRAFT}', ${ids([mail.id])}, 'demo-acct-work', ${ids([JSON.stringify([mail.sender_email])])}, ${ids([`Re: ${mail.subject}`])}, 'Hi Nadia, a reply the chat wrote.', 1, 'draft', ${now}, ${now})`);
+  sql(`INSERT OR REPLACE INTO chat_conversations (id, account_id, title, created_at, updated_at) VALUES ('${CHAT_CONV}', 'demo-acct-work', '${CHAT_TITLE}', ${now}, ${now})`);
+  sql(`INSERT OR REPLACE INTO chat_messages (id, conversation_id, role, content, created_at, referenced_draft_ids) VALUES ('verify-chat-msg', '${CHAT_CONV}', 'assistant', 'The reply is ready: [Reply to Nadia](draft://${CHAT_DRAFT}). The [terms](https://example.com/chat-terms) are online.', ${now}, '["${CHAT_DRAFT}"]')`);
+  // The conversation list is read when the account changes.
+  await click('button=Inbox'); await sleep(600);
+  await click('button*=ulises@fastmail.com'); await sleep(1200); await click('button*=ulises@emailopslabs.dev'); await sleep(1200);
+  await click('button=Chat'); await sleep(1500);
+  const opened = await js((t) => { const x = [...document.querySelectorAll('aside button')].find((y) => y.textContent.trim() === t); x?.click(); return !!x; }, CHAT_TITLE);
+  if (!opened) return 'FAIL: la conversación sembrada no aparece en la lista';
+  await sleep(1500);
+  const clicked = await js(() => { const a = [...document.querySelectorAll('main a')].find((x) => x.textContent.trim() === 'terms'); a?.click(); return !!a; }); await sleep(800);
+  const dialog = await js(() => document.querySelector('[data-testid="external-link-open"]')?.closest('.fixed').innerText.replace(/\n+/g, ' | ') || null);
+  const focused = await js(() => document.activeElement?.textContent.trim());
+  // Never "Open in browser": that hands the address to the OS.
+  await b.keys('Escape'); await sleep(600);
+  const closed = !(await exists('[data-testid="external-link-open"]'));
+  return ok(clicked && /https:\/\/example\.com\/chat-terms/.test(dialog || '') && focused === 'Cancel' && closed, `diálogo «${dialog}»; foco en Cancel; Escape lo cierra`, `enlace=${clicked}, diálogo=${dialog}, foco=${focused}, cerrado=${closed}`);
+});
+await step('Compose', 'la respuesta de un borrador del chat no deja borrador', 'la píldora abre la respuesta con el texto del chat; lo que se escribe guarda ese mismo borrador, no otro; al enviar el borrador desaparece y sin credenciales el mensaje queda como fallido en el outbox', async () => {
+  const mail = nadia();
+  const pill = await js(() => { const x = document.querySelector('button[title^="Re-open draft"]'); x?.click(); return !!x; });
+  if (!pill) return 'FAIL: la respuesta del chat no muestra la píldora del borrador';
+  await sleep(2500);
+  const body = await js(() => [...document.querySelectorAll('[contenteditable="true"]')].map((e) => e.innerText).join(' '));
+  await (await b.$('[contenteditable="true"]')).click(); await sleep(200);
+  await js(() => document.execCommand('insertText', false, 'One more line. ')); await sleep(1800);
+  const whileEditing = replyDrafts(mail.id);
+  if (!(await sendButton())) return 'FAIL: no hay botón Send en la respuesta';
+  const t = await waitToast(/Sending/, 5000);
+  const queued = replyDrafts(mail.id);
+  const err = await waitToast(/could not be sent/i, 30000);
+  const after = replyDrafts(mail.id);
+  await closeToasts();
+  const subject = `Re: ${mail.subject}`;
+  const failed = outboxRows(subject)[0];
+  // Leave the demo DB as it was: the failed message through its Delete, the conversation behind a new chat.
+  await click('[data-testid="sidebar-scheduled"]'); await sleep(1500);
+  await js((s) => [...document.querySelectorAll('[data-testid="scheduled-row"]')].find((r) => r.innerText.includes(s))?.querySelector('[data-testid="scheduled-delete"]')?.click(), subject); await sleep(1200);
+  await closeToasts();
+  await click('button=Chat'); await sleep(1200); await click('button=New chat'); await sleep(800);
+  sql(`DELETE FROM chat_messages WHERE conversation_id = '${CHAT_CONV}'; DELETE FROM chat_conversations WHERE id = '${CHAT_CONV}'`);
+  await click('button=Inbox'); await sleep(800);
+  return ok(/Hi Nadia, a reply the chat wrote/.test(body) && whileEditing.length === 1 && whileEditing[0].id === CHAT_DRAFT && !!t && queued.length === 0 && !!err && after.length === 0 && failed?.status === 'failed',
+    `un solo borrador (${whileEditing[0]?.id}) mientras se escribe; ninguno al enviar; outbox ${failed?.status}`, `cuerpo «${body.slice(0, 60)}», al escribir ${JSON.stringify(whileEditing)}, aviso=${t}, en cola ${JSON.stringify(queued)}, error=${err}, después ${JSON.stringify(after)}, outbox=${JSON.stringify(failed)}`);
 });
 await step('Compose', 'cerrar y borrador', 'al cancelar, el borrador aparece en Drafts (los borradores se guardan automáticamente)', async () => {
   await fillCompose('Verification run', 'hello from the verifier');
