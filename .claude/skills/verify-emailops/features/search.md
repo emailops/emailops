@@ -51,4 +51,5 @@ Live run 11/09/2026: the first four steps proven; evidence in `src-tauri/reports
 | filter ↔ search-box token, the highlighted filter follows the query, one-filter queries page | vitest (`src/lib/filterQuery`, `src/stores/filterStore`, `Sidebar/SmartFilters`, `Inbox/ActiveSearchNotice`) |
 | click writes `tag:topic=<value>` and a second click clears it; right-click → Add to search appends | e2e (`Búsqueda/smart filter escribe su consulta`, `Búsqueda/botón derecho añade el filtro a la búsqueda`) |
 | the chat does not cite a trashed email or a junk-marked lookalike | eval (`retrieval_*` in `src-tauri/evals/chat/cases/retrieval_exclusions.yaml`) |
+| a passage past the snippet is found by meaning: it fails on a demo DB embedded from the snippets | eval (`retrieval_reads_past_the_snippet` in `retrieval_body.yaml`) |
 | agent search quality | eval on the production mailbox (`agent_search`), outside `make verify` |

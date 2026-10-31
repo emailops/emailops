@@ -19,8 +19,9 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
 - Verification fixtures (`insert_verification_fixtures` in `scripts/generate_demo_db.py`): a trashed quote and its
   correction (Larkspur Freight, with a shortcut and a web-page attachment that holds a remote image), a renewal notice and a junk-marked
   lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly) whose `email_headers` carry
-  RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote and one
-  archived message (*Studio key handover confirmed*).
+  RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote, one
+  archived message (*Studio key handover confirmed*), the Lens *Renewal quotes* with a row of each Larkspur quote, and a memory
+  fact on Quayside Studios that carries an order for the model.
 - The schema comes from this checkout's migrations (`init_db` example), not from the production DB; `ensure_demo_db.sh`
   rebuilds the demo DB when a migration is newer than it.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's

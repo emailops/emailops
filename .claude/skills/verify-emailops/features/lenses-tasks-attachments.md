@@ -38,6 +38,7 @@ Preconditions: baseline. The demo email *Corrected Larkspur Freight renewal quot
 | Lens scope, extraction, coercion, isolation of a failing Lens, stop from the queue | unit on an in-memory DB (`services::lenses::*`, `db::lenses`) |
 | rule collects a file on sync; a dangerous collected file is refused until confirmed | integration (`a_headless_sync_applies_attachment_rules_to_new_mail`, `a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed`, …) |
 | an HTML attachment renders like an email body, with remote content by consent | vitest (`EmailView/AttachmentTabView.render`, `Attachments/AttachmentViewer.render`) + e2e (`Adjuntos/página web como el cuerpo de un correo`) |
+| the chat's Lens tools leave out a row of deleted mail | unit (`db::lenses`) + eval (`lens_rows_leave_out_trashed_mail` in `retrieval_exclusions.yaml`) |
 | Lens CRUD and runs | integration (`*lens*`, `backfill_*` — the latter are counted under Accounts by their name) |
 | attachment and Lens command arguments (`confirmed` included) | contract (`src/lib/apiContract/lenses.api.test.ts`) |
 | dialog, hook, viewer, rule modal, stores | vitest (`useOpenAttachment`, `AttachmentTabView`, `Attachments/*`, `attachmentStore`, `Lenses/*`) |
