@@ -12,6 +12,7 @@ use crate::ai::provider::AIProvider;
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Email, RetrievalTrace};
+use crate::services::ai::AiService;
 use crate::services::retrieval::{
     dedup_by_thread, fetch_fts, fetch_vector, fuse_rrf, FtsRequest, Ranking, VectorRequest,
 };
@@ -298,7 +299,7 @@ pub async fn retrieve_context_full(
         // Fetch the user-editable rewrite template once per turn; falls back
         // to the registry default if the user has not customised it.
         let tpl = crate::services::prompts::get_template(db, "chat.query_rewrite")?;
-        rewrite_query_hyde(provider, query, &tpl).await
+        rewrite_query_hyde(db, provider, query, &tpl).await
     };
     let query_rewrite_ms: Option<i64> = expanded.as_ref().map(|_| t_qr.elapsed().as_millis() as i64);
     let effective_query: &str = expanded.as_deref().unwrap_or(query);
@@ -318,7 +319,7 @@ pub async fn retrieve_context_full(
     let mut vec_search_ms: Option<i64> = None;
     let vec_fut = async {
         let t_emb = std::time::Instant::now();
-        let emb = provider.embed(effective_query).await?.embedding;
+        let emb = AiService::embed_metered(db, provider, effective_query).await?.embedding;
         let emb_ms = t_emb.elapsed().as_millis() as i64;
         let t_vs = std::time::Instant::now();
         let scores = fetch_vector(
@@ -571,7 +572,7 @@ pub async fn retrieve_context_full(
     let t_rerank = std::time::Instant::now();
     let (mut results, rerank_timed_out) = if aux_plan.rerank && pool.len() > k {
         let tpl = crate::services::prompts::get_template(db, "chat.rerank")?;
-        rerank_candidates(provider, query, pool, &tpl).await
+        rerank_candidates(db, provider, query, pool, &tpl).await
     } else {
         (pool, false)
     };
@@ -738,7 +739,12 @@ pub async fn retrieve_context_full(
 /// Bounded by [`QUERY_REWRITE_TIMEOUT`]: if the local model is slow we fall
 /// back to the original query rather than making the user wait. Returns
 /// `Ok(None)` on skip (too short / empty response).
-async fn rewrite_query_hyde(provider: &dyn AIProvider, user_question: &str, template: &str) -> Option<String> {
+async fn rewrite_query_hyde(
+    db: &Database,
+    provider: &dyn AIProvider,
+    user_question: &str,
+    template: &str,
+) -> Option<String> {
     if user_question.chars().count() < QUERY_REWRITE_MIN_CHARS {
         return None;
     }
@@ -750,10 +756,17 @@ async fn rewrite_query_hyde(provider: &dyn AIProvider, user_question: &str, temp
     vars.insert("user_question", user_question.to_string());
     let prompt = crate::services::prompts::render(template, &vars);
 
-    let fut = provider.complete(&prompt, Default::default());
+    let fut = AiService::complete_metered(db, provider, &prompt, Default::default(), "chat_query_rewrite");
     let raw = match timeout(QUERY_REWRITE_TIMEOUT, fut).await {
         Ok(Ok(result)) => result.text,
-        Ok(Err(_)) | Err(_) => return None,
+        Ok(Err(e)) => {
+            emit_log(
+                "debug",
+                &format!("query rewrite failed ({e}); using the question as asked"),
+            );
+            return None;
+        }
+        Err(_) => return None,
     };
 
     let cleaned: Vec<&str> = raw.lines().map(str::trim).filter(|l| !l.is_empty()).take(2).collect();
@@ -779,6 +792,7 @@ async fn rewrite_query_hyde(provider: &dyn AIProvider, user_question: &str, temp
 /// tokens. Parsing is tolerant — any unparseable entry keeps its baseline
 /// score, so a partial response still helps.
 async fn rerank_candidates(
+    db: &Database,
     provider: &dyn AIProvider,
     user_question: &str,
     mut candidates: Vec<ScoredEmail>,
@@ -805,7 +819,7 @@ async fn rerank_candidates(
     vars.insert("candidates", body);
     let prompt = crate::services::prompts::render(template, &vars);
 
-    let fut = provider.complete(&prompt, Default::default());
+    let fut = AiService::complete_metered(db, provider, &prompt, Default::default(), "chat_rerank");
     let raw = match timeout(RERANK_TIMEOUT, fut).await {
         Ok(Ok(result)) => result.text,
         Ok(Err(e)) => {
@@ -1057,6 +1071,102 @@ mod category_scope_tests {
 mod tests {
     use super::*;
     use crate::ai::provider::ProviderType;
+
+    fn paid_provider() -> crate::ai::provider::FakeAiProvider {
+        crate::ai::provider::FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter)
+    }
+
+    fn paid_reply(text: &str, cost_usd: f64) -> crate::ai::provider::CompletionResult {
+        crate::ai::provider::CompletionResult {
+            text: text.to_string(),
+            cost_usd,
+            ..Default::default()
+        }
+    }
+
+    /// A DB with a budget of 1 USD, all of it already spent on OpenRouter.
+    fn db_with_spent_budget() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.set_preference("ai_monthly_budget", "1.0").expect("budget");
+        crate::services::ai::spend_for_testing(&db, 1.0);
+        db
+    }
+
+    fn candidate(id: &str, score: f32) -> ScoredEmail {
+        ScoredEmail {
+            email: crate::services::attachments::tests::make_email("acct", id, "s@example.com", "Subject"),
+            body: format!("Body of {id}"),
+            score,
+            citation_number: 0,
+            thread_size: 1,
+        }
+    }
+
+    const QUESTION: &str = "which invoices are still unpaid this month?";
+
+    #[tokio::test]
+    async fn a_paid_rewrite_and_rerank_count_against_the_budget() {
+        let db = Database::new_for_testing().expect("test db");
+        let provider = paid_provider();
+        provider.push_completion_result(paid_reply("unpaid invoices\nThe open invoices are...", 0.25));
+        provider.push_completion_result(paid_reply("1=2\n2=9", 0.5));
+
+        let rewritten = rewrite_query_hyde(&db, &provider, QUESTION, "{{user_question}}").await;
+        let (ranked, _) = rerank_candidates(
+            &db,
+            &provider,
+            QUESTION,
+            vec![candidate("a", 0.2), candidate("b", 0.1)],
+            "{{user_question}} {{candidates}}",
+        )
+        .await;
+
+        assert!(rewritten.is_some());
+        assert_eq!(ranked[0].email.id, "b", "the model's scores order the list");
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 2);
+        assert!((usage.total_cost_usd - 0.75).abs() < 1e-9);
+    }
+
+    /// Out of budget both optional steps fall back as for any failure — the
+    /// plain question, the fused order — without a paid call.
+    #[tokio::test]
+    async fn a_spent_budget_skips_the_rewrite_and_the_rerank_without_calling_the_provider() {
+        let db = db_with_spent_budget();
+        let provider = paid_provider();
+        provider.push_completion("unpaid invoices");
+        provider.push_completion("1=2\n2=9");
+
+        let rewritten = rewrite_query_hyde(&db, &provider, QUESTION, "{{user_question}}").await;
+        let (ranked, timed_out) = rerank_candidates(
+            &db,
+            &provider,
+            QUESTION,
+            vec![candidate("a", 0.2), candidate("b", 0.1)],
+            "{{user_question}} {{candidates}}",
+        )
+        .await;
+
+        assert_eq!(rewritten, None);
+        assert_eq!(ranked[0].email.id, "a");
+        assert!(!timed_out);
+        assert!(provider.completion_calls().is_empty(), "no paid call past the budget");
+    }
+
+    /// Out of budget the question is not embedded: keyword search answers.
+    #[tokio::test]
+    async fn a_spent_budget_answers_by_keyword_without_embedding_the_question() {
+        let db = db_with_spent_budget();
+        let provider = paid_provider().with_embedding_cost(0.1);
+
+        let (_, trace, embedding) = retrieve_context_full(&db, &provider, "acct", "invoice", &[], 5)
+            .await
+            .expect("keyword-only retrieval");
+
+        assert!(embedding.is_none());
+        assert!(trace.vector_fallback);
+        assert!(provider.embed_calls().is_empty(), "no paid call past the budget");
+    }
 
     /// With no embedding model set up (OpenRouter before one is chosen) the
     /// question is not embedded at all: keyword search alone answers.

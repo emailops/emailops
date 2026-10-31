@@ -4107,3 +4107,18 @@ already placed in `skills/` becomes usable through `/name` without a further ste
   run, and the request was about the feature.
 - *Removing the switch*: it is the way to drop the sidebar entry, and removing it would
   overrule anyone who turned skills off.
+
+## 2026-10-31 — The AI budget covers every paid model call
+
+**Decision:** Every OpenRouter completion, tool call and embedding of the app goes through a
+metered helper in `AiService`, so it is refused once the budget is spent and recorded when it
+costs anything. The Settings connection test is recorded and never refused. A classification
+batch stops at the first refusal, and a research run stops reading at the first refused batch
+and answers from what it found.
+**Context:** Only the chat loop and Lens were metered. Classification, research, the query
+planner, query rewrite, rerank, form filling, document reading and the guide index called the
+provider directly, so they spent past the budget without showing in the usage record.
+**Rejected:**
+- *Refusing inside each provider*: the provider has no database and cannot record usage.
+- *Letting a classification batch run on*: every remaining email would fail the same way.
+  Rule-only emails behind the first refusal wait for budget too, which is the known cost.
