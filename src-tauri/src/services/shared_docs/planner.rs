@@ -9,6 +9,11 @@ use crate::services::junk::auth::{AuthAssessment, AuthResult};
 /// burst of typing goes out as one message.
 pub const FLUSH_DEBOUNCE_SECS: i64 = 120;
 
+/// The wait after a first failed mail of a document's changes.
+pub const FLUSH_RETRY_BASE_SECS: i64 = 60;
+/// The longest wait, so changes still go out soon after the provider is back.
+pub const FLUSH_RETRY_MAX_SECS: i64 = 900;
+
 /// What this install already knows of the document an envelope names.
 pub struct KnownDoc<'a> {
     pub status: DocStatus,
@@ -99,18 +104,42 @@ pub struct FlushCandidate {
     pub dirty_since: Option<i64>,
     /// The last local change: the debounce runs from here.
     pub updated_at: i64,
+    /// When the last mail failed, the earliest time to try again.
+    pub retry_at: Option<i64>,
 }
 
 /// Pure: the documents due to be mailed at `now` — active, consented, with
-/// unsent changes and no edit for [`FLUSH_DEBOUNCE_SECS`], oldest first.
+/// unsent changes, no edit for [`FLUSH_DEBOUNCE_SECS`] and no retry still
+/// waiting, oldest first.
 pub fn due_flushes(candidates: &[FlushCandidate], now: i64) -> Vec<String> {
     let mut due: Vec<&FlushCandidate> = candidates
         .iter()
         .filter(|c| c.status == DocStatus::Active && c.consented)
         .filter(|c| c.dirty_since.is_some() && c.updated_at + FLUSH_DEBOUNCE_SECS <= now)
+        .filter(|c| c.retry_at.is_none_or(|at| at <= now))
         .collect();
     due.sort_by_key(|c| c.dirty_since);
     due.into_iter().map(|c| c.id.clone()).collect()
+}
+
+/// A document whose mail keeps failing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushRetry {
+    /// Failures in a row.
+    pub failures: u32,
+    pub retry_at: i64,
+}
+
+/// Pure: the wait after one more failure at `now`, doubling from
+/// [`FLUSH_RETRY_BASE_SECS`] up to [`FLUSH_RETRY_MAX_SECS`].
+pub fn next_flush_retry(previous: Option<&FlushRetry>, now: i64) -> FlushRetry {
+    let failures = previous.map_or(1, |p| p.failures.saturating_add(1));
+    // Any shift this large is already past the cap.
+    let delay = (FLUSH_RETRY_BASE_SECS << (failures - 1).min(16)).min(FLUSH_RETRY_MAX_SECS);
+    FlushRetry {
+        failures,
+        retry_at: now + delay,
+    }
 }
 
 /// Pure: why a message must not be taken as coming from the participant its
@@ -358,7 +387,42 @@ mod tests {
             consented: true,
             dirty_since,
             updated_at,
+            retry_at: None,
         }
+    }
+
+    #[test]
+    fn a_document_waits_for_its_retry_time() {
+        let now = 1_000;
+        let mut waiting = candidate("waiting", Some(1), 1);
+        waiting.retry_at = Some(now + 1);
+        let mut ready = candidate("ready", Some(1), 1);
+        ready.retry_at = Some(now);
+        assert_eq!(due_flushes(&[waiting, ready], now), vec!["ready"]);
+    }
+
+    #[test]
+    fn each_failure_doubles_the_wait_up_to_the_cap() {
+        let now = 1_000;
+        let mut retry = None;
+        let mut delays = Vec::new();
+        for _ in 0..7 {
+            let next = next_flush_retry(retry.as_ref(), now);
+            delays.push(next.retry_at - now);
+            retry = Some(next);
+        }
+        assert_eq!(delays, vec![60, 120, 240, 480, 900, 900, 900]);
+        assert_eq!(retry.map(|r| r.failures), Some(7));
+    }
+
+    #[test]
+    fn the_wait_stays_at_the_cap_however_long_the_failures_last() {
+        let previous = FlushRetry {
+            failures: u32::MAX,
+            retry_at: 0,
+        };
+        let next = next_flush_retry(Some(&previous), 1_000);
+        assert_eq!(next.retry_at, 1_000 + FLUSH_RETRY_MAX_SECS);
     }
 
     #[test]

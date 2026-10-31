@@ -416,6 +416,45 @@ mod tests {
         assert!(authserv_matches("mx.google.com", "mx.google.com"));
     }
 
+    // The two shapes below are synthetic: no real Exchange Online header backs
+    // them, so they record what the parser does today, not what it should do.
+    #[test]
+    fn an_outlook_verdict_naming_its_server_is_attributed() {
+        let named = headers(
+            "example-com.mail.protection.outlook.com; spf=fail smtp.mailfrom=example.com; \
+             dkim=none header.d=none; dmarc=fail action=none header.from=example.com",
+        );
+
+        let a = assess(Some(&named), expected_authserv("outlook"));
+
+        assert!(a.trusted);
+        assert_eq!(a.spf, Some(AuthResult::Fail));
+        assert_eq!(a.dmarc, Some(AuthResult::Fail));
+        assert!(a.dmarc_hard_fail());
+    }
+
+    #[test]
+    fn an_outlook_verdict_with_no_authserv_id_is_not_attributed() {
+        let bare = headers(
+            "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=example.com; \
+             dkim=none (message not signed) header.d=none;\
+             dmarc=fail action=none header.from=example.com;compauth=fail reason=000",
+        );
+        assert_eq!(
+            bare.authserv_id.as_deref(),
+            Some("spf=fail"),
+            "the first verdict is taken for the authserv-id"
+        );
+
+        let a = assess(Some(&bare), expected_authserv("outlook"));
+
+        assert!(!a.trusted);
+        assert_eq!(a.spf, None, "the first segment is skipped as the authserv-id");
+        assert_eq!(a.dmarc, Some(AuthResult::Fail));
+        assert!(a.is_unknown());
+        assert!(!a.dmarc_hard_fail());
+    }
+
     #[test]
     fn a_lookalike_authserv_is_rejected() {
         // Anchored on a dot, so an attacker cannot register a host that merely

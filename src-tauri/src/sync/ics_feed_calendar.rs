@@ -311,12 +311,14 @@ impl EventBody {
     }
 }
 
+fn is_tzid(param: &str) -> bool {
+    param.get(..5).is_some_and(|name| name.eq_ignore_ascii_case("TZID="))
+}
+
 /// Add `TZID=<default>` to a floating date-time's params so every value of a
 /// feed is read in the publisher's zone (`X-WR-TIMEZONE`) instead of UTC.
 fn params_with_default_tz(params: &[String], value: &str, default_tz: Option<&str>) -> Vec<String> {
-    let has_tz = params
-        .iter()
-        .any(|p| p.len() > 5 && p[..5].eq_ignore_ascii_case("TZID="));
+    let has_tz = params.iter().any(|p| is_tzid(p));
     let is_date = params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE")) || !value.contains('T');
     match default_tz {
         Some(tz) if !has_tz && !is_date && !value.trim().ends_with('Z') => {
@@ -475,9 +477,56 @@ fn occurrence_id(uid: &str, recurrence_epoch: i64, is_all_day: bool) -> String {
     }
 }
 
+/// A rule's `UNTIL` as the `rrule` parser takes it. Anything without a `Z` it
+/// reads in the machine's zone, and it refuses that next to a zoned `DTSTART`,
+/// so the value becomes a UTC instant, read in the zone of `start_params` (UTC
+/// when they name none). A bare date covers its whole day. A floating `DTSTART`
+/// is read in the machine's zone too, so its `UNTIL` stays floating.
+fn rrule_until(until: &str, start_params: &[String], floating: bool) -> Option<String> {
+    let until = until.trim();
+    if until.ends_with('Z') {
+        return Some(until.to_string());
+    }
+    let wall = if until.contains('T') {
+        until.to_string()
+    } else {
+        format!("{until}T235959")
+    };
+    if floating {
+        return Some(wall);
+    }
+    let (epoch, _) = parse_ics_time(&wall, start_params)?;
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+    Some(dt.format("%Y%m%dT%H%M%SZ").to_string())
+}
+
+/// A master's `RRULE` value with its `UNTIL` in the parser's form.
+fn rrule_value(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -> Option<String> {
+    let start = event.first("DTSTART")?;
+    let params = if is_all_day {
+        Vec::new()
+    } else {
+        params_with_default_tz(&start.params, &start.value, default_tz)
+    };
+    let floating = !is_all_day && !start.value.trim().ends_with('Z') && !params.iter().any(|p| is_tzid(p));
+    let parts = event
+        .first_value("RRULE")?
+        .trim()
+        .split(';')
+        .map(|part| match part.split_once('=') {
+            Some((name, value)) if name.trim().eq_ignore_ascii_case("UNTIL") => {
+                rrule_until(value, &params, floating).map(|until| format!("UNTIL={until}"))
+            }
+            _ => Some(part.to_string()),
+        })
+        .collect::<Option<Vec<String>>>()?;
+    Some(parts.join(";"))
+}
+
 /// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
 /// `rrule` parser: all-day values become UTC midnights (it does not read
-/// `VALUE=DATE`), floating values get the feed's default zone.
+/// `VALUE=DATE`), floating values get the feed's default zone, `UNTIL` follows
+/// [`rrule_until`].
 fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -> Option<String> {
     let mut lines = Vec::new();
     for name in ["DTSTART", "EXDATE"] {
@@ -498,7 +547,7 @@ fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -
             }
         }
     }
-    lines.push(format!("RRULE:{}", event.first_value("RRULE")?.trim()));
+    lines.push(format!("RRULE:{}", rrule_value(event, is_all_day, default_tz)?));
     Some(lines.join("\n"))
 }
 
@@ -854,6 +903,97 @@ mod tests {
         );
         assert!(out.iter().all(|e| e.is_all_day && e.end_time == e.start_time + 86_400));
         assert_eq!(out[0].provider_event_id, "a@x_20260801");
+    }
+
+    #[test]
+    fn an_all_day_rule_with_a_bare_until_date_keeps_every_day_through_it() {
+        let out = expand(
+            &["UID:a@x\nDTSTART;VALUE=DATE:20260801\nRRULE:FREQ=DAILY;UNTIL=20260803\nSUMMARY:Trip"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            vec![utc(2026, 8, 1, 0, 0), utc(2026, 8, 2, 0, 0), utc(2026, 8, 3, 0, 0)]
+        );
+    }
+
+    #[test]
+    fn a_timed_rule_expands_through_until_whatever_form_until_takes() {
+        // 11/08 07:30 in Madrid is 05:30Z; New York, far from any test machine's
+        // zone, proves UNTIL is read in the event's zone and not the machine's.
+        let weekly_in = |tz: &str, until: &str| {
+            format!(
+                "UID:u@x\nDTSTART;TZID={tz}:20260728T073000\nDTEND;TZID={tz}:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU;{until}\nSUMMARY:U"
+            )
+        };
+        let madrid = [utc(2026, 7, 28, 5, 30), utc(2026, 8, 4, 5, 30), utc(2026, 8, 11, 5, 30)];
+        let new_york = [
+            utc(2026, 7, 28, 11, 30),
+            utc(2026, 8, 4, 11, 30),
+            utc(2026, 8, 11, 11, 30),
+        ];
+        let cases = [
+            ("Europe/Madrid", "UNTIL=20260811", madrid, "a bare date"),
+            ("Europe/Madrid", "UNTIL=20260811T073000", madrid, "a local date-time"),
+            ("Europe/Madrid", "UNTIL=20260811T053000Z", madrid, "UTC"),
+            ("America/New_York", "UNTIL=20260811", new_york, "a bare date"),
+            (
+                "America/New_York",
+                "UNTIL=20260811T073000",
+                new_york,
+                "a local date-time",
+            ),
+        ];
+        for (tz, until, expected, form) in cases {
+            let event = weekly_in(tz, until);
+            let out = expand(&[&event], utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+            let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            assert_eq!(starts, expected, "UNTIL as {form} in {tz}");
+        }
+    }
+
+    #[test]
+    fn a_utc_rule_with_a_bare_until_date_keeps_that_day() {
+        let out = expand(
+            &["UID:z@x\nDTSTART:20260728T070000Z\nRRULE:FREQ=WEEKLY;UNTIL=20260811\nSUMMARY:Z"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        assert_eq!(out.len(), 3, "{out:?}");
+    }
+
+    #[test]
+    fn a_floating_rule_with_a_bare_until_date_keeps_that_day() {
+        let out = expand(
+            &["UID:f@x\nDTSTART:20260728T073000\nRRULE:FREQ=WEEKLY;UNTIL=20260811\nSUMMARY:F"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        assert_eq!(out.len(), 3, "{out:?}");
+    }
+
+    #[test]
+    fn a_floating_rule_in_a_zoned_feed_reads_until_in_the_feed_zone() {
+        let feed = vcal(&["UID:f@x\nDTSTART:20260728T073000\nRRULE:FREQ=WEEKLY;UNTIL=20260811T073000\nSUMMARY:F"])
+            .replace("X-WR-CALNAME:Feed", "X-WR-CALNAME:Feed\r\nX-WR-TIMEZONE:Europe/Madrid");
+        let out = expand_events(&parse_vcalendar(&feed), utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            vec![utc(2026, 7, 28, 5, 30), utc(2026, 8, 4, 5, 30), utc(2026, 8, 11, 5, 30)]
+        );
+    }
+
+    #[test]
+    fn a_non_ascii_parameter_does_not_stop_the_feed() {
+        let out = expand(
+            &["UID:n@x\nDTSTART;ABCDé=1:20260729T070000Z\nSUMMARY:N"],
+            utc(2026, 7, 1, 0, 0),
+            utc(2026, 8, 1, 0, 0),
+        );
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

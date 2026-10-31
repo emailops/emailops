@@ -129,17 +129,38 @@ impl Database {
             .optional()?)
     }
 
-    /// Replace a document's state. `dirty` marks it as having changes to mail
-    /// (keeping the earliest such time); a change merged from a peer passes
-    /// `false` and leaves the mark as it was.
-    pub fn set_shared_doc_state(&self, doc_id: &str, state: &[u8], dirty: bool, now: i64) -> Result<()> {
-        self.connection().execute(
+    /// Replace a document's state with what `merge` makes of the stored one,
+    /// and return it (`None` when the document is gone). The write connection
+    /// is held from the read to the write, so a concurrent writer cannot be
+    /// overwritten; `merge` must not touch the database. `dirty` marks the
+    /// document as having changes to mail (keeping the earliest such time); a
+    /// change merged from a peer passes `false` and leaves the mark as it was.
+    pub fn merge_shared_doc_state(
+        &self,
+        doc_id: &str,
+        dirty: bool,
+        now: i64,
+        merge: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
+    ) -> Result<Option<Vec<u8>>> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        let stored: Option<Vec<u8>> = tx
+            .query_row("SELECT state FROM shared_docs WHERE id = ?1", params![doc_id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        let merged = merge(&stored)?;
+        tx.execute(
             "UPDATE shared_docs SET state = ?2, updated_at = ?3,
                  dirty_since = CASE WHEN ?4 THEN COALESCE(dirty_since, ?3) ELSE dirty_since END
              WHERE id = ?1",
-            params![doc_id, state, now, dirty],
+            params![doc_id, merged, now, dirty],
         )?;
-        Ok(())
+        tx.commit()?;
+        Ok(Some(merged))
     }
 
     /// Mark a document as having changes to mail, without touching its state
@@ -541,16 +562,44 @@ mod tests {
         assert_eq!(db.list_shared_docs(None).unwrap().len(), 3);
     }
 
+    /// Merge by appending `suffix` to the stored state.
+    fn append(db: &Database, doc: &str, suffix: &[u8], dirty: bool, now: i64) -> Option<Vec<u8>> {
+        db.merge_shared_doc_state(doc, dirty, now, |stored| Ok([stored, suffix].concat()))
+            .unwrap()
+    }
+
     #[test]
     fn a_local_change_keeps_the_first_dirty_time_and_a_merge_leaves_it() {
         let db = db();
         insert(&db, "d1", "acc-1", 10);
-        db.set_shared_doc_state("d1", b"s1", false, 11).unwrap();
+        append(&db, "d1", b"1", false, 11);
         assert_eq!(db.get_shared_doc("d1").unwrap().unwrap().dirty_since, None);
-        db.set_shared_doc_state("d1", b"s2", true, 12).unwrap();
-        db.set_shared_doc_state("d1", b"s3", true, 13).unwrap();
+        append(&db, "d1", b"2", true, 12);
+        append(&db, "d1", b"3", true, 13);
         let doc = db.get_shared_doc("d1").unwrap().unwrap();
         assert_eq!((doc.dirty_since, doc.updated_at), (Some(12), 13));
+    }
+
+    #[test]
+    fn a_merge_builds_on_the_stored_state_and_returns_the_result() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        assert_eq!(append(&db, "d1", b"-more", false, 11).unwrap(), b"s0-more");
+        assert_eq!(db.shared_doc_state("d1").unwrap().unwrap(), b"s0-more");
+        assert_eq!(append(&db, "gone", b"x", false, 11), None);
+    }
+
+    #[test]
+    fn a_failed_merge_leaves_the_document_as_it_was() {
+        let db = db();
+        insert(&db, "d1", "acc-1", 10);
+        let failed = db.merge_shared_doc_state("d1", true, 11, |_| {
+            Err(crate::models::error::AppError::InvalidInput("bad update".into()))
+        });
+        assert!(failed.is_err());
+        let doc = db.get_shared_doc("d1").unwrap().unwrap();
+        assert_eq!((doc.dirty_since, doc.updated_at), (None, 10));
+        assert_eq!(db.shared_doc_state("d1").unwrap().unwrap(), b"s0");
     }
 
     #[test]
