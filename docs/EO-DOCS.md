@@ -60,6 +60,7 @@ Decisiones registradas en `docs/DECISIONS.md`, entradas del 04/10/2026 y del 05/
 | Funcionalidad | Detalle |
 |---|---|
 | Consentimiento por documento | Compartir o aceptar una invitación activa el envío automático, solo a esos participantes |
+| Participantes nuevos | Si otro participante añade personas, el documento vuelve a invitación y no se envía nada hasta aceptar la lista nueva |
 | Sugerencias | Al compartir se priorizan los contactos del mismo dominio de empresa, salvo proveedores genéricos como gmail. También hay una pestaña «Mi organización» en Contactos |
 | Adjuntar desde el compositor | «Desde el equipo» o «Desde EO Docs». Adjuntar un EO Doc lo comparte con los destinatarios del correo, con un aviso de que solo funciona con usuarios de EmailOps |
 | Abandonar | El documento queda en solo lectura y los mensajes posteriores se ignoran |

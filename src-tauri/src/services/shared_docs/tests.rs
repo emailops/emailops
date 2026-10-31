@@ -45,6 +45,14 @@ fn install(address: &str) -> Install {
 /// Deliver to `to` every message `from` sent it since the last delivery,
 /// dropping the ones whose index is in `lose`. Returns how many arrived.
 async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
+    // An install of the sender's own sees its messages through Sent.
+    let own = from.account.email == to.account.email;
+    deliver_filed(from, to, lose, own).await
+}
+
+/// [`deliver_except`] with the mailbox chosen by the test: `own` files the
+/// messages in the receiver's Sent mail, otherwise they land in its inbox.
+async fn deliver_filed(from: &Install, to: &Install, lose: &[usize], own: bool) -> usize {
     let sent = from.provider.sent();
     let start = {
         let mut delivered = to.delivered.lock().unwrap();
@@ -54,8 +62,6 @@ async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
     };
     let mut arrived = 0;
     for (i, msg) in sent.iter().enumerate().skip(start) {
-        // An install of the sender's own sees its messages through Sent.
-        let own = from.account.email == to.account.email;
         if lose.contains(&i) || !(own || msg.to_emails.contains(&to.account.email)) {
             continue;
         }
@@ -288,34 +294,32 @@ async fn nothing_is_mailed_before_the_user_shares_or_while_nobody_else_is_in_it(
     assert!(alice.provider.sent().is_empty());
 }
 
-#[tokio::test]
-async fn a_forged_participant_is_ignored() {
-    let (alice, bob, doc) = shared_pair().await;
-    let eve = install("eve@example.net");
-    let forged = Envelope {
+/// An envelope for `doc_id` that nobody's document produced.
+fn crafted_envelope(doc_id: &str, participants: &[&str]) -> Envelope {
+    Envelope {
         purpose: envelope::Purpose::Update,
-        doc_id: doc.clone(),
+        doc_id: doc_id.into(),
         kind: DocKind::Doc,
         title: "Plan".into(),
-        participants: vec![
-            "alice@example.com".into(),
-            "bob@example.org".into(),
-            "eve@example.net".into(),
-        ],
+        participants: participants.iter().map(|p| p.to_string()).collect(),
         state_vector: crdt::empty_state_vector(),
         update: Peer::new(66).insert(0, "pwned "),
-    };
-    let data = b64().encode(envelope::encode(&forged).unwrap());
-    eve.provider
+    }
+}
+
+/// Mail `env` from `from`'s address to `to` as an ordinary document message.
+async fn mail_envelope_to(from: &Install, to: &str, env: &Envelope) {
+    let data = b64().encode(envelope::encode(env).unwrap());
+    from.provider
         .send_new_email(
-            "eve@example.net",
+            &from.account.email,
             None,
-            &["bob@example.org".into()],
+            &[to.into()],
             &[],
             "x",
             &EmailBody::plain("x"),
             &[EmailAttachment {
-                filename: envelope::file_name(&doc),
+                filename: envelope::file_name(&env.doc_id),
                 mime_type: envelope::ENVELOPE_MIME.into(),
                 data,
                 content_id: None,
@@ -324,10 +328,69 @@ async fn a_forged_participant_is_ignored() {
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_forged_participant_is_ignored() {
+    let (alice, bob, doc) = shared_pair().await;
+    let eve = install("eve@example.net");
+    let forged = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&eve, "bob@example.org", &forged).await;
     deliver(&eve, &bob).await;
 
     assert_eq!(stored_text(&bob, &doc), "Hello");
     drop(alice);
+}
+
+#[tokio::test]
+async fn a_new_document_naming_this_account_as_sender_is_ignored_outside_sent() {
+    let bob = install("bob@example.org");
+    let writer = install("bob@example.org");
+    let doc = uuid::Uuid::new_v4().to_string();
+    let env = crafted_envelope(&doc, &["bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&writer, "bob@example.org", &env).await;
+
+    deliver_filed(&writer, &bob, &[], false).await;
+
+    assert!(bob.db.get_shared_doc(&doc).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_known_document_ignores_a_message_naming_this_account_as_sender_outside_sent() {
+    let (alice, bob, doc) = shared_pair().await;
+    let writer = install("bob@example.org");
+    let env = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&writer, "bob@example.org", &env).await;
+
+    deliver_filed(&writer, &bob, &[], false).await;
+
+    assert_eq!(stored_text(&bob, &doc), "Hello");
+    let stored = bob.db.get_shared_doc(&doc).unwrap().unwrap();
+    assert_eq!(stored.participants, vec!["alice@example.com", "bob@example.org"]);
+    drop(alice);
+}
+
+#[tokio::test]
+async fn someone_elses_new_participant_holds_the_mail_until_the_user_accepts() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&bob, &doc, &open_editor(&bob, &doc, 2), " there");
+    let env = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "carol@example.net"]);
+    mail_envelope_to(&alice, "bob@example.org", &env).await;
+    deliver(&alice, &bob).await;
+
+    let held = bob.db.get_shared_doc(&doc).unwrap().unwrap();
+    assert_eq!(held.status, DocStatus::Invited);
+    assert!(!flush(&bob.db, &bob.account, &bob.provider, &doc).await.unwrap());
+    assert!(
+        bob.provider.sent().is_empty(),
+        "nothing goes out before the user agrees"
+    );
+
+    accept(&bob.db, &bob.account.id, &doc, NOW).unwrap();
+    assert!(flush(&bob.db, &bob.account, &bob.provider, &doc).await.unwrap());
+    let sent = bob.provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].to_emails.contains(&"carol@example.net".to_string()));
 }
 
 #[tokio::test]

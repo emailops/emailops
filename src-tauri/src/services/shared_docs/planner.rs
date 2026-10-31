@@ -1,7 +1,7 @@
 //! Pure decisions of the shared-document sync: what to do with an arriving
 //! envelope, which documents are due to be mailed, and to whom.
 
-use super::envelope::Envelope;
+use super::envelope::{Envelope, MAX_PARTICIPANTS};
 pub use crate::models::shared_docs::DocStatus;
 use crate::services::junk::auth::{AuthAssessment, AuthResult};
 
@@ -20,6 +20,9 @@ pub struct KnownDoc<'a> {
 pub enum Arrival {
     /// Merge it into the known document.
     Apply,
+    /// Merge it and hold the document back as an invitation: someone else
+    /// added addresses, and the user only agreed to mail the old list.
+    ApplyAndHold,
     /// A document this install has never seen: store it as an invitation.
     Invitation,
     /// Leave the document alone, for the reason given (logged).
@@ -28,9 +31,20 @@ pub enum Arrival {
 
 /// Pure: decide what an envelope sent by `sender` to the account `me` does.
 /// Addresses are compared normalized (lowercase).
-pub fn plan_arrival(envelope: &Envelope, sender: &str, me: &str, known: Option<&KnownDoc<'_>>) -> Arrival {
+pub fn plan_arrival(
+    envelope: &Envelope,
+    sender: &str,
+    me: &str,
+    is_sent_copy: bool,
+    known: Option<&KnownDoc<'_>>,
+) -> Arrival {
     let sender = sender.trim().to_lowercase();
     let me = me.trim().to_lowercase();
+    // `From` is free text: the account's own address proves nothing outside
+    // its Sent mail.
+    if sender == me && !is_sent_copy {
+        return Arrival::Ignore("it names this account as sender but is not in its Sent mail");
+    }
     if !envelope.participants.contains(&sender) {
         return Arrival::Ignore("the sender is not one of its participants");
     }
@@ -43,7 +57,16 @@ pub fn plan_arrival(envelope: &Envelope, sender: &str, me: &str, known: Option<&
         Some(doc) if !doc.participants.contains(&sender) => {
             Arrival::Ignore("the sender is not one of its participants")
         }
-        Some(_) => Arrival::Apply,
+        Some(doc) => {
+            let merged = merged_participants(doc.participants, &envelope.participants).len();
+            if merged > MAX_PARTICIPANTS {
+                Arrival::Ignore("it takes the document over the participant limit")
+            } else if merged > doc.participants.len() && sender != me && doc.status == DocStatus::Active {
+                Arrival::ApplyAndHold
+            } else {
+                Arrival::Apply
+            }
+        }
     }
 }
 
@@ -187,7 +210,7 @@ mod tests {
     fn an_unknown_document_from_a_participant_is_an_invitation() {
         let env = envelope(&["ana@example.com", "ben@example.org"]);
         assert_eq!(
-            plan_arrival(&env, "Ana@Example.com", "ben@example.org", None),
+            plan_arrival(&env, "Ana@Example.com", "ben@example.org", false, None),
             Arrival::Invitation
         );
     }
@@ -196,11 +219,11 @@ mod tests {
     fn a_sender_or_receiver_outside_the_participants_is_ignored() {
         let env = envelope(&["ana@example.com", "ben@example.org"]);
         assert!(matches!(
-            plan_arrival(&env, "eve@example.net", "ben@example.org", None),
+            plan_arrival(&env, "eve@example.net", "ben@example.org", false, None),
             Arrival::Ignore(_)
         ));
         assert!(matches!(
-            plan_arrival(&env, "ana@example.com", "carl@example.org", None),
+            plan_arrival(&env, "ana@example.com", "carl@example.org", false, None),
             Arrival::Ignore(_)
         ));
     }
@@ -214,12 +237,78 @@ mod tests {
         };
         let env = envelope(&["ana@example.com", "ben@example.org", "eve@example.net"]);
         assert_eq!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&known)),
-            Arrival::Apply
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&known)),
+            Arrival::ApplyAndHold
         );
         // Eve listing herself does not make her a participant here.
         assert!(matches!(
-            plan_arrival(&env, "eve@example.net", "ben@example.org", Some(&known)),
+            plan_arrival(&env, "eve@example.net", "ben@example.org", false, Some(&known)),
+            Arrival::Ignore(_)
+        ));
+    }
+
+    #[test]
+    fn only_a_sent_copy_can_speak_for_this_account() {
+        let env = envelope(&["ana@example.com", "ben@example.org"]);
+        assert!(matches!(
+            plan_arrival(&env, "Ben@Example.org", "ben@example.org", false, None),
+            Arrival::Ignore(_)
+        ));
+        assert_eq!(
+            plan_arrival(&env, "ben@example.org", "ben@example.org", true, None),
+            Arrival::Invitation
+        );
+    }
+
+    #[test]
+    fn an_added_address_holds_an_active_document_unless_the_user_added_it() {
+        let stored = owned(&["ana@example.com", "ben@example.org"]);
+        let env = envelope(&["ana@example.com", "ben@example.org", "carl@example.net"]);
+        let doc_with = |status| KnownDoc {
+            status,
+            participants: &stored,
+        };
+        let cases = [
+            ("ana@example.com", false, DocStatus::Active, Arrival::ApplyAndHold),
+            ("ana@example.com", false, DocStatus::Invited, Arrival::Apply),
+            ("ben@example.org", true, DocStatus::Active, Arrival::Apply),
+        ];
+        for (sender, is_sent_copy, status, expected) in cases {
+            let known = doc_with(status);
+            assert_eq!(
+                plan_arrival(&env, sender, "ben@example.org", is_sent_copy, Some(&known)),
+                expected,
+                "{sender} on a {status:?} document"
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_participants_apply_without_holding() {
+        let stored = owned(&["ana@example.com", "ben@example.org"]);
+        let known = KnownDoc {
+            status: DocStatus::Active,
+            participants: &stored,
+        };
+        let env = envelope(&["ana@example.com", "ben@example.org"]);
+        assert_eq!(
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&known)),
+            Arrival::Apply
+        );
+    }
+
+    #[test]
+    fn a_list_over_the_limit_is_ignored() {
+        let stored: Vec<String> = (0..MAX_PARTICIPANTS - 1).map(|i| format!("p{i}@example.com")).collect();
+        let mut with_me = stored.clone();
+        with_me.push("ben@example.org".into());
+        let known = KnownDoc {
+            status: DocStatus::Active,
+            participants: &with_me,
+        };
+        let env = envelope(&["p0@example.com", "ben@example.org", "extra@example.net"]);
+        assert!(matches!(
+            plan_arrival(&env, "p0@example.com", "ben@example.org", false, Some(&known)),
             Arrival::Ignore(_)
         ));
     }
@@ -237,11 +326,11 @@ mod tests {
             participants: &stored,
         };
         assert_eq!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&invited)),
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&invited)),
             Arrival::Apply
         );
         assert!(matches!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&left)),
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&left)),
             Arrival::Ignore(_)
         ));
     }

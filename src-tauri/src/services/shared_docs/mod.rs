@@ -716,7 +716,7 @@ enum Applied {
 }
 
 /// Merge one envelope into this install, per [`planner::plan_arrival`].
-fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope, now: i64) -> Result<Applied> {
+fn apply_arrival(db: &Database, account: &Account, email: &Email, env: &Envelope, now: i64) -> Result<Applied> {
     if db.shared_doc_deleted(&account.id, &env.doc_id)? {
         logger::log(
             "debug",
@@ -738,8 +738,12 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
         status: d.status,
         participants: &d.participants,
     });
-    let sender = sender.trim().to_lowercase();
-    let state = match planner::plan_arrival(env, &sender, &account.email, known_doc.as_ref()) {
+    let sender = email.sender_email.trim().to_lowercase();
+    // Gmail labels a sent message wherever it sits; the others file it in Sent.
+    let is_sent_copy = email.is_sent || email.mailbox == "sent";
+    let arrival = planner::plan_arrival(env, &sender, &account.email, is_sent_copy, known_doc.as_ref());
+    let hold = arrival == Arrival::ApplyAndHold;
+    let state = match arrival {
         Arrival::Ignore(reason) => {
             logger::log(
                 "debug",
@@ -774,13 +778,24 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
             }
             state
         }
-        Arrival::Apply => {
+        Arrival::Apply | Arrival::ApplyAndHold => {
             let stored = db
                 .shared_doc_state(&env.doc_id)?
                 .ok_or_else(|| AppError::NotFound(format!("Shared document {} not found", env.doc_id)))?;
             let state = crdt::merge(&stored, &env.update)?;
             db.set_shared_doc_state(&env.doc_id, &state, false, now)?;
             db.add_shared_doc_participants(&env.doc_id, &env.participants)?;
+            if hold {
+                db.set_shared_doc_status(&env.doc_id, DocStatus::Invited, None, now)?;
+                logger::log(
+                    "info",
+                    "sync",
+                    format!(
+                        "[{}] {sender} added people to \"{}\": nothing is mailed until you accept",
+                        account.email, env.title
+                    ),
+                );
+            }
             state
         }
     };
@@ -845,7 +860,7 @@ pub async fn ingest_arrivals(
                 return Ok(None);
             }
             let env = envelope::decode(&envelope_bytes(provider, email, info).await?)?;
-            let applied = apply_arrival(db, account, &email.sender_email, &env, now)?;
+            let applied = apply_arrival(db, account, email, &env, now)?;
             db.record_shared_doc_message(&account.id, &email.id, &env.doc_id, now)?;
             Ok::<_, AppError>(Some((env.doc_id, env.purpose, applied)))
         };
