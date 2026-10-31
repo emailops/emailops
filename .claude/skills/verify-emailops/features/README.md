@@ -76,4 +76,5 @@ that says `n/a` and why.
 - [Keyboard shortcuts](./keyboard-shortcuts.md) — `?` overlay, `j`/`k` cursor, action keys. **Driven live 02/10/2026.**
 - [Unsubscribe and block sender](./sender-controls.md) — Unsubscribe dialog (Cancel only), Block/Unblock, Settings → Junk list. **Driven live 02/10/2026.**
 - [New-mail notifications](./new-mail-notifications.md) — Settings → Notifications persistence; delivery via the fake provider. **Driven live 02/10/2026.**
+- [EO Docs](./eo-docs.md) — create, edit, history, links in a read-only view; sharing proven against the fake provider. **Driven live 31/10/2026.**
 - [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.
