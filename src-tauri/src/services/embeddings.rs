@@ -519,11 +519,12 @@ async fn generate_with_service(
             }
         }
 
-        let content = if email.body.trim().is_empty() {
-            &email.snippet
-        } else {
-            &email.body
-        };
+        // `get_emails_by_ids` leaves `body` empty: the text lives in its own table.
+        let body = crate::services::thread_clean::clean_email_body(
+            &db.get_email_body(&email.id)?,
+            MAX_CHUNKS_PER_EMAIL * CHUNK_SIZE,
+        );
+        let content = if body.trim().is_empty() { &email.snippet } else { &body };
 
         let content_hash = compute_content_hash(&embedding_model, &email.subject, content);
 
@@ -918,6 +919,48 @@ mod tests {
         assert_eq!(fake.embed_calls().len(), 5);
         assert_eq!(embedded_emails(&db), 5);
         crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+    }
+
+    fn embed_one_email(db: &Arc<Database>) -> Vec<String> {
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new().with_embedding_dim(768));
+        let service = AiService::with_provider(db.clone(), fake.clone());
+        test_runtime()
+            .block_on(generate_with_service(db, &service, Some("acc1"), None, 10, None, true))
+            .expect("run");
+        fake.embed_calls()
+    }
+
+    #[test]
+    fn an_embedding_reads_the_body_as_plain_text() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 1);
+        db.connection()
+            .execute(
+                "INSERT INTO email_bodies (email_id, body)
+                 VALUES ('e-0', '<html><body><p>The renewal price is <b>4200 euros</b>.</p></body></html>')",
+                [],
+            )
+            .unwrap();
+
+        let texts = embed_one_email(&db);
+
+        assert!(
+            texts.iter().any(|t| t.contains("The renewal price is 4200 euros")),
+            "{texts:?}"
+        );
+        assert!(texts.iter().all(|t| !t.contains("<p>")), "{texts:?}");
+    }
+
+    #[test]
+    fn an_email_with_no_body_embeds_its_snippet() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 1);
+
+        let texts = embed_one_email(&db);
+
+        assert!(texts.iter().any(|t| t.contains("Short body 0")), "{texts:?}");
     }
 
     /// A rebuild deletes the whole index first: one that was stopped while
