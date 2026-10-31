@@ -863,7 +863,7 @@ await step('Compose', 'Discard en una pestaña borra el borrador', 'Discard en u
 // chat tool leaves them, because sending the reply consumes the draft and the next run needs it again.
 const CHAT_DRAFT = 'verify-chat-draft', CHAT_CONV = 'verify-chat-conv', CHAT_TITLE = 'Verification chat draft';
 const nadia = () => sql("SELECT id, subject, sender_email FROM emails WHERE sender = 'Nadia Brunner'")[0];
-const replyDrafts = (emailId) => sql(`SELECT id, status FROM drafts WHERE email_id = ${ids([emailId])}`);
+const replyDrafts = (emailId) => sql(`SELECT id FROM drafts WHERE email_id = ${ids([emailId])}`).map((r) => r.id);
 await step('Chat', 'enlace del chat pide confirmación', 'un enlace en una respuesta del chat no navega: abre el diálogo con la dirección real y el foco en Cancel, y Escape lo cierra sin abrir nada', async () => {
   const mail = nadia(); if (!mail) return 'FAIL: no hay correo de Nadia Brunner';
   const now = Math.floor(Date.now() / 1000);
@@ -887,18 +887,21 @@ await step('Chat', 'enlace del chat pide confirmación', 'un enlace en una respu
 });
 await step('Compose', 'la respuesta de un borrador del chat no deja borrador', 'la píldora abre la respuesta con el texto del chat; lo que se escribe guarda ese mismo borrador, no otro; al enviar el borrador desaparece y sin credenciales el mensaje queda como fallido en el outbox', async () => {
   const mail = nadia();
+  // `make verify` runs the chat evals first, and their drafts stay on the demo mail: only this reply's count.
+  const others = replyDrafts(mail.id).filter((id) => id !== CHAT_DRAFT);
+  const mine = () => replyDrafts(mail.id).filter((id) => !others.includes(id));
   const pill = await js(() => { const x = document.querySelector('button[title^="Re-open draft"]'); x?.click(); return !!x; });
   if (!pill) return 'FAIL: la respuesta del chat no muestra la píldora del borrador';
   await sleep(2500);
   const body = await js(() => [...document.querySelectorAll('[contenteditable="true"]')].map((e) => e.innerText).join(' '));
   await (await b.$('[contenteditable="true"]')).click(); await sleep(200);
   await js(() => document.execCommand('insertText', false, 'One more line. ')); await sleep(1800);
-  const whileEditing = replyDrafts(mail.id);
+  const whileEditing = mine();
   if (!(await sendButton())) return 'FAIL: no hay botón Send en la respuesta';
   const t = await waitToast(/Sending/, 5000);
-  const queued = replyDrafts(mail.id);
+  const queued = mine();
   const err = await waitToast(/could not be sent/i, 30000);
-  const after = replyDrafts(mail.id);
+  const after = mine();
   await closeToasts();
   const subject = `Re: ${mail.subject}`;
   const failed = outboxRows(subject)[0];
@@ -909,8 +912,8 @@ await step('Compose', 'la respuesta de un borrador del chat no deja borrador', '
   await click('button=Chat'); await sleep(1200); await click('button=New chat'); await sleep(800);
   sql(`DELETE FROM chat_messages WHERE conversation_id = '${CHAT_CONV}'; DELETE FROM chat_conversations WHERE id = '${CHAT_CONV}'`);
   await click('button=Inbox'); await sleep(800);
-  return ok(/Hi Nadia, a reply the chat wrote/.test(body) && whileEditing.length === 1 && whileEditing[0].id === CHAT_DRAFT && !!t && queued.length === 0 && !!err && after.length === 0 && failed?.status === 'failed',
-    `un solo borrador (${whileEditing[0]?.id}) mientras se escribe; ninguno al enviar; outbox ${failed?.status}`, `cuerpo «${body.slice(0, 60)}», al escribir ${JSON.stringify(whileEditing)}, aviso=${t}, en cola ${JSON.stringify(queued)}, error=${err}, después ${JSON.stringify(after)}, outbox=${JSON.stringify(failed)}`);
+  return ok(/Hi Nadia, a reply the chat wrote/.test(body) && whileEditing.join() === CHAT_DRAFT && !!t && queued.length === 0 && !!err && after.length === 0 && failed?.status === 'failed',
+    `un solo borrador (${whileEditing.join()}) mientras se escribe; ninguno al enviar; outbox ${failed?.status}`, `cuerpo «${body.slice(0, 60)}», al escribir ${JSON.stringify(whileEditing)}, aviso=${t}, en cola ${JSON.stringify(queued)}, error=${err}, después ${JSON.stringify(after)}, outbox=${JSON.stringify(failed)}`);
 });
 await step('Compose', 'cerrar y borrador', 'al cancelar, el borrador aparece en Drafts (los borradores se guardan automáticamente)', async () => {
   await fillCompose('Verification run', 'hello from the verifier');

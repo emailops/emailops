@@ -258,7 +258,13 @@
     "src-tauri/src/sync/outlook.rs::a_draft_listed_without_a_change_key_is_always_read": "Un borrador de Outlook listado sin changeKey se lee siempre, porque no se puede saber si cambió.",
     "src-tauri/src/sync/outlook.rs::a_draft_whose_attachments_cannot_be_listed_is_left_for_the_next_pull": "Un borrador de Outlook cuyos adjuntos no se pueden listar (403) se deja para el siguiente pull sin perder los demás borradores.",
     "src-tauri/src/sync/outlook.rs::updating_a_draft_with_a_small_attachment_replaces_its_attachments": "Actualizar un borrador de Outlook con un adjunto pequeño reemplaza sus adjuntos en el proveedor, porque la actualización solo lleva el texto.",
-    "src-tauri/src/sync/outlook.rs::updating_a_draft_to_no_attachments_removes_them_upstream": "Actualizar un borrador de Outlook sin adjuntos los elimina también en el proveedor; antes un fichero quitado aquí volvía con el siguiente pull."
+    "src-tauri/src/sync/outlook.rs::updating_a_draft_to_no_attachments_removes_them_upstream": "Actualizar un borrador de Outlook sin adjuntos los elimina también en el proveedor; antes un fichero quitado aquí volvía con el siguiente pull.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_call_in_a_function_wrapper_is_read_even_one_brace_short": "Una llamada a herramienta con el envoltorio `function` y a la que le falta una llave se ejecuta: antes no corría ninguna herramienta y el chat se inventaba una reunión.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_complete_function_wrapper_is_read": "Una llamada completa con el envoltorio `function` de OpenAI se lee como cualquier otra.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_brace_inside_a_string_is_not_counted_as_open": "Una llave dentro de un texto no cuenta como objeto abierto al completar las llaves de una llamada.",
+    "src-tauri/src/ai/llama_cpp/tool_parser.rs::a_block_the_stream_cut_off_is_not_completed": "Un bloque cortado por el final del stream no se completa: sus argumentos pueden estar a medias y ejecutarlo actuaría sobre otros.",
+    "src-tauri/src/services/chat/turn.rs::parse_xml_tool_calls_reads_a_function_wrapper_one_brace_short": "El rescate de texto del chat también lee una llamada con envoltorio `function` a la que le falta una llave, para los proveedores que no pasan por el parser nativo.",
+    "src-tauri/src/services/chat/turn.rs::parse_xml_tool_calls_does_not_complete_a_block_the_stream_cut_off": "El rescate de texto del chat tampoco completa un bloque cortado por el final del stream."
   },
   "vitest": {
     "src/components/ComposeModal.close.test.tsx::closes at once when it holds no files: the draft has everything": "Un compositor sin ficheros adjuntos se cierra al instante con Escape, porque el borrador ya lo guarda todo.",
