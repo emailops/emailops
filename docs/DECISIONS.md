@@ -4122,3 +4122,16 @@ restarts, and seven of them could fill the disk the live database writes to.
   and one step gives the same single snapshot.
 - *Keeping seven copies*: on an 11 GB mailbox that is 77 GB of disk.
 - *Showing the last backup in Settings*: a new surface; the Logs panel is enough for now.
+
+## 2026-10-30 — IMAP lists a mailbox to its end and also syncs on a timer
+
+**Decision:** The IMAP inbox listing has no page cap: a page token runs out only at the
+last UID. IMAP accounts also sync every five minutes, and once per failed attempt to reach
+IDLE. A failed download is given up on only after three retries and seven days from its
+first failure.
+**Context:** The sync reads "no more pages" as "everything was listed", so the ten-page cap
+left mail stranded between stored rows. IDLE watches INBOX alone, a signal that lands during
+another sync is dropped, and a server without IDLE never raises one. Retries run on
+consecutive syncs, so a count alone was spent in minutes by a short outage.
+**Rejected:** *Reporting the cap through a new return value*: it changes the listing contract
+of every provider for a limit only IMAP had, and later slices are already bounded per batch.

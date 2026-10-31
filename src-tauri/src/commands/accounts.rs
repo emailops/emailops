@@ -162,6 +162,9 @@ pub async fn update_imap_credentials(
     // Verify credentials work before saving.
     services::accounts::test_imap_connection(credentials.clone()).await?;
     services::accounts::store_imap_credentials(&account_id, &credentials)?;
+    // The running IDLE watcher holds the credentials it was started with.
+    state.scheduler.unwatch_account(&account_id);
+    state.scheduler.watch_account(&account);
     Ok(())
 }
 
@@ -204,8 +207,8 @@ pub async fn add_imap_account(
 /// Persist a new sync range and make it take effect *now*.
 ///
 /// A range change that only lands in the DB is invisible for as long as the
-/// current sync runs — and an IMAP account only syncs on IDLE notifications, so
-/// "as long as" can mean "until new mail happens to arrive". The in-flight run
+/// current sync runs, and for an IMAP account until its next IDLE notification
+/// or periodic sync after that. The in-flight run
 /// is therefore asked to stop at its next batch boundary (already-downloaded
 /// emails are kept) and a replacement sync is queued behind it, which reads the
 /// new range when it starts.

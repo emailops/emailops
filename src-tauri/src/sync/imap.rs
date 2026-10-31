@@ -69,12 +69,6 @@ pub(crate) fn folder_email_id_prefix(account_id: &str, server_path: &str) -> Str
     }
 }
 
-/// Upper bound on INBOX pages one sync may walk through the backfill window.
-/// 10 x `PAGE_SIZE` (100) keeps a first sync against a huge mailbox bounded;
-/// progress is resumable because the next sync's window starts from the new
-/// oldest stored email.
-const MAX_INBOX_PAGES_PER_SYNC: u32 = 10;
-
 /// Most mailboxes whose UIDVALIDITY one sync checks: the inbox, the three role
 /// folders and the custom folders the sync walks
 /// (`MAX_CUSTOM_FOLDERS_PER_ACCOUNT` in `services/emails/sync.rs`). Each costs
@@ -139,26 +133,19 @@ fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64
 
 /// Cut one page out of an INBOX `SEARCH` result, newest UID first.
 ///
-/// IMAP has no server-side cursor, so the page token carries our own:
-/// `"{last_uid_returned}:{pages_taken}"`. The next page resumes strictly below
-/// that UID, which is what lets the backfill pass walk *older* mail instead of
-/// re-listing the newest window forever. Returns `None` for the token once the
-/// result set is exhausted or [`MAX_INBOX_PAGES_PER_SYNC`] is reached.
+/// IMAP has no server-side cursor, so the page token carries our own: the last
+/// UID returned. The next page resumes strictly below it, which is what lets the
+/// backfill pass walk *older* mail instead of re-listing the newest window
+/// forever. Returns `None` for the token only once the result set is exhausted,
+/// because the sync takes that as having listed everything.
 fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32) -> (Vec<u32>, Option<String>) {
     if max_results == 0 {
         return (Vec::new(), None);
     }
 
     // Tokens are only ever minted here, so parse leniently: a malformed one
-    // degrades to "first page" rather than aborting the sync. The page counter
-    // still advances, so a bad token can never spin forever.
-    let (cursor, pages_taken) = match page_token {
-        Some(token) => {
-            let (uid, pages) = token.split_once(':').unwrap_or((token, "0"));
-            (uid.parse::<u32>().ok(), pages.parse::<u32>().unwrap_or(0))
-        }
-        None => (None, 0),
-    };
+    // degrades to "first page" rather than aborting the sync.
+    let cursor = page_token.and_then(|token| token.parse::<u32>().ok());
 
     // UIDs are monotonically increasing per mailbox, so descending UID order is
     // newest-first.
@@ -171,9 +158,8 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
     let more_remain = sorted.len() > max_results as usize;
     sorted.truncate(max_results as usize);
 
-    let pages_taken = pages_taken.saturating_add(1);
     let next_token = match sorted.last() {
-        Some(last) if more_remain && pages_taken < MAX_INBOX_PAGES_PER_SYNC => Some(format!("{last}:{pages_taken}")),
+        Some(last) if more_remain => Some(last.to_string()),
         _ => None,
     };
 
@@ -661,6 +647,37 @@ impl ImapClient {
                     }
                 }
                 false
+            }
+        }
+    }
+
+    /// [`Self::select_folder_blocking`] for listings: `Ok(false)` only when the
+    /// folder is not there. Anything else is an error, because the backfill
+    /// reads an empty listing as having reached the start of the folder.
+    fn select_folder_checked(
+        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+        folder: &ImapFolder,
+    ) -> Result<bool> {
+        match folder {
+            ImapFolder::Inbox => imap_search::select_if_exists(session, "INBOX"),
+            ImapFolder::Custom(path) => imap_search::select_if_exists(session, path),
+            role_folder => {
+                let entries = Self::list_entries_blocking(session)
+                    .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                let resolved = role_folder
+                    .well_known()
+                    .and_then(|role| resolve_role_folder(role, &entries));
+                if let Some(resolved) = resolved {
+                    if imap_search::select_if_exists(session, &resolved)? {
+                        return Ok(true);
+                    }
+                }
+                for &candidate in role_folder.legacy_candidates() {
+                    if imap_search::select_if_exists(session, candidate)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
             }
         }
     }
@@ -1621,7 +1638,7 @@ impl EmailProvider for ImapClient {
             // Resolve + SELECT the role folder. Folder absence is not an
             // error — some providers simply don't expose Spam or Trash; we
             // return an empty list so the caller logs and moves on.
-            if !Self::select_folder_blocking(&mut session, &folder) {
+            if !Self::select_folder_checked(&mut session, &folder)? {
                 slot.checkin(session);
                 return Ok(Vec::new());
             }
@@ -1714,7 +1731,7 @@ impl EmailProvider for ImapClient {
 
             // A folder deleted server-side between LIST and this SELECT is not
             // an error — return empty so the caller logs and moves on.
-            if imap_search::select(&mut session, &path).is_err() {
+            if !imap_search::select_if_exists(&mut session, &path)? {
                 slot.checkin(session);
                 return Ok(Vec::new());
             }
@@ -2878,19 +2895,19 @@ mod tests {
     fn inbox_page_returns_newest_first_and_a_cursor_when_more_remain() {
         let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], None, 2);
         assert_eq!(uids, vec![5, 4]);
-        assert_eq!(token.as_deref(), Some("4:1"));
+        assert_eq!(token.as_deref(), Some("4"));
     }
 
     #[test]
     fn inbox_page_resumes_strictly_below_the_cursor() {
-        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("4:1"), 2);
+        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("4"), 2);
         assert_eq!(uids, vec![3, 2]);
-        assert_eq!(token.as_deref(), Some("2:2"));
+        assert_eq!(token.as_deref(), Some("2"));
     }
 
     #[test]
     fn inbox_page_has_no_token_once_the_window_is_exhausted() {
-        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("2:2"), 2);
+        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("2"), 2);
         assert_eq!(uids, vec![1]);
         assert_eq!(token, None);
     }
@@ -2915,21 +2932,21 @@ mod tests {
     }
 
     #[test]
-    fn inbox_pagination_is_capped_per_sync_so_one_run_cannot_walk_forever() {
-        // A 100k-message mailbox must not download in a single sync. Progress is
-        // resumable: the next sync's backfill window starts from the new oldest.
-        let all: Vec<u32> = (1..=100_000).collect();
-        let mut pages = 0;
+    fn inbox_pagination_never_calls_a_longer_mailbox_finished() {
+        // The token running out is what tells the sync it listed everything,
+        // so a mailbox of any size has to reach its last UID.
+        let all: Vec<u32> = (1..=1_200).collect();
+        let mut seen = 0;
         let mut token: Option<String> = None;
         loop {
-            let (_, next) = select_inbox_page(all.clone(), token.as_deref(), 100);
-            pages += 1;
+            let (page, next) = select_inbox_page(all.clone(), token.as_deref(), 100);
+            seen += page.len();
             match next {
                 Some(t) => token = Some(t),
                 None => break,
             }
         }
-        assert_eq!(pages, MAX_INBOX_PAGES_PER_SYNC as usize);
+        assert_eq!(seen, all.len());
     }
 
     #[test]

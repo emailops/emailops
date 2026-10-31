@@ -95,6 +95,27 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
         .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
 }
 
+/// Pure: `Ok(false)` when the server refused the mailbox, an error when the
+/// answer could not be obtained at all.
+fn select_outcome(outcome: std::result::Result<(), imap::Error>) -> Result<bool> {
+    match outcome {
+        Ok(()) => Ok(true),
+        Err(imap::Error::No(_)) => Ok(false),
+        Err(e) => Err(AppError::SyncError(format!("IMAP SELECT failed: {e}"))),
+    }
+}
+
+/// [`select`] for callers that treat a missing folder as an empty one: a
+/// connection that dropped must not look like a mailbox with nothing in it.
+pub(crate) fn select_if_exists<T: Read + Write>(session: &mut imap::Session<T>, mailbox_name: &str) -> Result<bool> {
+    let quoted = quote_mailbox("SELECT", mailbox_name)?;
+    select_outcome(
+        session
+            .run_command_and_read_response(format!("SELECT {quoted}"))
+            .map(|_| ()),
+    )
+}
+
 /// Open a mailbox read-only and report its `UIDVALIDITY`.
 ///
 /// UIDs are only meaningful together with this value (RFC 3501 §2.3.1.1): when
@@ -556,6 +577,22 @@ pub(crate) fn truncate_for_error(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn select_outcome_tells_a_missing_folder_from_a_failure_to_find_out() {
+        assert!(matches!(select_outcome(Ok(())), Ok(true)));
+        assert!(matches!(
+            select_outcome(Err(imap::Error::No("no such mailbox".into()))),
+            Ok(false)
+        ));
+        for failure in [
+            imap::Error::ConnectionLost,
+            imap::Error::Bad("try later".into()),
+            imap::Error::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+        ] {
+            assert!(select_outcome(Err(failure)).is_err());
+        }
+    }
+
     use super::*;
 
     /// Everything the client wrote to the socket, shared with the test so it

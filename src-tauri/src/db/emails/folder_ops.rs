@@ -570,7 +570,7 @@ mod tests {
             .get_failed_emails("acc-1")
             .unwrap()
             .into_iter()
-            .map(|(id, _)| id)
+            .map(|(id, _, _)| id)
             .collect();
         assert_eq!(
             failed,

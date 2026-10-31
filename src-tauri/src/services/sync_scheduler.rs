@@ -870,6 +870,10 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
 
 // ── IMAP IDLE watcher ─────────────────────────────────────────────────────────
 
+/// How often an IMAP account syncs with no IDLE signal: IDLE watches INBOX
+/// alone, and a signal that lands during another sync is dropped.
+const IMAP_PERIODIC_SYNC: Duration = Duration::from_secs(5 * 60);
+
 /// Manages an IMAP IDLE connection for one account.
 /// The blocking IDLE loop runs on a thread-pool thread and signals via a channel.
 /// Reconnects with exponential backoff when the connection drops; the backoff
@@ -949,12 +953,25 @@ pub(crate) async fn imap_idle_watcher(
 /// would otherwise wait for the next change in the mailbox.
 pub(crate) async fn imap_idle_drain(mut rx: tokio::sync::mpsc::Receiver<bool>, sync_fn: &SyncFn) -> bool {
     let mut established = false;
-    while let Some(new_mail) = rx.recv().await {
-        // false = server-side keepalive timeout; re-enter IDLE without syncing
-        if new_mail || !established {
-            sync_fn().await;
+    let mut periodic = tokio::time::interval_at(tokio::time::Instant::now() + IMAP_PERIODIC_SYNC, IMAP_PERIODIC_SYNC);
+    periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            signal = rx.recv() => {
+                let Some(new_mail) = signal else { break };
+                // false = server-side keepalive timeout; re-enter IDLE without syncing
+                if new_mail || !established {
+                    sync_fn().await;
+                }
+                established = true;
+            }
+            _ = periodic.tick() => sync_fn().await,
         }
-        established = true;
+    }
+    // A server without working IDLE ends every session here: each reconnect is
+    // its only chance to get mail.
+    if !established {
+        sync_fn().await;
     }
     established
 }
@@ -1341,7 +1358,36 @@ mod tests {
         let established = imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
 
         assert!(!established);
-        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    /// A server without working IDLE never raises a signal: each attempt to
+    /// reach IDLE is its only chance to get mail.
+    #[tokio::test]
+    async fn imap_idle_drain_syncs_once_when_the_session_never_connected() {
+        let count = Arc::new(AtomicU32::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
+        drop(tx);
+
+        imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    /// IDLE watches INBOX alone and a signal can land while another sync runs,
+    /// so a quiet session still syncs on a timer.
+    #[tokio::test(start_paused = true)]
+    async fn imap_idle_drain_syncs_on_a_timer_while_the_session_is_quiet() {
+        let count = Arc::new(AtomicU32::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
+        tx.send(false).await.unwrap();
+        let sync_fn = counter_sync_fn(count.clone());
+        let drain = tokio::spawn(async move { imap_idle_drain(rx, &sync_fn).await });
+
+        tokio::time::sleep(IMAP_PERIODIC_SYNC * 2 + Duration::from_secs(1)).await;
+        drop(tx);
+        drain.await.unwrap();
+
+        assert_eq!(count.load(Ordering::SeqCst), 3, "the first signal plus two ticks");
     }
 
     // ── plan_idle_reconnect ───────────────────────────────────────────────────
