@@ -23,6 +23,42 @@ use crate::util::text::truncate_utf8;
 
 const MAX_BODY_CHARS: usize = 1500;
 
+/// What one extraction batch did with the emails it took from the queue.
+///
+/// The number of extracted emails alone reads the same for a queue that ran
+/// out and for a batch whose every call failed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BatchOutcome {
+    /// Extracted and marked done.
+    pub extracted: u32,
+    /// Settled without a model call (an excluded sender, an invite) and marked done.
+    pub skipped: u32,
+    /// Left in the queue by a failure; the next batch takes them again.
+    pub failed: u32,
+}
+
+/// What a backfill does after a batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillStep {
+    /// The queue moved, or the run was stopped: back to the top of the loop.
+    Continue,
+    /// The queue is empty.
+    Finished,
+    /// Every email taken failed, and another pass would fail the same way.
+    Stalled,
+}
+
+/// Pure planner: the next step of a backfill after `outcome`.
+pub fn next_backfill_step(outcome: BatchOutcome, cancelled: bool) -> BackfillStep {
+    if cancelled || outcome.extracted > 0 || outcome.skipped > 0 {
+        BackfillStep::Continue
+    } else if outcome.failed > 0 {
+        BackfillStep::Stalled
+    } else {
+        BackfillStep::Finished
+    }
+}
+
 pub async fn extract_new_emails(db: &Arc<Database>, app: &AppHandle, account_id: &str) -> Result<u32> {
     if !db.is_ai_enabled()? {
         emit_log(
@@ -38,7 +74,7 @@ pub async fn extract_new_emails(db: &Arc<Database>, app: &AppHandle, account_id:
         emit_log(app, "info", "tasks", "Skipped: task extraction is disabled");
         return Ok(0);
     }
-    extract_batch(db, app, account_id, &cfg, None).await
+    Ok(extract_batch(db, app, account_id, &cfg, None).await?.extracted)
 }
 
 pub async fn extract_batch(
@@ -47,15 +83,15 @@ pub async fn extract_batch(
     account_id: &str,
     cfg: &TaskConfig,
     cancel: Option<&AtomicBool>,
-) -> Result<u32> {
+) -> Result<BatchOutcome> {
     if !cfg.enabled {
-        return Ok(0);
+        return Ok(BatchOutcome::default());
     }
 
     let min_ts = cfg.backfill_min_timestamp(Utc::now().timestamp());
     let ids = db.get_task_unextracted_email_ids(account_id, 50, &cfg.categories, min_ts)?;
     if ids.is_empty() {
-        return Ok(0);
+        return Ok(BatchOutcome::default());
     }
 
     let owner_email = match db.get_account(account_id)? {
@@ -67,7 +103,7 @@ pub async fn extract_batch(
                 "tasks",
                 &format!("extractor: account {account_id} not found; skipping"),
             );
-            return Ok(0);
+            return Ok(BatchOutcome::default());
         }
     };
 
@@ -91,28 +127,42 @@ pub async fn extract_batch(
         }
     };
 
-    let mut ok = 0;
-    for email_id in &ids {
+    let outcome = run_batch(db, &ai, &owner_email, &ids, cfg, cancel).await;
+    emit_log(
+        app,
+        if outcome.failed > 0 { "warn" } else { "success" },
+        "tasks",
+        &format!("Extracted tasks for {}/{} emails", outcome.extracted, ids.len()),
+    );
+    Ok(outcome)
+}
+
+async fn run_batch(
+    db: &Arc<Database>,
+    ai: &AiService,
+    owner_email: &str,
+    email_ids: &[String],
+    cfg: &TaskConfig,
+    cancel: Option<&AtomicBool>,
+) -> BatchOutcome {
+    let mut outcome = BatchOutcome::default();
+    for email_id in email_ids {
         // Stopped by its own Cancel button, or from the queue because the AI
         // provider or model is about to change.
         if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) || crate::services::task_queue::cancel_requested() {
-            emit_log(app, "info", "tasks", "Task extraction cancelled mid-batch");
+            crate::services::logger::log("info", "tasks", "Task extraction cancelled mid-batch");
             break;
         }
-        match process_email(db, &ai, &owner_email, email_id, cfg).await {
-            Ok(true) => ok += 1,
-            Ok(false) => {}
-            Err(e) => emit_log(app, "warn", "tasks", &format!("task extractor skipped {email_id}: {e}")),
+        match process_email(db, ai, owner_email, email_id, cfg).await {
+            Ok(true) => outcome.extracted += 1,
+            Ok(false) => outcome.skipped += 1,
+            Err(e) => {
+                outcome.failed += 1;
+                crate::services::logger::log("warn", "tasks", format!("task extractor skipped {email_id}: {e}"));
+            }
         }
     }
-
-    emit_log(
-        app,
-        "success",
-        "tasks",
-        &format!("Extracted tasks for {ok}/{} emails", ids.len()),
-    );
-    Ok(ok)
+    outcome
 }
 
 async fn run_heuristic_only(
@@ -120,24 +170,27 @@ async fn run_heuristic_only(
     owner_email: &str,
     email_ids: &[String],
     cfg: &TaskConfig,
-) -> Result<u32> {
-    let mut marked = 0;
+) -> Result<BatchOutcome> {
+    let mut outcome = BatchOutcome::default();
     for id in email_ids {
         let Some(email) = db.get_email(id)? else {
             continue;
         };
         if let Err(e) = apply_heuristic_thread_update(db, &email, owner_email) {
             crate::services::logger::log("warn", "tasks", format!("heuristic update failed for {id}: {e}"));
+            outcome.failed += 1;
             continue;
         }
         // Only an excluded sender is final without a model; every other email
         // stays queued so its tasks are extracted once a provider is set up.
         if cfg.is_sender_excluded(&email.sender_email) {
             db.mark_tasks_extracted(id, Utc::now().timestamp())?;
-            marked += 1;
+            outcome.skipped += 1;
+        } else {
+            outcome.failed += 1;
         }
     }
-    Ok(marked)
+    Ok(outcome)
 }
 
 async fn process_email(
@@ -801,6 +854,59 @@ mod process_tests {
         titles
     }
 
+    fn outcome(extracted: u32, skipped: u32, failed: u32) -> BatchOutcome {
+        BatchOutcome {
+            extracted,
+            skipped,
+            failed,
+        }
+    }
+
+    #[test]
+    fn a_backfill_ends_only_when_the_queue_is_empty() {
+        use BackfillStep::*;
+        for (batch, cancelled, step) in [
+            (outcome(0, 0, 0), false, Finished),
+            (outcome(0, 0, 50), false, Stalled),
+            (outcome(3, 0, 47), false, Continue),
+            (outcome(0, 50, 0), false, Continue),
+            (outcome(0, 2, 48), false, Continue),
+            (outcome(0, 0, 0), true, Continue),
+            (outcome(0, 0, 50), true, Continue),
+        ] {
+            assert_eq!(
+                next_backfill_step(batch, cancelled),
+                step,
+                "{batch:?}, cancelled: {cancelled}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_batch_counts_the_emails_whose_call_failed() {
+        let (db, fake, ai, cfg) = setup();
+        fake.fail_completions(Some("model offline"));
+        let ids = vec!["e1".to_string()];
+
+        let batch = run_batch(&db, &ai, "me@example.com", &ids, &cfg, None).await;
+
+        assert_eq!(batch, outcome(0, 0, 1));
+    }
+
+    #[tokio::test]
+    async fn a_batch_counts_the_emails_it_settled_without_the_model() {
+        let (db, _fake, ai, cfg) = setup();
+        let cfg = TaskConfig {
+            extract_from_self_only: true,
+            ..cfg
+        };
+        let ids = vec!["e1".to_string()];
+
+        let batch = run_batch(&db, &ai, "someone-else@example.com", &ids, &cfg, None).await;
+
+        assert_eq!(batch, outcome(0, 1, 0));
+    }
+
     #[tokio::test]
     async fn a_provider_error_leaves_the_email_queued_for_retry() {
         let (db, fake, ai, cfg) = setup();
@@ -912,8 +1018,9 @@ mod process_tests {
     async fn without_an_ai_provider_emails_stay_queued_for_extraction() {
         let (db, _fake, _ai, cfg) = setup();
         let ids = vec!["e1".to_string(), "e2".to_string()];
-        let marked = run_heuristic_only(&db, "me@example.com", &ids, &cfg).await.unwrap();
-        assert_eq!(marked, 0);
+        let batch = run_heuristic_only(&db, "me@example.com", &ids, &cfg).await.unwrap();
+        // Queued is not done: a backfill must not read this as the end.
+        assert_eq!(batch, outcome(0, 0, 2));
         assert!(is_pending(&db, "e1"));
         assert!(is_pending(&db, "e2"));
     }

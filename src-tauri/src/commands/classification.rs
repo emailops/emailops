@@ -40,6 +40,7 @@ pub async fn classify_previous_emails(
         .ai_background
         .submit_named(&task_label, async move {
             match classification::classify_all_emails(&db, &account_id).await {
+                Ok(0) => emit_log(&app, "info", "No emails were classified"),
                 Ok(count) => {
                     emit_log(&app, "success", &format!("Classified {} emails", count));
                 }

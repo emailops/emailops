@@ -5,6 +5,8 @@
 //! (that is the feed expander's job). ICS input is UNTRUSTED: parsing is
 //! purely structural and never evaluates anything.
 
+use super::windows_zones;
+
 /// One content line: `NAME;PARAM=..:VALUE`, name upper-cased, params raw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IcsProperty {
@@ -162,16 +164,46 @@ pub fn parse_ics_time(value: &str, params: &[String]) -> Option<(i64, bool)> {
     let tzid = params
         .iter()
         .find_map(|p| p.strip_prefix("TZID=").or_else(|| p.strip_prefix("tzid=")));
-    if let Some(tzid) = tzid {
-        if let Ok(tz) = tzid.trim_matches('"').parse::<chrono_tz::Tz>() {
-            use chrono::TimeZone;
-            if let Some(local) = tz.from_local_datetime(&naive).earliest() {
-                return Some((local.timestamp(), false));
-            }
-        }
+    if let Some(tz) = tzid.and_then(resolve_tzid) {
+        use chrono::TimeZone;
+        let epoch = match tz.from_local_datetime(&naive).earliest() {
+            Some(local) => local.timestamp(),
+            None => skipped_local_time(tz, naive),
+        };
+        return Some((epoch, false));
     }
     // Unknown zone / floating time: UTC is the least-wrong fallback.
     Some((naive.and_utc().timestamp(), false))
+}
+
+/// The zone a `TZID` names: an IANA name, or the Windows name Outlook writes.
+fn resolve_tzid(tzid: &str) -> Option<chrono_tz::Tz> {
+    let name = tzid.trim().trim_matches('"');
+    name.parse()
+        .ok()
+        .or_else(|| windows_zones::iana_name(name)?.parse().ok())
+}
+
+/// `param` with a `TZID` rewritten to its IANA name, for readers that know no
+/// Windows names, such as the `rrule` parser.
+pub fn with_iana_tzid(param: &str) -> String {
+    let zone = param
+        .strip_prefix("TZID=")
+        .or_else(|| param.strip_prefix("tzid="))
+        .and_then(resolve_tzid);
+    match zone {
+        Some(tz) => format!("TZID={}", tz.name()),
+        None => param.to_string(),
+    }
+}
+
+/// RFC 5545 §3.3.5: a local time the change to daylight time skips is read
+/// with the offset in force before the change. Zones change offset at most
+/// once a day, so the day before is on the right side of it.
+fn skipped_local_time(tz: chrono_tz::Tz, naive: chrono::NaiveDateTime) -> i64 {
+    use chrono::{Offset, TimeZone};
+    let before = tz.offset_from_utc_datetime(&(naive - chrono::Days::new(1))).fix();
+    naive.and_utc().timestamp() - i64::from(before.local_minus_utc())
 }
 
 #[cfg(test)]
@@ -226,6 +258,61 @@ mod tests {
         let lines = unfold_ics_lines("SUMMARY:long\r\n  title\r\nUID:x\r\n");
         assert_eq!(lines[0], "SUMMARY:long title");
         assert_eq!(lines[1], "UID:x");
+    }
+
+    fn tzid(zone: &str) -> Vec<String> {
+        vec![format!("TZID={zone}")]
+    }
+
+    fn utc(date: &str) -> i64 {
+        parse_ics_time(date, &[]).expect("valid UTC value").0
+    }
+
+    #[test]
+    fn a_windows_zone_name_is_read_as_its_zone_not_as_utc() {
+        assert_eq!(
+            parse_ics_time("20260728T093000", &tzid("Romance Standard Time")),
+            Some((utc("20260728T073000Z"), false)),
+        );
+        assert_eq!(
+            parse_ics_time("20260115T093000", &tzid("\"Pacific Standard Time\"")),
+            Some((utc("20260115T173000Z"), false)),
+        );
+    }
+
+    /// RFC 5545 §3.3.5: a local time skipped by the change to daylight time is
+    /// read with the offset in force before the change.
+    #[test]
+    fn a_time_inside_the_daylight_saving_gap_uses_the_offset_before_it() {
+        assert_eq!(
+            parse_ics_time("20070311T023000", &tzid("America/New_York")),
+            Some((utc("20070311T073000Z"), false)),
+        );
+        assert_eq!(
+            parse_ics_time("20260329T023000", &tzid("Europe/Madrid")),
+            Some((utc("20260329T013000Z"), false)),
+        );
+        // A gap of half an hour, not a whole one.
+        assert_eq!(
+            parse_ics_time("20261004T021500", &tzid("Australia/Lord_Howe")),
+            Some((utc("20261003T154500Z"), false)),
+        );
+    }
+
+    #[test]
+    fn a_repeated_local_time_keeps_its_first_occurrence() {
+        assert_eq!(
+            parse_ics_time("20261025T023000", &tzid("Europe/Madrid")),
+            Some((utc("20261025T003000Z"), false)),
+        );
+    }
+
+    #[test]
+    fn an_unknown_zone_still_falls_back_to_utc() {
+        assert_eq!(
+            parse_ics_time("20260728T093000", &tzid("Customized Time Zone")),
+            Some((utc("20260728T093000Z"), false)),
+        );
     }
 
     #[test]

@@ -3,6 +3,8 @@
 //! OS notification, emit the `meeting-reminder` event (the in-app banner with
 //! the Join button), mark the row notified.
 
+use std::collections::HashSet;
+
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::CalendarEvent;
@@ -16,15 +18,34 @@ const MAX_NOTIFY_MINUTES: i64 = 120;
 ///
 /// An event qualifies when it has not been notified yet, is not all-day
 /// (all-day events have no meaningful "starts in N minutes"), has not started
-/// yet, and starts within the lead window.
-pub fn plan_meeting_notifications(events: &[CalendarEvent], now: i64, lead_secs: i64) -> Vec<&CalendarEvent> {
+/// yet, starts within the lead window, and `own_email` has not declined it.
+///
+/// A meeting on several calendars of an account is one row per calendar with
+/// the same provider id, and gets one reminder: the first copy planned marks
+/// the meeting, and a copy already notified keeps the others quiet.
+pub fn plan_meeting_notifications<'a>(
+    events: &'a [CalendarEvent],
+    now: i64,
+    lead_secs: i64,
+    own_email: &str,
+) -> Vec<&'a CalendarEvent> {
+    let meeting = |e: &'a CalendarEvent| (e.provider_event_id.as_str(), e.start_time);
+    let mut reminded: HashSet<(&str, i64)> = events.iter().filter(|e| e.notified_at.is_some()).map(meeting).collect();
     events
         .iter()
-        .filter(|e| e.notified_at.is_none())
         .filter(|e| !e.is_all_day)
         .filter(|e| e.status != "cancelled")
         .filter(|e| e.start_time > now && e.start_time - now <= lead_secs)
+        .filter(|e| !declined_by(e, own_email))
+        .filter(|e| reminded.insert(meeting(e)))
         .collect()
+}
+
+fn declined_by(event: &CalendarEvent, email: &str) -> bool {
+    event
+        .attendees
+        .iter()
+        .any(|a| a.email.eq_ignore_ascii_case(email) && a.response == "declined")
 }
 
 /// Reminder lead time in seconds, or `None` when meeting notifications are
@@ -104,11 +125,12 @@ mod tests {
 
     const NOW: i64 = 100_000;
     const LEAD: i64 = 600; // 10 minutes
+    const OWN: &str = "me@example.com";
 
     #[test]
     fn event_starting_inside_lead_window_is_planned() {
         let events = vec![event("soon", NOW + 300)];
-        let planned = plan_meeting_notifications(&events, NOW, LEAD);
+        let planned = plan_meeting_notifications(&events, NOW, LEAD, OWN);
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].id, "soon");
     }
@@ -116,47 +138,97 @@ mod tests {
     #[test]
     fn event_starting_after_lead_window_is_not_planned_yet() {
         let events = vec![event("later", NOW + LEAD + 1)];
-        assert!(plan_meeting_notifications(&events, NOW, LEAD).is_empty());
+        assert!(plan_meeting_notifications(&events, NOW, LEAD, OWN).is_empty());
     }
 
     #[test]
     fn event_already_started_is_not_planned() {
         let events = vec![event("started", NOW), event("past", NOW - 60)];
-        assert!(plan_meeting_notifications(&events, NOW, LEAD).is_empty());
+        assert!(plan_meeting_notifications(&events, NOW, LEAD, OWN).is_empty());
     }
 
     #[test]
     fn already_notified_event_is_not_planned_again() {
         let mut e = event("done", NOW + 300);
         e.notified_at = Some(NOW - 60);
-        assert!(plan_meeting_notifications(&[e], NOW, LEAD).is_empty());
+        assert!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).is_empty());
     }
 
     #[test]
     fn all_day_events_never_notify() {
         let mut e = event("allday", NOW + 300);
         e.is_all_day = true;
-        assert!(plan_meeting_notifications(&[e], NOW, LEAD).is_empty());
+        assert!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).is_empty());
     }
 
     #[test]
     fn cancelled_events_never_notify() {
         let mut e = event("cancelled", NOW + 300);
         e.status = "cancelled".to_string();
-        assert!(plan_meeting_notifications(&[e], NOW, LEAD).is_empty());
+        assert!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).is_empty());
     }
 
     #[test]
     fn tentative_events_do_notify() {
         let mut e = event("tentative", NOW + 300);
         e.status = "tentative".to_string();
-        assert_eq!(plan_meeting_notifications(&[e], NOW, LEAD).len(), 1);
+        assert_eq!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).len(), 1);
+    }
+
+    fn attendee(email: &str, response: &str) -> crate::models::CalendarAttendee {
+        crate::models::CalendarAttendee {
+            email: email.to_string(),
+            response: response.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_meeting_the_user_declined_is_not_planned() {
+        let mut e = event("declined", NOW + 300);
+        e.attendees = vec![
+            attendee("Me@Example.com", "declined"),
+            attendee("a@example.com", "accepted"),
+        ];
+        assert!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).is_empty());
+    }
+
+    #[test]
+    fn a_meeting_someone_else_declined_is_planned() {
+        let mut e = event("theirs", NOW + 300);
+        e.attendees = vec![
+            attendee("me@example.com", "accepted"),
+            attendee("a@example.com", "declined"),
+        ];
+        assert_eq!(plan_meeting_notifications(&[e], NOW, LEAD, OWN).len(), 1);
+    }
+
+    #[test]
+    fn a_meeting_on_two_calendars_is_planned_once() {
+        let mut other = event("same", NOW + 300);
+        other.calendar_id = "team".to_string();
+        let events = vec![event("same", NOW + 300), other];
+        assert_eq!(plan_meeting_notifications(&events, NOW, LEAD, OWN).len(), 1);
+    }
+
+    #[test]
+    fn the_other_copy_stays_quiet_once_one_copy_was_notified() {
+        let mut notified = event("same", NOW + 300);
+        notified.notified_at = Some(NOW - 60);
+        let mut other = event("same", NOW + 300);
+        other.calendar_id = "team".to_string();
+        assert!(plan_meeting_notifications(&[notified, other], NOW, LEAD, OWN).is_empty());
+    }
+
+    #[test]
+    fn two_occurrences_of_one_id_are_two_meetings() {
+        let events = vec![event("series", NOW + 300), event("series", NOW + 500)];
+        assert_eq!(plan_meeting_notifications(&events, NOW, LEAD, OWN).len(), 2);
     }
 
     #[test]
     fn boundary_exactly_lead_seconds_before_start_is_planned() {
         let events = vec![event("edge", NOW + LEAD)];
-        assert_eq!(plan_meeting_notifications(&events, NOW, LEAD).len(), 1);
+        assert_eq!(plan_meeting_notifications(&events, NOW, LEAD, OWN).len(), 1);
     }
 
     // ── notification_lead_secs (prefs) ─────────────────────────────────────

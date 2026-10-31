@@ -1047,7 +1047,7 @@ impl RuleApplies {
 
 impl RuleApplyTicket {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed) || crate::services::task_queue::cancel_requested()
     }
 }
 
@@ -2489,6 +2489,17 @@ pub(crate) mod tests {
 
         assert_eq!(outcome.status, ApplyStatus::Failed);
         assert!(outcome.error.is_some_and(|e| e.message.contains("r1")));
+    }
+
+    /// Moving the data folder stops the queues, and an apply can scan for long.
+    #[tokio::test]
+    async fn stopping_the_queue_cancels_the_running_apply() {
+        let applies = Arc::new(RuleApplies::default());
+        let ticket = applies.begin("rule-1");
+
+        let cancelled = crate::services::task_queue::run_cancelled(async { ticket.is_cancelled() }).await;
+
+        assert!(cancelled);
     }
 
     #[test]

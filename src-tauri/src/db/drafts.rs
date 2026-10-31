@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -371,6 +371,34 @@ impl Database {
         conn.execute(
             "DELETE FROM drafts WHERE id = ?1 AND account_id = ?2",
             params![draft_id, account_id],
+        )?;
+        Ok(())
+    }
+
+    /// Remember a provider draft whose copy could not be removed.
+    pub fn add_draft_tombstone(&self, account_id: &str, provider_draft_id: &str) -> Result<()> {
+        self.connection().execute(
+            "INSERT OR REPLACE INTO draft_tombstones (account_id, provider_draft_id, deleted_at)
+             VALUES (?1, ?2, ?3)",
+            params![account_id, provider_draft_id, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// The provider draft ids of this account still waiting to be removed.
+    pub fn draft_tombstones(&self, account_id: &str) -> Result<HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT provider_draft_id FROM draft_tombstones WHERE account_id = ?1")?;
+        let ids = stmt
+            .query_map(params![account_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<HashSet<String>>>()?;
+        Ok(ids)
+    }
+
+    pub fn remove_draft_tombstone(&self, account_id: &str, provider_draft_id: &str) -> Result<()> {
+        self.connection().execute(
+            "DELETE FROM draft_tombstones WHERE account_id = ?1 AND provider_draft_id = ?2",
+            params![account_id, provider_draft_id],
         )?;
         Ok(())
     }
