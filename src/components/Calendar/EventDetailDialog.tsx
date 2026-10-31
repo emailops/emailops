@@ -11,6 +11,7 @@ import {
   linkifySegments,
   visibleAttendees,
 } from '@/lib/calendarEvent';
+import { eventBounds } from '@/lib/calendarGrid';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
@@ -124,7 +125,7 @@ export function EventDetailDialog({
 
   const sameDay = new Date(event.startTime * 1000).toDateString() === new Date(event.endTime * 1000).toDateString();
   const timeRange = event.isAllDay
-    ? `${date(event.startTime)} · ${t('calendar:allDay')}`
+    ? `${date(eventBounds(event).start)} · ${t('calendar:allDay')}`
     : sameDay
       ? `${date(event.startTime)} · ${time(event.startTime)} – ${time(event.endTime)}`
       : `${dateTime(event.startTime)} – ${dateTime(event.endTime)}`;
