@@ -224,7 +224,7 @@ impl EmailCategory {
 
 /// Localized "Sent with" lead-in for the footer. The product name "EmailOps"
 /// is a brand and is never translated.
-fn footer_prefix(language: Language) -> &'static str {
+pub(crate) fn footer_prefix(language: Language) -> &'static str {
     match language {
         Language::En => "Sent with",
         Language::Es => "Enviado con",
@@ -233,16 +233,16 @@ fn footer_prefix(language: Language) -> &'static str {
     }
 }
 
+/// The URL the footer links to. `thread_clean` recognises the footer by it.
+pub(crate) const FOOTER_URL: &str = "https://getemailops.com/?utm_source=email_footer";
+
 /// Plain-text footer appended to every outgoing email, in the user's UI language.
 ///
 /// The URL is on its own line — wrapping it in parentheses (e.g. `(https://…)`)
 /// makes most email-client auto-linkers swallow the trailing `)` into the URL,
 /// producing a broken link like `https://getemailops.com)/`.
 pub fn email_footer_plain(language: Language) -> String {
-    format!(
-        "\n\n--\n{} EmailOps\nhttps://getemailops.com/?utm_source=email_footer",
-        footer_prefix(language)
-    )
+    format!("\n\n--\n{} EmailOps\n{FOOTER_URL}", footer_prefix(language))
 }
 
 /// HTML footer appended to every outgoing email, in the user's UI language.
@@ -250,7 +250,7 @@ pub fn email_footer_html(language: Language) -> String {
     format!(
         "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\">\
          <p style=\"color:#888;font-size:12px;margin:0\">{} \
-         <a href=\"https://getemailops.com/?utm_source=email_footer\" style=\"color:#888\">EmailOps</a></p>",
+         <a href=\"{FOOTER_URL}\" style=\"color:#888\">EmailOps</a></p>",
         footer_prefix(language)
     )
 }
