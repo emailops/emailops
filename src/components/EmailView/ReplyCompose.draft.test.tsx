@@ -156,7 +156,7 @@ describe('ReplyCompose drafts', () => {
   it('takes over a draft the chat saved, so sending removes it', async () => {
     const onSend = vi.fn(async () => {});
     render({ onSend, adoptDraftId: 'draft-chat', initialBody: 'Hola Alice' });
-    await act(async () => button('Send Reply').click());
+    await act(async () => button('compose:sendReply').click());
     expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'draft-chat' }));
     await leave();
   });

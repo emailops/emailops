@@ -20,15 +20,7 @@ vi.mock('@/lib/api', () => ({
 }));
 vi.mock('./ThreadEmailItem', () => ({ ThreadEmailItem: () => null }));
 vi.mock('./ReplyCompose', () => ({
-  ReplyCompose: ({
-    mode,
-    initialBody,
-    adoptDraftId,
-  }: {
-    mode: string;
-    initialBody: string;
-    adoptDraftId?: string;
-  }) => {
+  ReplyCompose: ({ mode, initialBody, adoptDraftId }: { mode: string; initialBody: string; adoptDraftId?: string }) => {
     const [instance] = useState(() => {
       composers.mounted += 1;
       return composers.mounted;
