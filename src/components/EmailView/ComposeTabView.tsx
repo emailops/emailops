@@ -86,6 +86,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     (tab.attachments ?? []).map((a) => ({ filePath: a.filePath, filename: a.filename, mimeType: a.mimeType })),
   );
   const hasDraftAttachments = draftAttachments.length > 0;
+  // A tab that opened with attachments manages them from then on, so removing
+  // the last one saves an empty list rather than leaving them on the draft.
+  const managesDraftAttachments = (tab.attachments?.length ?? 0) > 0;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
@@ -157,9 +160,9 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       plainBody: prepared.plainText,
       bodyHtml,
       // Manage (and thus preserve) the draft's file-path attachments across
-      // saves. When there are none, leave the field undefined so a text-only
+      // saves. When it never had any, leave the field undefined so a text-only
       // save doesn't clear anything.
-      attachments: hasDraftAttachments ? draftAttachments : undefined,
+      attachments: managesDraftAttachments ? draftAttachments : undefined,
       // A save landing after Discard would bring the draft back.
       isSending: isSending || isDiscarding,
       sent,
@@ -181,7 +184,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     isDiscarding,
     sent,
     draftAttachments,
-    hasDraftAttachments,
+    managesDraftAttachments,
     tab.replyToEmailId,
   ]);
 

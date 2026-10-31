@@ -103,6 +103,9 @@ struct GraphMessageDraftList {
 #[derive(Debug, Deserialize)]
 struct GraphMessage {
     id: String,
+    /// The version of the message. Feeds the draft pull's change tokens.
+    #[serde(rename = "changeKey")]
+    change_key: Option<String>,
     #[serde(rename = "conversationId")]
     conversation_id: Option<String>,
     #[serde(rename = "internetMessageId")]
@@ -190,6 +193,21 @@ struct GraphAttachment {
     /// field returns `"abc"`.
     #[serde(rename = "contentId")]
     content_id: Option<String>,
+}
+
+/// What a message's attachment listing holds.
+#[derive(Debug, Default)]
+struct GraphAttachments {
+    /// Every fileAttachment (inline or not), to be saved to
+    /// `email_attachment_meta` and shown in the UI.
+    files: Vec<AttachmentInfo>,
+    /// `(content_id, mime_type, base64_data)` triples for attachments that
+    /// have both a `contentId` and inline `contentBytes`, so `cid:` references
+    /// in the HTML body can be substituted with data URIs.
+    inline_images: Vec<(String, String, String)>,
+    /// Names of the attachments that are not files (referenceAttachment,
+    /// itemAttachment): there are no bytes to download for them.
+    unsupported: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,8 +374,12 @@ impl OutlookClient {
         // attachments exist; defaulting that to "no attachments" silently drops
         // them from the UI. `list_attachments` is cheap and returns empty when
         // there really are none.
-        let (attachments, inline_images) = match msg.has_attachments {
-            Some(false) => (Vec::new(), Vec::new()),
+        let GraphAttachments {
+            files: attachments,
+            inline_images,
+            ..
+        } = match msg.has_attachments {
+            Some(false) => GraphAttachments::default(),
             _ => match self.list_attachments(&msg.id).await {
                 Ok(found) => found,
                 // The connection, not the message: it must come back for its
@@ -367,7 +389,7 @@ impl OutlookClient {
                 // stores the email with no attachment rows at all.
                 Err(e) => {
                     self.log(&format!("Graph: could not list attachments for {}: {e}", msg.id));
-                    (Vec::new(), Vec::new())
+                    GraphAttachments::default()
                 }
             },
         };
@@ -388,13 +410,7 @@ impl OutlookClient {
         Ok((email, category, attachments))
     }
 
-    /// Returns `(attachments, inline_images)`.
-    /// - `attachments`: every fileAttachment (inline or not), to be saved to
-    ///   `email_attachment_meta` and shown in the UI.
-    /// - `inline_images`: `(content_id, mime_type, base64_data)` triples for
-    ///   attachments that have both a `contentId` and inline `contentBytes`,
-    ///   so `cid:` references in the HTML body can be substituted with data URIs.
-    async fn list_attachments(&self, message_id: &str) -> Result<(Vec<AttachmentInfo>, Vec<(String, String, String)>)> {
+    async fn list_attachments(&self, message_id: &str) -> Result<GraphAttachments> {
         // Don't use `$select` here: `contentBytes` and `contentId` live on the
         // derived type `microsoft.graph.fileAttachment`, not on the base
         // `microsoft.graph.attachment`, so Graph returns HTTP 400 when they
@@ -416,11 +432,10 @@ impl OutlookClient {
                 "Graph: failed to list attachments for {}: HTTP {} body={}",
                 message_id, status, body
             ));
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(GraphAttachments::default());
         }
         let list: GraphAttachmentList = response.json().await?;
-        let mut out = Vec::with_capacity(list.value.len());
-        let mut inline_images = Vec::new();
+        let mut found = GraphAttachments::default();
         for att in list.value {
             // Skip non-file attachments (referenceAttachment, itemAttachment).
             // We only know how to download bytes for fileAttachment.
@@ -430,6 +445,9 @@ impl OutlookClient {
                 .map(|t| t.eq_ignore_ascii_case("#microsoft.graph.fileAttachment"))
                 .unwrap_or(false);
             if !is_file {
+                found
+                    .unsupported
+                    .push(att.name.unwrap_or_else(|| "attachment".to_string()));
                 continue;
             }
             let mime_type = att
@@ -444,7 +462,9 @@ impl OutlookClient {
             // without a follow-up fetch.
             if let (Some(cid), Some(ref bytes)) = (att.content_id.as_ref(), att.content_bytes.as_ref()) {
                 if !cid.is_empty() && !bytes.is_empty() {
-                    inline_images.push((cid.clone(), mime_type.clone(), bytes.to_string()));
+                    found
+                        .inline_images
+                        .push((cid.clone(), mime_type.clone(), bytes.to_string()));
                 }
             }
 
@@ -453,7 +473,7 @@ impl OutlookClient {
             // Outlook desktop/OWA), so filtering here silently drops them.
             // Inline images embedded in the body are still listed as
             // attachments so users can download the original file if they want.
-            out.push(AttachmentInfo {
+            found.files.push(AttachmentInfo {
                 attachment_id: att.id,
                 filename: att.name.unwrap_or_else(|| "attachment".to_string()),
                 mime_type,
@@ -461,7 +481,7 @@ impl OutlookClient {
                 inline_data: att.content_bytes, // None for large attachments; caller fetches on demand
             });
         }
-        Ok((out, inline_images))
+        Ok(found)
     }
 
     // ── Send ─────────────────────────────────────────────────────────────────
@@ -621,20 +641,18 @@ impl OutlookClient {
     ) -> Result<String> {
         let outgoing = outgoing_attachments(body, attachments);
         let plan = plan_outgoing(&outgoing)?;
-        // Too much for one request: the text goes in the update, and the
-        // draft's attachments are replaced one by one after it.
-        let bare = (!plan.single_request).then(|| body_without_inline_images(body));
-        let (body, attachments) = match &bare {
-            Some(bare) => (bare, &[][..]),
-            None => (body, attachments),
-        };
+        // The text goes in the update, and the draft's attachments are replaced
+        // one by one after it, whatever their size: `attachments` is not a
+        // property Graph documents for this PATCH, and a payload without any
+        // would leave at the provider a file removed here.
+        let bare = body_without_inline_images(body);
         let payload =
             crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
                 cc_emails,
                 subject,
-                body,
-                attachments,
+                body: &bare,
+                attachments: &[],
             });
         let url = format!(
             "{}/me/messages/{}",
@@ -647,10 +665,8 @@ impl OutlookClient {
             })
             .await?;
         let msg: GraphMessage = response.json().await?;
-        if !plan.single_request {
-            self.remove_attachments(&msg.id).await?;
-            self.add_attachments(&msg.id, &outgoing, &plan).await?;
-        }
+        self.remove_attachments(&msg.id).await?;
+        self.add_attachments(&msg.id, &outgoing, &plan).await?;
         Ok(msg.id)
     }
 
@@ -985,12 +1001,15 @@ impl OutlookClient {
         Ok(())
     }
 
-    pub async fn list_drafts(&self) -> Result<Vec<crate::models::ProviderDraft>> {
+    pub async fn list_drafts(
+        &self,
+        known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<crate::sync::draft_plan::ProviderDraftPull> {
         // Enumerate the whole Drafts folder. This must be exhaustive: the ids
         // become the keep-list for `prune_provider_drafts`, so stopping at the
         // first page would delete every draft past it on each sync.
         let mut next_url = Some(format!("{}/me/mailFolders/drafts/messages?$top=100", self.base_url));
-        let mut out = Vec::new();
+        let mut messages = Vec::new();
         let mut pages = 0usize;
         while let Some(url) = next_url.take() {
             // Bail rather than truncate: a partial list would make the prune
@@ -1004,32 +1023,103 @@ impl OutlookClient {
             }
             let response = self.send_get_with_retry(&url, "list drafts").await?;
             let list: GraphMessageDraftList = response.json().await?;
-            for msg in list.value {
-                let provider_draft_id = msg.id.clone();
-                let (email, _cat) = parse_message(msg);
-                // Graph draft bodies are HTML; split so the composer renders the
-                // rich source instead of escaping it as literal text.
-                let (body, body_html) = crate::util::html::split_draft_body(&email.body);
-                out.push(crate::models::ProviderDraft {
-                    provider_draft_id,
-                    to_addresses: email.recipients,
-                    cc_addresses: email.cc,
-                    subject: email.subject,
-                    body,
-                    body_html,
-                    // Graph stamps `receivedDateTime` on a draft when it is saved.
-                    updated_at: Some(email.timestamp),
-                    // Graph returns full draft bodies in the listing itself, so
-                    // there is no per-draft read to skip and no token to track.
-                    provider_message_id: None,
-                    in_reply_to: None,
-                });
-            }
+            messages.extend(list.value);
             // `@odata.nextLink` is a complete URL carrying $skiptoken state —
             // follow it verbatim rather than rebuilding the query.
             next_url = list.next_link.filter(|link| !link.is_empty());
         }
-        Ok(out)
+
+        // The listing carries full bodies, but attachments take a call each,
+        // so only drafts whose `changeKey` moved are looked at.
+        let listed: Vec<crate::sync::draft_plan::ListedDraft> = messages
+            .iter()
+            .map(|msg| crate::sync::draft_plan::ListedDraft {
+                provider_draft_id: msg.id.clone(),
+                change_token: msg.change_key.clone(),
+            })
+            .collect();
+        let plan = crate::sync::draft_plan::plan_draft_fetches(&listed, known_change_tokens);
+        let mut changed = Vec::with_capacity(plan.to_fetch.len());
+        for msg in messages {
+            if !plan.to_fetch.contains(&msg.id) {
+                continue;
+            }
+            let provider_draft_id = msg.id.clone();
+            let change_token = msg.change_key.clone();
+            // Its attachments are unknown, and a draft stored without them
+            // would lose them upstream on the next edit. It stays listed, so
+            // it is neither imported nor pruned this pass.
+            let attachments = match self.draft_attachments(&msg).await {
+                Ok(attachments) => attachments,
+                Err(e) => {
+                    self.log(&format!(
+                        "Graph: could not list the attachments of draft {}: {e}",
+                        msg.id
+                    ));
+                    continue;
+                }
+            };
+            let (email, _cat) = parse_message(msg);
+            // Graph draft bodies are HTML; split so the composer renders the
+            // rich source instead of escaping it as literal text.
+            let (body, body_html) = crate::util::html::split_draft_body(&email.body);
+            changed.push(crate::models::ProviderDraft {
+                provider_draft_id,
+                to_addresses: email.recipients,
+                cc_addresses: email.cc,
+                subject: email.subject,
+                body,
+                body_html,
+                // Graph stamps `receivedDateTime` on a draft when it is saved.
+                updated_at: Some(email.timestamp),
+                provider_message_id: change_token,
+                in_reply_to: None,
+                attachments,
+            });
+        }
+        Ok(crate::sync::draft_plan::ProviderDraftPull {
+            changed,
+            present_ids: plan.present_ids,
+        })
+    }
+
+    /// Every attachment of a draft, the ones Graph has no bytes for included.
+    /// Skipping those, as mail does, would make the draft look complete, and
+    /// updating a draft removes every attachment it has upstream.
+    ///
+    /// `hasAttachments` leaves out inline attachments, so `false` only settles
+    /// it for a body that references none.
+    async fn draft_attachments(&self, msg: &GraphMessage) -> Result<Vec<crate::models::ProviderDraftAttachment>> {
+        let references_inline = msg
+            .body
+            .as_ref()
+            .and_then(|body| body.content.as_deref())
+            .is_some_and(|content| content.contains("cid:"));
+        if msg.has_attachments == Some(false) && !references_inline {
+            return Ok(Vec::new());
+        }
+        let found = self.list_attachments(&msg.id).await?;
+        let files = found
+            .files
+            .into_iter()
+            .map(|att| crate::models::ProviderDraftAttachment {
+                message_id: msg.id.clone(),
+                attachment_id: att.attachment_id,
+                filename: att.filename,
+                mime_type: att.mime_type,
+                inline_data: att.inline_data,
+            });
+        let unsupported = found
+            .unsupported
+            .into_iter()
+            .map(|filename| crate::models::ProviderDraftAttachment {
+                message_id: msg.id.clone(),
+                attachment_id: String::new(),
+                filename,
+                mime_type: "application/octet-stream".to_string(),
+                inline_data: None,
+            });
+        Ok(files.chain(unsupported).collect())
     }
 
     // ── Attachment bytes ─────────────────────────────────────────────────────
@@ -1749,16 +1839,9 @@ impl EmailProvider for OutlookClient {
 
     async fn list_drafts(
         &self,
-        _known_change_tokens: &std::collections::HashMap<String, String>,
+        known_change_tokens: &std::collections::HashMap<String, String>,
     ) -> Result<crate::sync::draft_plan::ProviderDraftPull> {
-        // Graph hands back full draft bodies in one listing call, so there is
-        // no N+1 to avoid — every listed draft is reported as changed.
-        let drafts = self.list_drafts().await?;
-        let present_ids = drafts.iter().map(|d| d.provider_draft_id.clone()).collect();
-        Ok(crate::sync::draft_plan::ProviderDraftPull {
-            changed: drafts,
-            present_ids,
-        })
+        self.list_drafts(known_change_tokens).await
     }
 }
 
@@ -2595,7 +2678,7 @@ mod tests {
         let draft = |id: &str, subject: &str| {
             format!(
                 r#"{{"id":"{id}","conversationId":"c-{id}","subject":"{subject}",
-                   "receivedDateTime":"2026-07-01T10:00:00Z","isRead":false,
+                   "receivedDateTime":"2026-07-01T10:00:00Z","isRead":false,"hasAttachments":false,
                    "body":{{"contentType":"html","content":"<p>hi</p>"}},
                    "toRecipients":[{{"emailAddress":{{"address":"dest@example.com","name":"D"}}}}]}}"#
             )
@@ -2623,7 +2706,6 @@ mod tests {
             .await;
 
         let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
-        // Fully qualified: the inherent `list_drafts` takes no arguments.
         let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
             .await
             .expect("pull");
@@ -2634,6 +2716,228 @@ mod tests {
             "page 2 drafts must reach the prune keep-list"
         );
         assert_eq!(pull.changed.len(), 2, "both pages' drafts are returned as content");
+    }
+
+    /// Mount a one-page Drafts listing.
+    async fn mount_drafts(server: &wiremock::MockServer, value: serde_json::Value) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("GET"))
+            .and(path("/me/mailFolders/drafts/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": value })))
+            .mount(server)
+            .await;
+    }
+
+    fn draft_json(id: &str, change_key: &str, has_attachments: bool, html: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "changeKey": change_key,
+            "conversationId": format!("c-{id}"),
+            "subject": "With a file",
+            "receivedDateTime": "2026-07-01T10:00:00Z",
+            "isRead": false,
+            "hasAttachments": has_attachments,
+            "body": { "contentType": "html", "content": html },
+            "toRecipients": [{ "emailAddress": { "address": "dest@example.com", "name": "D" } }],
+        })
+    }
+
+    async fn attachment_listings(server: &wiremock::MockServer) -> usize {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/attachments"))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_draft_reports_its_attachments_under_its_own_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([draft_json("d-1", "ck-1", true, "<p>hi</p>")]),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/d-1/attachments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+                { "@odata.type": "#microsoft.graph.fileAttachment", "id": "att-1", "name": "report.pdf",
+                  "contentType": "application/pdf", "size": 2048, "contentBytes": "aGk=" },
+                { "@odata.type": "#microsoft.graph.fileAttachment", "id": "att-2", "name": "large.zip",
+                  "contentType": "application/zip", "size": 9000000 },
+            ]})))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        let draft = &pull.changed[0];
+        assert_eq!(draft.provider_message_id.as_deref(), Some("ck-1"), "the change token");
+        assert_eq!(draft.attachments.len(), 2);
+        assert_eq!(draft.attachments[0].message_id, "d-1", "a Graph draft is a message");
+        assert_eq!(draft.attachments[0].filename, "report.pdf");
+        assert_eq!(draft.attachments[0].inline_data.as_deref(), Some("aGk="));
+        assert_eq!(draft.attachments[1].attachment_id, "att-2");
+        assert_eq!(draft.attachments[1].inline_data, None, "fetched on demand");
+    }
+
+    #[tokio::test]
+    async fn a_draft_with_no_attachments_costs_no_extra_call() {
+        let server = wiremock::MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([draft_json("d-1", "ck-1", false, "<p>hi</p>")]),
+        )
+        .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert!(pull.changed[0].attachments.is_empty());
+        assert_eq!(attachment_listings(&server).await, 0);
+    }
+
+    #[tokio::test]
+    async fn an_inline_only_draft_is_asked_for_its_attachments() {
+        // `hasAttachments` leaves inline attachments out, and updating a draft
+        // removes every attachment it has.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([draft_json("d-1", "ck-1", false, r#"<img src="cid:logo">"#)]),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/d-1/attachments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+                { "@odata.type": "#microsoft.graph.fileAttachment", "id": "att-1", "name": "logo.png",
+                  "contentType": "image/png", "contentId": "logo", "isInline": true, "contentBytes": "aGk=" },
+            ]})))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(pull.changed[0].attachments[0].filename, "logo.png");
+    }
+
+    #[tokio::test]
+    async fn a_non_file_attachment_is_reported_with_no_way_to_download_it() {
+        // Mail skips these. A draft must not: it would look complete, and the
+        // next edit would delete the attachment upstream.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([draft_json("d-1", "ck-1", true, "<p>hi</p>")]),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/d-1/attachments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "value": [
+                { "@odata.type": "#microsoft.graph.itemAttachment", "id": "att-1", "name": "Forwarded" },
+            ]})))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        let attachment = &pull.changed[0].attachments[0];
+        assert_eq!(attachment.filename, "Forwarded");
+        assert_eq!(attachment.attachment_id, "");
+        assert_eq!(attachment.inline_data, None);
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_draft_is_not_asked_for_its_attachments_again() {
+        let server = wiremock::MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([draft_json("d-1", "ck-1", true, "<p>hi</p>")]),
+        )
+        .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let known = [("d-1".to_string(), "ck-1".to_string())].into_iter().collect();
+        let pull = EmailProvider::list_drafts(&client, &known).await.expect("pull");
+
+        assert!(pull.changed.is_empty());
+        assert_eq!(
+            pull.present_ids,
+            vec!["d-1".to_string()],
+            "still kept by the prune pass"
+        );
+        assert_eq!(attachment_listings(&server).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_draft_listed_without_a_change_key_is_always_read() {
+        let server = wiremock::MockServer::start().await;
+        let mut draft = draft_json("d-1", "unused", false, "<p>hi</p>");
+        draft.as_object_mut().expect("object").remove("changeKey");
+        mount_drafts(&server, serde_json::json!([draft])).await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let known = [("d-1".to_string(), "ck-1".to_string())].into_iter().collect();
+        let pull = EmailProvider::list_drafts(&client, &known).await.expect("pull");
+
+        assert_eq!(pull.changed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_draft_whose_attachments_cannot_be_listed_is_left_for_the_next_pull() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        mount_drafts(
+            &server,
+            serde_json::json!([
+                draft_json("d-1", "ck-1", true, "<p>hi</p>"),
+                draft_json("d-2", "ck-2", false, "<p>hi</p>")
+            ]),
+        )
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/me/messages/d-1/attachments"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("{}"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        let changed: Vec<&str> = pull.changed.iter().map(|d| d.provider_draft_id.as_str()).collect();
+        assert_eq!(changed, vec!["d-2"], "it must not be stored as attachment-free");
+        assert_eq!(
+            pull.present_ids,
+            vec!["d-1".to_string(), "d-2".to_string()],
+            "and it is still upstream, so it must not be pruned"
+        );
     }
 
     #[tokio::test]
@@ -2734,6 +3038,7 @@ mod tests {
     fn category_maps_focused_to_primary() {
         let msg = GraphMessage {
             id: "m1".to_string(),
+            change_key: None,
             conversation_id: Some("c1".to_string()),
             internet_message_id: None,
             subject: Some("hi".to_string()),
@@ -2777,6 +3082,7 @@ mod tests {
     fn category_maps_other_to_updates() {
         let msg = GraphMessage {
             id: "m1".to_string(),
+            change_key: None,
             conversation_id: None, // also tests thread_id fallback
             internet_message_id: None,
             subject: None,
@@ -3905,6 +4211,120 @@ mod tests {
             let patch: serde_json::Value =
                 serde_json::from_slice(&requests_to(&server, "PATCH", "/me/messages/d1").await[0].body).unwrap();
             assert!(patch.get("attachments").is_none(), "{patch}");
+        });
+    }
+
+    #[test]
+    fn updating_a_draft_with_a_small_attachment_replaces_its_attachments() {
+        // The update carries the text only: `attachments` is not a property
+        // Graph documents for it, so what it does to a draft's files is unknown.
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(
+                &server,
+                "PATCH",
+                "/me/messages/d1",
+                200,
+                serde_json::json!({ "id": "d1" }),
+            )
+            .await;
+            mount_json(
+                &server,
+                "GET",
+                "/me/messages/d1/attachments",
+                200,
+                serde_json::json!({ "value": [{ "id": "old-1" }] }),
+            )
+            .await;
+            Mock::given(method("DELETE"))
+                .and(path("/me/messages/d1/attachments/old-1"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&server)
+                .await;
+            mount_json(
+                &server,
+                "POST",
+                "/me/messages/d1/attachments",
+                201,
+                serde_json::json!({ "id": "new-1" }),
+            )
+            .await;
+
+            client_for(&server)
+                .update_draft(
+                    "d1",
+                    &["them@example.com".to_string()],
+                    &[],
+                    "Files",
+                    &EmailBody::plain("draft").without_footer(),
+                    &[file("note.txt", 1024)],
+                )
+                .await
+                .expect("updated");
+
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "PATCH /me/messages/d1",
+                    "GET /me/messages/d1/attachments",
+                    "DELETE /me/messages/d1/attachments/old-1",
+                    "POST /me/messages/d1/attachments",
+                ]
+            );
+            let patch: serde_json::Value =
+                serde_json::from_slice(&requests_to(&server, "PATCH", "/me/messages/d1").await[0].body).unwrap();
+            assert!(patch.get("attachments").is_none(), "{patch}");
+        });
+    }
+
+    #[test]
+    fn updating_a_draft_to_no_attachments_removes_them_upstream() {
+        // Left to the update alone, a file taken off the draft here stayed at
+        // the provider and came back with the next pull.
+        with_log_seam(async {
+            let server = MockServer::start().await;
+            mount_json(
+                &server,
+                "PATCH",
+                "/me/messages/d1",
+                200,
+                serde_json::json!({ "id": "d1" }),
+            )
+            .await;
+            mount_json(
+                &server,
+                "GET",
+                "/me/messages/d1/attachments",
+                200,
+                serde_json::json!({ "value": [{ "id": "old-1" }] }),
+            )
+            .await;
+            Mock::given(method("DELETE"))
+                .and(path("/me/messages/d1/attachments/old-1"))
+                .respond_with(ResponseTemplate::new(204))
+                .mount(&server)
+                .await;
+
+            client_for(&server)
+                .update_draft(
+                    "d1",
+                    &["them@example.com".to_string()],
+                    &[],
+                    "No files",
+                    &EmailBody::plain("draft").without_footer(),
+                    &[],
+                )
+                .await
+                .expect("updated");
+
+            assert_eq!(
+                requests(&server).await,
+                vec![
+                    "PATCH /me/messages/d1",
+                    "GET /me/messages/d1/attachments",
+                    "DELETE /me/messages/d1/attachments/old-1",
+                ]
+            );
         });
     }
 

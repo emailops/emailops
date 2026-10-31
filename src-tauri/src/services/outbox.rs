@@ -188,7 +188,7 @@ pub async fn queue_outgoing(
     if let Some(draft) = &draft {
         message
             .attachments
-            .extend(crate::services::emails::load_draft_attachments(&draft.attachments)?);
+            .extend(crate::services::emails::load_draft_attachments(db, &draft.attachments)?);
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -758,6 +758,52 @@ mod tests {
         let restored = cancel_outbox_message(&db, "acc-1", &entry.id, NOW).unwrap();
         assert_eq!(restored.attachments[1].filename, "agenda.txt");
         assert_eq!(restored.attachments[1].data, "YWdlbmRh");
+    }
+
+    // A pulled attachment that has not been downloaded yet: queueing would send
+    // the message without it and delete the draft that still holds it upstream.
+    #[tokio::test]
+    async fn a_draft_missing_a_pulled_file_is_not_queued_and_stays() {
+        let (db, _fake) = setup();
+        let draft = db
+            .save_user_draft(&crate::models::SaveDraftRequest {
+                id: None,
+                email_id: None,
+                account_id: "acc-1".into(),
+                to_addresses: vec!["recipient@example.com".into()],
+                cc_addresses: vec![],
+                subject: "Lunch".into(),
+                body: "Friday?".into(),
+                body_html: None,
+                provider_draft_id: None,
+                attachments: None,
+            })
+            .unwrap();
+        db.replace_draft_attachments(
+            &draft.id,
+            &[crate::models::DraftAttachment {
+                id: String::new(),
+                draft_id: draft.id.clone(),
+                file_path: "attachments/acc-1/drafts/not-here-yet.pdf".into(),
+                filename: "report.pdf".into(),
+                mime_type: "application/pdf".into(),
+            }],
+        )
+        .unwrap();
+
+        let result = queue_outgoing(
+            &db,
+            new_message(),
+            OutboxSchedule::At { send_at: NOW + 60 },
+            Some(&draft.id),
+            None,
+            NOW,
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::InvalidInput(_))), "got {result:?}");
+        assert!(db.get_draft(&draft.id).unwrap().is_some(), "the draft stays");
+        assert!(list_outbox(&db, None).unwrap().is_empty(), "nothing was queued");
     }
 
     // A draft is a per-account record: a message of one account must not

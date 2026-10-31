@@ -4178,3 +4178,28 @@ stop the history below it for good. *The seven-day window of the failed-download
 would wait a week for such a message. *Filing failed folder downloads on that list*: it has no
 mailbox column, and the provider's own parse cannot always say which folder a message is in.
 *Deleting a vanished row with no Message-ID*: it hid live mail that was only moved.
+
+## 2026-10-31 — A pulled draft holds its attachments, and a missing file holds the draft back
+
+**Decision:** A draft pulled from Gmail or Outlook stores its attachments as files under
+`attachments/<account>/drafts/`. While one of them is not on disk, because the download
+failed or the provider has no bytes to give (Outlook item and reference attachments), the
+draft is not pushed, sent or queued: edits stay local until the file arrives or the user
+removes the attachment. Outlook draft updates now always replace attachments by list, delete
+and add, which widens the 2026-09-30 entry, where that happened only past one request.
+**Context:** A draft is pushed back with exactly the files stored locally, so a draft pulled
+without them lost them at the provider on the first edit. Graph's update does not document
+`attachments` among its properties, and the payload omitted the key for an empty list, so a
+removal never reached Outlook and the next pull brought the attachment back.
+**Rejected:**
+- *Not storing a draft until all its files are here*: a draft holding something the app
+  cannot store would never appear, and the older local row could still be edited and pushed.
+- *Pushing without the missing file*: that is the loss being fixed.
+- *A `pending` column*: a row whose file is not there says the same with no migration, and
+  reading it already fails on every push and send path.
+- *Clearing the stored change tokens in a migration*: an account preference does it without
+  tying the release to a schema version.
+**Limit:** inline images come back as ordinary attachments, because a draft row keeps no
+content id: their bytes survive, but an Outlook `cid:` reference in the body stops resolving
+after an edit, and a Gmail draft shows the image in the body and as an attachment. Each push
+drops the change token, so the next pull downloads the draft's files again to compare them.

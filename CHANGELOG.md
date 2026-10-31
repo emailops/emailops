@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows an error with Retry instead of a blank window.
 - Dates and the labels of the list, the thread view and the composers follow the
   app language. The Drafts view shows when drafts fail to load or delete.
+- **Drafts from Gmail and Outlook keep their attachments.** A draft written
+  elsewhere now arrives with its files, and editing or sending it keeps them.
+  Before, the first edit removed them from the provider and the send went out
+  without them. Until a file has been downloaded, the draft cannot be sent, and
+  your edits wait here without touching the provider's copy.
 
 ## [0.6.17] — 2026-10-29
 
