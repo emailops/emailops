@@ -80,6 +80,8 @@ export function ReadingPane({
   // inactive ones are `invisible`, not `hidden`, so the viewer keeps its size
   // and does not re-lay out the document on return.
   const attachmentTabs = tabs.filter((tab) => tab.type === 'attachment');
+  // Compose tabs too: what the user typed lives in the tab's own component.
+  const composeTabs = tabs.filter((tab) => tab.type === 'compose');
 
   return (
     <div className={className}>
@@ -105,9 +107,12 @@ export function ReadingPane({
             <AttachmentTabView tab={tab} onClose={closeActive} />
           </div>
         ))}
-        {activeTab?.type === 'attachment' ? null : activeTab?.type === 'compose' ? (
-          <ComposeTabView tab={activeTab} accounts={accounts} onClose={() => onCloseTab(activeTab.id)} />
-        ) : (
+        {composeTabs.map((tab) => (
+          <div key={tab.id} className={`absolute inset-0 flex flex-col ${tab.id === activeTabId ? '' : 'invisible'}`}>
+            <ComposeTabView tab={tab} accounts={accounts} onClose={() => onCloseTab(tab.id)} />
+          </div>
+        ))}
+        {activeTab?.type === 'attachment' || activeTab?.type === 'compose' ? null : (
           <EmailView
             threadEmails={shownThread}
             isLoading={shownIsLoading}

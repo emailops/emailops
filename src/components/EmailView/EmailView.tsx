@@ -251,6 +251,7 @@ export function EmailView({
   const latestEmailId = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1].id : '';
   const emailTags = useTagStore((s) => s.tagsByEmail[latestEmailId] || EMPTY_TAGS);
   const latestEmailForEffect = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1] : null;
+  const threadKey = latestEmailForEffect ? `${latestEmailForEffect.accountId}:${latestEmailForEffect.threadId}` : '';
   // Read inside the draft-restore effect, which must run once per thread (keyed
   // on the latest email) rather than on every refresh of these values.
   const threadEmailsRef = useRef(threadEmails);
@@ -327,14 +328,15 @@ export function EmailView({
     return match?.id ?? null;
   }, [threadEmails, searchQuery]);
 
-  // Reset compose state when the user moves to a different thread / a new
-  // latest message. Keyed on the latest email's ID, NOT its object identity:
-  // refreshThread (after a send, and on sync batch/complete events) replaces
-  // threadEmails with fresh object identities even when the content is
-  // unchanged, and an identity-keyed reset closed the reply box the moment
+  // Reset compose state when the user moves to a different thread. Keyed on
+  // the thread, NOT its latest message: a sync that brings a new message into
+  // the open thread must not close what the user is writing. Nor on object
+  // identity: refreshThread (after a send, and on sync batch/complete events)
+  // replaces threadEmails with fresh object identities even when the content
+  // is unchanged, and an identity-keyed reset closed the reply box the moment
   // it opened ("clicking Reply All does nothing").
   useEffect(() => {
-    if (!latestEmailId) {
+    if (!threadKey) {
       setIsReplyOpen(false);
       setReplyBody('');
       setDraftSources([]);
@@ -354,7 +356,7 @@ export function EmailView({
     setThreadSearchQuery('');
     setThreadMatchIdx(0);
     setOccurrenceCounts({});
-  }, [latestEmailId]);
+  }, [threadKey]);
 
   // Chat-generated reply draft: once the matching thread is loaded, open
   // the inline ReplyCompose with the AI body prepended on top of the
@@ -779,6 +781,8 @@ export function EmailView({
         {isReplyOpen && (
           <div className="min-h-0 overflow-y-auto">
             <ReplyCompose
+              // Recipients are worked out on mount, and a forward has none of the reply's.
+              key={replyMode === 'forward' ? 'forward' : 'reply'}
               email={latestEmail}
               threadEmails={threadEmails}
               accounts={accounts}
