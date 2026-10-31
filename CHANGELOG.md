@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI drafts stay in one language.** A reply is written in the language of the
+  message it answers, greeting and closing included, whatever the language of
+  your instructions, your past messages or the earlier messages in the thread.
+  A note for a missing fact comes in that language too.
+- **AI drafts no longer sign twice.** When your signature applies, a draft stops
+  at its closing line and the app adds the signature.
+- The "Sent with EmailOps" line is no longer read as part of a message, so it
+  stays out of AI drafts and of the text a forward quotes.
+
 - **The chat no longer skips a tool the local model called slightly wrong.** A
   call one brace short used to run nothing, and the answer made up a result.
 - **Forwarding is safer.** Send waits for the forwarded files, and files or text
