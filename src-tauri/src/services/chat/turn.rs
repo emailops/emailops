@@ -366,6 +366,7 @@ const SOURCE_FRAMING_CHARS: usize = 100;
 /// failed). Returned with the trace entries of the parts it read.
 #[allow(clippy::too_many_arguments)]
 async fn fit_open_document(
+    db: &Database,
     provider: &dyn AIProvider,
     doc: &super::open_document::OpenDocument,
     question: &str,
@@ -392,8 +393,17 @@ async fn fit_open_document(
         emit_log("info", &format!("open document: read part {done} of {total}"));
     };
     let is_cancelled = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-    let (notes, calls) =
-        read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await;
+    let (notes, calls) = read_document_in_parts(
+        db,
+        provider,
+        doc,
+        question,
+        &reading,
+        slot_chars,
+        &on_part,
+        &is_cancelled,
+    )
+    .await;
     let fitted = match notes {
         Some(notes) => notes.shortened(slot_chars),
         None => {
@@ -4990,6 +5000,7 @@ async fn run_chat_turn_inner(
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
         let run = super::planner::plan_search(
+            &db,
             provider.as_ref(),
             &template,
             &user_email,
@@ -5392,6 +5403,7 @@ async fn run_chat_turn_inner(
         let shorter_ambient = match (&ambient_context, &ambient_source, plan.open_thread_chars) {
             (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => {
                 let (fitted, calls) = fit_open_document(
+                    &db,
                     provider.as_ref(),
                     doc,
                     &user_question,
@@ -9063,7 +9075,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "what is the exit fee?",
@@ -9089,7 +9103,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "q",
@@ -9112,7 +9128,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "q",

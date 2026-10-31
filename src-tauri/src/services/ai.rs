@@ -7,8 +7,8 @@ const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
 use crate::ai::provider::{
-    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ProviderType,
-    ToolStreamResult,
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, EmbeddingResult, ModelInfo,
+    ProviderType, ToolStreamResult,
 };
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
@@ -1295,6 +1295,48 @@ impl AiService {
         )
     }
 
+    /// Record a completion the provider charged for. A local backend charges
+    /// nothing and adds no row: these calls run once per classified email, and
+    /// a row per call would flood the usage table without informing the budget.
+    fn record_charged_completion(
+        db: &Database,
+        provider: &dyn AIProvider,
+        result: &CompletionResult,
+        operation: &str,
+    ) -> Result<()> {
+        if result.cost_usd <= 0.0 {
+            return Ok(());
+        }
+        Self::record_provider_call(
+            db,
+            provider.provider_type(),
+            &result.model,
+            operation,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.cost_usd,
+        )
+    }
+
+    /// Record an embedding the provider charged for. Only charged embeddings
+    /// get a usage row: a local provider embeds every chunk of every email for
+    /// free, and a row (plus a log event) per chunk would flood the usage table
+    /// without informing the budget.
+    fn record_charged_embedding(db: &Database, provider: &dyn AIProvider, tokens: u32, cost_usd: f64) -> Result<()> {
+        if cost_usd <= 0.0 {
+            return Ok(());
+        }
+        Self::record_provider_call(
+            db,
+            provider.embedding_provider_type(),
+            provider.embedding_model_name(),
+            "embed",
+            tokens,
+            0,
+            cost_usd,
+        )
+    }
+
     /// [`AIProvider::chat_stream_with_tools`] under the budget, for callers
     /// that hold a provider rather than an `AiService` (the chat turn):
     /// refused before the call once the period's spend has reached the
@@ -1362,6 +1404,74 @@ impl AiService {
         Ok(result)
     }
 
+    /// [`AIProvider::complete`] under the budget, recorded as `operation`, for
+    /// callers that hold a provider rather than an `AiService`; see
+    /// [`Self::chat_stream_with_tools`]. The options reach the provider as they
+    /// are.
+    pub async fn complete_metered(
+        db: &Database,
+        provider: &dyn AIProvider,
+        prompt: &str,
+        options: CompletionOptions,
+        operation: &str,
+    ) -> Result<CompletionResult> {
+        Self::ensure_budget(db, provider.provider_type())?;
+        let result = provider.complete(prompt, options).await?;
+        Self::record_charged_completion(db, provider, &result, operation)?;
+        Ok(result)
+    }
+
+    /// [`AIProvider::complete_with_prefix`] under the budget; see
+    /// [`Self::complete_metered`].
+    pub async fn complete_with_prefix_metered(
+        db: &Database,
+        provider: &dyn AIProvider,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+        operation: &str,
+    ) -> Result<CompletionResult> {
+        Self::ensure_budget(db, provider.provider_type())?;
+        let result = provider.complete_with_prefix(prefix, suffix, options).await?;
+        Self::record_charged_completion(db, provider, &result, operation)?;
+        Ok(result)
+    }
+
+    /// The connection test Settings runs on `provider`. A paid call, so what
+    /// it cost is recorded, but not refused for budget: like the probe of an
+    /// embedding model it is one short fixed string the user asked for.
+    pub async fn test_connection(db: &Database, provider: &dyn AIProvider) -> Result<CompletionResult> {
+        let result = provider.complete("Reply with exactly: OK", Default::default()).await?;
+        Self::record_charged_completion(db, provider, &result, "test_connection")?;
+        Ok(result)
+    }
+
+    /// [`AIProvider::embed`] under the budget; see [`Self::complete_metered`].
+    pub async fn embed_metered(db: &Database, provider: &dyn AIProvider, text: &str) -> Result<EmbeddingResult> {
+        Self::ensure_budget(db, provider.embedding_provider_type())?;
+        let result = provider.embed(text).await?;
+        Self::record_charged_embedding(db, provider, result.tokens, result.cost_usd)?;
+        Ok(result)
+    }
+
+    /// [`AIProvider::embed_batch`] under the budget, recorded as one call; see
+    /// [`Self::complete_metered`].
+    pub async fn embed_batch_metered(
+        db: &Database,
+        provider: &dyn AIProvider,
+        texts: &[String],
+    ) -> Result<Vec<EmbeddingResult>> {
+        Self::ensure_budget(db, provider.embedding_provider_type())?;
+        let results = provider.embed_batch(texts).await?;
+        Self::record_charged_embedding(
+            db,
+            provider,
+            results.iter().map(|r| r.tokens).sum(),
+            results.iter().map(|r| r.cost_usd).sum(),
+        )?;
+        Ok(results)
+    }
+
     pub async fn complete(&self, prompt: &str, operation: &str, options: Option<CompletionOptions>) -> Result<String> {
         self.complete_with_prefix("", prompt, operation, options).await
     }
@@ -1410,21 +1520,7 @@ impl AiService {
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-        self.ensure_budget_remaining(self.provider.embedding_provider_type())?;
-        let result = self.provider.embed(text).await?;
-        // Only charged embeddings get a usage row: a local provider embeds
-        // every chunk of every email for free, and a row (plus a log event)
-        // per chunk would flood the usage table without informing the budget.
-        if result.cost_usd > 0.0 {
-            self.record_call(
-                self.provider.embedding_provider_type(),
-                self.provider.embedding_model_name(),
-                "embed",
-                result.tokens,
-                0,
-                result.cost_usd,
-            )?;
-        }
+        let result = Self::embed_metered(&self.db, self.provider.as_ref(), text).await?;
         Ok(result.embedding)
     }
 
@@ -1785,6 +1881,18 @@ mod provider_tests {
     }
 }
 
+/// Charge `cost_usd` to the current period, as an earlier OpenRouter call would.
+#[cfg(test)]
+pub(crate) fn spend_for_testing(db: &Database, cost_usd: f64) {
+    db.connection()
+        .execute(
+            "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
+             VALUES ('openrouter', 'vendor/model', 'chat', 0, 0, ?1, ?2)",
+            rusqlite::params![cost_usd, chrono::Utc::now().timestamp() + 1],
+        )
+        .unwrap();
+}
+
 #[cfg(test)]
 mod budget_tests {
     use super::*;
@@ -2123,17 +2231,6 @@ mod budget_tests {
         assert_eq!(AiService::usage_summary(&db).unwrap().total_calls, 0);
     }
 
-    /// Charge `cost_usd` to the current period, as an earlier OpenRouter call would.
-    fn spend(db: &Database, cost_usd: f64) {
-        db.connection()
-            .execute(
-                "INSERT INTO ai_usage (provider, model, operation, prompt_tokens, completion_tokens, cost_usd, timestamp)
-                 VALUES ('openrouter', 'vendor/model', 'chat', 0, 0, ?1, ?2)",
-                rusqlite::params![cost_usd, chrono::Utc::now().timestamp() + 1],
-            )
-            .unwrap();
-    }
-
     /// The budget is OpenRouter's spend: a user who hit it and moved to a free
     /// local or self-hosted backend must not be refused by it.
     #[tokio::test]
@@ -2144,7 +2241,7 @@ mod budget_tests {
             ProviderType::OpenAiCompatible,
         ] {
             let (svc, fake) = service_with_budget("1.0", FakeAiProvider::new().with_provider_type(kind));
-            spend(&svc.db, 2.0);
+            spend_for_testing(&svc.db, 2.0);
             fake.push_chat_response("local answer");
 
             svc.complete("q", "test", None).await.expect("completion");
@@ -2153,6 +2250,176 @@ mod budget_tests {
                 .await
                 .expect("chat");
         }
+    }
+
+    // ── One-shot calls from callers that hold a provider ────────────────────
+
+    fn openrouter_fake() -> FakeAiProvider {
+        FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter)
+    }
+
+    /// The `(provider, model, operation)` of the only usage row.
+    fn only_usage_row(db: &Database) -> (String, String, String) {
+        db.reader()
+            .query_row("SELECT provider, model, operation FROM ai_usage", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_metered_completion_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let fake = openrouter_fake();
+        fake.push_completion_result(CompletionResult {
+            prompt_tokens: 12,
+            completion_tokens: 3,
+            ..paid_completion("answer", 0.25)
+        });
+
+        let result = AiService::complete_metered(&db, &fake, "q", CompletionOptions::default(), "classify_email")
+            .await
+            .unwrap();
+
+        assert_eq!(result.text, "answer");
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+        assert_eq!(usage.total_prompt_tokens, 12);
+        assert_eq!(usage.total_completion_tokens, 3);
+        assert_eq!(
+            only_usage_row(&db),
+            (
+                "openrouter".to_string(),
+                "fake-model".to_string(),
+                "classify_email".to_string()
+            )
+        );
+    }
+
+    /// The halves reach the provider apart: a backend's prefix cache depends
+    /// on it.
+    #[tokio::test]
+    async fn a_metered_completion_with_a_prefix_records_what_the_provider_charged() {
+        let db = db_with_budget("1.0");
+        let fake = openrouter_fake();
+        fake.push_completion_result(paid_completion("answer", 0.25));
+
+        let result = AiService::complete_with_prefix_metered(
+            &db,
+            &fake,
+            "head",
+            "tail",
+            CompletionOptions::default(),
+            "chat_plan",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.text, "answer");
+        assert_eq!(
+            fake.prefix_completion_calls(),
+            vec![("head".to_string(), "tail".to_string())]
+        );
+        assert_eq!(only_usage_row(&db).2, "chat_plan");
+    }
+
+    /// The call that crosses the budget is kept and recorded; the next one,
+    /// with or without a prefix, never reaches the provider.
+    #[tokio::test]
+    async fn a_metered_completion_is_refused_before_the_call_once_the_budget_is_spent() {
+        let db = db_with_budget("1.0");
+        let fake = openrouter_fake();
+        fake.push_completion_result(paid_completion("crosses", 1.5));
+        let crossing = AiService::complete_metered(&db, &fake, "q", CompletionOptions::default(), "test")
+            .await
+            .expect("the crossing call was paid for");
+        assert_eq!(crossing.text, "crosses");
+
+        let plain = AiService::complete_metered(&db, &fake, "q", CompletionOptions::default(), "test").await;
+        let prefixed =
+            AiService::complete_with_prefix_metered(&db, &fake, "a", "b", CompletionOptions::default(), "test").await;
+
+        assert!(matches!(plain, Err(AppError::BudgetExceeded(_))), "got {plain:?}");
+        assert!(matches!(prefixed, Err(AppError::BudgetExceeded(_))), "got {prefixed:?}");
+        assert_eq!(fake.completion_calls().len(), 1, "no paid call past the budget");
+    }
+
+    /// Local backends must not notice the meter: no refusal, and no usage row
+    /// or log event per classified email.
+    #[tokio::test]
+    async fn a_local_completion_is_neither_refused_nor_recorded() {
+        for kind in [
+            ProviderType::Ollama,
+            ProviderType::LlamaCpp,
+            ProviderType::OpenAiCompatible,
+        ] {
+            let db = db_with_budget("1.0");
+            spend_for_testing(&db, 2.0);
+            let fake = FakeAiProvider::new().with_provider_type(kind);
+            fake.push_completion("one");
+            fake.push_completion("two");
+
+            let plain = AiService::complete_metered(&db, &fake, "q", CompletionOptions::default(), "test").await;
+            let prefixed =
+                AiService::complete_with_prefix_metered(&db, &fake, "a", "b", CompletionOptions::default(), "test")
+                    .await;
+
+            assert_eq!(plain.expect("not refused").text, "one");
+            assert_eq!(prefixed.expect("not refused").text, "two");
+            assert_eq!(
+                AiService::usage_summary(&db).unwrap().total_calls,
+                1,
+                "only the spend row"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_metered_embedding_records_the_charge_and_is_refused_once_the_budget_is_spent() {
+        let db = db_with_budget("0.5");
+        let fake = openrouter_fake().with_embedding_cost(0.5);
+
+        AiService::embed_metered(&db, &fake, "a").await.unwrap();
+        let refused = AiService::embed_metered(&db, &fake, "b").await;
+
+        assert!(matches!(refused, Err(AppError::BudgetExceeded(_))), "got {refused:?}");
+        assert_eq!(fake.embed_calls().len(), 1, "no paid call past the budget");
+        assert_eq!(only_usage_row(&db).2, "embed");
+    }
+
+    #[tokio::test]
+    async fn a_metered_batch_of_embeddings_records_each_charge_once_and_is_refused_as_a_whole() {
+        let db = db_with_budget("0.5");
+        let fake = openrouter_fake().with_embedding_cost(0.25);
+        let texts = ["a".to_string(), "b".to_string()];
+
+        AiService::embed_batch_metered(&db, &fake, &texts).await.unwrap();
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert!((usage.total_cost_usd - 0.5).abs() < 1e-9, "{}", usage.total_cost_usd);
+
+        let refused = AiService::embed_batch_metered(&db, &fake, &texts).await;
+        assert!(matches!(refused, Err(AppError::BudgetExceeded(_))), "got {refused:?}");
+        assert_eq!(fake.embed_calls().len(), 2, "no paid call past the budget");
+    }
+
+    /// The same rule as the probe of an embedding model: one short fixed
+    /// string the user asked for from Settings is not refused, and what it
+    /// cost still counts.
+    #[tokio::test]
+    async fn the_connection_test_is_recorded_and_never_refused() {
+        let db = db_with_budget("1.0");
+        spend_for_testing(&db, 2.0);
+        let fake = openrouter_fake();
+        fake.push_completion_result(paid_completion("OK", 0.25));
+
+        let result = AiService::test_connection(&db, &fake).await.expect("not refused");
+
+        assert_eq!(result.text, "OK");
+        assert_eq!(fake.completion_calls(), vec!["Reply with exactly: OK".to_string()]);
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 2);
+        assert!((usage.total_cost_usd - 2.25).abs() < 1e-9);
     }
 
     /// Server chat with OpenRouter embeddings: only the OpenRouter side is

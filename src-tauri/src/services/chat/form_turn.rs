@@ -195,6 +195,7 @@ pub(super) async fn run_form_fill_turn(
 
     let t_fill = std::time::Instant::now();
     let run: FillRun = fill_form(
+        db,
         provider,
         &template,
         form,
