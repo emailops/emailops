@@ -436,6 +436,8 @@ export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
 export interface PendingChatDraft {
   emailId: string;
   body: string;
+  /** The draft the chat saved for this reply: the composer takes it over. */
+  draftId?: string;
 }
 
 interface EmailStore {

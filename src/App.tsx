@@ -1102,8 +1102,8 @@ function AppInner() {
           // click handler does. `getState()` reads the latest action ref
           // rather than capturing a closure over the not-yet-declared
           // useEmailStore hook above the listener mount.
-          openThreadReply: (accountId, emailId, body) => {
-            setPendingChatDraft({ emailId, body });
+          openThreadReply: (accountId, emailId, body, draftId) => {
+            setPendingChatDraft({ emailId, body, draftId });
             useEmailStore.getState().navigateToEmail(accountId, emailId);
           },
           // Switch away from the chat view so the compose tab the chat just
