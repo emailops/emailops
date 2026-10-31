@@ -8,8 +8,11 @@
 // thread behind it. An explicit registration replaces guessing from CSS
 // classes, which silently missed portalled menus and absolutely positioned
 // popovers (docs/DECISIONS.md, "Overlays register themselves").
+//
+// The registry also knows the order they opened in: Escape belongs to the top
+// overlay alone, so closing a confirmation does not close the dialog under it.
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useId } from 'react';
 import { create } from 'zustand';
 
 interface OverlayStore {
@@ -28,12 +31,21 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
 /** Pure selector: an overlay is on screen. */
 export const anyOverlayOpen = (state: Pick<OverlayStore, 'count'>): boolean => state.count > 0;
 
+/** The overlays on screen, oldest first. */
+const stack: string[] = [];
+
 /** Register the calling component as an overlay while `open` is true (and it
- *  is mounted). */
-export function useOverlay(open = true): void {
+ *  is mounted). Returns whether it is the top overlay right now. */
+export function useOverlay(open = true): () => boolean {
+  const id = useId();
   useEffect(() => {
     if (!open) return;
+    stack.push(id);
     useOverlayStore.getState().push();
-    return () => useOverlayStore.getState().pop();
-  }, [open]);
+    return () => {
+      stack.splice(stack.indexOf(id), 1);
+      useOverlayStore.getState().pop();
+    };
+  }, [open, id]);
+  return useCallback(() => stack[stack.length - 1] === id, [id]);
 }

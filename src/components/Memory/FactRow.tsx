@@ -1,6 +1,6 @@
-import { format } from 'date-fns';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import { useMemoryStore } from '@/stores/memoryStore';
 import type { MemoryFact } from '@/types';
 
@@ -17,6 +17,7 @@ interface FactRowProps {
  */
 export function FactRow({ fact, selected, onSelect }: FactRowProps) {
   const { t } = useTranslation(['memory']);
+  const fmt = useFormatters();
   const { promoteFact, retireFact, updateFact, deleteFact } = useMemoryStore();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(fact.fact);
@@ -83,7 +84,7 @@ export function FactRow({ fact, selected, onSelect }: FactRowProps) {
               {' · '}
               confidence {fact.confidence.toFixed(2)}
             </span>
-            <span>· {format(new Date(fact.createdAt * 1000), 'MMM d, yyyy')}</span>
+            <span>· {fmt.date(fact.createdAt)}</span>
             {fact.source !== 'extraction' && (
               <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 uppercase text-[10px]">
                 {fact.source}

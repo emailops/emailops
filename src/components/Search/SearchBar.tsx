@@ -526,7 +526,7 @@ export function SearchBar({
                       </div>
                     </div>
                     <div className={`text-sm ${emailWithScore.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
-                      {emailWithScore.subject || '(No subject)'}
+                      {emailWithScore.subject || t('common:labels.noSubject')}
                     </div>
                     <div className="text-sm text-gray-400 truncate">{emailWithScore.snippet}</div>
                     {emailWithScore.matchReason && (

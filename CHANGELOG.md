@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included with the app stay off until you switch them on, and if you turned
   skills off they stay off.
 
+### Fixed
+
+- **Forwarding is safer.** Send waits for the forwarded files, and files or text
+  that finish loading after you moved on no longer reach another conversation.
+- **Discard in a compose tab now removes the draft**, after asking. Closing a
+  composer that holds attached files asks first, as drafts keep only the text.
+- Reply All switched to from an open Reply now addresses everyone, and asking
+  the AI for a new draft keeps the recipients of the reply you have open.
+- Escape closes only the top dialog, dialogs keep the keyboard inside them, and
+  a failed send stays on screen however long the message is.
+- Failed or empty lists offer a way forward: Load more works again after an
+  error, and empty lists offer to show all mail, show all categories or sync.
+- A background sync no longer clears an error, the email you navigated to or the
+  list around it, and switching lists during an undo can no longer show the
+  wrong one.
+- The same thread id on two accounts now opens two tabs, and a failed lock check
+  shows an error with Retry instead of a blank window.
+- Dates and the labels of the list, the thread view and the composers follow the
+  app language. The Drafts view shows when drafts fail to load or delete.
+
 ## [0.6.17] — 2026-10-29
 
 ### Added

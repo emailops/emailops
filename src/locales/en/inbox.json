@@ -24,6 +24,15 @@
     "unread": "Unread",
     "empty": "No unread emails"
   },
+  "emptyState": {
+    "syncing": "Syncing emails...",
+    "noSearchResults": "No emails match your search",
+    "noFilterResults": "No emails match the selected filters",
+    "noEmails": "No emails yet — try syncing or adding an account",
+    "showAll": "Show all emails",
+    "showAllCategories": "Show all categories",
+    "syncNow": "Sync now"
+  },
   "noEmailSelected": "No email selected",
   "selectEmailHint": "Select an email from the list to view it here.",
   "categoryFilter": {
@@ -124,7 +133,14 @@
     "unstar": "Remove star",
     "archive": "Archive",
     "moveToInbox": "Move to Inbox",
-    "notSpam": "Not spam — move to Inbox"
+    "notSpam": "Not spam — move to Inbox",
+    "noPreview": "(No preview)",
+    "toLine": "To: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Back",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs",
+    "messageCount_many": "{{count}} msgs"
   },
   "compose": {
     "open": "Compose",

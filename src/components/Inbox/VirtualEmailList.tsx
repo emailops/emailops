@@ -30,6 +30,8 @@ interface VirtualEmailListProps {
   hasMore: boolean;
   isSyncing: boolean;
   emptyStateMessage?: string;
+  /** The way out of the empty state, shown under its message. */
+  emptyStateAction?: { label: string; onClick: () => void };
   onSelectEmail: (email: Email) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
@@ -60,6 +62,7 @@ export function VirtualEmailList({
   hasMore,
   isSyncing,
   emptyStateMessage,
+  emptyStateAction,
   onSelectEmail,
   onLoadMore,
   onAddSenderFilter,
@@ -202,11 +205,19 @@ export function VirtualEmailList({
     };
   }, [scrollContainerRef, resyncVirtualizer]);
 
-  // Scroll focused email into view using the virtualizer (avoids inline ref callbacks)
+  // Scroll focused email into view using the virtualizer (avoids inline ref
+  // callbacks). Once per focus, like the cursor below: the focus outlives a
+  // background refresh, which must not pull the user back to it.
+  const scrolledFocusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusEmailId) return;
+    if (focusEmailId === scrolledFocusRef.current) return;
+    if (!focusEmailId) {
+      scrolledFocusRef.current = null;
+      return;
+    }
     const index = emails.findIndex((e) => e.id === focusEmailId);
     if (index === -1) return;
+    scrolledFocusRef.current = focusEmailId;
     const raf = requestAnimationFrame(() => {
       virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
     });
@@ -239,7 +250,7 @@ export function VirtualEmailList({
   }, [lastVirtualItem?.index, emails.length, hasMore, isLoadingMore, onLoadMore, lastVirtualItem]);
 
   if (emails.length === 0) {
-    const message = emptyStateMessage ?? (isSyncing ? 'Syncing emails...' : 'No emails match the selected filters');
+    const message = emptyStateMessage ?? t(isSyncing ? 'inbox:emptyState.syncing' : 'inbox:emptyState.noFilterResults');
     return (
       <div ref={scrollContainerRef as React.LegacyRef<HTMLDivElement>} className="flex-1 overflow-y-auto">
         <div className="p-8 text-center">
@@ -252,6 +263,15 @@ export function VirtualEmailList({
             />
           </svg>
           <p className="mt-3 text-sm text-gray-500">{message}</p>
+          {emptyStateAction && (
+            <button
+              type="button"
+              onClick={emptyStateAction.onClick}
+              className="mt-3 px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+            >
+              {emptyStateAction.label}
+            </button>
+          )}
         </div>
       </div>
     );
