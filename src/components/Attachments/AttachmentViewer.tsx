@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { EmailBody } from '@/components/EmailView/EmailBody';
 import { useFormatters } from '@/hooks/useFormatters';
 import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
+import { decodeDataUrlText } from '@/lib/download';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment } from '@/types';
@@ -173,12 +175,13 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
           // Keyed by attachment so another PDF opens fitted to width again.
           <PdfViewer key={attachment.id} dataUrl={dataUrl} title={attachment.filename} />
         ) : isHtml ? (
-          <iframe
-            src={dataUrl}
-            className="w-full h-full border-0"
-            sandbox="allow-same-origin"
-            title={attachment.filename}
-          />
+          <div className="h-full overflow-auto p-4">
+            <EmailBody
+              html={decodeDataUrlText(dataUrl)}
+              accountId={attachment.accountId}
+              senderEmail={attachment.senderEmail}
+            />
+          </div>
         ) : isImage ? (
           <div className="flex items-center justify-center h-full p-6 overflow-auto">
             <img src={dataUrl} alt={attachment.filename} className="max-w-full max-h-full object-contain" />

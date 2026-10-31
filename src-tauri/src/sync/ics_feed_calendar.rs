@@ -22,6 +22,7 @@ use crate::models::CalendarAttendee;
 use crate::services::calendar::ics::{
     parse_ics_time, parse_vcalendar, unescape_text, with_iana_tzid, ParsedCalendar, RawVEvent,
 };
+use crate::services::unsubscribe::{host_may_be_public, PublicOnlyResolver};
 use crate::sync::calendar_provider::{
     CalendarProvider, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -48,16 +49,38 @@ pub trait IcsFetcher: Send + Sync {
 
 /// Production fetcher: https only, shared connect/request timeouts, bounded
 /// body. Failures name the host, never the URL (it carries the feed key).
-pub struct ReqwestIcsFetcher {
-    client: reqwest::Client,
+pub struct ReqwestIcsFetcher;
+
+/// Redirects a feed fetch may follow.
+const MAX_FEED_REDIRECTS: usize = 5;
+
+/// The client for one feed. The user chose the feed's own host, which may be a
+/// server on their network. A redirect was chosen by whoever answered: it is
+/// followed under [`redirect_allowed`], and a name it leads to must resolve to
+/// public addresses. One the client refuses reaches `fetch` as a failed status.
+fn feed_client(feed_host: &str) -> Result<reqwest::Client> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        // `previous` starts with the first request.
+        if redirect_allowed(attempt.url(), attempt.previous().len().saturating_sub(1)) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    crate::sync::http_client::timed_client_builder(crate::sync::http_client::API_REQUEST_TIMEOUT)
+        .redirect(policy)
+        .referer(false)
+        .dns_resolver(Arc::new(PublicOnlyResolver {
+            exempt_host: Some(feed_host.to_string()),
+        }))
+        .build()
+        .map_err(|e| AppError::SyncError(format!("calendar feed {feed_host}: {e}")))
 }
 
-impl Default for ReqwestIcsFetcher {
-    fn default() -> Self {
-        Self {
-            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT),
-        }
-    }
+/// Whether a feed fetch may follow a redirect to `url` after `followed` earlier
+/// ones: https, not a non-public IP literal, within the limit.
+fn redirect_allowed(url: &reqwest::Url, followed: usize) -> bool {
+    followed < MAX_FEED_REDIRECTS && url.scheme() == "https" && host_may_be_public(url)
 }
 
 /// Host part of a feed URL for messages; "feed" when it cannot be parsed.
@@ -77,8 +100,7 @@ impl IcsFetcher for ReqwestIcsFetcher {
             return Err(AppError::InvalidInput("calendar feed URL must use https".into()));
         }
         let host = feed_host(url);
-        let response = self
-            .client
+        let response = feed_client(&host)?
             .get(parsed)
             .header(reqwest::header::ACCEPT, "text/calendar, */*;q=0.1")
             .send()
@@ -1066,6 +1088,99 @@ mod tests {
                 url: "https://cal.example.com/b.ics".into(),
             },
         ]
+    }
+
+    /// A listener that counts who connects, then hangs up: a redirect that
+    /// reaches it shows here whatever scheme it used.
+    async fn connection_counter() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&connections);
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        (port, connections)
+    }
+
+    #[tokio::test]
+    async fn a_redirect_reaches_neither_plain_http_nor_a_private_host() {
+        use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
+
+        let (port, connections) = connection_counter().await;
+        for target in [
+            format!("http://127.0.0.1:{port}/feed.ics"),
+            format!("https://127.0.0.1:{port}/feed.ics"),
+            format!("https://localhost:{port}/feed.ics"),
+        ] {
+            let feed = MockServer::start().await;
+            Mock::given(any())
+                .respond_with(ResponseTemplate::new(302).insert_header("location", target.as_str()))
+                .mount(&feed)
+                .await;
+
+            let outcome = feed_client("127.0.0.1").expect("client").get(feed.uri()).send().await;
+
+            assert_eq!(
+                connections.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "reached {target}"
+            );
+            assert!(!outcome.is_ok_and(|r| r.status().is_success()), "{target}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_feed_the_user_chose_may_live_on_a_private_host() {
+        use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
+
+        let feed = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&feed)
+            .await;
+        let url = format!("http://localhost:{}/feed.ics", feed.address().port());
+
+        let response = feed_client("localhost")
+            .expect("client")
+            .get(url)
+            .send()
+            .await
+            .expect("reached");
+
+        assert!(response.status().is_success());
+    }
+
+    #[test]
+    fn a_redirect_does_not_pass_the_feed_url_on_as_a_referer() {
+        // The URL holds the feed key. The client's `Debug` lists the setting
+        // only when it is on.
+        let client = feed_client("cal.example.com").expect("client");
+        assert!(!format!("{client:?}").contains("referer"), "{client:?}");
+    }
+
+    #[test]
+    fn a_redirect_is_followed_only_to_https_on_a_public_host_within_the_limit() {
+        let cases = [
+            ("https://cal.example.com/a.ics", 0, true),
+            ("https://93.184.216.34/a.ics", 0, true),
+            ("https://cal.example.com/a.ics", MAX_FEED_REDIRECTS - 1, true),
+            ("https://cal.example.com/a.ics", MAX_FEED_REDIRECTS, false),
+            ("http://cal.example.com/a.ics", 0, false),
+            ("ftp://cal.example.com/a.ics", 0, false),
+            ("https://127.0.0.1/a.ics", 0, false),
+            ("https://10.0.0.8/a.ics", 0, false),
+            ("https://192.168.1.1/a.ics", 0, false),
+            ("https://169.254.169.254/latest", 0, false),
+            ("https://[::1]/a.ics", 0, false),
+            ("https://[fd00::1]/a.ics", 0, false),
+        ];
+        for (url, followed, allowed) in cases {
+            let url = reqwest::Url::parse(url).unwrap();
+            assert_eq!(redirect_allowed(&url, followed), allowed, "{url} after {followed}");
+        }
     }
 
     #[tokio::test]

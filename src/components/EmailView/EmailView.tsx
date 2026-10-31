@@ -255,10 +255,10 @@ export function EmailView({
       if (meta.mimeType.startsWith('image/')) {
         setLightboxMeta(meta);
       } else {
-        openAttachmentTab(meta);
+        openAttachmentTab(meta, threadEmails.find((e) => e.id === meta.emailId)?.senderEmail ?? '');
       }
     },
-    [openAttachmentTab],
+    [openAttachmentTab, threadEmails],
   );
 
   const latestEmailId = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1].id : '';

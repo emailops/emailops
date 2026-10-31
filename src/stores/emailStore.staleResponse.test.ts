@@ -226,17 +226,21 @@ describe('openAttachmentTab with a sender-declared MIME type', () => {
 
   it('normalizes the type used for the tab and its data URL', async () => {
     vi.mocked(api.fetchEmailAttachmentBytes).mockResolvedValue('aGk=');
-    await useEmailStore.getState().openAttachmentTab({
-      id: 'att-1',
-      accountId: 'acc',
-      emailId: 'a',
-      providerAttachmentId: 'p1',
-      filename: 'page.html',
-      mimeType: 'Text/HTML; charset=utf-8',
-    } as never);
+    await useEmailStore.getState().openAttachmentTab(
+      {
+        id: 'att-1',
+        accountId: 'acc',
+        emailId: 'a',
+        providerAttachmentId: 'p1',
+        filename: 'page.html',
+        mimeType: 'Text/HTML; charset=utf-8',
+      } as never,
+      'sender@example.com',
+    );
 
     const tab = useEmailStore.getState().tabs[0];
     expect(tab.type === 'attachment' && tab.mimeType).toBe('text/html');
     expect(tab.type === 'attachment' && tab.dataUrl).toBe('data:text/html;base64,aGk=');
+    expect(tab.type === 'attachment' && tab.senderEmail).toBe('sender@example.com');
   });
 });

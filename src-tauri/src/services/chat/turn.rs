@@ -4911,7 +4911,8 @@ async fn run_chat_turn_inner(
     // LATER turn, but the history the model replays carries no tool arguments
     // — so the page to continue is recovered from the previous assistant
     // message's persisted trace.
-    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history))
+        .with_open_thread(ambient_refs.clone());
     if matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. }) {
         emit_log(
             "info",

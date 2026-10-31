@@ -205,7 +205,7 @@ fn parse_https(uri: &str) -> Option<Url> {
 /// False when the URL names a non-public IP literal. A domain name passes
 /// here; [`PublicOnlyResolver`] refuses it at connect time if it resolves
 /// only to non-public addresses.
-fn host_may_be_public(url: &Url) -> bool {
+pub(crate) fn host_may_be_public(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Ipv4(ip)) => is_public_ip(IpAddr::V4(ip)),
         Some(url::Host::Ipv6(ip)) => is_public_ip(IpAddr::V6(ip)),
@@ -341,7 +341,7 @@ pub fn one_click_client() -> Result<reqwest::Client> {
         .connect_timeout(ONE_CLICK_CONNECT_TIMEOUT)
         .timeout(ONE_CLICK_TIMEOUT)
         .redirect(policy)
-        .dns_resolver(Arc::new(PublicOnlyResolver))
+        .dns_resolver(Arc::new(PublicOnlyResolver::default()))
         .user_agent(ONE_CLICK_USER_AGENT)
         .build()
         .map_err(|e| AppError::IoError(format!("could not build the unsubscribe HTTP client: {e}")))
@@ -355,19 +355,31 @@ fn redirect_allowed(url: &Url, followed: usize) -> bool {
 
 /// Resolves names like the system resolver but keeps only public addresses,
 /// so a list domain that points at a private or loopback address is not
-/// reached (including on a redirect).
-struct PublicOnlyResolver;
+/// reached (including on a redirect). `exempt_host` keeps all of its addresses:
+/// it is a host the user named themselves.
+#[derive(Default)]
+pub(crate) struct PublicOnlyResolver {
+    pub(crate) exempt_host: Option<String>,
+}
 
 impl reqwest::dns::Resolve for PublicOnlyResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
+        let exempt = self
+            .exempt_host
+            .as_deref()
+            .is_some_and(|h| h.eq_ignore_ascii_case(&host));
         Box::pin(async move {
             let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
-            let public = public_addrs(resolved);
-            if public.is_empty() {
+            let addrs: Vec<_> = if exempt {
+                resolved.collect()
+            } else {
+                public_addrs(resolved)
+            };
+            if addrs.is_empty() {
                 return Err(format!("{host} resolves only to non-public addresses").into());
             }
-            Ok(Box::new(public.into_iter()) as reqwest::dns::Addrs)
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
 }
@@ -1005,6 +1017,6 @@ mod address_tests {
     async fn a_name_that_resolves_only_to_loopback_is_refused() {
         use reqwest::dns::Resolve;
         let name: reqwest::dns::Name = "localhost".parse().unwrap();
-        assert!(PublicOnlyResolver.resolve(name).await.is_err());
+        assert!(PublicOnlyResolver::default().resolve(name).await.is_err());
     }
 }
