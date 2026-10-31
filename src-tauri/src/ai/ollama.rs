@@ -233,6 +233,9 @@ struct OllamaChatStreamChunk {
     eval_count: Option<u32>,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
 }
 
 /// Splits an NDJSON byte stream into lines. Network chunks can end mid-line,
@@ -315,6 +318,8 @@ pub struct ChatStreamResult {
     pub prefill_ms: Option<i64>,
     /// Ollama does not report KV-cache reuse — always `None`.
     pub cached_prompt_tokens: Option<u32>,
+    /// The reply stopped at `num_predict`.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -832,6 +837,7 @@ impl OllamaClient {
                                 prompt_eval_count: None,
                                 prefill_ms: None,
                                 cached_prompt_tokens: None,
+                                truncated: false,
                             });
                         }
                     }
@@ -843,6 +849,7 @@ impl OllamaClient {
                         prompt_eval_count: parsed.prompt_eval_count,
                         prefill_ms: None,
                         cached_prompt_tokens: None,
+                        truncated: stopped_at_limit(parsed.done_reason.as_deref()),
                     });
                 }
             }
@@ -863,7 +870,7 @@ impl OllamaClient {
         messages: &[OllamaChatMessage],
         tools: &[serde_json::Value],
         mut on_token: Box<dyn FnMut(String) -> bool + Send>,
-    ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>)> {
+    ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>, bool)> {
         let url = self.endpoint("/api/chat")?;
         let request = OllamaChatRequest {
             model: self.model.clone(),
@@ -931,7 +938,7 @@ impl OllamaClient {
                         accumulated.push_str(&msg.content);
                         if !on_token(msg.content.clone()) {
                             // Cancelled by caller — return what we have.
-                            return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                            return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count, false));
                         }
                     }
                 }
@@ -942,7 +949,13 @@ impl OllamaClient {
                     prompt_eval_count = parsed.prompt_eval_count;
                 }
                 if parsed.done {
-                    return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                    let truncated = stopped_at_limit(parsed.done_reason.as_deref());
+                    return Ok((
+                        finalize(accumulated, tool_calls),
+                        eval_count,
+                        prompt_eval_count,
+                        truncated,
+                    ));
                 }
             }
             if ended {
@@ -1236,6 +1249,7 @@ impl AIProvider for OllamaClient {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: result.truncated,
         })
     }
 
@@ -1246,7 +1260,7 @@ impl AIProvider for OllamaClient {
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
         let ollama_msgs = ai_messages_to_ollama(&messages);
-        let (result, eval_count, prompt_eval_count) = self
+        let (result, eval_count, prompt_eval_count, truncated) = self
             .chat_stream_with_tools_internal(&ollama_msgs, &tools, on_token)
             .await?;
         // `ollama_message_to_ai` clears content when tool_calls are present, so a
@@ -1265,6 +1279,7 @@ impl AIProvider for OllamaClient {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated,
         })
     }
 
@@ -2155,6 +2170,45 @@ mod stream_line_tests {
         client
             .chat_stream_internal(vec![("user".into(), "hi".into())], Box::new(|_| true))
             .await
+    }
+
+    #[tokio::test]
+    async fn a_stream_says_when_it_stopped_at_the_token_limit() {
+        let cut = stream_reply(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"},\"done\":true,\"done_reason\":\"length\"}\n",
+        )
+        .await
+        .unwrap();
+        assert!(cut.truncated);
+        let done = stream_reply(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"done\":true,\"done_reason\":\"stop\"}\n",
+        )
+        .await
+        .unwrap();
+        assert!(!done.truncated);
+    }
+
+    #[tokio::test]
+    async fn a_tool_stream_says_when_it_stopped_at_the_token_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"},\"done\":true,\"done_reason\":\"length\"}\n",
+            ))
+            .mount(&server)
+            .await;
+        let client = OllamaClient {
+            base_url: Ok(server.uri()),
+            ..OllamaClient::new(Some("m"))
+        };
+        let result = client
+            .chat_stream_with_tools(Vec::new(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+        assert!(result.truncated);
     }
 
     #[tokio::test]

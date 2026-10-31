@@ -1257,6 +1257,7 @@ impl AIProvider for OpenRouterClient {
             eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
             prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
             cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            truncated: outcome.truncated,
             content: outcome.content,
             ..Default::default()
         })
@@ -1273,6 +1274,7 @@ impl AIProvider for OpenRouterClient {
             eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
             prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
             cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            truncated: outcome.truncated,
             message: assistant_message(outcome),
             prefill_ms: None,
             cached_prompt_tokens: None,

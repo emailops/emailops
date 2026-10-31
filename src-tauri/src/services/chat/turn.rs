@@ -2249,6 +2249,8 @@ struct ToolLoopOutcome {
     /// The user cancelled the turn: the loop stopped at the first chance it
     /// had and made no model call after it (see `chat::cancel`).
     cancelled: bool,
+    /// The round that produced the final answer stopped at the token limit.
+    answer_truncated: bool,
 }
 
 /// What a cancelled turn keeps: the reply the user already saw (when the
@@ -2804,6 +2806,9 @@ async fn run_tool_loop(
     // its direct-answer path should re-emit the answer as a single token or skip
     // (it was already shipped).
     let mut answer_streamed_live = false;
+    // Set from the round that produced the final answer: a tool round that hit
+    // the limit is not what the user reads.
+    let mut answer_truncated = false;
     // Small local models (e.g. qwen3.5-4b) sometimes "announce" they will call
     // a tool ("Voy a buscar el contacto…") and then stop without emitting an
     // actual tool_call — turning the announcement into the final answer. Allow
@@ -3041,6 +3046,7 @@ async fn run_tool_loop(
         )
         .await;
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
+        let round_truncated = call_result.as_ref().is_ok_and(|r| r.truncated);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
             "info",
@@ -3184,6 +3190,7 @@ async fn run_tool_loop(
                 // re-emitting it as a single token. Push and break.
                 had_any_answer = true;
                 answer_streamed_live = last_round_streamed_live;
+                answer_truncated = round_truncated;
                 messages.push(response);
                 break;
             }
@@ -3421,6 +3428,7 @@ async fn run_tool_loop(
         aggregated_draft_refs,
         answer_streamed_live,
         cancelled: is_cancelled(),
+        answer_truncated,
     }
 }
 
@@ -3905,6 +3913,7 @@ async fn run_thread_bound_turn(
     // Whether the loop already shipped the answer live (skip the single-token
     // re-emit below if so). Captured before `outcome` is partially moved.
     let answer_streamed_live = outcome.answer_streamed_live;
+    let answer_truncated = outcome.answer_truncated;
 
     // If the loop ended on a direct assistant text answer, reuse it as-is;
     // otherwise stream a synthesis pass over whatever messages it produced.
@@ -3966,6 +3975,7 @@ async fn run_thread_bound_turn(
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: answer_truncated,
         })
     } else {
         // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
@@ -4056,6 +4066,31 @@ async fn run_thread_bound_turn(
             // Safety net: strip any tool-call markup that leaked into the final
             // text before persisting, so a reload shows the cleaned-up answer.
             result.content = strip_tool_call_markup(&result.content);
+            // Same net as `run_chat_turn`: no answer text at all gets the
+            // localized hint, on screen and in the row, never a blank bubble.
+            if result.content.trim().is_empty() {
+                emit_log(
+                    "error",
+                    "thread answer empty — shipping rephrase hint instead of a blank bubble",
+                );
+                result.content = empty_answer_hint(language).to_string();
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: result.content.clone(),
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                        replace: None,
+                    },
+                );
+            }
+            if result.truncated {
+                emit_log("warn", "the model reached its token limit: the answer is cut off");
+            }
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
@@ -4096,6 +4131,7 @@ async fn run_thread_bound_turn(
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
                 budget: turn_budget.trace(),
+                answer_truncated: result.truncated,
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -5450,6 +5486,7 @@ async fn run_chat_turn_inner(
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
         tool_email_refs,
+        loop_answer_truncated,
     ) = if research_active {
         // Research mode replaces the tool loop: gather → read in batches →
         // write the report, all as one-shot completions on the auxiliary
@@ -5607,6 +5644,8 @@ async fn run_chat_turn_inner(
             Vec::new(),
             false,
             run.relevant,
+            // A report that ran out of budget is finished by `finish_report`.
+            false,
         )
     } else {
         emit_log("info", "stage: tool_loop");
@@ -5662,6 +5701,7 @@ async fn run_chat_turn_inner(
             // Tool-returned emails only: they decide the answer's grounding
             // (see `plan_answer_grounding`).
             outcome.aggregated_email_refs,
+            outcome.answer_truncated,
         )
     };
 
@@ -5854,6 +5894,7 @@ async fn run_chat_turn_inner(
                                 stable_tokens: None,
                                 dropped_front_tokens: None,
                                 cost_usd: None,
+                                truncated: loop_answer_truncated,
                             })
                         }
                     }
@@ -5891,6 +5932,7 @@ async fn run_chat_turn_inner(
                         stable_tokens: None,
                         dropped_front_tokens: None,
                         cost_usd: None,
+                        truncated: loop_answer_truncated,
                     })
                 }
             }
@@ -6067,6 +6109,9 @@ async fn run_chat_turn_inner(
                         replace: None,
                     },
                 );
+            }
+            if result.truncated {
+                emit_log("warn", "the model reached its token limit: the answer is cut off");
             }
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
@@ -6261,6 +6306,7 @@ async fn run_chat_turn_inner(
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
                 budget: budget_trace,
+                answer_truncated: result.truncated,
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
@@ -6458,6 +6504,7 @@ mod tests {
             stable_tokens: Some(805),
             dropped_front_tokens: Some(0),
             cost_usd: None,
+            truncated: false,
         };
         let trace = build_tool_round_trace(2, 4280, Some(&result));
         assert_eq!(trace.kind, "tool_round");
@@ -6495,6 +6542,7 @@ mod tests {
             stable_tokens: Some(1193),
             dropped_front_tokens: Some(0),
             cost_usd: None,
+            truncated: false,
         };
         let trace = build_final_stream_trace(2900, Some(&result));
         assert_eq!(trace.kind, "final_stream");
@@ -10264,6 +10312,187 @@ Preséntalos en una tabla markdown …";
         assert!(provider.chat_calls().is_empty(), "no model call after the cancel");
     }
 
+    /// One thread-bound turn against `provider`, and the row it left.
+    async fn thread_bound_row(provider: crate::ai::provider::FakeAiProvider) -> ChatMessage {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.seed_test_account("a1");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+        run_thread_bound_turn(
+            Arc::clone(&db),
+            Arc::new(provider),
+            conv.id.clone(),
+            assistant.id.clone(),
+            "a1".to_string(),
+            "what does this thread say?".to_string(),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::time::Instant::now(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await
+        .expect("the turn");
+        db.get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row")
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_turn_without_an_answer_ships_the_hint_not_a_blank_row() {
+        // Nothing at all from the model, or a reply that strips to nothing.
+        for reply in ["", "<tool_call>"] {
+            let provider = crate::ai::provider::FakeAiProvider::new();
+            provider.push_chat_response(reply);
+            let row = thread_bound_row(provider).await;
+            assert_eq!(
+                row.content,
+                empty_answer_hint(crate::services::i18n::Language::En),
+                "reply {reply:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_answer_stopped_at_the_token_limit_is_marked() {
+        // Directly from the tool loop, or from the synthesis pass an empty
+        // round falls back to.
+        let direct = crate::ai::provider::FakeAiProvider::new();
+        direct.push_truncated_chat_message(ai_msg("assistant", "The thread says the date moved to"));
+        let via_synthesis = crate::ai::provider::FakeAiProvider::new();
+        via_synthesis.push_chat_response("");
+        via_synthesis.push_truncated_chat_message(ai_msg("assistant", "The thread says the date moved to"));
+        for provider in [direct, via_synthesis] {
+            let row = thread_bound_row(provider).await;
+            assert!(row.trace.expect("trace").answer_truncated);
+            assert_eq!(
+                row.content, "The thread says the date moved to",
+                "later turns replay this text: the mark stays out of it"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_answer_that_finished_is_not_marked() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response("The date moved to March.");
+        let row = thread_bound_row(provider).await;
+        assert!(!row.trace.expect("trace").answer_truncated);
+    }
+
+    /// `run_tool_loop` over one `search_emails` tool, until `provider` answers.
+    async fn tool_loop_outcome(provider: &crate::ai::provider::FakeAiProvider) -> ToolLoopOutcome {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        })
+            as Arc<dyn tools::Tool>]));
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        run_tool_loop(
+            &db,
+            &registry,
+            provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn the_tool_loop_reports_an_answer_stopped_at_the_token_limit() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_truncated_chat_message(ai_msg("assistant", "Half an"));
+        assert!(tool_loop_outcome(&provider).await.answer_truncated);
+    }
+
+    #[tokio::test]
+    async fn a_tool_round_stopped_at_the_token_limit_does_not_mark_the_answer() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let mut search = ai_tool_call("search_emails");
+        search.function.arguments = serde_json::json!({"query": "x"});
+        provider.push_truncated_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![search]),
+        });
+        provider.push_chat_response("The full answer.");
+        assert!(!tool_loop_outcome(&provider).await.answer_truncated);
+    }
+
+    /// The main path through a real provider, stubbed at the HTTP edge:
+    /// `run_chat_turn` builds its provider from the preferences, so a fake
+    /// cannot reach it.
+    #[tokio::test]
+    async fn a_mailbox_answer_stopped_at_the_token_limit_is_marked() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"The kickoff moved to\"},\"finish_reason\":\"length\"}]}\n\n\
+                 data: [DONE]\n\n",
+            ))
+            .mount(&server)
+            .await;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.seed_test_account("a1");
+        db.set_preference("ai_provider", "openai_compatible").expect("pref");
+        db.set_preference("openai_compatible_base_url", &server.uri())
+            .expect("pref");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db
+            .insert_chat_message(&conv.id, "user", "when is the kickoff?", None)
+            .expect("user row");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+
+        run_chat_turn(
+            Arc::clone(&db),
+            Arc::new(tools::ToolRegistry::with_tools(vec![])),
+            conv.id.clone(),
+            user.id.clone(),
+            assistant.id.clone(),
+            "a1".to_string(),
+            "when is the kickoff?".to_string(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            TurnContext::default(),
+        )
+        .await
+        .expect("the turn");
+
+        let row = db
+            .get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row");
+        assert_eq!(row.content, "The kickoff moved to");
+        assert!(row.trace.expect("trace").answer_truncated);
+    }
+
     #[tokio::test]
     async fn a_cancel_stops_a_tool_round_on_a_model_that_has_gone_silent() {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
@@ -10708,6 +10937,7 @@ Preséntalos en una tabla markdown …";
             steps: Vec::new(),
             search_page: None,
             budget: None,
+            answer_truncated: false,
         });
         msg
     }
