@@ -474,8 +474,9 @@ mod tests {
             assert!(!attachment.file_path.contains("evil"), "{}", attachment.file_path);
             assert_eq!(attachment.filename, name, "the name stays as the label it is");
             assert_eq!(file_at(tmp.path(), &attachment.file_path), REPORT);
-            delete_draft(&db, &account, &draft.id, None).await.expect("delete");
-            provider.delete_draft("srv-1").await.expect("drop upstream");
+            delete_draft(&db, &account, &draft.id, Some(&provider))
+                .await
+                .expect("delete");
         }
         assert!(!tmp.path().join("escape").exists());
         assert!(!tmp.path().parent().expect("parent").join("escape").exists());
