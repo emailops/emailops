@@ -19,7 +19,9 @@ use chrono::TimeZone;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
-use crate::services::calendar::ics::{parse_ics_time, parse_vcalendar, unescape_text, ParsedCalendar, RawVEvent};
+use crate::services::calendar::ics::{
+    parse_ics_time_with_fixed_zones, parse_vcalendar, unescape_text, ParsedCalendar, RawVEvent,
+};
 use crate::sync::calendar_provider::{
     CalendarProvider, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -311,12 +313,13 @@ impl EventBody {
     }
 }
 
-/// Add `TZID=<default>` to a floating date-time's params so every value of a
-/// feed is read in the publisher's zone (`X-WR-TIMEZONE`) instead of UTC.
+fn timezone_param(params: &[String]) -> Option<&str> {
+    crate::services::calendar::ics::tzid_from_params(params)
+}
+
+/// Add `TZID=<default>` to floating times using the feed's `X-WR-TIMEZONE`.
 fn params_with_default_tz(params: &[String], value: &str, default_tz: Option<&str>) -> Vec<String> {
-    let has_tz = params
-        .iter()
-        .any(|p| p.len() > 5 && p[..5].eq_ignore_ascii_case("TZID="));
+    let has_tz = timezone_param(params).is_some();
     let is_date = params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE")) || !value.contains('T');
     match default_tz {
         Some(tz) if !has_tz && !is_date && !value.trim().ends_with('Z') => {
@@ -328,11 +331,17 @@ fn params_with_default_tz(params: &[String], value: &str, default_tz: Option<&st
     }
 }
 
-fn time_of(event: &RawVEvent, name: &str, default_tz: Option<&str>) -> Option<(i64, bool)> {
+fn time_of(
+    event: &RawVEvent,
+    name: &str,
+    default_tz: Option<&str>,
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
+) -> Option<(i64, bool)> {
     let prop = event.first(name)?;
-    parse_ics_time(
+    parse_ics_time_with_fixed_zones(
         &prop.value,
         &params_with_default_tz(&prop.params, &prop.value, default_tz),
+        fixed_zones,
     )
 }
 
@@ -394,10 +403,14 @@ fn attendee_response(params: &[String]) -> String {
     .to_string()
 }
 
-fn event_body(event: &RawVEvent, default_tz: Option<&str>) -> Option<EventBody> {
+fn event_body(
+    event: &RawVEvent,
+    default_tz: Option<&str>,
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
+) -> Option<EventBody> {
     let uid = event.first_value("UID")?.trim().to_string();
-    let (start, is_all_day) = time_of(event, "DTSTART", default_tz)?;
-    let end = match time_of(event, "DTEND", default_tz) {
+    let (start, is_all_day) = time_of(event, "DTSTART", default_tz, fixed_zones)?;
+    let end = match time_of(event, "DTEND", default_tz, fixed_zones) {
         Some((end, _)) => end,
         None => match event.first_value("DURATION").and_then(parse_iso_duration) {
             Some(secs) => start + secs,
@@ -406,14 +419,8 @@ fn event_body(event: &RawVEvent, default_tz: Option<&str>) -> Option<EventBody> 
         },
     };
     let dtstart = event.first("DTSTART")?;
-    let timezone = params_with_default_tz(&dtstart.params, &dtstart.value, default_tz)
-        .iter()
-        .find_map(|p| {
-            p.strip_prefix("TZID=")
-                .or_else(|| p.strip_prefix("tzid="))
-                .map(|t| t.trim_matches('"').to_string())
-        })
-        .unwrap_or_default();
+    let params = params_with_default_tz(&dtstart.params, &dtstart.value, default_tz);
+    let timezone = timezone_param(&params).unwrap_or_default().to_string();
     let text = |name: &str| {
         event
             .first_value(name)
@@ -475,30 +482,150 @@ fn occurrence_id(uid: &str, recurrence_epoch: i64, is_all_day: bool) -> String {
     }
 }
 
-/// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
+/// The `DTSTART`/`RRULE`/`RDATE`/`EXDATE` lines of a master, normalised for the
 /// `rrule` parser: all-day values become UTC midnights (it does not read
 /// `VALUE=DATE`), floating values get the feed's default zone.
-fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -> Option<String> {
-    let mut lines = Vec::new();
-    for name in ["DTSTART", "EXDATE"] {
-        for prop in event.all(name) {
-            if is_all_day {
-                for date in prop.value.split(',') {
-                    let (epoch, _) = parse_ics_time(date, &["VALUE=DATE".to_string()])?;
-                    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
-                    lines.push(format!("{name}:{}", dt.format("%Y%m%dT%H%M%SZ")));
+fn rrule_source(
+    event: &RawVEvent,
+    is_all_day: bool,
+    default_tz: Option<&str>,
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
+    recurrence_offset: Option<i32>,
+) -> Option<String> {
+    let mut dtstart_lines = Vec::new();
+    for prop in event.all("DTSTART") {
+        let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
+        let fixed_property = timezone_param(&params)
+            .is_some_and(|tzid| tzid.parse::<chrono_tz::Tz>().is_err() && fixed_zones.contains_key(tzid));
+        if is_all_day || recurrence_offset.is_some() || fixed_property {
+            for date in prop.value.split(',') {
+                let date_params = if is_all_day {
+                    vec!["VALUE=DATE".to_string()]
+                } else {
+                    params.clone()
+                };
+                let (epoch, _) = parse_ics_time_with_fixed_zones(date, &date_params, fixed_zones)?;
+                let epoch = epoch.checked_add(i64::from(recurrence_offset.unwrap_or(0)))?;
+                let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+                dtstart_lines.push(format!("DTSTART:{}", dt.format("%Y%m%dT%H%M%SZ")));
+            }
+        } else {
+            let head = std::iter::once("DTSTART".to_string())
+                .chain(params)
+                .collect::<Vec<_>>()
+                .join(";");
+            dtstart_lines.push(format!("{head}:{}", prop.value.trim()));
+        }
+    }
+    if dtstart_lines.is_empty() {
+        return None;
+    }
+    let dtstart = dtstart_lines[0].clone();
+
+    let mut rule = Vec::new();
+    for part in event.first_value("RRULE")?.trim().split(';') {
+        if let Some(offset) = recurrence_offset {
+            if let Some((name, value)) = part.split_once('=') {
+                if name.eq_ignore_ascii_case("UNTIL") {
+                    if value.ends_with('Z') {
+                        let (epoch, _) = parse_ics_time_with_fixed_zones(value, &[], fixed_zones)?;
+                        let epoch = epoch.checked_add(i64::from(offset))?;
+                        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+                        rule.push(format!("UNTIL={}", dt.format("%Y%m%dT%H%M%SZ")));
+                        continue;
+                    } else if !value.contains('T') {
+                        let (epoch, _) =
+                            parse_ics_time_with_fixed_zones(&format!("{}T000000", value.trim()), &[], fixed_zones)?;
+                        let epoch = epoch.checked_add(24 * 60 * 60 - 1)?;
+                        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+                        rule.push(format!("UNTIL={}", dt.format("%Y%m%dT%H%M%SZ")));
+                        continue;
+                    }
                 }
+            }
+        }
+        rule.push(part.to_string());
+    }
+    let rrule_line = format!("RRULE:{}", rule.join(";"));
+
+    let mut optional_lines = Vec::new();
+    for name in ["RDATE", "EXDATE"] {
+        for prop in event.all(name) {
+            let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
+            let fixed_property = timezone_param(&params)
+                .is_some_and(|tzid| tzid.parse::<chrono_tz::Tz>().is_err() && fixed_zones.contains_key(tzid));
+            let is_period = params.iter().any(|p| {
+                p.split_once('=').map_or(false, |(name, value)| {
+                    name.trim().eq_ignore_ascii_case("VALUE")
+                        && value.trim().trim_matches('"').eq_ignore_ascii_case("PERIOD")
+                })
+            });
+            if is_period {
+                crate::services::logger::log(
+                    "warn",
+                    "sync",
+                    "calendar feed: skipped invalid recurrence date".to_string(),
+                );
+                continue;
+            }
+
+            let normalized = if is_all_day || recurrence_offset.is_some() || fixed_property {
+                let mut out = Vec::new();
+                for date in prop.value.split(',') {
+                    let date_params = if is_all_day {
+                        vec!["VALUE=DATE".to_string()]
+                    } else {
+                        params.clone()
+                    };
+                    match parse_ics_time_with_fixed_zones(date, &date_params, fixed_zones) {
+                        Some((epoch, _)) => {
+                            if let Some(epoch) = epoch.checked_add(i64::from(recurrence_offset.unwrap_or(0))) {
+                                if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0) {
+                                    out.push(format!("{name}:{}", dt.format("%Y%m%dT%H%M%SZ")));
+                                }
+                            }
+                        }
+                        None => {
+                            crate::services::logger::log(
+                                "warn",
+                                "sync",
+                                "calendar feed: skipped invalid recurrence date".to_string(),
+                            );
+                        }
+                    }
+                }
+                out
             } else {
-                let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
-                let head = std::iter::once(name.to_string())
-                    .chain(params)
-                    .collect::<Vec<_>>()
-                    .join(";");
-                lines.push(format!("{head}:{}", prop.value.trim()));
+                prop.value
+                    .split(',')
+                    .map(|date| {
+                        let head = std::iter::once(name.to_string())
+                            .chain(params.clone())
+                            .collect::<Vec<_>>()
+                            .join(";");
+                        format!("{head}:{}", date.trim())
+                    })
+                    .collect()
+            };
+
+            for line in normalized {
+                let candidate = format!("{}\n{}\n{}", dtstart, line, rrule_line);
+                if rrule::RRuleSet::from_str(&candidate).is_ok() {
+                    optional_lines.push(line);
+                } else {
+                    crate::services::logger::log(
+                        "warn",
+                        "sync",
+                        "calendar feed: skipped unsupported recurrence date".to_string(),
+                    );
+                }
             }
         }
     }
-    lines.push(format!("RRULE:{}", event.first_value("RRULE")?.trim()));
+
+    let mut lines = dtstart_lines;
+    lines.extend(optional_lines);
+    lines.push(rrule_line);
     Some(lines.join("\n"))
 }
 
@@ -514,13 +641,24 @@ fn occurrences(
     window_start: i64,
     window_end: i64,
     default_tz: Option<&str>,
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
 ) -> Option<Vec<i64>> {
     let duration = (body.end - body.start).max(0);
-    let source = rrule_source(event, body.is_all_day, default_tz)?;
+    // rrule supports IANA zones, but not FixedOffset. Represent a fixed
+    // zone's wall clock in UTC while expanding, then translate the results.
+    // This preserves local BYDAY/BYHOUR even when its UTC date differs.
+    let recurrence_offset = event
+        .first("DTSTART")
+        .filter(|p| !body.is_all_day && !p.value.trim().ends_with('Z'))
+        .filter(|_| body.timezone.parse::<chrono_tz::Tz>().is_err())
+        .and_then(|_| fixed_zones.get(&body.timezone))
+        .map(chrono::FixedOffset::local_minus_utc);
+    let shift = i64::from(recurrence_offset.unwrap_or(0));
+    let source = rrule_source(event, body.is_all_day, default_tz, fixed_zones, recurrence_offset)?;
     let set = rrule::RRuleSet::from_str(&source).ok()?;
     let result = set
-        .after(utc_dt(window_start - duration)?)
-        .before(utc_dt(window_end)?)
+        .after(utc_dt(window_start.checked_sub(duration)?.checked_add(shift)?)?)
+        .before(utc_dt(window_end.checked_add(shift)?)?)
         .all(MAX_OCCURRENCES_PER_EVENT);
     if result.limited {
         crate::services::logger::log(
@@ -532,7 +670,7 @@ fn occurrences(
             ),
         );
     }
-    Some(result.dates.iter().map(|d| d.timestamp()).collect())
+    result.dates.iter().map(|d| d.timestamp().checked_sub(shift)).collect()
 }
 
 /// Expand a parsed feed into event instances overlapping
@@ -547,7 +685,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
     let mut overrides: HashMap<String, Vec<(i64, &RawVEvent)>> = HashMap::new();
     for event in &cal.events {
         let Some(uid) = event.first_value("UID") else { continue };
-        match time_of(event, "RECURRENCE-ID", default_tz) {
+        match time_of(event, "RECURRENCE-ID", default_tz, &cal.fixed_zones) {
             Some((rid, _)) => overrides.entry(uid.trim().to_string()).or_default().push((rid, event)),
             None => masters.push(event),
         }
@@ -556,7 +694,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
     let mut out = Vec::new();
     let mut seen_uids: HashSet<String> = HashSet::new();
     for master in masters {
-        let Some(body) = event_body(master, default_tz) else {
+        let Some(body) = event_body(master, default_tz, &cal.fixed_zones) else {
             continue;
         };
         if !seen_uids.insert(body.uid.clone()) {
@@ -573,7 +711,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
             continue;
         }
 
-        let Some(starts) = occurrences(master, &body, window_start, window_end, default_tz) else {
+        let Some(starts) = occurrences(master, &body, window_start, window_end, default_tz, &cal.fixed_zones) else {
             crate::services::logger::log(
                 "error",
                 "sync",
@@ -594,7 +732,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
             match uid_overrides.iter().find(|(rid, _)| *rid == start) {
                 Some((rid, event)) => {
                     consumed.insert(*rid);
-                    if let Some(ov) = event_body(event, default_tz) {
+                    if let Some(ov) = event_body(event, default_tz, &cal.fixed_zones) {
                         if ov.status != "cancelled" && overlaps(ov.start, ov.end, window_start, window_end) {
                             out.push(ov.instance(id, ov.start, ov.end, Some(body.uid.clone())));
                         }
@@ -610,7 +748,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
         // Overrides whose original slot lies outside the window but were moved
         // into it.
         for (rid, event) in uid_overrides.iter().filter(|(rid, _)| !consumed.contains(rid)) {
-            if let Some(ov) = event_body(event, default_tz) {
+            if let Some(ov) = event_body(event, default_tz, &cal.fixed_zones) {
                 if ov.status != "cancelled" && overlaps(ov.start, ov.end, window_start, window_end) {
                     out.push(ov.instance(
                         occurrence_id(&body.uid, *rid, body.is_all_day),
@@ -625,7 +763,7 @@ pub fn expand_events(cal: &ParsedCalendar, window_start: i64, window_end: i64) -
     // Overrides whose master never appeared in the feed.
     for (uid, list) in overrides {
         for (rid, event) in list {
-            if let Some(ov) = event_body(event, default_tz) {
+            if let Some(ov) = event_body(event, default_tz, &cal.fixed_zones) {
                 if ov.status != "cancelled" && overlaps(ov.start, ov.end, window_start, window_end) {
                     out.push(ov.instance(
                         occurrence_id(&uid, rid, ov.is_all_day),
@@ -673,6 +811,153 @@ mod tests {
 
     fn expand(events: &[&str], ws: i64, we: i64) -> Vec<ProviderCalendarEvent> {
         expand_events(&parse_vcalendar(&vcal(events)), ws, we)
+    }
+
+    #[test]
+    fn unsupported_period_rdate_keeps_iana_and_floating_series_beyond_master() {
+        for (zones, dtstart) in [
+            (
+                "",
+                "DTSTART;TZID=Europe/Madrid:20260324T100000\r\nDTEND;TZID=Europe/Madrid:20260324T110000",
+            ),
+            (
+                "X-WR-TIMEZONE:Europe/Madrid\r\n",
+                "DTSTART:20260324T100000\r\nDTEND:20260324T110000",
+            ),
+        ] {
+            let event = format!("UID:period-regression@example.test\r\n{dtstart}\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nRDATE;VALUE=PERIOD:20260401T100000/20260401T110000,20260402T100000/PT1H");
+            let calendar = with_zones(&[&event], zones);
+            let out = expand_events(&calendar, utc(2026, 3, 30, 0, 0), utc(2026, 4, 30, 0, 0));
+            let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            let expected = vec![utc(2026, 3, 31, 8, 0), utc(2026, 4, 7, 8, 0), utc(2026, 4, 14, 8, 0)];
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn fixed_mixed_optional_dates_skip_invalid_elements_without_losing_series() {
+        let event = "UID:dates-regression@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20260901T003000\r\nDTEND;TZID=\"Example Fixed Time\":20260901T013000\r\nRRULE:FREQ=DAILY;COUNT=4\r\nRDATE;TZID=\"Example Fixed Time\":bad-date,20260905T003000\r\nEXDATE;TZID=\"Example Fixed Time\":not-a-date,20260903T003000";
+        let calendar = with_zones(&[event], FIXED_ZONE);
+        let out = expand_events(&calendar, utc(2026, 9, 1, 0, 0), utc(2026, 9, 7, 0, 0));
+        let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        let expected = vec![
+            utc(2026, 9, 1, 22, 30),
+            utc(2026, 9, 3, 22, 30),
+            utc(2026, 9, 4, 22, 30),
+        ];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn date_only_fixed_until_includes_last_local_day_for_both_offset_signs() {
+        for (zones, ws, we, expected) in [
+            (
+                FIXED_ZONE.to_string(),
+                utc(2026, 10, 24, 0, 0),
+                utc(2026, 10, 28, 0, 0),
+                vec![utc(2026, 10, 24, 21, 30), utc(2026, 10, 25, 21, 30)],
+            ),
+            (
+                FIXED_ZONE.replace("+0200", "-0330"),
+                utc(2026, 10, 25, 0, 0),
+                utc(2026, 10, 29, 0, 0),
+                vec![utc(2026, 10, 25, 3, 0), utc(2026, 10, 26, 3, 0)],
+            ),
+        ] {
+            let event = "UID:until-regression@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20261023T233000\r\nDTEND;TZID=\"Example Fixed Time\":20261023T234500\r\nRRULE:FREQ=DAILY;UNTIL=20261025";
+            let calendar = with_zones(&[event], &zones);
+            let out = expand_events(&calendar, ws, we);
+            let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    const FIXED_ZONE: &str = "BEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nDTSTART:16010101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
+
+    fn with_zones(events: &[&str], zones: &str) -> ParsedCalendar {
+        let document = vcal(events).replacen("VERSION:2.0\r\n", &format!("VERSION:2.0\r\n{zones}"), 1);
+        parse_vcalendar(&document)
+    }
+
+    #[test]
+    fn embedded_fixed_zone_is_shared_by_explicit_and_default_feed_times() {
+        let calendar = with_zones(&[
+            "UID:fixed@x\nDTSTART;TzId=\" Example Fixed Time \":20261023T103000\nDTEND;TZID=\"Example Fixed Time\":20261023T113000",
+            "UID:floating@x\nDTSTART:20261023T103000\nDTEND:20261023T113000",
+            "UID:utc@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T103000Z",
+            "UID:day@x\nDTSTART;VALUE=DATE:20261023",
+        ], &format!("{FIXED_ZONE}X-WR-TIMEZONE:Example Fixed Time\r\n"));
+        let out = expand_events(&calendar, utc(2026, 10, 23, 0, 0), utc(2026, 10, 24, 0, 0));
+        assert_eq!(out.len(), 4);
+        for id in ["fixed@x", "floating@x"] {
+            let event = out.iter().find(|event| event.provider_event_id == id).unwrap();
+            assert_eq!(
+                (event.start_time, event.end_time),
+                (utc(2026, 10, 23, 8, 30), utc(2026, 10, 23, 9, 30))
+            );
+        }
+        assert_eq!(
+            out.iter()
+                .find(|event| event.provider_event_id == "utc@x")
+                .unwrap()
+                .start_time,
+            utc(2026, 10, 23, 10, 30)
+        );
+        let day = out.iter().find(|event| event.provider_event_id == "day@x").unwrap();
+        assert!(day.is_all_day);
+        assert_eq!(day.start_time, utc(2026, 10, 23, 0, 0));
+    }
+
+    #[test]
+    fn fixed_zone_recurrence_keeps_wall_day_exdates_rdates_until_and_override_ids() {
+        let calendar = with_zones(&[
+            "UID:fixed-series@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T003000\nDTEND;TZID=\"Example Fixed Time\":20260728T013000\nRRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30;UNTIL=20260810T223000Z\nEXDATE;TZID=\"Example Fixed Time\":20260804T003000\nRDATE;TZID=\"Example Fixed Time\":20260806T003000",
+            "UID:fixed-series@x\nRECURRENCE-ID;TZID=\"Example Fixed Time\":20260811T003000\nDTSTART;TZID=\"Example Fixed Time\":20260811T020000\nDTEND;TZID=\"Example Fixed Time\":20260811T030000\nSUMMARY:Moved",
+        ], FIXED_ZONE);
+        let out = expand_events(&calendar, utc(2026, 7, 27, 0, 0), utc(2026, 8, 18, 0, 0));
+        assert_eq!(
+            out.iter().map(|event| event.start_time).collect::<Vec<_>>(),
+            vec![
+                utc(2026, 7, 27, 22, 30),
+                utc(2026, 8, 5, 22, 30),
+                utc(2026, 8, 11, 0, 0)
+            ]
+        );
+        let moved = out.iter().find(|event| event.title == "Moved").unwrap();
+        assert_eq!(moved.provider_event_id, "fixed-series@x_20260810T223000Z");
+        assert_eq!(moved.end_time, utc(2026, 8, 11, 1, 0));
+    }
+
+    #[test]
+    fn embedded_iana_definition_does_not_override_dst_recurrence() {
+        let zones = FIXED_ZONE
+            .replace("Example Fixed Time", "Europe/Madrid")
+            .replace("+0200", "+0900");
+        let calendar = with_zones(
+            &["UID:iana@x\nDTSTART;TZID=Europe/Madrid:20260324T100000\nRRULE:FREQ=WEEKLY;COUNT=2"],
+            &zones,
+        );
+        let out = expand_events(&calendar, utc(2026, 3, 23, 0, 0), utc(2026, 4, 6, 0, 0));
+        assert_eq!(
+            out.iter().map(|event| event.start_time).collect::<Vec<_>>(),
+            vec![utc(2026, 3, 24, 9, 0), utc(2026, 3, 31, 8, 0)]
+        );
+    }
+
+    #[test]
+    fn unusable_timezone_metadata_keeps_feed_events_with_legacy_fallback() {
+        for zones in [
+            format!("{FIXED_ZONE}{FIXED_ZONE}"),
+            FIXED_ZONE.replace("TZOFFSETTO:+0200", "TZOFFSETTO:invalid"),
+        ] {
+            let calendar = with_zones(
+                &["UID:fallback@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T103000"],
+                &zones,
+            );
+            let out = expand_events(&calendar, utc(2026, 10, 23, 0, 0), utc(2026, 10, 24, 0, 0));
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].start_time, utc(2026, 10, 23, 10, 30));
+        }
     }
 
     const WEEKLY: &str = "UID:w@x\nDTSTART;TZID=Europe/Madrid:20260728T073000\nDTEND;TZID=Europe/Madrid:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Weekly";

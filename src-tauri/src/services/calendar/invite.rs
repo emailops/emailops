@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::ics::{parse_ics_time, split_content_line, unescape_text, unfold_ics_lines};
+use super::ics::{parse_ics_time_with_fixed_zones, parse_vcalendar, unescape_text};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
@@ -40,8 +40,9 @@ pub struct CalendarInvite {
 /// Parse the first VEVENT of an iCalendar document. Returns `None` when there
 /// is no usable event (missing UID or DTSTART).
 pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
-    let mut method = "REQUEST".to_string();
-    let mut in_event = false;
+    let calendar = parse_vcalendar(ics);
+    let event = calendar.events.first()?;
+    let method = calendar.method.clone().unwrap_or_else(|| "REQUEST".to_string());
     let mut uid = None;
     let mut summary = String::new();
     let mut location = String::new();
@@ -50,15 +51,9 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
     let mut end: Option<(i64, bool)> = None;
     let mut recurrence = None;
 
-    for line in unfold_ics_lines(ics) {
-        let Some((name, params, value)) = split_content_line(&line) else {
-            continue;
-        };
-        match name.as_str() {
-            "BEGIN" if value.eq_ignore_ascii_case("VEVENT") => in_event = true,
-            "END" if value.eq_ignore_ascii_case("VEVENT") => break, // first VEVENT only
-            "METHOD" if !in_event => method = value.trim().to_ascii_uppercase(),
-            _ if !in_event => {}
+    for prop in &event.props {
+        let value = &prop.value;
+        match prop.name.as_str() {
             "UID" => uid = Some(value.trim().to_string()),
             "SUMMARY" => summary = unescape_text(value.trim()),
             "LOCATION" => location = unescape_text(value.trim()),
@@ -70,8 +65,8 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
                     .unwrap_or(value.trim())
                     .to_ascii_lowercase();
             }
-            "DTSTART" => start = parse_ics_time(&value, &params),
-            "DTEND" => end = parse_ics_time(&value, &params),
+            "DTSTART" => start = parse_ics_time_with_fixed_zones(value, &prop.params, &calendar.fixed_zones),
+            "DTEND" => end = parse_ics_time_with_fixed_zones(value, &prop.params, &calendar.fixed_zones),
             "RRULE" => recurrence = Some(value.trim().to_string()),
             _ => {}
         }
@@ -179,6 +174,62 @@ fn decode_ics_base64(b64: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_fixed_timezone_is_used_for_invite_display() {
+        let ics="BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nDTSTART:16010101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:synthetic@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20261023T103000\r\nDTEND;TZID=\"Example Fixed Time\":20261023T113000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let invite = parse_ics_invite(ics).expect("fixed-offset invite");
+        assert_eq!(
+            chrono::DateTime::from_timestamp(invite.start_time, 0)
+                .unwrap()
+                .to_rfc3339(),
+            "2026-10-23T08:30:00+00:00"
+        );
+        assert_eq!(invite.end_time - invite.start_time, 3600);
+    }
+
+    #[test]
+    fn duplicate_or_malformed_timezones_do_not_hide_an_invite() {
+        let zone = "BEGIN:VTIMEZONE\nTZID:Custom\nBEGIN:STANDARD\nTZOFFSETFROM:+0200\nTZOFFSETTO:+0200\nDTSTART:16010101T000000\nEND:STANDARD\nEND:VTIMEZONE\n";
+        for definitions in [
+            format!("{zone}{zone}"),
+            zone.replace("TZOFFSETTO:+0200", "TZOFFSETTO:invalid"),
+            zone.replace("END:VTIMEZONE\n", ""),
+        ] {
+            let ics = format!("BEGIN:VCALENDAR\n{definitions}BEGIN:VEVENT\nUID:retained@example.test\nDTSTART;TZID=Custom:20261023T103000\nEND:VEVENT\nEND:VCALENDAR\n");
+            let invite = parse_ics_invite(&ics).expect("event survives unusable timezone metadata");
+            assert_eq!(invite.uid, "retained@example.test");
+            assert_eq!(
+                chrono::DateTime::from_timestamp(invite.start_time, 0)
+                    .unwrap()
+                    .to_rfc3339(),
+                "2026-10-23T10:30:00+00:00"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_timezone_does_not_disable_iana_or_utc_invites() {
+        for start in ["DTSTART;TZID=Europe/Madrid:20261023T103000", "DTSTART:20261023T083000Z"] {
+            let ics = format!("BEGIN:VCALENDAR\nBEGIN:VTIMEZONE\nTZID:Bad\nEND:VTIMEZONE\nBEGIN:VEVENT\nUID:retained@example.test\n{start}\nEND:VEVENT\nEND:VCALENDAR\n");
+            let invite = parse_ics_invite(&ics).expect("unrelated broken timezone does not reject event");
+            assert_eq!(
+                chrono::DateTime::from_timestamp(invite.start_time, 0)
+                    .unwrap()
+                    .to_rfc3339(),
+                "2026-10-23T08:30:00+00:00"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_event_parser_preserves_method_and_skips_nested_alarm_fields() {
+        let ics = "BEGIN:VCALENDAR\r\nMETHOD:CANCEL\r\nBEGIN:VEVENT\r\nUID:event@example.test\r\nDTSTART:20261023T083000Z\r\nSUMMARY:Folded \r\n summary\r\nBEGIN:VALARM\r\nUID:alarm@example.test\r\nSUMMARY:Alarm text\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let invite = parse_ics_invite(ics).expect("first event");
+        assert_eq!(invite.uid, "event@example.test");
+        assert_eq!(invite.summary, "Folded summary");
+        assert_eq!(invite.method, "CANCEL");
+    }
 
     const SAMPLE_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Madrid:20260728T073000\r\nDTEND;TZID=Europe/Madrid:20260728T083000\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nDTSTAMP:20260723T103000Z\r\nORGANIZER;CN=Organizer:mailto:Organizer@Example.com\r\nUID:abc123DEF@example.com\r\nSUMMARY:Team sync\\, weekly\r\nLOCATION:Room 4\\; floor 2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
