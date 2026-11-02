@@ -121,7 +121,8 @@ summary() {
       if outdated_unresolvable "$f"; then
         echo "could not resolve dependencies on crates.io (warning only): $(awk '/^error:/{sub(/^error: /, ""); print; exit}' "$f")"
       else
-        awk 'NR>2{n++} END{print n+0 " outdated root dependencies"}' "$f"
+        # Rows under the table's rule: a git dependency prints fetch lines above it.
+        awk 'rows{n++} /^----/{rows=1} END{print n+0 " outdated root dependencies"}' "$f"
       fi ;;
     biome)     awk '/Checked /' "$f" ;;
     vitest)    awk '/Tests /' "$f" ;;
