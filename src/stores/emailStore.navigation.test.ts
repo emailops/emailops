@@ -10,6 +10,7 @@ const focused = { id: 'focused', accountId: 'acc', threadId: 't1', isRead: true,
 const cited = { id: 'cited', accountId: 'acc', threadId: 't2', isRead: true, timestamp: 2 } as Email;
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   getEmailById: vi.fn(async () => focused),
   getEmailInboxPosition: vi.fn(async () => 0),
   getEmailCount: vi.fn(async () => 500),

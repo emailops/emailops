@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Email } from '@/types';
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   getThread: vi.fn(),
   getEmailBody: vi.fn(async () => 'body'),
   getEmails: vi.fn(),

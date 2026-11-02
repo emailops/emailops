@@ -11,6 +11,7 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   searchEmails: vi.fn(),
   autocompleteSenders: vi.fn(),
 }));

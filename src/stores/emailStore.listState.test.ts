@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Email } from '@/types';
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   getEmails: vi.fn(),
   getEmailCount: vi.fn(async () => 500),
   searchEmails: vi.fn(async () => ({ emails: [] })),

@@ -1,11 +1,13 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { TagChips } from '@/components/common/TagChips';
 import type { ParsedSearchQuery, SearchMethod, SearchResult, SenderSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import { accountColorClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
+import { junkChip, useJunkStore } from '@/stores/junkStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { Email } from '@/types';
 
@@ -62,6 +64,7 @@ export function SearchBar({
     () => (accountId === null ? new Map(accounts.map((a) => [a.id, a.email])) : null),
     [accountId, accounts],
   );
+  const verdicts = useJunkStore((s) => s.verdictsByEmail);
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [results, setResults] = useState<SearchResult | null>(null);
@@ -136,7 +139,11 @@ export function SearchBar({
       setIsSearching(true);
       setSearchError(null);
 
-      const promise = api.searchEmails(accountId, searchQuery, true);
+      // A search reaches flagged mail, and a hit must not paint without its warning.
+      const promise = api.searchEmails(accountId, searchQuery, true).then(async (result) => {
+        await useJunkStore.getState().fetchVerdicts(result.emails.map((email) => email.id));
+        return result;
+      });
       inFlightRef.current = { query: searchQuery, promise };
 
       try {
@@ -490,61 +497,69 @@ export function SearchBar({
           )}
           {results && results.emails.length > 0 && (
             <ul>
-              {results.emails.map((emailWithScore) => (
-                <li key={emailWithScore.id}>
-                  <button
-                    onClick={() => handleResultClick(emailWithScore)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`font-medium truncate ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}
-                        >
-                          {emailWithScore.sender}
-                        </span>
-                        {accountEmailById && (
+              {results.emails.map((emailWithScore) => {
+                const junk = junkChip(emailWithScore.id, [], verdicts[emailWithScore.id]);
+                return (
+                  <li key={emailWithScore.id}>
+                    <button
+                      onClick={() => handleResultClick(emailWithScore)}
+                      className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2 min-w-0">
                           <span
-                            data-testid="account-chip"
-                            className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+                            className={`font-medium truncate ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}
                           >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(accounts, emailWithScore.accountId)}`}
-                              aria-hidden="true"
-                            />
-                            <span className="truncate">
-                              {accountEmailById.get(emailWithScore.accountId) ?? emailWithScore.accountId}
-                            </span>
+                            {emailWithScore.sender}
                           </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {emailWithScore.relevanceScore !== null && (
-                          <RelevanceIndicator score={emailWithScore.relevanceScore} />
-                        )}
-                        <span className="text-xs text-gray-400">{formatDate(emailWithScore.timestamp, locale)}</span>
+                          {accountEmailById && (
+                            <span
+                              data-testid="account-chip"
+                              className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(accounts, emailWithScore.accountId)}`}
+                                aria-hidden="true"
+                              />
+                              <span className="truncate">
+                                {accountEmailById.get(emailWithScore.accountId) ?? emailWithScore.accountId}
+                              </span>
+                            </span>
+                          )}
+                          {junk && (
+                            <span data-testid="junk-chip" className="flex-shrink-0">
+                              <TagChips tags={[junk]} compact nowrap />
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {emailWithScore.relevanceScore !== null && (
+                            <RelevanceIndicator score={emailWithScore.relevanceScore} />
+                          )}
+                          <span className="text-xs text-gray-400">{formatDate(emailWithScore.timestamp, locale)}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className={`text-sm ${emailWithScore.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
-                      {emailWithScore.subject || t('common:labels.noSubject')}
-                    </div>
-                    <div className="text-sm text-gray-400 truncate">{emailWithScore.snippet}</div>
-                    {emailWithScore.matchReason && (
-                      <div className="mt-1 text-xs text-primary-600 flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        {emailWithScore.matchReason}
+                      <div className={`text-sm ${emailWithScore.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
+                        {emailWithScore.subject || t('common:labels.noSubject')}
                       </div>
-                    )}
-                  </button>
-                </li>
-              ))}
+                      <div className="text-sm text-gray-400 truncate">{emailWithScore.snippet}</div>
+                      {emailWithScore.matchReason && (
+                        <div className="mt-1 text-xs text-primary-600 flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            />
+                          </svg>
+                          {emailWithScore.matchReason}
+                        </div>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
+import { useLogStore } from '@/stores/logStore';
 import { useTagStore } from '@/stores/tagStore';
-import type { JunkFlaggedAction, JunkVerdict } from '@/types';
+import type { EmailTag, JunkFlaggedAction, JunkVerdict } from '@/types';
 
 /**
  * Junk verdicts, loaded in batches alongside the email list.
@@ -19,6 +20,9 @@ interface JunkStore {
   setFlaggedAction: (action: JunkFlaggedAction) => Promise<void>;
   /** Ids already fetched, so an unscored email isn't re-requested every render. */
   loaded: Record<string, true>;
+  /** Verdicts a list must hold before it paints: a failure is the list's to show. */
+  fetchVerdicts: (emailIds: string[]) => Promise<void>;
+  /** Best effort, for what is already on screen: a failure costs a badge and is logged. */
   loadVerdicts: (emailIds: string[]) => Promise<void>;
   getVerdict: (emailId: string) => JunkVerdict | undefined;
   /** Drop the "already fetched" mark so the next load re-asks the backend. */
@@ -52,6 +56,29 @@ export function isHiddenFromInbox(verdict: JunkVerdict | undefined, action: Junk
   return action === 'hide' && isFlagged(verdict);
 }
 
+/** The kind a flagged message shows: what the detector settled on, or plain spam
+ *  for one the user confirmed against a `legit` call. */
+function junkKind(verdict: JunkVerdict | undefined): string {
+  return verdict?.primaryKind && verdict.primaryKind !== 'legit' ? verdict.primaryKind : 'spam';
+}
+
+/**
+ * The junk chip a row shows. It follows the verdict, so flagged mail keeps its
+ * warning with no `junk` tag written or the tag load failed; the user's "not
+ * junk" outranks a tag that has not caught up.
+ */
+export function junkChip(
+  emailId: string,
+  tags: readonly EmailTag[],
+  verdict: JunkVerdict | undefined,
+): EmailTag | undefined {
+  if (verdict?.userOverride === 'not_junk') return undefined;
+  const tag = tags.find((t) => t.tagType === 'junk');
+  if (tag) return tag;
+  if (!isFlagged(verdict)) return undefined;
+  return { emailId, tagType: 'junk', tagValue: junkKind(verdict), confidence: null, createdAt: verdict?.scoredAt ?? 0 };
+}
+
 export const useJunkStore = create<JunkStore>((set, get) => ({
   verdictsByEmail: {},
   loaded: {},
@@ -67,24 +94,28 @@ export const useJunkStore = create<JunkStore>((set, get) => ({
     }
   },
 
-  loadVerdicts: async (emailIds: string[]) => {
+  fetchVerdicts: async (emailIds: string[]) => {
     if (emailIds.length === 0) return;
     const { loaded } = get();
     const missing = emailIds.filter((id) => !(id in loaded));
     if (missing.length === 0) return;
 
+    const verdicts = await api.getJunkVerdicts(missing);
+    // Mark every requested id as loaded, including the ones with no verdict —
+    // otherwise unscored mail is re-fetched on every list render.
+    const loadedNext: Record<string, true> = {};
+    for (const id of missing) loadedNext[id] = true;
+    set((state) => ({
+      verdictsByEmail: { ...state.verdictsByEmail, ...verdicts },
+      loaded: { ...state.loaded, ...loadedNext },
+    }));
+  },
+
+  loadVerdicts: async (emailIds: string[]) => {
     try {
-      const verdicts = await api.getJunkVerdicts(missing);
-      // Mark every requested id as loaded, including the ones with no verdict —
-      // otherwise unscored mail is re-fetched on every list render.
-      const loadedNext: Record<string, true> = {};
-      for (const id of missing) loadedNext[id] = true;
-      set((state) => ({
-        verdictsByEmail: { ...state.verdictsByEmail, ...verdicts },
-        loaded: { ...state.loaded, ...loadedNext },
-      }));
-    } catch {
-      // Non-critical: badges just won't show. The mail itself is unaffected.
+      await get().fetchVerdicts(emailIds);
+    } catch (error) {
+      useLogStore.getState().addLog('error', 'system', `Could not load junk verdicts: ${String(error)}`);
     }
   },
 
@@ -170,7 +201,7 @@ export const useJunkStore = create<JunkStore>((set, get) => ({
           tagType: 'junk',
           // The kind the detector settled on, so confirming a phishing warning
           // does not silently relabel the message as ordinary spam.
-          tagValue: previousVerdict?.primaryKind !== 'legit' ? (previousVerdict?.primaryKind ?? 'spam') : 'spam',
+          tagValue: junkKind(previousVerdict),
           confidence: null,
           createdAt: Math.floor(Date.now() / 1000),
         },

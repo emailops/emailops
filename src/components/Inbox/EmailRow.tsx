@@ -10,9 +10,10 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
+import { junkChip, useJunkStore } from '@/stores/junkStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
-import type { Email, EmailCategory } from '@/types';
+import type { Email, EmailCategory, EmailTag } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
 import { SnoozeBadge } from './SnoozeBadge';
 
@@ -22,7 +23,7 @@ export type { RulePrefill } from './EmailActionsMenu';
 // zustand 5 dropped auto-shallow on selector results, so returning `|| []`
 // inline produces a new array every render and trips React's
 // useSyncExternalStore "getSnapshot should be cached" guard.
-const EMPTY_TAGS: readonly string[] = Object.freeze([]);
+const EMPTY_TAGS: readonly EmailTag[] = Object.freeze([]);
 
 interface EmailRowProps {
   email: Email;
@@ -77,6 +78,7 @@ export function EmailRow({
   // explicitly opted out of seeing AI-derived metadata in the inbox.
   const aiEnabled = useAiStore((s) => s.enabled);
   const storedTags = useTagStore((s) => s.tagsByEmail[email.id] || EMPTY_TAGS);
+  const verdict = useJunkStore((s) => s.verdictsByEmail[email.id]);
   // Exclude the company tag from the right-hand chip list — it's already
   // rendered as an uppercase prefix on the subject, so showing it again on
   // the tasks/tags side is just visual noise.
@@ -85,14 +87,16 @@ export function EmailRow({
   // no network, so it is not "AI-derived metadata" the user opted out of. More
   // importantly, hiding a phishing warning because someone turned off AI would
   // be a security regression, not a preference.
-  const emailTags = aiEnabled
-    ? storedTags.filter((t) => t.tagType !== 'company')
-    : storedTags.filter((t) => t.tagType === 'junk');
+  const junkTag = junkChip(email.id, storedTags, verdict);
+  const withoutJunk = storedTags.filter((t) => t.tagType !== 'junk');
+  const emailTags = [
+    ...(junkTag ? [junkTag] : []),
+    ...(aiEnabled ? withoutJunk.filter((t) => t.tagType !== 'company') : []),
+  ];
   // Deprioritize rather than hide. The message stays exactly where the server
   // put it — we never move mail — but a flagged row recedes so the eye skips it.
   // Dimming is dropped while the row is selected, so opening a flagged message
   // never leaves the user reading faded text.
-  const junkTag = storedTags.find((t) => t.tagType === 'junk');
   // Company tag is rendered as an uppercase chip prefix on the subject so the
   // user can scan which client/vendor a thread belongs to at a glance. We hide
   // it when the value contains '@' — that's the per-address shape produced by

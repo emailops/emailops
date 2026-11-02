@@ -880,6 +880,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       // view's wake times read them.
       void get().fetchSnoozes(accountId);
 
+      // A flagged row never paints without its warning (see EmailRow).
+      await useJunkStore.getState().fetchVerdicts(emails.map((e) => e.id));
+
       // Only update state if this is still the current fetch operation
       if (get().currentFetchId === fetchId) {
         set({
@@ -942,6 +945,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       } else {
         moreEmails = await api.getEmails(accountId, PAGE_SIZE, offset, mailbox, unreadOnly);
       }
+
+      await useJunkStore.getState().fetchVerdicts(moreEmails.map((e) => e.id));
 
       // Check if fetch ID changed (account switched during load)
       if (get().currentFetchId !== currentFetchId) {
