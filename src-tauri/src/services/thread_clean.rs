@@ -440,7 +440,8 @@ fn segment(text: &str) -> Vec<Block<'_>> {
             i += 1;
             continue;
         }
-        if t == "--" {
+        // `--` is the standard, and `---` what people type by hand.
+        if t == "--" || t == "---" {
             let start = i;
             i += 1;
             while i < lines.len()
@@ -809,6 +810,15 @@ mod tests {
         let clean = clean_email_body(body, MAX_CHARS_PER_EMAIL);
         assert!(clean.contains("Example Labs"), "{clean:?}");
         assert!(!clean.contains("EmailOps"), "{clean:?}");
+    }
+
+    #[test]
+    fn three_dashes_typed_by_hand_open_a_signature_too() {
+        assert_eq!(
+            own_text("Thanks for the call.\n\n---\n\nVisit my site"),
+            "Thanks for the call."
+        );
+        assert_eq!(own_text("---\n\nVisit my site"), "");
     }
 
     #[test]
