@@ -1505,14 +1505,16 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         if let Some(value) = strip_prefix_ci(token, "tag:") {
             let value = value.trim_matches('"').trim();
             if !value.is_empty() {
-                parsed.tag_filters.push(value.to_lowercase());
+                // Kept as typed: a tag's case is part of its stored value, and
+                // SQLite folds ASCII only, so lowering here would lose `Ñ`.
+                parsed.tag_filters.push(value.to_string());
                 has_filter = true;
             }
         }
     }
 
     if has_filter {
-        parsed.keywords = extract_residual_keywords(query);
+        parsed.keywords = extract_residual_keywords(&tokens);
         let from_filter = parsed.from_filter.clone();
         let to_filter = parsed.to_filter.clone();
         let subject_filter = parsed.subject_filter.clone();
@@ -1624,9 +1626,18 @@ fn phrase_filter(tokens: &[String], words: &[String], patterns: &[&[&str]]) -> O
     None
 }
 
-fn extract_residual_keywords(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
+/// The free words of a query. An operator's token stays whole, quotes included,
+/// so its value leaves with it; a quoted phrase is ordinary words.
+fn extract_residual_keywords(tokens: &[String]) -> Vec<String> {
+    tokens
+        .iter()
+        .flat_map(|token| {
+            if token.contains(':') {
+                vec![token.as_str()]
+            } else {
+                token.split_whitespace().collect()
+            }
+        })
         .filter_map(|word| {
             let normalized = normalize_token(word);
             if normalized.is_empty()
@@ -1982,6 +1993,24 @@ mod base_url_tests {
 #[cfg(test)]
 mod pattern_parser_tests {
     use super::parse_search_query_patterns;
+
+    #[test]
+    fn a_quoted_value_leaves_no_stray_word() {
+        let parsed = parse_search_query_patterns(r#"tag:"topic=Customer Support""#).unwrap();
+        assert!(parsed.keywords.is_empty(), "keywords: {:?}", parsed.keywords);
+    }
+
+    #[test]
+    fn a_tag_value_keeps_what_was_typed() {
+        let parsed = parse_search_query_patterns(r#"tag:"company=Ñandú Ltd""#).unwrap();
+        assert_eq!(parsed.tag_filters, vec!["company=Ñandú Ltd"]);
+    }
+
+    #[test]
+    fn a_quoted_phrase_is_still_two_words() {
+        let parsed = parse_search_query_patterns(r#"after:01/10/2026 "quarterly report""#).unwrap();
+        assert_eq!(parsed.keywords, vec!["quarterly", "report"]);
+    }
 
     #[test]
     fn collects_every_id_operator() {

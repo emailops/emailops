@@ -806,395 +806,28 @@ impl Database {
                 .map(with_own_timestamps);
         }
 
+        let Some((sql, params_vec)) = build_search_sql(&SearchSqlArgs {
+            account_id,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+            ascending,
+            exclude_spam,
+            unread_only,
+            received_only,
+            participants: &participants,
+            shape,
+        }) else {
+            return Ok(Vec::new());
+        };
+
         let conn = self.reader();
-        let order_clause = match shape {
-            SearchShape::Lookup => thread_order_clause("e", ascending),
-            SearchShape::SearchBox(_) => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
-        };
-        // Each thread is represented by one matching email: the latest one
-        // newest-first, the earliest one oldest-first — otherwise a thread the
-        // user started long ago and replied to yesterday sorts by yesterday.
-        let thread_pick = if ascending { "MIN" } else { "MAX" };
-
-        // ── CTE: find thread_ids that contain a matching email ────────────────────
-        // All filter conditions apply to the same email row (`match_e`) so that
-        // `from:alice subject:meeting` requires a single message to satisfy both.
-        let mut cte_conditions: Vec<String> = Vec::new();
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        let mut param_idx = 1usize;
-        // Optional pre-CTE for the from filter — populated when both email-prefix
-        // and FTS-sender branches are needed so each can use its own index.
-        let mut from_match_cte: Option<String> = None;
-
-        // account_id is ?1 — used in both the CTE and outer query.
-        params_vec.push(Box::new(account_id.to_string()));
-        cte_conditions.push(format!("match_e.account_id = ?{}", param_idx));
-        cte_conditions.push("match_e.is_deleted = 0".to_string());
-        // Spam/trash never surface in search — a spam email classified
-        // `primary` must not sail through the category filter.
-        match shape {
-            SearchShape::Lookup => cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string()),
-            SearchShape::SearchBox(_) => cte_conditions.push(Self::filterable_mailbox("match_e")),
-        }
-        if exclude_spam {
-            cte_conditions.push(Self::junk_condition("match_e"));
-        }
-        // Read state rides with the other per-email conditions, so the thread
-        // representative is the latest UNREAD matching email of the thread.
-        if unread_only {
-            cte_conditions.push("match_e.is_read = 0".to_string());
-        }
-        if received_only {
-            cte_conditions.push("match_e.is_sent = 0".to_string());
-        }
-        param_idx += 1;
-
-        if let SearchShape::SearchBox(scope) = shape {
-            fn present(v: Option<&str>) -> Option<&str> {
-                v.map(str::trim).filter(|v| !v.is_empty())
-            }
-            // The view a search-box query runs in: only that mailbox's mail.
-            if let Some(mailbox) = present(scope.mailbox) {
-                cte_conditions.push(format!("match_e.mailbox = ?{param_idx}"));
-                params_vec.push(Box::new(mailbox.to_string()));
-                param_idx += 1;
-            }
-            // Same match as the sidebar's domain filter (`get_filtered_emails`).
-            if let Some(domain) = present(scope.domain) {
-                cte_conditions.push(format!("match_e.sender_domain = ?{param_idx}"));
-                params_vec.push(Box::new(domain.to_lowercase()));
-                param_idx += 1;
-            }
-            // Same match as the sidebar's attachment filter.
-            if let Some(ext) = present(scope.attachment_ext) {
-                cte_conditions.push(format!(
-                    "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = match_e.id AND LOWER(am.filename) LIKE ?{param_idx})"
-                ));
-                params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
-                param_idx += 1;
-            }
-        }
-
-        // Category filter
-        if let Some(cats) = categories.filter(|c| !c.is_empty()) {
-            let placeholders: Vec<String> = (0..cats.len()).map(|i| format!("?{}", param_idx + i)).collect();
-            cte_conditions.push(format!("match_e.category IN ({})", placeholders.join(", ")));
-            for cat in cats {
-                params_vec.push(Box::new(cat.clone()));
-            }
-            param_idx += cats.len();
-        }
-
-        // Keyword search via FTS5 (already indexed — no change needed here)
-        if !query.is_empty() {
-            let fts_query = sanitize_fts_query(query);
-            // A keyword of only symbols ("?!") can match nothing; dropping
-            // the condition instead would match every thread.
-            if fts_query.is_empty() {
-                return Ok(Vec::new());
-            }
-            cte_conditions.push(format!(
-                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                param_idx
-            ));
-            params_vec.push(Box::new(fts_query));
-            param_idx += 1;
-        }
-
-        // From filter — two-pronged:
-        //   1. Prefix match on `sender_email` (uses idx_emails_sender_email_nocase).
-        //      A case-folded range scan so mixed-case stored addresses still match
-        //      the lowercased needle (the porter/unicode FTS branch is already
-        //      case-insensitive; this keeps the address branch consistent).
-        //   2. FTS5 sender-column search for display-name matches (e.g. "from:Alice").
-        //
-        // When both branches are needed we materialise a separate `from_match` CTE
-        // with UNION so each branch can use its own index independently.  The old
-        // approach (OR in a single WHERE clause) prevented SQLite from using either
-        // index, causing a full table scan on every from: query.
-        if let Some(from) = from_filter {
-            let from_lower = from.to_lowercase();
-            // Build an FTS5 sender-column query: "sender:word1* sender:word2* ..."
-            let fts_sender: String = from
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|t| t.len() >= 2)
-                .map(|t| format!("sender:\"{}\"*", t))
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            // Convert prefix to explicit >= / < range bounds so SQLite can use
-            // idx_emails_sender_email as a B-tree range scan.  Parameterised
-            // LIKE ? prevents the optimiser from knowing there is no leading
-            // wildcard, so it falls back to a full table scan.
-            let upper_bound = prefix_upper_bound(&from_lower);
-
-            if fts_sender.is_empty() {
-                // Very short or symbol-only input — range scan only.
-                // COLLATE NOCASE so a mixed-case stored address still falls in
-                // range against the lowercased needle (idx_emails_sender_email_nocase).
-                if let Some(ref ub) = upper_bound {
-                    cte_conditions.push(format!(
-                        "(match_e.sender_email >= ?{lo} COLLATE NOCASE AND match_e.sender_email < ?{hi} COLLATE NOCASE)",
-                        lo = param_idx,
-                        hi = param_idx + 1,
-                    ));
-                    params_vec.push(Box::new(from_lower.clone()));
-                    params_vec.push(Box::new(ub.clone()));
-                    param_idx += 2;
-                } else {
-                    cte_conditions.push(format!("match_e.sender_email >= ?{} COLLATE NOCASE", param_idx));
-                    params_vec.push(Box::new(from_lower.clone()));
-                    param_idx += 1;
-                }
-            } else {
-                // UNION CTE: each branch uses its own index independently.
-                //   Branch 1 (>= / <) → idx_emails_sender_email_nocase B-tree range scan.
-                //   Branch 2 (MATCH)   → emails_fts inverted index (display-name hits).
-                //
-                // is_deleted is intentionally omitted — filter_match enforces it.
-                // COLLATE NOCASE on both bounds so a mixed-case stored address
-                // still falls in range against the lowercased needle; the
-                // idx_emails_sender_email_nocase index serves the case-folded scan.
-                let range_clause = if let Some(ref _ub) = upper_bound {
-                    format!(
-                        "sender_email >= ?{lo} COLLATE NOCASE AND sender_email < ?{hi} COLLATE NOCASE",
-                        lo = param_idx,
-                        hi = param_idx + 1,
-                    )
-                } else {
-                    format!("sender_email >= ?{} COLLATE NOCASE", param_idx)
-                };
-                let range_params = if upper_bound.is_some() { 2 } else { 1 };
-
-                // Branch 3 (relaxed, multi-token needles only): every
-                // meaningful token must appear SOMEWHERE in "display name +
-                // address". Neither indexed branch can span the two fields —
-                // the FTS `sender` column holds only the display name, and the
-                // address branch is a prefix scan pinned to the local part — so
-                // a needle like "nadia de northwind" (a person AND their
-                // company) matched nothing at all. This branch is a scan, which
-                // is why it is gated on a multi-token needle: single-token
-                // lookups (the overwhelming majority) keep the pure index path.
-                let relaxed_tokens = relaxed_sender_tokens(from);
-                let relaxed_branch = if relaxed_tokens.is_empty() {
-                    String::new()
-                } else {
-                    let first = param_idx + range_params + 1;
-                    let conds: Vec<String> = (0..relaxed_tokens.len())
-                        .map(|i| format!("haystack LIKE ?{}", first + i))
-                        .collect();
-                    format!(
-                        "
-                         UNION
-                         SELECT email_id FROM (
-                             SELECT id AS email_id,
-                                    lower(sender || ' ' || sender_email) AS haystack
-                             FROM emails
-                             WHERE account_id = ?1
-                         ) WHERE {}",
-                        conds.join(" AND "),
-                    )
-                };
-
-                // Branch 4 (company / domain needles): the user names the
-                // COMPANY, not the person — "northwind", "de northwind". The domain
-                // is in no display name, and it is not a prefix of the address
-                // (that starts with the local part), so branches 1-2 find only
-                // the few senders who spell the company into their display
-                // name. Prefix-matched against the indexed `sender_domain`
-                // column, so this is a B-tree range scan, not a table scan.
-                let domain_needle = sender_domain_needle(from);
-                let domain_branch = match domain_needle {
-                    None => String::new(),
-                    Some(ref d) => {
-                        let lo = param_idx + range_params + 1 + relaxed_tokens.len();
-                        match prefix_upper_bound(d) {
-                            Some(_) => format!(
-                                "
-                         UNION
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_domain
-                         WHERE account_id = ?1
-                           AND sender_domain >= ?{lo} AND sender_domain < ?{hi}",
-                                lo = lo,
-                                hi = lo + 1,
-                            ),
-                            None => format!(
-                                "
-                         UNION
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_domain
-                         WHERE account_id = ?1
-                           AND sender_domain >= ?{lo}",
-                                lo = lo,
-                            ),
-                        }
-                    }
-                };
-
-                from_match_cte = Some(format!(
-                    "from_match AS (
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_email_nocase
-                         WHERE account_id = ?1
-                           AND {range}
-                         UNION
-                         SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}{relaxed}{domain}
-                     )",
-                    range = range_clause,
-                    fts_idx = param_idx + range_params,
-                    relaxed = relaxed_branch,
-                    domain = domain_branch,
-                ));
-                params_vec.push(Box::new(from_lower));
-                if let Some(ub) = upper_bound {
-                    params_vec.push(Box::new(ub));
-                }
-                params_vec.push(Box::new(fts_sender));
-                param_idx += range_params + 1;
-                for tok in &relaxed_tokens {
-                    params_vec.push(Box::new(format!("%{}%", tok)));
-                    param_idx += 1;
-                }
-                if let Some(d) = domain_needle {
-                    let ub = prefix_upper_bound(&d);
-                    params_vec.push(Box::new(d));
-                    param_idx += 1;
-                    if let Some(ub) = ub {
-                        params_vec.push(Box::new(ub));
-                        param_idx += 1;
-                    }
-                }
-                // The JOIN into from_match is handled in query assembly below.
-            }
-        }
-
-        // To filter — recipients are stored as a JSON array; LIKE is unavoidable
-        // without a separate recipients table.  Run it in the CTE (once) rather than
-        // inside a correlated subquery (once per representative email).
-        if let Some(to) = to_filter {
-            let to_pattern = format!("%{}%", to);
-            cte_conditions.push(format!("match_e.recipients_json LIKE ?{}", param_idx));
-            params_vec.push(Box::new(to_pattern));
-            param_idx += 1;
-        }
-
-        // Participants: any term in the sender (name or address), recipients
-        // or cc. JSON arrays again, so LIKE — same cost as the `to` filter.
-        if !participants.is_empty() {
-            let mut any_term = Vec::with_capacity(participants.len());
-            for term in &participants {
-                any_term.push(format!(
-                    "(lower(match_e.sender) LIKE ?{i} OR lower(match_e.sender_email) LIKE ?{i} \
-                     OR lower(match_e.recipients_json) LIKE ?{i} OR lower(match_e.cc_json) LIKE ?{i})",
-                    i = param_idx
-                ));
-                params_vec.push(Box::new(format!("%{term}%")));
-                param_idx += 1;
-            }
-            cte_conditions.push(format!("({})", any_term.join(" OR ")));
-        }
-
-        // Subject filter — route through FTS5 subject column instead of LIKE '%…%'.
-        // FTS5 `subject:{term}*` uses the inverted index on the subject field.
-        if let Some(subj) = subject_filter {
-            let fts_subject: String = subj
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|t| t.len() >= 2)
-                .map(|t| format!("subject:\"{}\"*", t))
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            if fts_subject.is_empty() {
-                // Fallback for very short subjects
-                let subj_pattern = format!("%{}%", subj);
-                cte_conditions.push(format!("match_e.subject LIKE ?{}", param_idx));
-                params_vec.push(Box::new(subj_pattern));
-                param_idx += 1;
-            } else {
-                cte_conditions.push(format!(
-                    "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                    param_idx
-                ));
-                params_vec.push(Box::new(fts_subject));
-                param_idx += 1;
-            }
-        }
-
-        // Date range filters
-        if let Some(after) = after_timestamp {
-            cte_conditions.push(format!("match_e.timestamp >= ?{}", param_idx));
-            params_vec.push(Box::new(after));
-            param_idx += 1;
-        }
-        if let Some(before) = before_timestamp {
-            cte_conditions.push(format!("match_e.timestamp <= ?{}", param_idx));
-            params_vec.push(Box::new(before));
-            param_idx += 1;
-        }
-
-        // Tag filters. A typed filter also binds `tag_type`, which keeps
-        // `intent=billing` from matching the company tag "billing" and lets
-        // SQLite use idx_email_tags_type_value instead of scanning by value.
-        if let Some(tags) = tag_filters.filter(|t| !t.is_empty()) {
-            for tag in tags {
-                let type_clause = match &tag.tag_type {
-                    Some(_) => format!(" AND et.tag_type = ?{}", param_idx + 1),
-                    None => String::new(),
-                };
-                cte_conditions.push(format!(
-                    "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{}{})",
-                    param_idx, type_clause
-                ));
-                params_vec.push(Box::new(tag.value.clone()));
-                param_idx += 1;
-                if let Some(tag_type) = &tag.tag_type {
-                    params_vec.push(Box::new(tag_type.clone()));
-                    param_idx += 1;
-                }
-            }
-        }
-
-        // ── Assemble and execute ─────────────────────────────────────────────────
-        let cte_where = cte_conditions.join(" AND ");
-
-        // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
-        // for finding the latest email per thread (benchmarked on 47k emails).
-        // `filter_match` emits id/thread_id/timestamp for matching emails,
-        // so the dedup groups by thread over ONLY the matching rows — not all
-        // emails in those threads, and the representative id always comes
-        // from `filter_match`. See the regression test
-        // `search_emails_from_filter_returns_matching_email_not_reply`.
-        //
-        // With a `from_match` CTE, `filter_match` drives from it (CROSS JOIN
-        // pins the order): the sender index + FTS produce the candidate ids,
-        // and each is a PK lookup that must pass every other filter. The ids
-        // stay inside SQL — binding them one parameter each broke past
-        // SQLite's 32,766-variable limit on a prolific sender.
-        let (from_cte, filter_source) = match &from_match_cte {
-            Some(cte) => (
-                format!("{cte},"),
-                "from_match fm CROSS JOIN emails match_e ON match_e.id = fm.email_id",
-            ),
-            None => (String::new(), "emails match_e"),
-        };
-        let sql = format!(
-            "WITH {from_cte}
-             filter_match AS (
-                 SELECT match_e.id, match_e.thread_id, match_e.timestamp
-                 FROM {filter_source}
-                 WHERE {cte_where}
-             ),
-             {dedup}
-             ORDER BY {order}
-             LIMIT ?{limit_idx}",
-            dedup = thread_representative_sql(thread_pick, &sort_key_sql(shape)),
-            order = order_clause,
-            limit_idx = param_idx,
-        );
-
-        params_vec.push(Box::new(limit));
-
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
@@ -1210,6 +843,475 @@ impl Database {
 
         Ok(result)
     }
+}
+
+/// How a `from:` needle narrows the matches.
+pub(super) enum FromMatch {
+    /// A `from_match (email_id)` CTE, each of whose branches uses its own index.
+    Cte(String),
+    /// A needle too short to tokenize: one condition on the aliased `emails`.
+    Condition(String),
+}
+
+/// The `from:` match shared by the chat's search and the list. `account_cond`
+/// scopes the branches (`account_id = ?1`, or the enabled accounts) and `alias`
+/// names the `emails` row a plain condition applies to. Binds continue from
+/// `next_index`, which is left past them.
+///
+/// Two-pronged:
+///   1. Prefix match on `sender_email` (uses idx_emails_sender_email_nocase).
+///      A case-folded range scan so mixed-case stored addresses still match
+///      the lowercased needle (the porter/unicode FTS branch is already
+///      case-insensitive; this keeps the address branch consistent).
+///   2. FTS5 sender-column search for display-name matches (e.g. "from:Alice").
+///
+/// When both branches are needed we materialise a separate `from_match` CTE
+/// with UNION so each branch can use its own index independently.  The old
+/// approach (OR in a single WHERE clause) prevented SQLite from using either
+/// index, causing a full table scan on every from: query.
+pub(super) fn from_match_sql(
+    from: &str,
+    account_cond: &str,
+    alias: &str,
+    next_index: &mut usize,
+) -> (FromMatch, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut param_idx = *next_index;
+    let mut condition = None;
+    let mut cte = None;
+    let from_lower = from.to_lowercase();
+    // Build an FTS5 sender-column query: "sender:word1* sender:word2* ..."
+    let fts_sender: String = from
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .map(|t| format!("sender:\"{}\"*", t))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Convert prefix to explicit >= / < range bounds so SQLite can use
+    // idx_emails_sender_email as a B-tree range scan.  Parameterised
+    // LIKE ? prevents the optimiser from knowing there is no leading
+    // wildcard, so it falls back to a full table scan.
+    let upper_bound = prefix_upper_bound(&from_lower);
+
+    if fts_sender.is_empty() {
+        // Very short or symbol-only input — range scan only.
+        // COLLATE NOCASE so a mixed-case stored address still falls in
+        // range against the lowercased needle (idx_emails_sender_email_nocase).
+        if let Some(ref ub) = upper_bound {
+            condition = Some(format!(
+                "({alias}.sender_email >= ?{lo} COLLATE NOCASE AND {alias}.sender_email < ?{hi} COLLATE NOCASE)",
+                lo = param_idx,
+                hi = param_idx + 1,
+            ));
+            params_vec.push(Box::new(from_lower.clone()));
+            params_vec.push(Box::new(ub.clone()));
+            param_idx += 2;
+        } else {
+            condition = Some(format!("{alias}.sender_email >= ?{} COLLATE NOCASE", param_idx));
+            params_vec.push(Box::new(from_lower.clone()));
+            param_idx += 1;
+        }
+    } else {
+        // UNION CTE: each branch uses its own index independently.
+        //   Branch 1 (>= / <) → idx_emails_sender_email_nocase B-tree range scan.
+        //   Branch 2 (MATCH)   → emails_fts inverted index (display-name hits).
+        //
+        // is_deleted is intentionally omitted — filter_match enforces it.
+        // COLLATE NOCASE on both bounds so a mixed-case stored address
+        // still falls in range against the lowercased needle; the
+        // idx_emails_sender_email_nocase index serves the case-folded scan.
+        let range_clause = if let Some(ref _ub) = upper_bound {
+            format!(
+                "sender_email >= ?{lo} COLLATE NOCASE AND sender_email < ?{hi} COLLATE NOCASE",
+                lo = param_idx,
+                hi = param_idx + 1,
+            )
+        } else {
+            format!("sender_email >= ?{} COLLATE NOCASE", param_idx)
+        };
+        let range_params = if upper_bound.is_some() { 2 } else { 1 };
+
+        // Branch 3 (relaxed, multi-token needles only): every
+        // meaningful token must appear SOMEWHERE in "display name +
+        // address". Neither indexed branch can span the two fields —
+        // the FTS `sender` column holds only the display name, and the
+        // address branch is a prefix scan pinned to the local part — so
+        // a needle like "nadia de northwind" (a person AND their
+        // company) matched nothing at all. This branch is a scan, which
+        // is why it is gated on a multi-token needle: single-token
+        // lookups (the overwhelming majority) keep the pure index path.
+        let relaxed_tokens = relaxed_sender_tokens(from);
+        let relaxed_branch = if relaxed_tokens.is_empty() {
+            String::new()
+        } else {
+            let first = param_idx + range_params + 1;
+            let conds: Vec<String> = (0..relaxed_tokens.len())
+                .map(|i| format!("haystack LIKE ?{}", first + i))
+                .collect();
+            format!(
+                "
+                 UNION
+                 SELECT email_id FROM (
+                     SELECT id AS email_id,
+                            lower(sender || ' ' || sender_email) AS haystack
+                     FROM emails
+                     WHERE {account_cond}
+                 ) WHERE {}",
+                conds.join(" AND "),
+            )
+        };
+
+        // Branch 4 (company / domain needles): the user names the
+        // COMPANY, not the person — "northwind", "de northwind". The domain
+        // is in no display name, and it is not a prefix of the address
+        // (that starts with the local part), so branches 1-2 find only
+        // the few senders who spell the company into their display
+        // name. Prefix-matched against the indexed `sender_domain`
+        // column, so this is a B-tree range scan, not a table scan.
+        let domain_needle = sender_domain_needle(from);
+        let domain_branch = match domain_needle {
+            None => String::new(),
+            Some(ref d) => {
+                let lo = param_idx + range_params + 1 + relaxed_tokens.len();
+                match prefix_upper_bound(d) {
+                    Some(_) => format!(
+                        "
+                 UNION
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_domain
+                 WHERE {account_cond}
+                   AND sender_domain >= ?{lo} AND sender_domain < ?{hi}",
+                        lo = lo,
+                        hi = lo + 1,
+                    ),
+                    None => format!(
+                        "
+                 UNION
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_domain
+                 WHERE {account_cond}
+                   AND sender_domain >= ?{lo}",
+                        lo = lo,
+                    ),
+                }
+            }
+        };
+
+        cte = Some(format!(
+            "from_match AS (
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_email_nocase
+                 WHERE {account_cond}
+                   AND {range}
+                 UNION
+                 SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}{relaxed}{domain}
+             )",
+            range = range_clause,
+            fts_idx = param_idx + range_params,
+            relaxed = relaxed_branch,
+            domain = domain_branch,
+        ));
+        params_vec.push(Box::new(from_lower));
+        if let Some(ub) = upper_bound {
+            params_vec.push(Box::new(ub));
+        }
+        params_vec.push(Box::new(fts_sender));
+        param_idx += range_params + 1;
+        for tok in &relaxed_tokens {
+            params_vec.push(Box::new(format!("%{}%", tok)));
+            param_idx += 1;
+        }
+        if let Some(d) = domain_needle {
+            let ub = prefix_upper_bound(&d);
+            params_vec.push(Box::new(d));
+            param_idx += 1;
+            if let Some(ub) = ub {
+                params_vec.push(Box::new(ub));
+                param_idx += 1;
+            }
+        }
+    }
+
+    *next_index = param_idx;
+    match (cte, condition) {
+        (Some(sql), _) => (FromMatch::Cte(sql), params_vec),
+        (None, condition) => (FromMatch::Condition(condition.unwrap_or_default()), params_vec),
+    }
+}
+
+/// Everything `search_emails_inner` varies its query by.
+#[derive(Clone, Copy)]
+struct SearchSqlArgs<'a> {
+    account_id: &'a str,
+    query: &'a str,
+    categories: Option<&'a [String]>,
+    from_filter: Option<&'a str>,
+    to_filter: Option<&'a str>,
+    subject_filter: Option<&'a str>,
+    after_timestamp: Option<i64>,
+    before_timestamp: Option<i64>,
+    tag_filters: Option<&'a [TagQuery]>,
+    limit: i32,
+    ascending: bool,
+    exclude_spam: bool,
+    unread_only: bool,
+    received_only: bool,
+    participants: &'a [String],
+    shape: SearchShape<'a>,
+}
+
+/// The SQL and binds of a text search, or `None` when the query cannot match
+/// anything. Pure, so the chat's query can be pinned (`lookup_sql_is_pinned`).
+fn build_search_sql(args: &SearchSqlArgs<'_>) -> Option<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
+    let SearchSqlArgs {
+        account_id,
+        query,
+        categories,
+        from_filter,
+        to_filter,
+        subject_filter,
+        after_timestamp,
+        before_timestamp,
+        tag_filters,
+        limit,
+        ascending,
+        exclude_spam,
+        unread_only,
+        received_only,
+        participants,
+        shape,
+    } = *args;
+    let order_clause = match shape {
+        SearchShape::Lookup => thread_order_clause("e", ascending),
+        SearchShape::SearchBox(_) => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
+    };
+    // Each thread is represented by one matching email: the latest one
+    // newest-first, the earliest one oldest-first — otherwise a thread the
+    // user started long ago and replied to yesterday sorts by yesterday.
+    let thread_pick = if ascending { "MIN" } else { "MAX" };
+
+    // ── CTE: find thread_ids that contain a matching email ────────────────────
+    // All filter conditions apply to the same email row (`match_e`) so that
+    // `from:alice subject:meeting` requires a single message to satisfy both.
+    let mut cte_conditions: Vec<String> = Vec::new();
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut param_idx = 1usize;
+    // Optional pre-CTE for the from filter — populated when both email-prefix
+    // and FTS-sender branches are needed so each can use its own index.
+    let mut from_match_cte: Option<String> = None;
+
+    // account_id is ?1 — used in both the CTE and outer query.
+    params_vec.push(Box::new(account_id.to_string()));
+    cte_conditions.push(format!("match_e.account_id = ?{}", param_idx));
+    cte_conditions.push("match_e.is_deleted = 0".to_string());
+    // Spam/trash never surface in search — a spam email classified
+    // `primary` must not sail through the category filter.
+    match shape {
+        SearchShape::Lookup => cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string()),
+        SearchShape::SearchBox(_) => cte_conditions.push(Database::filterable_mailbox("match_e")),
+    }
+    if exclude_spam {
+        cte_conditions.push(Database::junk_condition("match_e"));
+    }
+    // Read state rides with the other per-email conditions, so the thread
+    // representative is the latest UNREAD matching email of the thread.
+    if unread_only {
+        cte_conditions.push("match_e.is_read = 0".to_string());
+    }
+    if received_only {
+        cte_conditions.push("match_e.is_sent = 0".to_string());
+    }
+    param_idx += 1;
+
+    if let SearchShape::SearchBox(scope) = shape {
+        fn present(v: Option<&str>) -> Option<&str> {
+            v.map(str::trim).filter(|v| !v.is_empty())
+        }
+        // The view a search-box query runs in: only that mailbox's mail.
+        if let Some(mailbox) = present(scope.mailbox) {
+            cte_conditions.push(format!("match_e.mailbox = ?{param_idx}"));
+            params_vec.push(Box::new(mailbox.to_string()));
+            param_idx += 1;
+        }
+        // Same match as the sidebar's domain filter (`get_filtered_emails`).
+        if let Some(domain) = present(scope.domain) {
+            cte_conditions.push(format!("match_e.sender_domain = ?{param_idx}"));
+            params_vec.push(Box::new(domain.to_lowercase()));
+            param_idx += 1;
+        }
+        // Same match as the sidebar's attachment filter.
+        if let Some(ext) = present(scope.attachment_ext) {
+            cte_conditions.push(format!(
+                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = match_e.id AND LOWER(am.filename) LIKE ?{param_idx})"
+            ));
+            params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
+            param_idx += 1;
+        }
+    }
+
+    // Category filter
+    if let Some(cats) = categories.filter(|c| !c.is_empty()) {
+        let placeholders: Vec<String> = (0..cats.len()).map(|i| format!("?{}", param_idx + i)).collect();
+        cte_conditions.push(format!("match_e.category IN ({})", placeholders.join(", ")));
+        for cat in cats {
+            params_vec.push(Box::new(cat.clone()));
+        }
+        param_idx += cats.len();
+    }
+
+    // Keyword search via FTS5 (already indexed — no change needed here)
+    if !query.is_empty() {
+        let fts_query = sanitize_fts_query(query);
+        // A keyword of only symbols ("?!") can match nothing; dropping
+        // the condition instead would match every thread.
+        if fts_query.is_empty() {
+            return None;
+        }
+        cte_conditions.push(format!(
+            "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+            param_idx
+        ));
+        params_vec.push(Box::new(fts_query));
+        param_idx += 1;
+    }
+
+    if let Some(from) = from_filter {
+        let (from_match, binds) = from_match_sql(from, "account_id = ?1", "match_e", &mut param_idx);
+        params_vec.extend(binds);
+        match from_match {
+            FromMatch::Cte(sql) => from_match_cte = Some(sql),
+            FromMatch::Condition(sql) => cte_conditions.push(sql),
+        }
+    }
+
+    // To filter — recipients are stored as a JSON array; LIKE is unavoidable
+    // without a separate recipients table.  Run it in the CTE (once) rather than
+    // inside a correlated subquery (once per representative email).
+    if let Some(to) = to_filter {
+        let to_pattern = format!("%{}%", to);
+        cte_conditions.push(format!("match_e.recipients_json LIKE ?{}", param_idx));
+        params_vec.push(Box::new(to_pattern));
+        param_idx += 1;
+    }
+
+    // Participants: any term in the sender (name or address), recipients
+    // or cc. JSON arrays again, so LIKE — same cost as the `to` filter.
+    if !participants.is_empty() {
+        let mut any_term = Vec::with_capacity(participants.len());
+        for term in participants {
+            any_term.push(format!(
+                "(lower(match_e.sender) LIKE ?{i} OR lower(match_e.sender_email) LIKE ?{i} \
+                 OR lower(match_e.recipients_json) LIKE ?{i} OR lower(match_e.cc_json) LIKE ?{i})",
+                i = param_idx
+            ));
+            params_vec.push(Box::new(format!("%{term}%")));
+            param_idx += 1;
+        }
+        cte_conditions.push(format!("({})", any_term.join(" OR ")));
+    }
+
+    // Subject filter — route through FTS5 subject column instead of LIKE '%…%'.
+    // FTS5 `subject:{term}*` uses the inverted index on the subject field.
+    if let Some(subj) = subject_filter {
+        let fts_subject: String = subj
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 2)
+            .map(|t| format!("subject:\"{}\"*", t))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if fts_subject.is_empty() {
+            // Fallback for very short subjects
+            let subj_pattern = format!("%{}%", subj);
+            cte_conditions.push(format!("match_e.subject LIKE ?{}", param_idx));
+            params_vec.push(Box::new(subj_pattern));
+            param_idx += 1;
+        } else {
+            cte_conditions.push(format!(
+                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+                param_idx
+            ));
+            params_vec.push(Box::new(fts_subject));
+            param_idx += 1;
+        }
+    }
+
+    // Date range filters
+    if let Some(after) = after_timestamp {
+        cte_conditions.push(format!("match_e.timestamp >= ?{}", param_idx));
+        params_vec.push(Box::new(after));
+        param_idx += 1;
+    }
+    if let Some(before) = before_timestamp {
+        cte_conditions.push(format!("match_e.timestamp <= ?{}", param_idx));
+        params_vec.push(Box::new(before));
+        param_idx += 1;
+    }
+
+    // Tag filters. A typed filter also binds `tag_type`, which keeps
+    // `intent=billing` from matching the company tag "billing" and lets
+    // SQLite use idx_email_tags_type_value instead of scanning by value.
+    if let Some(tags) = tag_filters.filter(|t| !t.is_empty()) {
+        for tag in tags {
+            let type_clause = match &tag.tag_type {
+                Some(_) => format!(" AND et.tag_type = ?{}", param_idx + 1),
+                None => String::new(),
+            };
+            cte_conditions.push(format!(
+                "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{}{})",
+                param_idx, type_clause
+            ));
+            params_vec.push(Box::new(tag.value.clone()));
+            param_idx += 1;
+            if let Some(tag_type) = &tag.tag_type {
+                params_vec.push(Box::new(tag_type.clone()));
+                param_idx += 1;
+            }
+        }
+    }
+
+    // ── Assemble and execute ─────────────────────────────────────────────────
+    let cte_where = cte_conditions.join(" AND ");
+
+    // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
+    // for finding the latest email per thread (benchmarked on 47k emails).
+    // `filter_match` emits id/thread_id/timestamp for matching emails,
+    // so the dedup groups by thread over ONLY the matching rows — not all
+    // emails in those threads, and the representative id always comes
+    // from `filter_match`. See the regression test
+    // `search_emails_from_filter_returns_matching_email_not_reply`.
+    //
+    // With a `from_match` CTE, `filter_match` drives from it (CROSS JOIN
+    // pins the order): the sender index + FTS produce the candidate ids,
+    // and each is a PK lookup that must pass every other filter. The ids
+    // stay inside SQL — binding them one parameter each broke past
+    // SQLite's 32,766-variable limit on a prolific sender.
+    let (from_cte, filter_source) = match &from_match_cte {
+        Some(cte) => (
+            format!("{cte},"),
+            "from_match fm CROSS JOIN emails match_e ON match_e.id = fm.email_id",
+        ),
+        None => (String::new(), "emails match_e"),
+    };
+    let sql = format!(
+        "WITH {from_cte}
+         filter_match AS (
+             SELECT match_e.id, match_e.thread_id, match_e.timestamp
+             FROM {filter_source}
+             WHERE {cte_where}
+         ),
+         {dedup}
+         ORDER BY {order}
+         LIMIT ?{limit_idx}",
+        dedup = thread_representative_sql(thread_pick, &sort_key_sql(shape)),
+        order = order_clause,
+        limit_idx = param_idx,
+    );
+
+    params_vec.push(Box::new(limit));
+
+    Some((sql, params_vec))
 }
 
 /// Thread dedup tail for `search_emails_inner`, run over a preceding
@@ -1298,6 +1400,8 @@ fn with_own_timestamps(emails: Vec<Email>) -> Vec<(Email, i64)> {
 
 #[cfg(test)]
 mod tests {
+    use super::{build_search_sql, SearchShape, SearchSqlArgs, TagQuery};
+
     use super::super::test_helpers::*;
     use super::super::*;
     use crate::db::Database;
@@ -4238,5 +4342,180 @@ mod tests {
             super::split_addressee("Ada <ada@x.example"),
             (String::new(), "Ada <ada@x.example".to_string())
         );
+    }
+
+    /// The chat's query is not part of the list rebuild: every shape it can
+    /// take stays token for token, whitespace aside. Regenerate the snapshot
+    /// only for a change meant to reach the chat.
+    #[test]
+    fn lookup_sql_is_pinned() {
+        let base = SearchSqlArgs {
+            account_id: "acc",
+            query: "",
+            categories: None,
+            from_filter: None,
+            to_filter: None,
+            subject_filter: None,
+            after_timestamp: None,
+            before_timestamp: None,
+            tag_filters: None,
+            limit: 10,
+            ascending: false,
+            exclude_spam: false,
+            unread_only: false,
+            received_only: false,
+            participants: &[],
+            shape: SearchShape::Lookup,
+        };
+        let tags = [TagQuery::typed("intent", "urgent"), TagQuery::any_type("billing")];
+        let categories = ["primary".to_string()];
+        let people = ["ada".to_string(), "ada@empresa.example".to_string()];
+        let cases = [
+            (
+                "word",
+                SearchSqlArgs {
+                    query: "invoice",
+                    ..base
+                },
+            ),
+            (
+                "words_ascending",
+                SearchSqlArgs {
+                    query: "invoice march",
+                    ascending: true,
+                    ..base
+                },
+            ),
+            (
+                "from_short",
+                SearchSqlArgs {
+                    from_filter: Some("a"),
+                    ..base
+                },
+            ),
+            (
+                "from_one_word",
+                SearchSqlArgs {
+                    from_filter: Some("ada"),
+                    ..base
+                },
+            ),
+            (
+                "from_two_words",
+                SearchSqlArgs {
+                    from_filter: Some("nadia de northwind"),
+                    ..base
+                },
+            ),
+            (
+                "from_address",
+                SearchSqlArgs {
+                    from_filter: Some("ada@empresa.example"),
+                    ..base
+                },
+            ),
+            (
+                "from_and_word",
+                SearchSqlArgs {
+                    from_filter: Some("ada"),
+                    query: "invoice",
+                    ..base
+                },
+            ),
+            (
+                "to",
+                SearchSqlArgs {
+                    to_filter: Some("ada@empresa.example"),
+                    ..base
+                },
+            ),
+            (
+                "subject",
+                SearchSqlArgs {
+                    subject_filter: Some("quarterly report"),
+                    ..base
+                },
+            ),
+            (
+                "subject_short",
+                SearchSqlArgs {
+                    subject_filter: Some("q"),
+                    ..base
+                },
+            ),
+            (
+                "dates",
+                SearchSqlArgs {
+                    query: "invoice",
+                    after_timestamp: Some(10),
+                    before_timestamp: Some(20),
+                    ..base
+                },
+            ),
+            (
+                "tags",
+                SearchSqlArgs {
+                    tag_filters: Some(&tags),
+                    ..base
+                },
+            ),
+            (
+                "categories",
+                SearchSqlArgs {
+                    query: "invoice",
+                    categories: Some(&categories),
+                    ..base
+                },
+            ),
+            (
+                "participants",
+                SearchSqlArgs {
+                    participants: &people,
+                    ..base
+                },
+            ),
+            (
+                "flags",
+                SearchSqlArgs {
+                    query: "invoice",
+                    exclude_spam: true,
+                    unread_only: true,
+                    received_only: true,
+                    ..base
+                },
+            ),
+        ];
+        let got: String = cases
+            .iter()
+            .map(|(name, args)| {
+                let (sql, binds) = build_search_sql(args).expect("every pinned shape can match");
+                let sql = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+                format!("-- {name} ({} binds)\n{sql}\n\n", binds.len())
+            })
+            .collect();
+        assert_eq!(got, include_str!("lookup_sql.snapshot.txt"));
+    }
+
+    #[test]
+    fn a_symbol_only_word_cannot_match() {
+        let args = SearchSqlArgs {
+            account_id: "acc",
+            query: "?!",
+            categories: None,
+            from_filter: None,
+            to_filter: None,
+            subject_filter: None,
+            after_timestamp: None,
+            before_timestamp: None,
+            tag_filters: None,
+            limit: 10,
+            ascending: false,
+            exclude_spam: false,
+            unread_only: false,
+            received_only: false,
+            participants: &[],
+            shape: SearchShape::Lookup,
+        };
+        assert!(build_search_sql(&args).is_none());
     }
 }
