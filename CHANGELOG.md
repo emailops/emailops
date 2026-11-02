@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Images in older mail come back.** Mail stored before inline images were
+  downloaded properly showed empty boxes. Such a message is now fetched again
+  when you open it.
 - **AI drafts stay in one language.** A reply is written in the language of the
   message it answers, greeting and closing included, whatever the language of
   your instructions, your past messages or the earlier messages in the thread.

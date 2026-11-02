@@ -4203,3 +4203,19 @@ removal never reached Outlook and the next pull brought the attachment back.
 content id: their bytes survive, but an Outlook `cid:` reference in the body stops resolving
 after an edit, and a Gmail draft shows the image in the body and as an attachment. Each push
 drops the change token, so the next pull downloads the draft's files again to compare them.
+
+## 2026-11-02 — Mail stored without its inline images is repaired when it is opened
+
+**Decision:** Opening a Gmail or Outlook message whose stored body still has `cid:` images
+fetches it again and keeps the result if it resolves more of them. A message the provider has
+answered for is not asked for again in that run; a failed fetch is retried on the next open.
+**Context:** Bodies stored before inline images were fetched by attachment id kept their
+references, and no sync rewrites a stored body, so that mail showed empty boxes for good. A
+reply can also quote an image it does not carry, and such a body never resolves.
+**Rejected:**
+- *A background pass over every such message*: it spends provider quota and disk on mail that
+  may never be opened again.
+- *Reusing `redownload_email`*: it rewrites the row, the search index and the attachments, for
+  what is one body.
+- *A column for "already tried"*: a schema change and a release coupling, to save one request
+  per run.

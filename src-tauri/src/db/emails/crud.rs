@@ -577,6 +577,16 @@ impl Database {
         }
     }
 
+    /// Replace a stored body. The search index keeps its row, so this is for
+    /// a body whose text did not change.
+    pub fn set_email_body(&self, email_id: &str, body: &str) -> Result<()> {
+        self.connection().execute(
+            "UPDATE email_bodies SET body = ?2 WHERE email_id = ?1",
+            params![email_id, body],
+        )?;
+        Ok(())
+    }
+
     /// The user's own messages in past threads where `correspondent_email`
     /// also wrote — how the user usually writes to that person. Newest first,
     /// strictly before `before_ts`, excluding `exclude_thread_id` (the thread
