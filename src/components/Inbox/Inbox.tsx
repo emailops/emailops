@@ -26,12 +26,13 @@ interface InboxProps {
   syncProgress: SyncProgress | null;
   isLoadingMore: boolean;
   hasMore: boolean;
-  totalCount: number;
   selectedEmailId: string | null;
   /** `auto` is set when the split layout picked the email itself (first load
    *  of a list), not the user — such a selection must not mark it read. */
   onSelectEmail: (email: Email, opts?: { auto?: boolean }) => void;
   onLoadMore: () => void;
+  /** Ask again for what failed: the first page or the next one. */
+  onRetry?: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
   onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
@@ -156,6 +157,7 @@ export function Inbox({
   selectedEmailId,
   onSelectEmail,
   onLoadMore,
+  onRetry,
   onAddSenderFilter,
   onHideSenderFromFilters,
   onCreateAttachmentRule,
@@ -193,8 +195,8 @@ export function Inbox({
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const unreadOnly = useEmailStore((s) => s.unreadOnly);
   const setUnreadOnly = useEmailStore((s) => s.setUnreadOnly);
-  const loadMoreFailed = useEmailStore((s) => selectPageFailed(s.paging));
-  const retryLoadMore = useEmailStore((s) => s.retryLoadMore);
+  const pageFailed = useEmailStore((s) => selectPageFailed(s.paging));
+  const listError = useEmailStore((s) => s.listError);
 
   // Active tab selection model:
   // - "all" while a search is active: search spans every category, and the
@@ -405,34 +407,13 @@ export function Inbox({
     if (!container || isLoadingMore || !hasMore || isLoading) return;
 
     const { scrollHeight, clientHeight } = container;
+    // A hidden list reads as empty; `onVisible` asks again when it is back.
+    if (clientHeight === 0) return;
     // If content doesn't fill the container (no scrollbar), load more
     if (scrollHeight <= clientHeight + 10) {
       onLoadMore();
     }
   }, [isLoadingMore, hasMore, isLoading, onLoadMore]);
-
-  // Infinite scroll handler
-  const handleScroll = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container || isLoadingMore || !hasMore) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-
-    // Load more when user scrolls to within 200px of the bottom
-    if (distanceFromBottom < 200) {
-      onLoadMore();
-    }
-  }, [isLoadingMore, hasMore, onLoadMore]);
-
-  // Attach scroll listener
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      return () => container.removeEventListener('scroll', handleScroll);
-    }
-  }, [handleScroll]);
 
   // Auto-load more if content doesn't fill the container
   useEffect(() => {
@@ -463,18 +444,21 @@ export function Inbox({
   // A sidebar filter travels as a one-token query; anything else is a
   // free-text search.
   const isTextSearch = Boolean(searchQuery?.trim()) && !filterFromQuery(searchQuery);
-  const emptyStateMessage: string = isSyncing
-    ? t('inbox:emptyState.syncing')
-    : unreadOnly
-      ? t('inbox:readFilter.empty')
-      : isTextSearch
-        ? t('inbox:emptyState.noSearchResults')
-        : hasActiveFilter || hasCategoryFilter
-          ? t('inbox:emptyState.noFilterResults')
-          : t('inbox:emptyState.noEmails');
+  const emptyStateMessage: string = listError
+    ? t('inbox:list.firstPageFailed')
+    : isSyncing
+      ? t('inbox:emptyState.syncing')
+      : unreadOnly
+        ? t('inbox:readFilter.empty')
+        : isTextSearch
+          ? t('inbox:emptyState.noSearchResults')
+          : hasActiveFilter || hasCategoryFilter
+            ? t('inbox:emptyState.noFilterResults')
+            : t('inbox:emptyState.noEmails');
   // A search has its own way out (ActiveSearchNotice) and a sync is filling
   // the list, so neither gets a button here.
   const emptyStateAction = (() => {
+    if (listError) return onRetry ? { label: t('common:actions.retry'), onClick: onRetry } : undefined;
     if (isSyncing || hasActiveFilter) return undefined;
     if (unreadOnly) return { label: t('inbox:emptyState.showAll'), onClick: () => setUnreadOnly(false) };
     if (hasCategoryFilter) {
@@ -498,7 +482,7 @@ export function Inbox({
             {/* Title */}
             {/* The title gives way before the search: it truncates, the
                 search keeps room to type (the header also holds the
-                All / Unread toggle and Load more). */}
+                All / Unread toggle). */}
             <div className="flex items-center gap-1.5 max-w-[45%] min-w-0">
               <h2 className="text-lg font-semibold text-gray-900 truncate">
                 {title ?? mailboxTitle('inbox', accountName, (key) => t(key as 'sidebar:inbox'))}
@@ -525,24 +509,6 @@ export function Inbox({
             {/* Action buttons */}
             <div className="flex items-center gap-1 flex-shrink-0">
               <ReadFilterToggle />
-              {hasMore && !isLoadingMore && (
-                <button
-                  onClick={() => {
-                    // A click asks again after a failed page; scrolling does not.
-                    if (loadMoreFailed) retryLoadMore();
-                    onLoadMore();
-                  }}
-                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
-                >
-                  {t('inbox:loadMore')}
-                </button>
-              )}
-              {isLoadingMore && (
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-                  {t('common:state.loading')}
-                </div>
-              )}
               {/* Always-visible new-chat affordance. Sits in the list toolbar
                   rather than the AI FEATURES sidebar section so starting a chat
                   never depends on that section being expanded or scrolled into
@@ -634,7 +600,7 @@ export function Inbox({
           <span>{t('inbox:junk.hideFlagged')}</span>
         </label>
       )}
-      {searchQuery && !isLoading && visibleEmails.length === 0 && (
+      {searchQuery && !isLoading && !listError && visibleEmails.length === 0 && (
         <ActiveSearchNotice query={searchQuery} onClear={clearSearchQuery} />
       )}
       <VirtualEmailList
@@ -647,6 +613,9 @@ export function Inbox({
         isLoadingMore={isLoadingMore}
         hasMore={hasMore}
         isSyncing={isSyncing}
+        pageFailed={pageFailed && emails.length > 0}
+        onRetry={onRetry}
+        onVisible={checkIfNeedMoreEmails}
         emptyStateMessage={emptyStateMessage}
         emptyStateAction={emptyStateAction}
         onSelectEmail={handleSelectEmail}

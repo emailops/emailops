@@ -484,7 +484,11 @@ interface EmailStore {
    *  it. After a failed page it stays off until the list is fetched again or
    *  the user asks for more, so scrolling does not retry in a tight loop. */
   paging: ListPaging;
-  retryLoadMore: () => void;
+  /** Why the first page failed. The list shows it in place of its rows, so it
+   *  never reads as an empty result. */
+  listError: string | null;
+  /** Ask again for what failed: the first page, or the next one. */
+  retryList: (accountId: string | null, mailbox?: MailboxView) => Promise<void>;
   tabs: EmailTab[];
   activeTabId: string | null;
   /**
@@ -644,7 +648,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   navigationInFlight: false,
   currentFetchId: 0,
   paging: INITIAL_PAGING,
-  retryLoadMore: () => set((state) => ({ paging: listPagingReducer(state.paging, { type: 'retried' }) })),
+  listError: null,
+  retryList: async (accountId, mailbox) => {
+    if (get().emails.length === 0) {
+      await get().fetchEmails(accountId, null, [], false, mailbox);
+      return;
+    }
+    set((state) => ({ paging: listPagingReducer(state.paging, { type: 'retried' }) }));
+    await get().loadMoreEmails(accountId, null, [], mailbox);
+  },
   tabs: [],
   activeTabId: null,
   pendingChatDraft: null,
@@ -824,6 +836,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         ...(shouldClear ? { emails: [] } : {}),
         paging: INITIAL_PAGING,
         error: null,
+        listError: null,
         currentFetchId: fetchId,
         navigationMode: false,
         focusEmailId: null,
@@ -833,6 +846,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }
 
     set({ listScope: view });
+
+    // The query itself stays out of the log: it can hold names and addresses.
+    const reportsSearch = !silent && source.kind === 'query';
+    if (reportsSearch) useLogStore.getState().addLog('info', 'search', 'Listing a search');
 
     // Opening a list (another mailbox, a filter, a search) may depend on an
     // archive/delete still in its undo window — e.g. the Archive view must
@@ -889,12 +906,23 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           isLoading: false,
           paging: listPagingReducer(state.paging, loaded),
         }));
+        if (reportsSearch) useLogStore.getState().addLog('success', 'search', `Listed ${emails.length} rows`);
       }
     } catch (error) {
       // Only update state if this is still the current fetch operation
-      if (get().currentFetchId === fetchId) {
-        set({ error: errorText(error), isLoading: false });
+      if (get().currentFetchId !== fetchId) return;
+      useLogStore.getState().addLog('error', 'search', `Could not load the list: ${errorText(error)}`);
+      if (silent) {
+        set({ isLoading: false });
+        return;
       }
+      // Rows of the list being left must not stand in for this one.
+      set((state) => ({
+        emails: [],
+        listError: errorText(error),
+        isLoading: false,
+        paging: listPagingReducer(state.paging, { type: 'failed' }),
+      }));
     }
   },
 
@@ -961,8 +989,13 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
             };
       });
     } catch (error) {
-      console.error('Failed to load more emails:', error);
-      set((state) => ({ paging: listPagingReducer(state.paging, { type: 'failed' }), error: errorText(error) }));
+      // A failure of the list before this one says nothing about this one.
+      if (get().currentFetchId !== currentFetchId) {
+        dispatch({ type: 'cancelled' });
+        return;
+      }
+      useLogStore.getState().addLog('error', 'search', `Could not load more emails: ${errorText(error)}`);
+      dispatch({ type: 'failed' });
     }
   },
 
@@ -1364,6 +1397,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       threadEmails: [],
       isLoading: false,
       paging: INITIAL_PAGING,
+      listError: null,
       isLoadingThread: false,
       totalCount: 0,
       error: null,

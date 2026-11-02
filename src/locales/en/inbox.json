@@ -4,7 +4,6 @@
   "emptyHint": "New messages will appear here once your mailbox syncs.",
   "loading": "Loading emails…",
   "loadingMore": "Loading more…",
-  "loadMore": "Load more",
   "noMore": "Up to date",
   "syncing": "Syncing…",
   "syncProgress": "Syncing {{current}} of {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 new email downloaded",
   "loadingEmails": "Loading emails...",
   "loadingMoreEmails": "Loading more...",
-  "noMoreEmails": "No more emails",
+  "noMoreEmails": "No more downloaded emails",
+  "noMoreEmailsSyncing": "No more downloaded emails for now. The sync may bring more.",
   "loadingThread": "Loading thread...",
   "loadingEmail": "Loading email…",
   "categoriesAria": "Email categories",
@@ -155,6 +155,10 @@
     "pinnedSection": "Pinned",
     "suggestedSection": "Suggested",
     "noFilters": "No smart filters yet — they appear as your mailbox grows."
+  },
+  "list": {
+    "firstPageFailed": "The list could not be loaded.",
+    "pageFailed": "More emails could not be loaded."
   },
   "searchPanel": {
     "firstResults": "First {{count}} results",

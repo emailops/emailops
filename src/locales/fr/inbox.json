@@ -4,7 +4,6 @@
   "emptyHint": "Les nouveaux messages apparaîtront ici à la synchronisation.",
   "loading": "Chargement des courriels…",
   "loadingMore": "Chargement…",
-  "loadMore": "Charger plus",
   "noMore": "À jour",
   "syncing": "Synchronisation…",
   "syncProgress": "Synchronisation {{current}} sur {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 nouveau courriel téléchargé",
   "loadingEmails": "Chargement des courriels...",
   "loadingMoreEmails": "Chargement…",
-  "noMoreEmails": "Plus aucun courriel",
+  "noMoreEmails": "Plus aucun courriel téléchargé",
+  "noMoreEmailsSyncing": "Plus aucun courriel téléchargé pour l'instant. La synchronisation peut en apporter d'autres.",
   "loadingThread": "Chargement du fil...",
   "loadingEmail": "Chargement du courriel…",
   "categoriesAria": "Catégories de courriels",
@@ -155,6 +155,10 @@
     "pinnedSection": "Épinglés",
     "suggestedSection": "Suggérés",
     "noFilters": "Pas encore de filtres intelligents — ils apparaîtront au fil du temps."
+  },
+  "list": {
+    "firstPageFailed": "Impossible de charger la liste.",
+    "pageFailed": "Impossible de charger d'autres courriels."
   },
   "searchPanel": {
     "firstResults": "{{count}} premiers résultats",

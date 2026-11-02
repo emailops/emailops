@@ -4,7 +4,6 @@
   "emptyHint": "Neue Nachrichten erscheinen hier, sobald dein Postfach synchronisiert wurde.",
   "loading": "E-Mails werden geladen…",
   "loadingMore": "Mehr laden…",
-  "loadMore": "Mehr laden",
   "noMore": "Auf dem neuesten Stand",
   "syncing": "Synchronisierung…",
   "syncProgress": "Synchronisiere {{current}} von {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 neue E-Mail heruntergeladen",
   "loadingEmails": "E-Mails werden geladen...",
   "loadingMoreEmails": "Lade weitere...",
-  "noMoreEmails": "Keine weiteren E-Mails",
+  "noMoreEmails": "Keine weiteren heruntergeladenen E-Mails",
+  "noMoreEmailsSyncing": "Vorerst keine weiteren heruntergeladenen E-Mails. Die Synchronisierung kann weitere bringen.",
   "loadingThread": "Thread wird geladen...",
   "loadingEmail": "E-Mail wird geladen…",
   "categoriesAria": "E-Mail-Kategorien",
@@ -155,6 +155,10 @@
     "pinnedSection": "Angeheftet",
     "suggestedSection": "Vorgeschlagen",
     "noFilters": "Noch keine Smart-Filter — sie erscheinen, sobald dein Postfach wächst."
+  },
+  "list": {
+    "firstPageFailed": "Die Liste konnte nicht geladen werden.",
+    "pageFailed": "Weitere E-Mails konnten nicht geladen werden."
   },
   "searchPanel": {
     "firstResults": "Erste {{count}} Ergebnisse",

@@ -36,7 +36,6 @@ vi.mock('./VirtualEmailList', () => ({
 }));
 vi.mock('./InboxSearchBox', () => ({ InboxSearchBox: () => null }));
 
-import * as api from '@/lib/api';
 import { useEmailStore } from '@/stores/emailStore';
 import type { Email, EmailCategory } from '@/types';
 import { Inbox } from './Inbox';
@@ -68,7 +67,6 @@ async function mount(props: Partial<Parameters<typeof Inbox>[0]> = {}) {
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={0}
         selectedEmailId={null}
         onSelectEmail={() => {}}
         onLoadMore={() => {}}
@@ -85,20 +83,34 @@ async function mount(props: Partial<Parameters<typeof Inbox>[0]> = {}) {
 const emptyMessage = () => container.querySelector('[data-testid="empty"]')?.textContent;
 const emptyAction = () => container.querySelector<HTMLButtonElement>('[data-testid="empty-action"]');
 
-describe('the Load more button after a failed page', () => {
-  it('asks the backend again', async () => {
+describe('a list without a button', () => {
+  it('offers no Load more', async () => {
     const first = { id: 'first', accountId: 'acct-1', threadId: 't1' } as Email;
-    useEmailStore.setState({ emails: [first], paging: { status: 'idle', cursor: null, offset: 1 }, totalCount: 500 });
-    vi.mocked(api.getEmails).mockRejectedValueOnce(new Error('offline'));
-    const loadMore = () => void useEmailStore.getState().loadMoreEmails('acct-1', null, [], 'inbox');
-    await act(async () => loadMore());
-    await mount({ emails: [first], hasMore: true, onLoadMore: loadMore });
-    vi.mocked(api.getEmails).mockClear();
+    await mount({ emails: [first], hasMore: true });
 
-    const button = [...container.querySelectorAll('button')].find((b) => b.textContent === 'inbox:loadMore');
-    await act(async () => button?.click());
+    expect(container.textContent).not.toContain('inbox:loadMore');
+  });
+});
 
-    expect(api.getEmails).toHaveBeenCalledTimes(1);
+describe('a failed first page', () => {
+  beforeEach(() => {
+    useEmailStore.setState({ searchQuery: 'invoice', listError: 'offline' });
+  });
+
+  it('says so and offers Retry, never that nothing matched', async () => {
+    const onRetry = vi.fn();
+    await mount({ onRetry });
+    expect(emptyMessage()).toBe('inbox:list.firstPageFailed');
+
+    await act(async () => emptyAction()?.click());
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the notice about an active search, which reads as an empty result', async () => {
+    await mount({ onRetry: () => {} });
+
+    expect(container.textContent).not.toContain('header.search');
   });
 });
 

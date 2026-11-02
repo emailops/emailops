@@ -52,7 +52,6 @@ async function mount(searchQuery: string | null = null) {
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={0}
         selectedEmailId={null}
         onSelectEmail={() => {}}
         onLoadMore={() => {}}

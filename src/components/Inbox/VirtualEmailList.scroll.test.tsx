@@ -426,3 +426,75 @@ describe('VirtualEmailList scroll position across a display:none hide', () => {
     expect(container.querySelectorAll('.overflow-y-auto').length).toBe(1);
   });
 });
+
+describe('VirtualEmailList paging', () => {
+  function renderPaged(props: Partial<Parameters<typeof VirtualEmailList>[0]>) {
+    act(() => {
+      root.render(
+        <VirtualEmailList
+          emails={manyEmails.slice(0, 5)}
+          selectedEmailId={null}
+          focusEmailId={null}
+          scrollContainerRef={scrollContainerRef}
+          isLoadingMore={false}
+          hasMore
+          isSyncing={false}
+          onSelectEmail={() => {}}
+          onLoadMore={() => {}}
+          {...props}
+        />,
+      );
+    });
+  }
+
+  it('asks for the next page near the end of a visible list', () => {
+    const onLoadMore = vi.fn();
+    renderPaged({ onLoadMore });
+    showAndSettle(scrollContainerRef.current as HTMLDivElement);
+
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+
+  it('does not walk a hidden list', () => {
+    const onLoadMore = vi.fn();
+    renderPaged({ onLoadMore });
+    fireResize();
+    renderPaged({ onLoadMore, emails: manyEmails.slice(0, 6) });
+
+    expect(onLoadMore).not.toHaveBeenCalled();
+  });
+
+  it('picks the walk up again when the list is shown', () => {
+    const onLoadMore = vi.fn();
+    const onVisible = vi.fn();
+    renderPaged({ onLoadMore, onVisible });
+    const el = scrollContainerRef.current as HTMLDivElement;
+    fireResize();
+    expect(onLoadMore).not.toHaveBeenCalled();
+
+    showAndSettle(el);
+
+    expect(onVisible).toHaveBeenCalledTimes(1);
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+
+  it('stops at a failed page and offers Retry under the last row', () => {
+    const onLoadMore = vi.fn();
+    const onRetry = vi.fn();
+    renderPaged({ onLoadMore, onRetry, pageFailed: true });
+    showAndSettle(scrollContainerRef.current as HTMLDivElement);
+
+    expect(onLoadMore).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('inbox:list.pageFailed');
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="page-retry"]')?.click());
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the list ended in terms of downloaded mail, and more may come during a sync', () => {
+    renderPaged({ hasMore: false });
+    expect(container.textContent).toContain('inbox:noMoreEmails');
+
+    renderPaged({ hasMore: false, isSyncing: true });
+    expect(container.textContent).toContain('inbox:noMoreEmailsSyncing');
+  });
+});

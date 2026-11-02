@@ -186,7 +186,7 @@ describe('loadMoreEmails after a failure', () => {
     await useEmailStore.getState().loadMoreEmails('acc', null, [], undefined);
 
     expect(api.getEmails).toHaveBeenCalledTimes(1);
-    expect(useEmailStore.getState().error).not.toBeNull();
+    expect(useEmailStore.getState().paging.status).toBe('failed');
   });
 
   it('pages again once the list has been refetched', async () => {

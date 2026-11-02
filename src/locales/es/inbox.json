@@ -4,7 +4,6 @@
   "emptyHint": "Los mensajes nuevos aparecerán aquí cuando se sincronice tu buzón.",
   "loading": "Cargando correos…",
   "loadingMore": "Cargando más…",
-  "loadMore": "Cargar más",
   "noMore": "Al día",
   "syncing": "Sincronizando…",
   "syncProgress": "Sincronizando {{current}} de {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "Descargado 1 correo nuevo",
   "loadingEmails": "Cargando correos...",
   "loadingMoreEmails": "Cargando más...",
-  "noMoreEmails": "No hay más correos",
+  "noMoreEmails": "No hay más correos descargados",
+  "noMoreEmailsSyncing": "No hay más correos descargados por ahora. La sincronización puede traer más.",
   "loadingThread": "Cargando hilo...",
   "loadingEmail": "Cargando correo…",
   "categoriesAria": "Categorías de correo",
@@ -155,6 +155,10 @@
     "pinnedSection": "Fijados",
     "suggestedSection": "Sugeridos",
     "noFilters": "Aún no hay filtros inteligentes — aparecerán a medida que crezca tu buzón."
+  },
+  "list": {
+    "firstPageFailed": "No se ha podido cargar la lista.",
+    "pageFailed": "No se han podido cargar más correos."
   },
   "searchPanel": {
     "firstResults": "Primeros {{count}} resultados",

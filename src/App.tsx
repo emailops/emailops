@@ -497,11 +497,11 @@ function AppInner() {
     isLoadingMore,
     isLoadingThread,
     hasMore,
-    totalCount,
     selectedEmail,
     threadEmails,
     selectEmail,
     loadMore,
+    retry: retryEmails,
     refetch: refetchEmails,
     silentRefetch: silentRefetchEmails,
     error: emailError,
@@ -1322,7 +1322,6 @@ function AppInner() {
       setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
       // The highlighted smart filter follows the query (filterStore).
       useEmailStore.getState().setSearchQuery(query);
-      addLog('info', 'search', `Filtering inbox: "${query}"`);
     },
     [addLog],
   );
@@ -1345,7 +1344,6 @@ function AppInner() {
       void selectEmail(null);
       if (query) {
         useEmailStore.getState().setSearchQuery(query);
-        addLog('info', 'search', `Filtering inbox: "${query}"`);
       } else {
         clearSearchQuery();
       }
@@ -1825,12 +1823,12 @@ function AppInner() {
                     syncProgress={syncProgress}
                     isLoadingMore={isLoadingMore}
                     hasMore={hasMore}
-                    totalCount={totalCount}
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
+                    onRetry={retryEmails}
                     onAddSenderFilter={addSenderAsFilter}
                     onHideSenderFromFilters={handleHideSenderFromFilters}
                     onCreateAttachmentRule={handleCreateAttachmentRule}

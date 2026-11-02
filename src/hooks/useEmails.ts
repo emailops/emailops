@@ -17,6 +17,7 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
     searchQuery,
     fetchEmails,
     loadMoreEmails,
+    retryList,
     selectedEmail,
     threadEmails,
     selectEmail,
@@ -59,6 +60,10 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
     }
   }, [activeAccountId, queryAccountId, activeFilter, loadMoreEmails, selectedCategories, mailbox]);
 
+  const retry = useCallback(() => {
+    if (activeAccountId) void retryList(queryAccountId, mailbox);
+  }, [activeAccountId, queryAccountId, retryList, mailbox]);
+
   const refetch = useCallback(() => {
     if (!activeAccountId) {
       return;
@@ -87,6 +92,7 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
     threadEmails,
     selectEmail,
     loadMore,
+    retry,
     searchQuery,
     clearError,
     reset,

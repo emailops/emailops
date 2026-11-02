@@ -110,8 +110,7 @@ describe('load more after a failed page', () => {
     await useEmailStore.getState().loadMoreEmails('acc', null, [], 'inbox');
     expect(api.getEmails).toHaveBeenCalledTimes(1);
 
-    useEmailStore.getState().retryLoadMore();
-    await useEmailStore.getState().loadMoreEmails('acc', null, [], 'inbox');
+    await useEmailStore.getState().retryList('acc', 'inbox');
 
     expect(api.getEmails).toHaveBeenCalledTimes(2);
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['first', 'listed']);

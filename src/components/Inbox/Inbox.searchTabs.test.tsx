@@ -51,7 +51,6 @@ async function mount(searchQuery: string | null, onSelectCategories = vi.fn()) {
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={0}
         selectedEmailId={null}
         onSelectEmail={() => {}}
         onLoadMore={() => {}}

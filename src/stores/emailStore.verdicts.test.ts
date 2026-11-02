@@ -57,7 +57,7 @@ describe('rows wait for their verdicts', () => {
     await useEmailStore.getState().fetchEmails('acc', null, [], false, 'inbox');
 
     expect(useEmailStore.getState().emails).toEqual([]);
-    expect(useEmailStore.getState().error).toContain('no verdicts');
+    expect(useEmailStore.getState().listError).toContain('no verdicts');
   });
 
   it('holds the next page too', async () => {
