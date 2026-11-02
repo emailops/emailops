@@ -1,0 +1,88 @@
+{
+  "generic": "出错了：{{message}}",
+  "unknown": "发生未知错误",
+  "network": "网络错误。请检查网络连接。",
+  "offline": "你处于离线状态，部分功能不可用。",
+  "database": "本地数据库错误：{{message}}",
+  "auth": {
+    "expired": "登录已过期，请重新登录。",
+    "invalidCredentials": "凭据无效。",
+    "providerRejected": "{{provider}} 拒绝了此次登录。",
+    "cancelled": "登录已取消。"
+  },
+  "sync": {
+    "failed": "同步失败：{{message}}",
+    "rateLimited": "{{provider}} 对同步做了频率限制，请稍后再试。",
+    "skippedOffline": "已跳过同步——当前处于离线状态。",
+    "noAccount": "未选择账户。"
+  },
+  "ai": {
+    "disabled": "AI 已禁用。请在设置中启用。",
+    "providerUnreachable": "无法连接 AI 提供商。",
+    "modelMissing": "所选模型不可用。",
+    "rateLimited": "AI 提供商对请求做了频率限制。",
+    "contextTooLong": "消息超出了模型的上下文窗口。"
+  },
+  "compose": {
+    "noRecipients": "发送前请至少添加一位收件人。",
+    "smtpFailed": "无法通过 SMTP 发送：{{message}}",
+    "draftSaveFailed": "无法保存草稿：{{message}}"
+  },
+  "account": {
+    "addFailed": "无法添加账户：{{message}}",
+    "removeFailed": "无法移除账户：{{message}}",
+    "saveSettingsFailed": "无法保存账户设置：{{message}}",
+    "imapTestFailed": "IMAP 测试失败：{{message}}"
+  },
+  "preferences": {
+    "loadFailed": "无法加载偏好设置：{{key}}",
+    "saveFailed": "无法保存偏好设置：{{key}}"
+  },
+  "codes": {
+    "auth": "身份验证失败：{{detail}}",
+    "database": "本地数据库错误。详见输出面板。",
+    "http": "网络请求失败。详见输出面板。",
+    "json": "无法读取服务器响应。详见输出面板。",
+    "oauth": "登录错误：{{detail}}",
+    "sync": "同步失败：{{detail}}",
+    "keyring": "钥匙串错误。详见输出面板。",
+    "needs_reauth": "需要身份验证——请重新登录。",
+    "calendar_permission_denied": "此账户未授予日历权限——请重新登录并允许访问日历。",
+    "not_found": "未找到：{{detail}}",
+    "read_only_calendar": "此日历是只读订阅——请到发布处修改事件",
+    "invalid_input": "输入无效：{{detail}}",
+    "ai": "AI 错误：{{detail}}",
+    "ai_disabled": "AI 已禁用。请在设置中启用。",
+    "ai_data_policy": "模型 {{model}} 不符合 EmailOps 的数据政策，不可用。请在 设置 → AI 中换用其他模型。",
+    "ai_context_exceeded": "请求长度超过了模型加载时的上下文窗口。请在服务器上以更大的上下文加载模型，或在 设置 → AI 中调低上下文窗口。",
+    "io": "文件错误。详见输出面板。",
+    "budget_exceeded": "AI 预算已超支：{{detail}}",
+    "cancelled": "已取消。",
+    "attachment_confirmation_required": "「{{filename}}」需要你确认后才能打开。",
+    "skill_no_frontmatter": "SKILL.md 必须以一个包含 name 和 description 的 --- 块开头。",
+    "skill_unclosed_frontmatter": "frontmatter 块没有用 --- 闭合。",
+    "skill_fence_not_on_own_line": "frontmatter 的结束 --- 必须单独占一行。",
+    "skill_invalid_frontmatter": "frontmatter 不是合法的 YAML：{{detail}}",
+    "skill_no_name": "frontmatter 中没有 name。",
+    "skill_empty_name": "技能必须有名称。",
+    "skill_invalid_name": "「{{name}}」不是有效的技能名称：只能使用小写字母、数字和单个连字符。",
+    "skill_name_mismatch": "name: {{name}} 必须与其文件夹名 {{folder}} 一致。",
+    "skill_no_description": "frontmatter 中没有 description——请说明这个技能做什么、什么时候用。",
+    "skill_description_too_long": "description 超过了 {{max}} 个字符。",
+    "skill_no_body": "技能在 frontmatter 之后没有指令内容。",
+    "skill_body_too_long": "指令超过了 {{max}} 个字符；请精简，以便放进模型的上下文。",
+    "skill_changed_on_disk": "{{name}}/SKILL.md 在你打开之后已被修改。请重新加载后再保存。",
+    "skill_already_exists": "已存在名为 {{name}} 的技能。请换一个名称。",
+    "no_archive_folder": "此账户没有「归档」文件夹。请创建一个名为「Archive」的文件夹以归档邮件。",
+    "outbox_not_pending": "此邮件正在发送中，已无法修改。",
+    "no_spam_folder": "此账户没有可存放垃圾邮件的垃圾邮件文件夹。",
+    "file_not_downloaded": "「{{filename}}」仍在 iCloud（或其他云端文件夹）中，未能及时下载。请在访达中下载后重试。",
+    "data_move_env_override": "数据文件夹由 EMAILOPS_DATA_DIR 指定。取消该变量后才能在应用内选择文件夹。",
+    "data_move_same_folder": "EmailOps 的数据已经存放在那里了。",
+    "data_move_inside_current": "新文件夹不能位于当前数据文件夹内部。",
+    "data_move_not_empty": "{{path}} 中已有文件。请选择一个空文件夹，或先删除那里的旧副本。",
+    "data_move_not_writable": "EmailOps 无法写入 {{path}}。",
+    "data_move_not_enough_space": "该位置可用空间不足：需要 {{needed}}，可用 {{available}}。",
+    "data_move_copy_mismatch": "{{path}} 中的副本与原始数据不一致（{{detail}}）。未做任何更改。"
+  }
+}

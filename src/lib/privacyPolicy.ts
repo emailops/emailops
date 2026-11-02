@@ -7,6 +7,9 @@ const PRIVACY_POLICY_URLS: Record<Language, string> = {
   es: 'https://getemailops.com/privacy/',
   fr: 'https://getemailops.com/fr/privacy/',
   de: 'https://getemailops.com/de/privacy/',
+  // No Chinese privacy policy is published yet: /zh/privacy/ resolves but shows
+  // "Page not found", so fall back to the English page until it exists.
+  zh: 'https://getemailops.com/en/privacy/',
 };
 
 export function privacyPolicyUrl(language: Language): string {

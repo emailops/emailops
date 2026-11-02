@@ -1,0 +1,124 @@
+{
+  "title": "日历",
+  "today": "今天",
+  "previous": "上一个",
+  "next": "下一个",
+  "refreshing": "正在刷新…",
+  "allDay": "全天",
+  "moreEvents": "还有 {{n}} 项",
+  "noAccount": "没有账户启用日历集成。请在 设置 → 日历 中开启。",
+  "integrationDisabled": "已为 {{email}} 关闭日历。",
+  "enableCalendarButton": "启用日历",
+  "selectAccount": "日历账户",
+  "allAccounts": "全部账户",
+  "syncError": "日历错误：{{message}}",
+  "reauthNeeded": "EmailOps 还没有权限读取此账户的日历。请重新登录以授予日历权限。",
+  "reauthNeededAccount": "需要重新连接 {{email}} 才能显示其日历。",
+  "reauthButton": "重新登录",
+  "reauthInProgress": "正在等待 Google/Microsoft…",
+  "viewModes": {
+    "month": "月",
+    "week": "周",
+    "day": "日"
+  },
+  "create": {
+    "title": "新建日程",
+    "eventTitle": "标题",
+    "eventTitlePlaceholder": "添加标题",
+    "date": "日期",
+    "startTime": "开始",
+    "endTime": "结束",
+    "description": "描述",
+    "descriptionPlaceholder": "添加描述",
+    "invitees": "参与人",
+    "inviteesPlaceholder": "添加参与人…",
+    "invalidEmail": "请输入有效的邮箱地址",
+    "recurrence": {
+      "label": "重复",
+      "none": "不重复",
+      "daily": "每天",
+      "weekly": "每周{{weekday}}",
+      "weekdays": "每个工作日（周一至周五）",
+      "monthly": "每月",
+      "yearly": "每年"
+    },
+    "meetNote": "会自动添加 Google Meet 链接。",
+    "createButton": "创建",
+    "creating": "正在创建…",
+    "error": "无法创建日程：{{message}}",
+    "account": "账户",
+    "protonHint": "Proton 日历没有可从此处创建日程的 API。它自己的表单会在这一天打开；日程会在下次刷新订阅时显示在这里。",
+    "openProton": "在 Proton 日历中创建"
+  },
+  "detail": {
+    "tentative": "待定",
+    "join": "加入会议",
+    "openInProvider": "在服务商日历中打开",
+    "location": "地点",
+    "organizer": "组织者",
+    "attendees": "参与人",
+    "description": "描述",
+    "attendeeStatus": {
+      "accepted": "已接受",
+      "declined": "已拒绝",
+      "tentative": "待定",
+      "needsAction": "尚未回复",
+      "organizer": "组织者"
+    },
+    "delete": "删除",
+    "deleteConfirmTitle": "删除此日程？",
+    "deleteScope": {
+      "instance": "仅此日程",
+      "following": "此日程及后续日程",
+      "all": "全部日程",
+      "allHint": "包括过去的日程"
+    },
+    "deleteButton": "删除日程",
+    "deleting": "正在删除…",
+    "notifyAttendees": "通知参与人",
+    "cancellationMessage": "在取消通知中添加说明",
+    "cancellationMessagePlaceholder": "给参与人的留言（可选）",
+    "googleCancellationHint": "Google 会向受邀者发送标准的取消邮件。",
+    "deleteError": "无法删除日程：{{message}}",
+    "account": "账户"
+  },
+  "reminder": {
+    "title": "即将开始的会议",
+    "startsInMinutes": "{{minutes}} 分钟后开始",
+    "startsNow": "现在开始",
+    "join": "加入",
+    "dismiss": "忽略"
+  },
+  "invite": {
+    "noTitle": "（无标题）",
+    "organizer": "组织者：{{organizer}}",
+    "cancelled": "此会议已取消",
+    "going": "是否参加？",
+    "yes": "参加",
+    "no": "不参加",
+    "maybe": "也许",
+    "confirmed": {
+      "accepted": "你已接受此邀请。",
+      "declined": "你已拒绝此邀请。",
+      "tentative": "你已暂时接受此邀请。"
+    },
+    "change": "更改",
+    "authError": "无法发送你的回复。请重新登录此账户以授予日历权限。",
+    "error": "无法发送你的回复：{{message}}"
+  },
+  "calendars": {
+    "hideOne": "隐藏 {{name}}",
+    "showOne": "显示 {{name}}"
+  },
+  "createInProton": "正在打开 Proton 日历以创建日程——请在那里选择时间和日历（共享订阅是只读的；更改会在几小时内显示在这里）。",
+  "panel": {
+    "title": "日程",
+    "open": "打开日历面板",
+    "close": "关闭日历面板",
+    "openFull": "打开完整日历",
+    "setupTitle": "此账户还没有日历",
+    "setupBody": "IMAP 账户在 设置 → 日历 中订阅日历源后才会显示日历（Proton 日历用其「通过链接共享」的网址）。",
+    "setupButton": "前往设置",
+    "addEvent": "在这一天新建日程"
+  }
+}

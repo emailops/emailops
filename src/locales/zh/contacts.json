@@ -1,0 +1,68 @@
+{
+  "title": "联系人",
+  "search": "搜索联系人…",
+  "empty": "未找到联系人",
+  "row": {
+    "messagesCount": "{{count}} 封邮件",
+    "messagesCountOne": "1 封邮件",
+    "compose": "给 {{name}} 写邮件",
+    "viewEmails": "查看 {{name}} 发来的邮件"
+  },
+  "company": {
+    "title": "公司：{{name}}",
+    "contactsCount": "{{count}} 位联系人",
+    "contactsCountOne": "1 位联系人"
+  },
+  "sort": {
+    "byName": "按姓名",
+    "byCount": "按邮件数",
+    "byLastSeen": "按最近联系",
+    "mostRecent": "最近联系",
+    "relationship": "关系紧密度",
+    "mostEmails": "邮件最多",
+    "mostReceived": "收到最多",
+    "mostSent": "发出最多",
+    "nameAZ": "姓名（A–Z）"
+  },
+  "kind": {
+    "all": "全部",
+    "people": "个人",
+    "automated": "自动发送"
+  },
+  "view": {
+    "noCompany": "无公司",
+    "contactsAndEmailsOne": "{{count}} 位联系人 · {{emails}} 封邮件",
+    "contactsAndEmailsOther": "{{count}} 位联系人 · {{emails}} 封邮件",
+    "filterToCompany": "筛选列表 →",
+    "noGroupings": "还没有按公司分组——公司标签在同步时推导。",
+    "modeList": "列表",
+    "modeCompany": "按公司",
+    "modeOrganization": "我的组织",
+    "organizationHint": "{{domain}} 的人员",
+    "searchPlaceholder": "搜索联系人…",
+    "sortPrefix": "排序：{{label}}",
+    "allCompanies": "全部公司",
+    "companyChip": "公司：{{name}} ×",
+    "noMatch": "没有联系人符合当前筛选条件。",
+    "noContactsYet": "还没有联系人——请先同步一些邮件。",
+    "countOfTotalOne": "{{shown}} / {{total}} 位联系人",
+    "countOfTotalOther": "{{shown}} / {{total}} 位联系人",
+    "loadMore": "加载更多",
+    "loading": "正在加载…",
+    "couldNotLoad": "无法加载联系人详情。",
+    "selectAccount": "请选择账户以查看联系人。"
+  },
+  "detail": {
+    "title": "联系人",
+    "closeAria": "关闭",
+    "automated": "自动发送",
+    "otherAddresses": "其他地址",
+    "received": "收到",
+    "sent": "发出",
+    "total": "合计",
+    "lastContact": "最近联系",
+    "relationship": "关系",
+    "composeEmail": "写邮件",
+    "viewAllEmails": "查看全部邮件"
+  }
+}

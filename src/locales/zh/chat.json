@@ -1,0 +1,359 @@
+{
+  "title": "对话",
+  "newConversation": "新对话",
+  "renameConversation": "重命名对话",
+  "deleteConversation": "删除对话",
+  "deleteConfirm": "删除此对话？此操作无法撤销。",
+  "emptyState": {
+    "title": "关于收件箱，随便问",
+    "hint": "试试「总结本周未读邮件」或「给 {{sender}} 最近那封邮件起草回复」。",
+    "askToStart": "提一个关于你邮件的问题即可开始。",
+    "askThreadToStart": "提一个关于此邮件会话的问题即可开始。"
+  },
+  "input": {
+    "placeholder": "发送消息…",
+    "placeholderEmails": "问点什么…（Enter 发送，Shift+Enter 换行）",
+    "waitingReply": "正在等待回复…",
+    "send": "发送",
+    "stop": "停止生成",
+    "regenerate": "重新生成",
+    "categoryFilter": "按分类筛选",
+    "attachContext": "附加上下文"
+  },
+  "noAccount": "请选择一个账户，才能开始与你的邮件对话。",
+  "shortcuts": {
+    "today": {
+      "label": "今日摘要",
+      "prompt": "总结我今天收到的邮件。用 Markdown 表格呈现，列为 | 发件人 | 主题 | 时间 | 紧急度 | 摘要 |，按紧急度排序。每封邮件都标注其引用编号。最后用一段话点出当天最重要的事项。"
+    },
+    "pending": {
+      "label": "待办事项",
+      "prompt": "找出需要我回复或处理的邮件。用 Markdown 表格呈现，列为 | 发件人 | 主题 | 对方要求 | 截止时间 | 优先级 |，按优先级从高到低排序。附上相关引用。最后给出一句简短友好的建议，说明该从哪里开始。"
+    },
+    "thisWeek": {
+      "label": "本周",
+      "prompt": "总结本周最重要的邮件。用 Markdown 表格呈现，列为 | 日期 | 发件人 | 主题 | 话题 | 建议处理方式 |，按时间顺序排列。每一条都附引用。最后用两三句话概括本周的主要话题。"
+    },
+    "unread": {
+      "label": "未读",
+      "prompt": "列出最值得关注的未读邮件。格式：Markdown 表格，列为 | 发件人 | 主题 | 分类 | 为何重要 | 紧急度 |。按紧急度从高到低排序并附上引用。最后用一句简短礼貌的建议，说明哪几封值得先打开。"
+    },
+    "clients": {
+      "label": "客户",
+      "prompt": "梳理近期的客户邮件，标出需要关注的那些。用 Markdown 表格呈现，列为 | 客户 | 主题 | 类型（咨询 / 投诉 / 机会） | 对方期待我做什么 | 紧急度 |，按紧急度排序。每行都附引用。最后为每位重点客户给出一句下一步建议。"
+    },
+    "draft": {
+      "label": "写一封草稿",
+      "prompt": "请起草一封邮件，写给 "
+    }
+  },
+  "starters": {
+    "title": "建议的提问",
+    "somethingElse": "问点别的…",
+    "reply": {
+      "label": "未回复：{{name}} — 「{{subject}}」",
+      "prompt": "在「{{subject}}」中，最后是 {{name}} 写的，我还没回。他需要我做什么吗？如果需要，是什么、什么时候之前？"
+    },
+    "sender": {
+      "label": "{{name}} 给我写过什么？",
+      "prompt": "{{name}} 最近给我写过什么？每封邮件用一句话概括并附引用。"
+    },
+    "thread": {
+      "label": "总结「{{subject}}」",
+      "prompt": "总结会话「{{subject}}」，并告诉我其中是否有需要我处理的事项。"
+    },
+    "openThread": {
+      "summary": {
+        "label": "总结此会话",
+        "prompt": "总结此会话：涉及哪些人、已经商定了什么、还有什么悬而未决。"
+      },
+      "asks": {
+        "label": "这里需要我做什么？",
+        "prompt": "此会话中对我提出了什么要求，截止到什么时候？"
+      },
+      "reply": {
+        "label": "起草回复",
+        "prompt": "为此会话起草一封回复，内容为 "
+      }
+    },
+    "openDocument": {
+      "summary": {
+        "label": "总结此文档",
+        "prompt": "总结此文档：它是什么、来自谁，以及其中的关键日期和金额。"
+      },
+      "keyPoints": {
+        "label": "要点、日期和金额",
+        "prompt": "列出此文档中的要点、日期和金额。"
+      },
+      "ask": {
+        "label": "就这份文档提问",
+        "prompt": "关于这份文档："
+      }
+    }
+  },
+  "message": {
+    "user": "你",
+    "assistant": "助手",
+    "system": "系统",
+    "copy": "复制消息",
+    "copied": "已复制",
+    "thinking": "正在思考…",
+    "streaming": "正在生成…",
+    "stopped": "已停止生成",
+    "error": "出错了",
+    "retry": "重试",
+    "wrong": "这个回答不对",
+    "wrongPrompt": "哪里不对？",
+    "wrongPlaceholder": "帮助模型改进——例如：那些邮件是 9 月的，不是 8 月的",
+    "wrongSubmit": "重试",
+    "rejected": "已标记为有误——下方已重试。",
+    "budgetNotice": "此回答引用的部分邮件因超出模型上下文窗口而被截短，细节可能缺失。",
+    "budgetOverflow": "此对话已超出模型的上下文窗口，回答可能遗漏了指令或上下文。",
+    "budgetSettings": "AI 设置"
+  },
+  "processing": {
+    "queued": "正在等待其他 AI 任务完成…",
+    "routing": "正在路由…",
+    "retrieving": "正在检索邮件…",
+    "searchingContacts": "正在搜索联系人…",
+    "searchingEmails": "正在搜索邮件…",
+    "retrievingEmail": "正在获取邮件…",
+    "generatingDraft": "正在生成草稿…",
+    "runningTools": "正在处理请求…",
+    "researching": "正在深入研究…",
+    "readingDocument": "正在通读文档…",
+    "research": {
+      "gathering": "研究：正在收集邮件…",
+      "reading": "研究：正在阅读邮件 {{read}}/{{total}}（第 {{batch}}/{{batches}} 批）…",
+      "condensing": "研究：正在合并笔记 {{batch}}/{{batches}}…",
+      "writing": "研究：正在根据 {{total}} 封邮件撰写报告…",
+      "remaining": " · 约剩 {{time}}"
+    },
+    "generating": "正在生成…",
+    "cancel": "取消",
+    "cancelling": "正在取消…"
+  },
+  "reasoning": {
+    "show": "显示推理过程",
+    "hide": "隐藏推理过程",
+    "label": "推理",
+    "trace": {
+      "arguments": "参数",
+      "tool": "工具：",
+      "resultPreview": "结果（预览）",
+      "failed": "· 失败",
+      "devOnly": "·（仅开发版捕获提示词）",
+      "vectorFallback": "（向量降级已启用）",
+      "route": "路由",
+      "workflow": "流程",
+      "toolCallDetails": "工具调用详情",
+      "retrievalDetail": "检索详情",
+      "routeMode": {
+        "rag_first": "先检索邮箱",
+        "tools_first": "不先检索邮箱"
+      },
+      "routeDecidedBy": "由{{who}}决定",
+      "classifier": {
+        "heuristic": "关键词规则",
+        "heuristic_followup": "上一个问题（追问）",
+        "planner": "查询规划器",
+        "forced": "固定设置",
+        "ambient": "当前打开的邮件",
+        "llm": "模型"
+      },
+      "phase": {
+        "toolRound": "LLM · 工具轮 {{n}}",
+        "planner": "LLM · 规划器",
+        "finalStream": "LLM · 最终输出",
+        "llmCall": "LLM 调用"
+      },
+      "step": {
+        "embedding": "向量化",
+        "vectorSearch": "向量搜索",
+        "ftsSearch": "全文搜索",
+        "fetchMetadata": "获取元数据",
+        "threadExpansion": "会话扩展",
+        "helpDocs": "EmailOps 帮助",
+        "rag": "RAG 检索",
+        "research": "深度研究"
+      },
+      "noCalls": "无调用",
+      "fallbackSkipped": "降级（已跳过）",
+      "categories": "分类",
+      "hits": "{{n}} 条命中",
+      "fused": "{{n}} 条合并",
+      "dedup": "去重 {{n}} 条",
+      "chars": "{{n}} 字符",
+      "tokens": "{{n}} token",
+      "throughput": "{{rate}} tok/s",
+      "copy": "复制",
+      "copied": "已复制",
+      "model": "模型",
+      "input": "输入",
+      "output": "输出",
+      "toolCallsRequested": "{{n}} 次工具调用",
+      "prefill": "预填充 {{latency}}",
+      "kvCacheHit": "KV 缓存 {{cached}}/{{total}} tok（{{pct}}%）",
+      "kvCacheMiss": "KV 缓存 0/{{total}} tok（冷启动）",
+      "helpSections": "指南章节 {{included}}/{{candidates}}",
+      "researchFailed": "{{n}} 批处理失败"
+    },
+    "flow": {
+      "researchOn": "研究模式",
+      "researchRead": "已在 {{batches}} 批中读取 {{planned}} 封邮件中的 {{read}} 封",
+      "researchFindings": "从 {{relevant}} 封邮件中得到 {{findings}} 条发现",
+      "researchStopped": "已被用户取消",
+      "keywords": "关键词",
+      "findings": "{{n}} 条发现",
+      "kind": {
+        "router": "路由",
+        "planner": "规划器（LLM）",
+        "retrieval": "RAG 检索",
+        "help": "EmailOps 帮助",
+        "skill": "技能",
+        "tool": "工具调用：",
+        "llmRound": "LLM 轮次 {{n}}",
+        "answer": "回答（LLM）",
+        "llmCall": "LLM 调用",
+        "llmCallN": "LLM 调用 {{n}}/{{total}}",
+        "documentPart": "读取文档第 {{n}}/{{total}} 部分",
+        "budget": "上下文预算"
+      },
+      "section": {
+        "prompt": "提示词",
+        "output": "输出",
+        "details": "详情"
+      },
+      "detail": {
+        "latency": "耗时",
+        "prefill": "预填充",
+        "kvCache": "KV 缓存",
+        "cache": "缓存",
+        "toolCalls": "工具调用",
+        "chars": "字符",
+        "hits": "命中",
+        "route": "路由",
+        "reason": "原因",
+        "status": "状态"
+      },
+      "budget": {
+        "window": "{{n}} token 窗口",
+        "overflow": "仍然放不下（约 {{n}} token）",
+        "cut": {
+          "historySources": "已略去 {{n}} 个更早问题的邮件",
+          "historyTurns": "已略去 {{n}} 条更早的消息",
+          "openThread": "当前会话已截短至 {{n}} 字符",
+          "sourceExcerpts": "每封邮件的摘录已截短至 {{n}} 字符",
+          "sourcesDropped": "已略去 {{n}} 封检索到的邮件",
+          "toolResults": "{{n}} 条工具结果共截去 {{chars}} 字符"
+        }
+      }
+    }
+  },
+  "sources": {
+    "title": "来源",
+    "openEmail": "打开邮件",
+    "emailCount": "{{count}} 个来源",
+    "emailCountOne": "1 个来源",
+    "showInList_other": "在列表中显示 {{count}} 封邮件",
+    "showInList_many": "在列表中显示 {{count}} 封邮件",
+    "showInList_one": "在邮件列表中显示"
+  },
+  "citation": {
+    "label": "引用 {{n}}"
+  },
+  "errors": {
+    "noAiEnabled": "启用 AI 后才能使用对话",
+    "noAccountSelected": "请先选择账户",
+    "loadFailed": "无法加载对话"
+  },
+  "categoryDropdown": {
+    "searchLabel": "搜索：",
+    "categoriesHeader": "分类",
+    "title": "要搜索哪些邮件分类",
+    "resetToPrimary": "重置为「主要」"
+  },
+  "intro": {
+    "title": "与你的邮件对话",
+    "body": "用自然语言提问。助手会检索最相关的邮件，并以其为依据作答，附带可点击的引用。",
+    "retrievalRestricted": "检索范围限定为{{categories}}。可在对话输入框的下拉菜单中更改。"
+  },
+  "threadContext": {
+    "label": "邮件会话上下文"
+  },
+  "panel": {
+    "title": "对话",
+    "open": "打开对话面板",
+    "close": "关闭对话面板",
+    "expand": "打开完整对话视图",
+    "resize": "调整对话面板宽度",
+    "conversationPicker": "切换对话",
+    "emptyHint": "可以问当前打开的邮件、收件箱里的任何内容，或 EmailOps 的某项功能怎么用。",
+    "context": {
+      "using": "作为上下文",
+      "remove": "不把此会话作为上下文",
+      "restore": "使用当前打开的会话作为上下文",
+      "noSubject": "（无主题）",
+      "hint": "回答仅以本会话为依据。移除后可搜索整个收件箱。",
+      "otherAccount": {
+        "label": "此邮件位于 {{email}}",
+        "hint": "对话正在从另一个账户作答，因此读不到这封邮件。切换账户后才能提问。",
+        "action": "切换"
+      },
+      "hintDocument": "回答会使用这份 PDF 的文本。移除后可改为询问收件箱。",
+      "restoreDocument": "使用当前打开的 PDF 作为上下文"
+    },
+    "newChat": "新对话"
+  },
+  "conversations": {
+    "empty": "还没有对话。",
+    "confirmDelete": "确认删除？",
+    "newChat": "新对话"
+  },
+  "unifiedScopeHint": "在「全部账户」视图中，对话只搜索 {{email}}",
+  "accountPicker": {
+    "label": "此对话搜索的账户",
+    "hint": "对话一次只从一个账户作答。切换会开启新对话。"
+  },
+  "research": {
+    "toggle": "深度研究",
+    "title": "研究模式：分批读取多得多的邮件，并撰写详细分析。速度较慢，可能需要几分钟。仅对下一条消息生效。",
+    "hint": "下一条消息：深入分析（较慢）",
+    "estimating": "正在统计本次研究涉及的邮件…",
+    "estimate": "本次研究将分 {{batches}} 批读取 {{emails}} 封邮件 · 约需 {{time}}",
+    "estimateNone": "没有邮件匹配这个问题——无法研究。",
+    "estimateFailed": "无法预估本次研究：{{error}}",
+    "start": "开始研究",
+    "cancel": "取消",
+    "stop": "取消研究",
+    "stopping": "正在取消…",
+    "filter": "筛选",
+    "byMeaning": "按语义收集（无筛选）",
+    "field": {
+      "from": "发件人",
+      "to": "收件人",
+      "with": "往来对象",
+      "subject": "主题",
+      "query": "关键词",
+      "intent": "类型",
+      "topic": "话题",
+      "since": "起始",
+      "until": "截止",
+      "unread": "仅未读"
+    },
+    "mode": {
+      "list": "回答：列出全部匹配项——不写报告，速度更快",
+      "count": "回答：给出精确数量并列出——不写报告，速度更快",
+      "analysis": "回答：针对全部匹配项撰写报告"
+    },
+    "exit": {
+      "title": "研究正在进行",
+      "body": "有一项对话研究仍在读取你的邮件。现在退出会丢失它，回答将为空。",
+      "keep": "继续研究",
+      "quit": "仍然退出"
+    },
+    "statusBar": "对话：研究进行中…（{{step}}）",
+    "matchesSoFar": "目前 {{n}} 条匹配——最新一条：",
+    "threadEmails": "{{n}} 封邮件"
+  }
+}
