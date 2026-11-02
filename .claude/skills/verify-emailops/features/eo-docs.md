@@ -33,7 +33,7 @@ Preconditions: baseline; the demo DB has no documents. Handles confirmed live on
 
 ## Gotchas
 
-- While a document is editable a click on a link only moves the caret: the dialog needs a read-only view (a version, an invitation or a document the user left).
+- A click on a link asks in every view, editable or read-only. Seeing the dialog does not prove the browser stayed shut: tauri-plugin-shell opens any click on a `target="_blank"` link itself, past the dialog, so the rendered `<a>` must carry no `target`.
 - Sharing and arrivals need a mail provider: the demo accounts have no credentials, so they are proven against the fake provider and the planner, never in the sweep.
 - A document saves in batches of 400 ms, and the first version appears a moment after typing: wait before opening History.
 

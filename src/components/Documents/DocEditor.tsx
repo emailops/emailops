@@ -61,13 +61,13 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       editorProps: {
         handleDOMEvents: {
           // Marks come from whoever wrote the document, so a link never
-          // navigates by itself. While editing, a click only moves the caret.
-          click: (view, event) => {
+          // navigates by itself. The caret has already moved on mouse down.
+          click: (_view, event) => {
             const link = (event.target as Element).closest('a');
             if (!link) return false;
             event.preventDefault();
             const url = getSafeExternalUrl(link.getAttribute('href') ?? '');
-            if (url && !view.editable) setLinkUrl(url);
+            if (url) setLinkUrl(url);
             return true;
           },
           beforeinput: (view, event) => {

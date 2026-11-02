@@ -73,6 +73,41 @@ describe('DocEditor', () => {
     expect(container.querySelector('[data-testid="external-link-open"]')).not.toBeNull();
   });
 
+  it('asks before leaving through a link while editing too', async () => {
+    const paragraph = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    paragraph.insert(0, [text]);
+    text.insert(0, 'read this', { link: { href: 'https://example.com/a' } });
+
+    await act(async () => {
+      root.render(<DocEditor doc={docWith(paragraph)} editable onEditor={(e) => (editor = e)} />);
+    });
+    await act(async () => {
+      container.querySelector('a')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.querySelector('[data-testid="external-link-open"]')).not.toBeNull();
+  });
+
+  // tauri-plugin-shell opens any click on an `<a target="_blank">` in the
+  // browser, whatever the app does with the event. jsdom does not load it, so
+  // the rendered attribute is what can be checked here.
+  it.each([
+    ['read-only', false],
+    ['editable', true],
+  ])('gives a link no target the shell plugin would open on its own (%s)', async (_mode, editable) => {
+    const paragraph = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    paragraph.insert(0, [text]);
+    text.insert(0, 'read this', { link: { href: 'https://example.com/a' } });
+
+    await act(async () => {
+      root.render(<DocEditor doc={docWith(paragraph)} editable={editable} onEditor={(e) => (editor = e)} />);
+    });
+
+    expect(container.querySelector('a')?.hasAttribute('target')).toBe(false);
+  });
+
   it('never gives a remote image in a document an address to fetch', async () => {
     const image = new Y.XmlElement('image');
     image.setAttribute('src', 'https://example.com/pixel.png');

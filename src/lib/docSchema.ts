@@ -24,7 +24,11 @@ const InlineImage = Image.extend({
 /** The field of the Yjs document an EO Docs text lives in. */
 export const DOC_FIELD = 'body';
 
-/** A link without a stored `target`: how it opens is not part of the document. */
+/**
+ * A link without a stored `target`: how it opens is not part of the document.
+ * The rendered one goes too (see `docSchemaExtensions`): tauri-plugin-shell
+ * opens any click on a `target="_blank"` link by itself, past the confirmation.
+ */
 const DocLink = Link.extend({
   addAttributes() {
     const { target: _target, ...attributes } = this.parent?.() ?? {};
@@ -40,7 +44,7 @@ const DocLink = Link.extend({
  */
 export const docSchemaExtensions: Extensions = [
   StarterKit.configure({ undoRedo: false, link: false }),
-  DocLink.configure({ openOnClick: false }),
+  DocLink.configure({ openOnClick: false, HTMLAttributes: { target: null } }),
   Table.configure({ resizable: false }),
   TableRow,
   TableHeader,
