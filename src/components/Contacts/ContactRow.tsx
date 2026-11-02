@@ -37,6 +37,7 @@ export function ContactRow({ contact, selected, onClick }: ContactRowProps) {
   return (
     <button
       type="button"
+      data-testid="contact-row"
       onClick={onClick}
       className={`w-full text-left px-6 py-3 flex items-center gap-3 border-l-2 transition-colors ${
         selected ? 'bg-primary-50 border-primary-500' : 'border-transparent hover:bg-gray-50'

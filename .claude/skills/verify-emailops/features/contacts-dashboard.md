@@ -5,7 +5,7 @@ per-account counters, storage and the background queues (sync, AI work) with the
 
 ## Sub-features
 
-- `contacts.list` one entry per address, grouped by company, with detail.
+- `contacts.list` one entry per address, grouped by company, with detail. The list loads by scrolling, with no button; a failed page offers Retry under the last row.
 - `dashboard.accounts` per-account counts, storage, last sync.
 - `dashboard.queues` running and queued background tasks; AI tasks stop cooperatively when asked.
 

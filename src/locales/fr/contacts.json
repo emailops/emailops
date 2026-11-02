@@ -47,7 +47,7 @@
     "noContactsYet": "Aucun contact pour le moment — synchronisez d'abord quelques courriels.",
     "countOfTotalOne": "{{shown}} sur {{total}} contact",
     "countOfTotalOther": "{{shown}} sur {{total}} contacts",
-    "loadMore": "Charger plus",
+    "pageFailed": "Impossible de charger d'autres contacts.",
     "loading": "Chargement…",
     "couldNotLoad": "Impossible de charger les détails du contact.",
     "selectAccount": "Sélectionnez un compte pour voir les contacts."

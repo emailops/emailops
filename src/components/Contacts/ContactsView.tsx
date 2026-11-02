@@ -21,6 +21,8 @@ interface ContactsViewProps {
 type ViewMode = 'list' | 'company' | 'organization';
 
 const PAGE_SIZE = 100;
+/** How close to the end of the list the next page starts loading. */
+const LOAD_AHEAD_PX = 200;
 
 const SORT_OPTIONS: {
   value: ContactSort;
@@ -63,6 +65,10 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
   const fetchIdRef = useRef(0);
+  // The list's pages have their own id: opening a contact must not drop one.
+  const pageRequestRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [pageFailed, setPageFailed] = useState(false);
 
   // Debounce search input
   useEffect(() => {
@@ -107,6 +113,10 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
       return;
     }
     const reqId = ++fetchIdRef.current;
+    // A page of the list being replaced has nowhere to land.
+    pageRequestRef.current += 1;
+    setPageFailed(false);
+    setIsLoadingMore(false);
     setIsLoading(true);
     setError(null);
 
@@ -178,7 +188,8 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
   }, [accountId, selectedAddress]);
 
   const loadMore = useCallback(async () => {
-    if (!accountId || !page?.hasMore || isLoadingMore) return;
+    if (!accountId || !page?.hasMore || isLoadingMore || pageFailed) return;
+    const reqId = ++pageRequestRef.current;
     setIsLoadingMore(true);
     try {
       const next = await api.listContacts(accountId, {
@@ -190,14 +201,43 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
         offset: items.length,
         limit: PAGE_SIZE,
       });
-      setItems((prev) => [...prev, ...next.items]);
+      if (pageRequestRef.current !== reqId) return;
+      setItems((prev) => {
+        const seen = new Set(prev.map((c) => c.email));
+        return [...prev, ...next.items.filter((c) => !seen.has(c.email))];
+      });
       setPage(next);
-    } catch (e) {
-      setError(errorText(e));
+    } catch {
+      if (pageRequestRef.current !== reqId) return;
+      setPageFailed(true);
     } finally {
-      setIsLoadingMore(false);
+      if (pageRequestRef.current === reqId) setIsLoadingMore(false);
     }
-  }, [accountId, page, isLoadingMore, debouncedSearch, kindFilter, companyFilter, sort, items.length, domainFilter]);
+  }, [
+    accountId,
+    page,
+    isLoadingMore,
+    pageFailed,
+    debouncedSearch,
+    kindFilter,
+    companyFilter,
+    sort,
+    items.length,
+    domainFilter,
+  ]);
+
+  // Near the end of the list, or when it does not fill the pane. The company
+  // view shares the pane and paints none of these rows, and a hidden pane
+  // measures as empty: neither may walk the list.
+  const loadIfNearEnd = useCallback(() => {
+    const pane = scrollRef.current;
+    if (!pane || pane.clientHeight === 0 || viewMode === 'company') return;
+    if (pane.scrollHeight - pane.scrollTop - pane.clientHeight < LOAD_AHEAD_PX) void loadMore();
+  }, [loadMore, viewMode]);
+
+  useEffect(() => {
+    loadIfNearEnd();
+  }, [loadIfNearEnd]);
 
   // Distinct company values for the company filter dropdown (list-mode only,
   // derived from current page so it reflects what the user is looking at).
@@ -327,7 +367,7 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={loadIfNearEnd} className="flex-1 overflow-y-auto">
           {error && <div className="px-6 py-3 text-sm text-rose-600 bg-rose-50 border-b border-rose-100">{error}</div>}
 
           {isLoading && items.length === 0 && companyGroups === null ? (
@@ -372,17 +412,21 @@ export function ContactsView({ accountId, onComposeTo, onViewEmailsFrom }: Conta
                     },
                   )}
                 </span>
-                {page?.hasMore && (
+                {isLoadingMore && <span>{t('contacts:view.loading')}</span>}
+              </div>
+              {pageFailed && (
+                <div className="px-6 py-4 text-center text-xs text-gray-500">
+                  <p>{t('contacts:view.pageFailed')}</p>
                   <button
                     type="button"
-                    onClick={loadMore}
-                    disabled={isLoadingMore}
-                    className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
+                    data-testid="contacts-retry"
+                    onClick={() => setPageFailed(false)}
+                    className="mt-2 px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
                   >
-                    {isLoadingMore ? t('contacts:view.loading') : t('contacts:view.loadMore')}
+                    {t('common:actions.retry')}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </>
           )}
         </div>
