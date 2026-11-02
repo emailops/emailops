@@ -156,6 +156,11 @@
     "suggestedSection": "Suggested",
     "noFilters": "No smart filters yet — they appear as your mailbox grows."
   },
+  "searchPanel": {
+    "firstResults": "First {{count}} results",
+    "results_one": "{{count}} result",
+    "results_other": "{{count}} results"
+  },
   "searchBox": {
     "inlinePlaceholder": "Search… ({{operators}})",
     "fullPlaceholder": "Search emails… ({{operators}})",

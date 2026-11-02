@@ -1298,9 +1298,13 @@ function AppInner() {
         .join(','),
     [accounts],
   );
+  // A different set of accounts is a different list: merging a refresh into it
+  // would keep the rows of a disabled account below the first page.
+  const lastEnabledAccountsKey = useRef(enabledAccountsKey);
   useEffect(() => {
-    if (!isUnified) return;
-    silentRefetchEmailsRef.current();
+    if (lastEnabledAccountsKey.current === enabledAccountsKey) return;
+    lastEnabledAccountsKey.current = enabledAccountsKey;
+    if (isUnified) refetchEmailsRef.current();
   }, [isUnified, enabledAccountsKey]);
 
   const handleSearchSelect = useCallback(
@@ -1321,12 +1325,6 @@ function AppInner() {
       addLog('info', 'search', `Filtering inbox: "${query}"`);
     },
     [addLog],
-  );
-
-  // The overlay's rows are a preview: the list pages from its own cursor.
-  const handleApplySearchWithResults = useCallback(
-    (query: string, _emails: Email[]) => handleApplySearch(query),
-    [handleApplySearch],
   );
 
   // A smart filter writes its query into the search box (DECISIONS
@@ -1985,9 +1983,9 @@ function AppInner() {
       {isSearchOpen && (
         <SearchBar
           accountId={queryAccountId}
+          view={isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox'}
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
-          onApplySearchWithResults={handleApplySearchWithResults}
           onClose={() => setIsSearchOpen(false)}
         />
       )}

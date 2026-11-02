@@ -156,6 +156,11 @@
     "suggestedSection": "Sugeridos",
     "noFilters": "Aún no hay filtros inteligentes — aparecerán a medida que crezca tu buzón."
   },
+  "searchPanel": {
+    "firstResults": "Primeros {{count}} resultados",
+    "results_one": "{{count}} resultado",
+    "results_other": "{{count}} resultados"
+  },
   "searchBox": {
     "inlinePlaceholder": "Buscar… ({{operators}})",
     "fullPlaceholder": "Buscar correos… ({{operators}})",

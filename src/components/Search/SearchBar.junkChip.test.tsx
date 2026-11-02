@@ -10,12 +10,12 @@ vi.mock('react-i18next', () => ({
 }));
 
 vi.mock('@/lib/api', () => ({
-  searchEmails: vi.fn(),
+  listThreads: vi.fn(),
   autocompleteSenders: vi.fn(),
   getJunkVerdicts: vi.fn(),
 }));
 
-import type { SearchResult } from '@/lib/api';
+import type { ThreadPage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { useJunkStore } from '@/stores/junkStore';
 import type { Email, JunkVerdict } from '@/types';
@@ -32,18 +32,15 @@ function hit(id: string) {
     snippet: 'snippet',
     timestamp: 1_700_000_000,
     isRead: true,
-    relevanceScore: null,
-    matchReason: null,
   } as unknown as Email;
 }
 
-const RESULT = {
+const RESULT: ThreadPage = {
   emails: [hit('e1'), hit('e2')],
-  query: 'invoice',
+  threadLatestAt: {},
+  nextCursor: null,
   parsedQuery: null,
-  aiAvailable: false,
-  searchMethod: 'keyword_search',
-} as unknown as SearchResult;
+};
 
 const FLAGGED = { emailId: 'e1', band: 'junk', primaryKind: 'phishing', userOverride: null } as JunkVerdict;
 
@@ -53,7 +50,7 @@ let root: Root;
 beforeEach(() => {
   vi.useFakeTimers();
   useJunkStore.setState({ verdictsByEmail: {}, loaded: {} });
-  vi.mocked(api.searchEmails).mockResolvedValue(RESULT);
+  vi.mocked(api.listThreads).mockResolvedValue(RESULT);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -68,13 +65,7 @@ afterEach(() => {
 async function search() {
   act(() => {
     root.render(
-      <SearchBar
-        accountId="acct"
-        onSelectEmail={() => {}}
-        onApplySearch={() => {}}
-        onApplySearchWithResults={() => {}}
-        onClose={() => {}}
-      />,
+      <SearchBar accountId="acct" onSelectEmail={() => {}} onApplySearch={() => {}} view="inbox" onClose={() => {}} />,
     );
   });
   const input = container.querySelector('input') as HTMLInputElement;
@@ -96,6 +87,26 @@ describe('SearchBar junk warning', () => {
 
     expect(container.querySelectorAll('[data-testid="junk-chip"]')).toHaveLength(1);
     expect(container.textContent).toContain('phishing');
+  });
+
+  it('previews the view it opened over, without logging a search', async () => {
+    vi.mocked(api.getJunkVerdicts).mockResolvedValue({});
+
+    await search();
+
+    expect(api.listThreads).toHaveBeenLastCalledWith('acct', 'invoice', 'inbox', false, null, 50, false);
+  });
+
+  it('does not pass a first page off as every result', async () => {
+    vi.mocked(api.getJunkVerdicts).mockResolvedValue({});
+    vi.mocked(api.listThreads).mockResolvedValue({
+      ...RESULT,
+      nextCursor: { threadTs: 1, timestamp: 1, id: 'e2' },
+    });
+
+    await search();
+
+    expect(container.textContent).toContain('inbox:searchPanel.firstResults');
   });
 
   it('shows no hit whose verdict could not be read', async () => {

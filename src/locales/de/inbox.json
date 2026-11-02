@@ -156,6 +156,11 @@
     "suggestedSection": "Vorgeschlagen",
     "noFilters": "Noch keine Smart-Filter — sie erscheinen, sobald dein Postfach wächst."
   },
+  "searchPanel": {
+    "firstResults": "Erste {{count}} Ergebnisse",
+    "results_one": "{{count}} Ergebnis",
+    "results_other": "{{count}} Ergebnisse"
+  },
   "searchBox": {
     "inlinePlaceholder": "Suchen… ({{operators}})",
     "fullPlaceholder": "E-Mails durchsuchen… ({{operators}})",

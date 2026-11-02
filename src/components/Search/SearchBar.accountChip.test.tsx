@@ -12,11 +12,11 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('@/lib/api', () => ({
   getJunkVerdicts: vi.fn(async () => ({})),
-  searchEmails: vi.fn(),
+  listThreads: vi.fn(),
   autocompleteSenders: vi.fn(),
 }));
 
-import type { SearchResult } from '@/lib/api';
+import type { ThreadPage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { useAccountStore } from '@/stores/accountStore';
 import type { Account, Email } from '@/types';
@@ -56,26 +56,23 @@ function hit(id: string, accountId: string) {
     mailbox: 'inbox',
     isSent: false,
     isStarred: false,
-    relevanceScore: null,
-    matchReason: null,
-  } as Email & { relevanceScore: null; matchReason: null };
+  } as Email;
 }
 
-const RESULT = {
+const RESULT: ThreadPage = {
   emails: [hit('e1', 'acct-work'), hit('e2', 'acct-home')],
-  query: 'invoice',
+  threadLatestAt: {},
+  nextCursor: null,
   parsedQuery: null,
-  aiAvailable: false,
-  searchMethod: 'keyword_search',
-} as unknown as SearchResult;
+};
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.mocked(api.searchEmails).mockClear();
-  vi.mocked(api.searchEmails).mockResolvedValue(RESULT);
+  vi.mocked(api.listThreads).mockClear();
+  vi.mocked(api.listThreads).mockResolvedValue(RESULT);
   useAccountStore.setState({
     accounts: [account('acct-work', 'work@example.com'), account('acct-home', 'home@example.com')],
   });
@@ -95,9 +92,9 @@ async function searchFor(accountId: string | null, query: string) {
     root.render(
       <SearchBar
         accountId={accountId}
+        view="inbox"
         onSelectEmail={() => {}}
         onApplySearch={() => {}}
-        onApplySearchWithResults={() => {}}
         onClose={() => {}}
       />,
     );
@@ -125,7 +122,7 @@ describe('SearchBar account chip', () => {
 
   it('searches every category, not only the selected inbox tab', async () => {
     await searchFor(null, 'invoice');
-    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual([null, 'invoice', true]);
+    expect(vi.mocked(api.listThreads).mock.calls[0]).toEqual([null, 'invoice', 'inbox', false, null, 50, false]);
   });
 
   it('shows no chip when the search is scoped to one account', async () => {

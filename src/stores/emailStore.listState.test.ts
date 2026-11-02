@@ -38,29 +38,6 @@ beforeEach(() => {
   vi.mocked(api.getEmails).mockResolvedValue([row('listed')]);
 });
 
-describe('pre-seeded search results', () => {
-  it('leaves the next load alone when the search on screen is applied again', async () => {
-    // Nothing refetches for a query that did not change, so a skip armed here
-    // would wait for, and swallow, an unrelated load later on.
-    useEmailStore.getState().setSearchQuery('invoice');
-    useEmailStore.getState().applySearchResults('invoice', [row('hit')]);
-    useEmailStore.getState().clearSearchQuery();
-
-    await useEmailStore.getState().fetchEmails('acc', null, [], false, 'inbox');
-
-    expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['listed']);
-  });
-
-  it('still skips the refetch a new query triggers', async () => {
-    useEmailStore.getState().applySearchResults('invoice', [row('hit')]);
-
-    await useEmailStore.getState().fetchEmails('acc', null, [], false, 'inbox');
-
-    expect(api.listThreads).not.toHaveBeenCalled();
-    expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['hit']);
-  });
-});
-
 describe('a list opened while an undo window is flushing', () => {
   it('does not replace a list opened after it', async () => {
     const commit = deferred<{ failed: [] }>();

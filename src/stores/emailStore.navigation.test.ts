@@ -41,18 +41,6 @@ describe('fetchEmails after navigateToEmail', () => {
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['cited']);
   });
 
-  it('runs a later fetch when pre-seeded search results took over a navigation in flight', async () => {
-    const store = useEmailStore.getState();
-    const navigation = store.navigateToEmail('acc', 'focused');
-    store.applySearchResults('id:cited', [cited]);
-    await navigation;
-
-    await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined); // pre-seeded: no-op
-    await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined);
-
-    expect(api.listThreads).toHaveBeenCalledTimes(1);
-  });
-
   it('keeps the category filter off the navigated list until the next fetch', async () => {
     await useEmailStore.getState().navigateToEmail('acc', 'focused');
     expect(useEmailStore.getState().navigationMode).toBe(true);

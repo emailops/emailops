@@ -10,6 +10,7 @@ import {
   type ListPagingAction,
   listPagingReducer,
   lowerCursor,
+  mergeHead,
   threadRowKey,
 } from '@/lib/listPaging';
 import { normalizeMimeType } from '@/lib/mimeType';
@@ -379,6 +380,9 @@ export function formatSnoozeTime(unixSeconds: number): string {
  */
 let threadRequestSeq = 0;
 
+/** Stale-response guard for background refreshes of a list with a query. */
+let refreshRequestSeq = 0;
+
 /** Changes whenever the user navigates to another conversation (or none):
  *  lets a slow action tell whether what it was started on is still shown. */
 export function selectionGeneration(): number {
@@ -475,8 +479,6 @@ interface EmailStore {
   /** True only while navigateToEmail is loading its list — fetchEmails stands
    *  aside so it cannot overwrite the list being built around the focused email. */
   navigationInFlight: boolean;
-  /** One-shot flag — next fetchEmails call is a no-op (used when search results are pre-seeded) */
-  skipNextFetch: boolean;
   currentFetchId: number;
   /** Where the list stands: `hasMore` and `isLoadingMore` are selectors over
    *  it. After a failed page it stays off until the list is fetched again or
@@ -607,8 +609,6 @@ interface EmailStore {
   moveEmail: (accountId: string, emailId: string, targetMailbox: MailboxView) => Promise<void>;
   updateEmail: (updated: Email) => void;
   setSearchQuery: (query: string) => void;
-  /** Apply a search query with already-fetched results (skips the next fetchEmails call). */
-  applySearchResults: (query: string, emails: Email[]) => void;
   clearSearchQuery: () => void;
   clearError: () => void;
   reset: () => void;
@@ -642,7 +642,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   focusEmailId: null,
   navigationMode: false,
   navigationInFlight: false,
-  skipNextFetch: false,
   currentFetchId: 0,
   paging: INITIAL_PAGING,
   retryLoadMore: () => set((state) => ({ paging: listPagingReducer(state.paging, { type: 'retried' }) })),
@@ -797,16 +796,19 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     // every later search or filter until the account changed.
     if (get().navigationInFlight) return;
 
-    // Skip if results were pre-seeded via applySearchResults
-    if (get().skipNextFetch) {
-      set({ skipNextFetch: false });
-      return;
-    }
-    // Increment fetch ID to track this operation and cancel stale ones
-    const fetchId = get().currentFetchId + 1;
     const { searchQuery, unreadOnly } = get();
     const view = mailbox ?? 'inbox';
     const source = planListSource(searchQuery);
+
+    // A refresh of a list with a query is the same list: it merges its first
+    // rows in and leaves the list id alone, so a page in flight still lands.
+    if (silent && source.kind === 'query') {
+      await refreshQueryList(accountId, source.query, view, unreadOnly);
+      return;
+    }
+
+    // Increment fetch ID to track this operation and cancel stale ones
+    const fetchId = get().currentFetchId + 1;
 
     // Silent mode: background refresh after sync — never show loading or clear the list,
     // and leave what the user is looking at alone: the focused email, a navigated list
@@ -852,7 +854,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
       if (source.kind === 'query') {
         // A typed search is a signal for the chat; a filter click is not.
-        const recordSearch = !silent && !filterFromQuery(source.query);
+        const recordSearch = !filterFromQuery(source.query);
         const page = await api.listThreads(accountId, source.query, view, unreadOnly, null, limit, recordSearch);
         emails = withThreadActivity(page.emails, page.threadLatestAt);
         totalCount = emails.length;
@@ -1337,24 +1339,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   setSearchQuery: (query) => set({ searchQuery: query }),
-  applySearchResults: (query, emails) => {
-    // Pre-seed emails and mark the next effect-triggered fetchEmails as a no-op.
-    // Only a changed query triggers that effect: with the same one the skip
-    // would wait for, and swallow, whichever load comes next.
-    // Also bump fetchId so any already-in-flight fetch's response is discarded.
-    set((state) => ({
-      searchQuery: query,
-      emails,
-      totalCount: emails.length,
-      paging: INITIAL_PAGING,
-      isLoading: false,
-      skipNextFetch: state.searchQuery !== query,
-      currentFetchId: state.currentFetchId + 1,
-      // The bumped fetchId makes an in-flight navigateToEmail bail out
-      // before it clears its own flag; the list is ours now.
-      navigationInFlight: false,
-    }));
-  },
   clearSearchQuery: () => set({ searchQuery: null }),
 
   clearError: () => set({ error: null }),
@@ -1387,7 +1371,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       focusEmailId: null,
       navigationMode: false,
       navigationInFlight: false,
-      skipNextFetch: false,
       tabs: [],
       activeTabId: null,
       pendingChatDraft: null,
@@ -1397,6 +1380,44 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     });
   },
 }));
+
+/**
+ * Merge a refresh into a list with a query. The newest refresh wins, and a
+ * refresh that outlived its list lands nowhere; its failure is the log's, since
+ * the rows on screen are still good.
+ */
+async function refreshQueryList(
+  accountId: string | null,
+  query: string,
+  view: MailboxView,
+  unreadOnly: boolean,
+): Promise<void> {
+  const { isLoading, emails, paging, currentFetchId } = useEmailStore.getState();
+  // The first page is on its way, or it failed and waits for Retry.
+  if (isLoading || (paging.status === 'failed' && emails.length === 0)) return;
+  const requestId = ++refreshRequestSeq;
+  try {
+    const limit = refetchLimit(emails.length);
+    const page = await api.listThreads(accountId, query, view, unreadOnly, null, limit, false);
+    const head = withThreadActivity(page.emails, page.threadLatestAt);
+    void useEmailStore.getState().fetchSnoozes(accountId);
+    await useJunkStore.getState().fetchVerdicts(head.map((e) => e.id));
+    if (refreshRequestSeq !== requestId || useEmailStore.getState().currentFetchId !== currentFetchId) return;
+    useEmailStore.setState((state) => {
+      const merged = mergeHead(state.emails, state.paging.cursor, {
+        emails: withoutPendingRemovals(head, state.pendingRemovals),
+        nextCursor: page.nextCursor,
+      });
+      return {
+        emails: merged.emails,
+        totalCount: merged.emails.length,
+        paging: listPagingReducer(state.paging, { type: 'refreshed', cursor: merged.cursor }),
+      };
+    });
+  } catch (error) {
+    useLogStore.getState().addLog('error', 'system', `Could not refresh the list: ${errorText(error)}`);
+  }
+}
 
 /** How long archive and delete wait for an Undo before reaching the provider. */
 export const UNDO_WINDOW_MS = 6000;

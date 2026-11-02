@@ -156,6 +156,11 @@
     "suggestedSection": "Suggérés",
     "noFilters": "Pas encore de filtres intelligents — ils apparaîtront au fil du temps."
   },
+  "searchPanel": {
+    "firstResults": "{{count}} premiers résultats",
+    "results_one": "{{count}} résultat",
+    "results_other": "{{count}} résultats"
+  },
   "searchBox": {
     "inlinePlaceholder": "Rechercher… ({{operators}})",
     "fullPlaceholder": "Rechercher des courriels… ({{operators}})",
