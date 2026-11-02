@@ -389,7 +389,13 @@ impl Database {
         now_ts: i64,
         limit: i32,
     ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
-        let live = crate::db::live_mailboxes_sql!();
+        // The sidebar counts what a filter lists; the board keeps flagged mail
+        // out of a summary of what the user deals with.
+        let mailbox_sql = if window.match_list {
+            Self::filterable_mailbox("e")
+        } else {
+            format!("e.mailbox IN {}", crate::db::live_mailboxes_sql!())
+        };
         // ?1 tag_type, ?2 limit, then the scope's account id (if any), then the
         // window binds — so the fixed indices stay stable.
         let mut next_index = 3usize;
@@ -429,7 +435,11 @@ impl Database {
         // block-level decay in `tag_recency_factor` handles a tag that has gone
         // quiet altogether.
         // Last placeholder allocated for this query, so no further increment.
-        let junk_sql = crate::db::exclude_junk_sql("e", window.hide_graymail);
+        let junk_sql = if window.match_list {
+            String::new()
+        } else {
+            crate::db::exclude_junk_sql("e", window.hide_graymail)
+        };
         let latest_sql = crate::db::latest_tagged_in_thread_sql("e", 1, window.latest_tag_only);
         let now_idx = next_index;
         let w =
@@ -459,7 +469,7 @@ impl Database {
              WHERE {scope_cond}
                AND t.tag_type = ?1
                AND e.is_deleted = 0
-               AND e.mailbox IN {live}
+               AND {mailbox_sql}
                {junk_sql}
                {latest_sql}
                {search_sql}
@@ -635,6 +645,7 @@ mod tests {
             latest_tag_only: true,
             mailbox: None,
             unread_only: false,
+            match_list: false,
         };
         let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
 
@@ -644,6 +655,23 @@ mod tests {
             "the outer loop must be email_tags, got: {first}\nfull plan: {plan:#?}"
         );
         assert!(!first.contains("SCAN emails"), "must never scan emails first: {first}");
+    }
+
+    #[test]
+    fn the_sidebar_count_drives_from_the_tag_index_too() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc1");
+        insert_email(&db, "e1", "acc1", "t1", 1_000);
+        tag_email(&db, "e1", "company", "globex");
+
+        let window = crate::models::EmailWindow {
+            match_list: true,
+            ..Default::default()
+        };
+        let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
+
+        let first = plan.first().expect("query plan should not be empty");
+        assert!(first.contains("email_tags"), "{plan:#?}");
     }
 
     fn insert_email(db: &Database, id: &str, account_id: &str, thread_id: &str, timestamp: i64) {

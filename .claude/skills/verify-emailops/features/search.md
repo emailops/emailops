@@ -11,7 +11,8 @@ restores the full list.
 - `search.empty` a query with no hits shows "No emails match your search" and no rows.
 - `search.clear` the ✕ inside the box empties it and restores the unfiltered inbox.
 - `search.autocomplete` typing `from:` offers sender suggestions (ArrowDown/Enter to pick).
-- `search.exclusions` mail in the trash, and mail the junk detector or the user marked as junk, is never a result or a retrieval candidate (keyword or vector), so the chat cannot cite it.
+- `search.exclusions` mail in the trash, and mail the junk detector or the user marked as junk, is never a retrieval candidate (keyword or vector), so the chat cannot cite it. The list is different: a query from the inbox leaves Spam and Trash out but shows flagged mail with its warning, and Spam and Trash list their own mail.
+- `search.complete` a list with a query goes down to its last match, with no cap and no button; a failed page offers Retry, and a refresh during a sync does not cut the list.
 
 ## How to get to it (user POV)
 
@@ -47,7 +48,9 @@ Live run 11/09/2026: the first four steps proven; evidence in `src-tauri/reports
 | search and Embeddings command arguments | contract (`src/lib/apiContract/busqueda.api.test.ts`) |
 | search box, account chip | vitest (`InboxSearchBox`, `searchQuery`, `Search/*`) |
 | query, empty, clear, trashed mail left out, `is:unread` against the DB | e2e (`Búsqueda/*`) |
-| a smart filter and its token list the same threads (newest match per thread, sorted by thread activity, live mailboxes + custom folders, no junk, inside the view); `domain:` / `ext:` | unit + integration (`services::filters`, `services::search::tests::a_tag_token_lists_what_its_smart_filter_lists`, `db::emails::search`) |
+| a walk reaches the end past the old cap, and a filter and any query follow one set of rules (newest match per thread, sorted by thread activity, each view's scope, flagged mail shown) | unit (`db::emails::list`, `services::list`) |
+| refresh merges into a long list, failures show, Retry repeats what failed | vitest (`src/lib/listPaging`, `src/stores/emailStore.refresh`, `src/stores/emailStore.failures`) |
+| a smart filter and its token list the same threads (newest match per thread, sorted by thread activity, live mailboxes + custom folders, inside the view); `domain:` / `ext:` | unit + integration (`services::filters`, `services::search::tests::a_tag_token_lists_what_its_smart_filter_lists`, `db::emails::search`) |
 | filter ↔ search-box token, the highlighted filter follows the query, one-filter queries page | vitest (`src/lib/filterQuery`, `src/stores/filterStore`, `Sidebar/SmartFilters`, `Inbox/ActiveSearchNotice`) |
 | click writes `tag:topic=<value>` and a second click clears it; right-click → Add to search appends | e2e (`Búsqueda/smart filter escribe su consulta`, `Búsqueda/botón derecho añade el filtro a la búsqueda`) |
 | the chat does not cite a trashed email or a junk-marked lookalike | eval (`retrieval_*` in `src-tauri/evals/chat/cases/retrieval_exclusions.yaml`) |

@@ -64,7 +64,8 @@ impl Database {
         excluded_senders: &[String],
     ) -> Result<QuickFilterStats> {
         let conn = self.reader();
-        let live = crate::db::live_mailboxes_sql!();
+        // The mail a filter lists, so a suggestion's number matches its rows.
+        let filterable = Self::filterable_mailbox("emails");
 
         // Scope-dependent SQL fragments. The account id (when present) binds
         // as ?1; exclusion placeholders start after it.
@@ -106,7 +107,7 @@ impl Database {
              FROM emails WHERE {scope_cond}
                AND sender_domain != ''
                AND is_deleted = 0
-               AND mailbox IN {live} {domain_exclude_clause}
+               AND {filterable} {domain_exclude_clause}
              GROUP BY domain
              ORDER BY cnt DESC LIMIT 10"
         );
@@ -149,7 +150,7 @@ impl Database {
             "SELECT MIN(sender_email), {thread_cnt} AS cnt
              FROM emails WHERE {scope_cond}
                AND is_deleted = 0
-               AND mailbox IN {live}
+               AND {filterable}
                AND {own_address_cond} {sender_exclude_clause}
              GROUP BY sender_email COLLATE NOCASE
              ORDER BY cnt DESC LIMIT 10"
@@ -199,7 +200,7 @@ impl Database {
     /// Mailboxes a smart filter reaches: the live ones plus custom folders,
     /// never Spam or Trash. The same list the search box uses, so a filter
     /// and its `tag:` / `from:` token list the same mail.
-    pub(super) fn filterable_mailbox(alias: &str) -> String {
+    pub(crate) fn filterable_mailbox(alias: &str) -> String {
         format!(
             "({alias}.mailbox IN {live} OR {alias}.mailbox LIKE 'folder:%')",
             live = crate::db::live_mailboxes_sql!()

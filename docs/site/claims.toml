@@ -556,7 +556,7 @@ checks = [
 
 [feat-smart-filters-2]
 checks = [
-  { tests = ['services::search::tests::a_tag_token_lists_what_its_smart_filter_lists', 'services::search::tests::a_search_inside_a_view_keeps_only_that_views_mail'], covers = ["A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail"] },
+  { tests = ['services::list::tests::a_filter_and_a_wider_query_apply_the_same_rules', 'db::emails::list::tests::each_view_lists_what_it_holds', 'db::emails::list::tests::inbox_searches_live_mail_and_folders_but_not_spam_or_trash'], covers = ["A filter or search works inside the view you are in: Sent, Spam, Trash and folders list only their own mail, and the inbox reaches everything except Spam and Trash."] },
   { manual = 'The click, the second click, Add to search, the search carried over an account switch and the empty-search notice are covered by src/lib/filterQuery.test.ts, src/stores/filterStore.test.ts, src/components/Sidebar/SmartFilters.test.tsx (also the ten-value cap and its show-more button) and src/components/Inbox/ActiveSearchNotice.test.tsx (vitest) and the Búsqueda sweep steps; no docClaim case drives them yet.' },
 ]
 
@@ -704,7 +704,7 @@ checks = [
 [feat-search-1]
 checks = [
   { app = true },
-  { manual = 'That attachments are searched too is not exercised.' },
+  { tests = ['services::list::tests::a_walk_reaches_the_end_past_the_old_cap_in_every_account', 'services::list::tests::a_filter_and_a_wider_query_apply_the_same_rules'], covers = ["The list goes down to the last match in the mail you have downloaded", "mail the junk detector flagged shows up with its warning"] },
 ]
 
 
@@ -788,8 +788,8 @@ checks = [
 [feat-organize-6]
 checks = [
   { app = true },
-  { tests = ['db::emails::crud::tests::a_flat_view_lists_only_its_own_unread_messages', 'db::emails::search::tests::an_unread_filter_lists_threads_with_any_unread_message', 'db::emails::search::tests::an_unread_tag_filter_lists_threads_with_any_unread_message'], covers = ["in views that list single messages, such as sent mail and folders, only the unread messages", "and with a smart filter on"] },
-  { manual = 'Hidden during a search and lasting until quit are covered by src/components/Inbox/Inbox.unreadToggle.test.tsx and src/stores/emailStore.unreadOnly.test.ts (vitest); the demo phase does not relaunch the app or type in the list search box.', covers = ["it is hidden while you search.", "the choice lasts until you quit EmailOps."] },
+  { tests = ['db::emails::crud::tests::a_flat_view_lists_only_its_own_unread_messages', 'db::emails::search::tests::an_unread_filter_lists_threads_with_any_unread_message', 'db::emails::search::tests::an_unread_tag_filter_lists_threads_with_any_unread_message'], covers = ["in views that list single messages, such as sent mail and folders, only the unread messages", "with a smart filter on"] },
+  { manual = 'Showing during a search and lasting until quit are covered by src/components/Inbox/Inbox.unreadToggle.test.tsx and src/stores/emailStore.unreadOnly.test.ts (vitest); the demo phase does not relaunch the app or type in the list search box.', covers = ["and while you search.", "the choice lasts until you quit EmailOps."] },
 ]
 
 [feat-snooze-1]

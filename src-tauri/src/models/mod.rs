@@ -1868,6 +1868,9 @@ pub struct EmailWindow {
     /// inbox filter rule — which put one six-message thread in four board
     /// blocks at once.
     pub latest_tag_only: bool,
+    /// Count by the list's rules, for the sidebar: folders in, flagged mail in.
+    /// Off, the Tag Board's: it summarises mail, and flagged mail stays out.
+    pub match_list: bool,
     /// Only mail stored in this mailbox (`inbox`, `sent`, `archive`,
     /// `folder:<path>`): a filter applied from a view lists that view's mail.
     /// Absent means every live mailbox.

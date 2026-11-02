@@ -4219,3 +4219,51 @@ reply can also quote an image it does not carry, and such a body never resolves.
   what is one body.
 - *A column for "already tried"*: a schema change and a release coupling, to save one request
   per run.
+
+## 2026-11-02 — Every search and filter goes through one paged list
+
+**Decision:** The sidebar filters, the search box, the search panel and the CLI all call
+`list_threads`: one row per conversation, in `thread_ts, timestamp, id` order, read from a
+cursor to the end with no cap and no Load more button. A filter and its text are one query.
+A background refresh merges its first rows into the list instead of replacing it, and a
+failed page offers Retry. This supersedes the "one-filter queries take the smart filter's
+path" part of "Smart filters write their query into the search box".
+**Context:** A search stopped at 100 conversations per account and said there was nothing
+more, a filter paged by row number and lost rows, and what a list hid depended on how the
+query was written. Plain mailboxes keep their row numbers: paging them differently is out
+of this work, and their "only unread" skip is a known risk.
+**Rejected:**
+- *Returning every match at once*: every query would load the tags and verdicts of all its
+  rows, and refreshes would still be partial, so the gap under the head would remain.
+- *Extending `get_filtered_emails` or `search_emails_inner`*: the Tag Board and the chat keep
+  their queries fixed.
+- *Removing the cap and keeping row numbers*: 20 of 135 conversations went missing in a
+  synthetic walk where rows left the set.
+
+## 2026-11-02 — Search and filters show flagged mail, with its warning
+
+**Decision:** Mail the junk detector flagged appears in every search and filter, and a row
+never paints without its warning: the list and the search panel wait for the verdicts before
+they publish rows. This supersedes "Typed search words still find junk; a smart filter's
+tokens do not", and the "always exclude junk" part of "Smart filters write their query into
+the search box". The Tag Board and the chat's retrieval still leave flagged mail out. The
+`hide` preference applies to plain mailboxes only: searching is asking for it.
+**Context:** A legitimate message flagged by mistake showed in Inbox, appeared when typing a
+word and vanished from `from:`, `tag:` and `after:`, with nothing saying so.
+**Rejected:**
+- *Hiding it behind a "show flagged" control*: a count, a state and four languages, when the
+  person searching should see what they asked for.
+- *Sending verdicts inside each page*: one more field in the contract, and it leaves plain
+  mailboxes and `id:` rows uncovered.
+
+## 2026-11-02 — A query searches what its view lists
+
+**Decision:** Sent, Archive, folders, Spam and Trash search their own mail, and Sent uses the
+same three signals as its list. The inbox reaches everything except Spam and Trash. Starred
+and Snoozed search like the inbox. This supersedes the "never Spam or Trash" part of "Smart
+filters write their query into the search box". A row leaves a list with a query only when
+it stops belonging to it, so archiving from a search in the inbox keeps the row.
+**Context:** Searching from Spam or Trash found nothing of theirs, and Sent listed one set of
+mail and searched another.
+**Rejected:**
+- *A "Search in Spam and Trash" action*: an extra step for what opening the view already says.

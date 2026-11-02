@@ -352,6 +352,58 @@ mod tests {
     }
 
     #[test]
+    fn a_filter_counter_matches_the_rows_it_lists() {
+        let db = db();
+        insert(&db, "plain", "a", "t1", 400);
+        insert(&db, "foldered", "a", "t2", 300);
+        insert(&db, "flagged", "a", "t3", 200);
+        insert(&db, "spammed", "a", "t4", 100);
+        {
+            let conn = db.connection();
+            conn.execute("UPDATE emails SET mailbox = 'folder:Work' WHERE id = 'foldered'", [])
+                .unwrap();
+            conn.execute("UPDATE emails SET mailbox = 'spam' WHERE id = 'spammed'", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO email_junk (email_id, account_id, spam_score, phish_score, gray_score, band,
+                     primary_kind, reasons_json, method, model_version, scored_at)
+                 VALUES ('flagged', 'a', 0.9, 0, 0, 'junk', 'spam', '[]', 'deterministic', 1, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        for id in ["plain", "foldered", "flagged", "spammed"] {
+            db.upsert_email_tag(id, "company", "acme", None).unwrap();
+        }
+        let scope = AccountScope::Account("a");
+        let listed = |query: &str| walk(&db, Some("a"), query, |_, _| {}).len() as i32;
+
+        assert_eq!(listed("from:ana@empresa.example"), 3);
+        assert_eq!(
+            db.count_filter_threads(scope, "sender", "ana@empresa.example").unwrap(),
+            listed("from:ana@empresa.example")
+        );
+        assert_eq!(
+            db.count_filter_threads(scope, "domain", "empresa.example").unwrap(),
+            listed("domain:empresa.example")
+        );
+        assert_eq!(
+            db.count_filter_threads(scope, "company", "acme").unwrap(),
+            listed("tag:company=acme")
+        );
+
+        let window = crate::models::EmailWindow {
+            match_list: true,
+            ..Default::default()
+        };
+        let stats = db.get_tag_board_stats(scope, "company", &window, 0, 10).unwrap();
+        assert_eq!(stats[0].count, listed("tag:company=acme"));
+
+        let suggestions = db.get_quick_filter_stats(scope, &[], &[]).unwrap();
+        assert_eq!(suggestions.top_domains[0].count, listed("domain:empresa.example"));
+    }
+
+    #[test]
     fn id_lists_exact_mail_in_every_account_on_one_page() {
         let db = db();
         insert(&db, "e1", "a", "t1", 100);

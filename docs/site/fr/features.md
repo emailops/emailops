@@ -92,7 +92,7 @@ la liste. Marquer une conversation comme non lue ramène toujours à la liste.
 **Tous** et **Non lus**, en haut de la liste, choisissent ce qu'elle affiche. **Non lus** ne garde
 que les conversations qui ont un message non lu — dans les vues qui listent des messages
 isolés, comme le courrier envoyé et les dossiers, seulement les messages non lus — dans toutes
-les vues et aussi avec un filtre intelligent ; pendant une recherche, il est masqué. Une
+les vues, avec un filtre intelligent et pendant une recherche. Une
 conversation que vous ouvrez reste dans la liste jusqu'à son rechargement, et le choix dure
 jusqu'à ce que vous quittiez EmailOps.
 
@@ -168,8 +168,9 @@ les présente sous forme de grille de blocs.
 Cliquer sur un filtre l'écrit dans le champ de recherche sous forme de requête visible et
 modifiable — `tag:priority=urgent`, `from:`, `domain:`, `ext:` — et un second clic l'efface.
 Clic droit sur un filtre puis **Ajouter à la recherche** le combine avec la recherche en cours.
-Un filtre s'applique dans la vue où vous êtes : dans les éléments envoyés ou un dossier, il ne
-liste que leur courrier, et la recherche reste active quand vous changez de compte ; si elle ne
+Un filtre ou une recherche s'applique dans la vue où vous êtes : les éléments envoyés, le spam,
+la corbeille et les dossiers ne listent que leur courrier, et la boîte de réception atteint tout
+sauf le spam et la corbeille. La recherche reste active quand vous changez de compte ; si elle ne
 trouve rien, la liste indique qu'une recherche est active et propose de l'effacer. Chaque groupe d'étiquettes affiche d'abord ses dix valeurs les plus
 utilisées, avec un bouton en dessous pour voir le reste.
 
@@ -309,9 +310,8 @@ ce qui le partage avec les destinataires de l'e-mail.
 ## Recherche
 
 <!-- claim:feat-search-1 -->
-Recherche plein texte sur les objets, les corps, les expéditeurs et les pièces jointes. Avec
-l'IA activée s'y ajoute la recherche sémantique, qui correspond au sens plutôt qu'aux mots
-exacts.
+Recherche plein texte sur les objets, les corps et les expéditeurs. La liste va jusqu'au dernier
+résultat du courrier téléchargé, et le courrier signalé par le détecteur apparaît avec son avertissement.
 
 <!-- claim:feat-search-2 -->
 Les recherches se précisent avec des opérateurs, seuls ou à côté de texte libre :

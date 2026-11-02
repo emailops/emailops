@@ -400,8 +400,18 @@ describe('unified (All accounts) mode', () => {
     expect(vi.mocked(api.getSavedSuggestions)).toHaveBeenCalledWith(null);
     // The sidebar now orders classified tags with the tag board's ranking, so
     // the sentinel has to reach that call as null too.
-    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(null, 'company', undefined, expect.any(Number));
-    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(null, 'topic', undefined, expect.any(Number));
+    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(
+      null,
+      'company',
+      { matchList: true },
+      expect.any(Number),
+    );
+    expect(vi.mocked(api.getTagBoardStats)).toHaveBeenCalledWith(
+      null,
+      'topic',
+      { matchList: true },
+      expect.any(Number),
+    );
     // Identity tracking keeps the sentinel, so stale-response guards still work.
     expect(useFilterStore.getState().currentAccountId).toBe(ALL_ACCOUNTS_ID);
   });

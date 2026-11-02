@@ -8,8 +8,8 @@ later score.
 ## Sub-features
 
 - `junk.chip` a flagged message shows its kind in the row and in the thread.
-- `junk.feedback` marking as junk writes the chip at once and hides the message from filtered views; "not junk" removes both and is permanent.
-- `junk.exclusion` flagged mail is left out of tag counts, the Tag Board, keyword and vector retrieval.
+- `junk.feedback` marking as junk writes the chip at once and takes the message out of the Tag Board; searches and filters keep it, with its warning. "not junk" removes both and is permanent.
+- `junk.exclusion` flagged mail is left out of the Tag Board, keyword and vector retrieval. Searches, filters and the sidebar's counts include it, and every list and the search panel paint it with its warning.
 - `junk.settings` Settings → **Junk**: detector on/off, phishing axis, what to do with flagged mail.
 
 ## How to get to it (user POV)

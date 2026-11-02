@@ -570,6 +570,8 @@ export interface EmailWindow {
    *  only, so it lands in one board block. Off, a thread matches every tag any
    *  of its messages carries (the inbox filter rule). */
   latestTagOnly?: boolean;
+  /** Count by the list's rules, for the sidebar: folders in, flagged mail in. */
+  matchList?: boolean;
   /** Only mail stored in this mailbox (`sent`, `archive`, `folder:<path>`):
    *  a filter applied from a view lists that view's mail. Absent = every
    *  live mailbox. */

@@ -106,7 +106,6 @@ impl Database {
     /// thread ids are not globally unique across accounts.
     pub fn count_filter_threads(&self, scope: AccountScope<'_>, filter_type: &str, filter_value: &str) -> Result<i32> {
         let conn = self.reader();
-        let live = crate::db::live_mailboxes_sql!();
         // Scope condition + params. Under Account the account id binds as the
         // LAST param so the filter-value params keep stable low indices.
         let (scope_cond, scope_cond_tagged, account_param): (&str, &str, Option<&str>) = match scope {
@@ -132,7 +131,8 @@ impl Database {
                 let sql = format!(
                     "SELECT COUNT(*) FROM (SELECT DISTINCT account_id, thread_id FROM emails
                      WHERE {value_cond} AND {scope_cond} AND is_deleted = 0
-                       AND mailbox IN {live})"
+                       AND {filterable})",
+                    filterable = Self::filterable_mailbox("emails"),
                 );
                 match account_param {
                     Some(id) => conn.query_row(&sql, params![value, id], |row| row.get(0))?,
@@ -144,9 +144,10 @@ impl Database {
                     "SELECT COUNT(*) FROM (SELECT DISTINCT e.account_id, e.thread_id
                      FROM email_tags et
                      JOIN emails e ON e.id = et.email_id
-                     WHERE et.tag_type = ?1 AND et.tag_value = ?2
+                     WHERE et.tag_type = ?1 AND et.tag_value = ?2 COLLATE NOCASE
                        AND {scope_cond_tagged} AND e.is_deleted = 0
-                       AND e.mailbox IN {live})"
+                       AND {filterable})",
+                    filterable = Self::filterable_mailbox("e"),
                 );
                 match account_param {
                     Some(id) => conn.query_row(&sql, params![filter_type, filter_value, id], |row| row.get(0))?,
