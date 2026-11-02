@@ -137,7 +137,7 @@ opentelemetry      = { version = "0.33", optional = true }
 opentelemetry_sdk  = { version = "0.33", optional = true }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 yrs = "0.28"
-calamine = { version = "0.37", features = ["dates"] }
+calamine = { version = "0.38", features = ["dates"] }
 
 [features]
 # Enables tauri::test::mock_builder for the eval examples so they can build an
