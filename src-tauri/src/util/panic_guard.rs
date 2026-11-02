@@ -34,6 +34,16 @@ pub fn call_isolated<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T> 
     std::panic::catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| Err(crashed(what)))
 }
 
+/// What a blocking task that did not finish turns into. `JoinError`'s text
+/// quotes the panic message, so it stays out of the error.
+pub fn join_failed(what: &str, error: &tokio::task::JoinError) -> AppError {
+    if error.is_panic() {
+        crashed(what)
+    } else {
+        AppError::SyncError(format!("{what} was cancelled"))
+    }
+}
+
 /// The line logged for a panic: where it happened, never its message.
 fn panic_report(location: Option<&std::panic::Location<'_>>) -> String {
     match location {
@@ -81,6 +91,29 @@ mod tests {
             .to_string();
         assert!(err.contains("Reading message 42"), "{err}");
         assert!(!err.contains("private text"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn join_failed_names_the_task_without_the_panic_message() {
+        let error = tokio::task::spawn_blocking::<_, ()>(|| panic!("subject: private text"))
+            .await
+            .unwrap_err();
+
+        let err = join_failed("IMAP operation", &error).to_string();
+
+        assert!(err.contains("IMAP operation"), "{err}");
+        assert!(!err.contains("private text"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn join_failed_says_when_the_task_was_cancelled() {
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let error = task.await.unwrap_err();
+
+        let err = join_failed("IMAP operation", &error).to_string();
+
+        assert!(err.contains("IMAP operation was cancelled"), "{err}");
     }
 
     #[test]

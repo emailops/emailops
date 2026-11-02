@@ -84,8 +84,10 @@ impl<S> SessionSlot<S> {
 
     /// Keep `session` for the next operation.
     ///
-    /// An operation that fails never checks its session back in, so a session
-    /// in an unknown state is dropped rather than reused.
+    /// An operation that fails outright does not check its session back in. One
+    /// that carries on past a failed command does, which is safe: `imap` stops a
+    /// session that lost its place, and the `NOOP` of the next checkout replaces
+    /// it.
     pub(crate) fn checkin(&self, session: S) {
         *self.session.lock().unwrap_or_else(PoisonError::into_inner) = Some(session);
     }

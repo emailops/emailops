@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included with the app stay off until you switch them on, and if you turned
   skills off they stay off.
 
+### Fixed
+
+- An IMAP server reply EmailOps cannot read no longer crashes the sync. If a
+  command fails because of one, Logs shows the shape of the reply with its text
+  masked.
+
 ## [0.6.17] — 2026-10-29
 
 ### Added

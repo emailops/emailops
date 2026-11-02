@@ -184,6 +184,12 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
 /// hang a blocking task forever.
 const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// A blocking IMAP task that did not finish: a panic there is an ordinary error
+/// of that operation, without the panic's text (see `util::panic_guard`).
+fn task_failed(error: tokio::task::JoinError) -> AppError {
+    crate::util::panic_guard::join_failed("IMAP operation", &error)
+}
+
 /// How an IMAP connection reaches TLS. 993 is IMAPS (TLS on connect); any
 /// other port (143, Proton Mail Bridge's 1143) greets in clear text and is
 /// upgraded with STARTTLS — the same port rule `test_smtp` applies to 465.
@@ -610,11 +616,7 @@ impl ImapClient {
         if has_role_attr {
             return Ok(entries);
         }
-        let advertises_special_use = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("SPECIAL-USE")))
-            .unwrap_or(false);
-        if !advertises_special_use {
+        if !imap_search::advertises(session, "SPECIAL-USE") {
             return Ok(entries);
         }
         match session.run_command_and_read_response("LIST \"\" \"*\" RETURN (SPECIAL-USE)") {
@@ -676,11 +678,7 @@ impl ImapClient {
         target: &str,
     ) -> Result<()> {
         let uid_set = uid.to_string();
-        let has_move = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("MOVE")))
-            .unwrap_or(false);
-        if has_move {
+        if imap_search::advertises(session, "MOVE") {
             session
                 .uid_mv(&uid_set, target)
                 .map_err(|e| AppError::SyncError(format!("IMAP MOVE to '{target}' failed: {e}")))?;
@@ -692,11 +690,7 @@ impl ImapClient {
             session
                 .uid_store(&uid_set, "+FLAGS (\\Deleted)")
                 .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
-            let has_uidplus = session
-                .capabilities()
-                .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("UIDPLUS")))
-                .unwrap_or(false);
-            let expunged = if has_uidplus {
+            let expunged = if imap_search::advertises(session, "UIDPLUS") {
                 session
                     .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
                     .map(|_| ())
@@ -769,8 +763,8 @@ impl ImapClient {
         uid: u32,
         message_id_header: Option<&str>,
     ) -> Result<(String, Option<u32>)> {
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let archive_path = folder_plan::resolve_archive_folder(&entries).ok_or(AppError::NoArchiveFolder)?;
         if *source == ImapFolder::Custom(archive_path.clone()) {
             return Ok((archive_path, Some(uid)));
@@ -812,8 +806,8 @@ impl ImapClient {
         if *source == ImapFolder::Spam {
             return Ok(Some(uid));
         }
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let spam_path = resolve_role_folder(WellKnownFolder::Spam, &entries).ok_or(AppError::NoSpamFolder)?;
         if !Self::select_folder_blocking(session, source) {
             return Err(AppError::SyncError(format!(
@@ -980,7 +974,7 @@ impl ImapClient {
             Ok(())
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking join error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(())
     }
 
@@ -1409,7 +1403,7 @@ impl EmailProvider for ImapClient {
                 Ok((inbox_uids.into_iter().collect(), sent_uids))
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         // INBOX and Sent UIDs live in separate UID namespaces so sorting them together
         // is meaningless. Page through INBOX independently (newest first, resuming
@@ -1517,7 +1511,7 @@ impl EmailProvider for ImapClient {
                 out
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?;
+            .map_err(task_failed)?;
 
             for (index, parsed) in fetched {
                 slots[index] = Some(parsed);
@@ -1582,7 +1576,7 @@ impl EmailProvider for ImapClient {
             Self::parse_message(uid, &fetched)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Use the full (prefixed) message_id so the stored ID is globally unique
         email.id = message_id.to_string();
@@ -1634,7 +1628,7 @@ impl EmailProvider for ImapClient {
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Newest UIDs first (IMAP UIDs are monotonically increasing per folder),
         // then cap at max_results so the initial sync pulls the most recent
@@ -1665,7 +1659,7 @@ impl EmailProvider for ImapClient {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
             let mut hits = Vec::new();
             for (folder, path) in attachment_search_folders(&folder_plan::plan_folders(&entries)) {
                 if let Err(e) = imap_search::select(&mut session, &path) {
@@ -1679,7 +1673,7 @@ impl EmailProvider for ImapClient {
             Ok(hits)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(Some(self.attachment_hit_ids(hits)))
     }
 
@@ -1690,12 +1684,12 @@ impl EmailProvider for ImapClient {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
             slot.checkin(session);
             Ok(entries)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn list_folder_messages(
@@ -1727,7 +1721,7 @@ impl EmailProvider for ImapClient {
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         let mut sorted = uids;
         sorted.sort_unstable_by(|a, b| b.cmp(a));
@@ -1827,7 +1821,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn rename_folder(&self, old_server_path: &str, new_server_path: &str) -> Result<()> {
@@ -1845,7 +1839,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn delete_folder(&self, server_path: &str) -> Result<()> {
@@ -1862,7 +1856,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Seen)` in the folder the message's id names.
@@ -1887,7 +1881,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Flagged)` in the folder the message's id names.
@@ -1912,7 +1906,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// Move the message to the account's archive folder (`\Archive`, else
@@ -1945,7 +1939,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(
                 || message_id.to_string(),
@@ -1982,7 +1976,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(|| message_id.to_string(), |u| self.located_id(&ImapFolder::Spam, u)),
             mailbox: ImapFolder::Spam.mailbox_value(),
@@ -2021,7 +2015,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
@@ -2036,7 +2030,10 @@ impl EmailProvider for ImapClient {
                 crate::services::logger::log(
                     "debug",
                     "sync",
-                    format!("IMAP LIST failed, checking UIDVALIDITY of the inbox only: {e}"),
+                    format!(
+                        "IMAP LIST failed, checking UIDVALIDITY of the inbox only: {}",
+                        imap_search::describe_error(&e)
+                    ),
                 );
                 Vec::new()
             });
@@ -2060,7 +2057,7 @@ impl EmailProvider for ImapClient {
             Ok(found)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(found
             .into_iter()
@@ -2091,7 +2088,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(fetched
             .into_iter()
@@ -2144,7 +2141,7 @@ impl EmailProvider for ImapClient {
                 Ok(checked)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(Some(
             checked
@@ -2230,7 +2227,7 @@ impl EmailProvider for ImapClient {
                 Ok(located)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(found.map(|(folder, uid)| provider::MessageLocation {
             id: self.located_id(&folder, uid),
@@ -2289,7 +2286,7 @@ impl EmailProvider for ImapClient {
             Ok(new_uid)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(new_uid.map(|u| MessageRef {
             id: match target {
@@ -2417,7 +2414,7 @@ impl ImapClient {
         let creds = self.credentials.clone();
         let outcome = tokio::task::spawn_blocking(move || Self::append_to_sent_blocking(&creds, &raw))
             .await
-            .unwrap_or_else(|e| Err(AppError::SyncError(format!("sent-copy task join error: {e}"))));
+            .unwrap_or_else(|e| Err(task_failed(e)));
 
         if let Err(e) = outcome {
             crate::services::logger::log(

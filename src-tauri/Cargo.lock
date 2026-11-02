@@ -3313,8 +3313,7 @@ dependencies = [
 [[package]]
 name = "imap"
 version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c617c55def8c42129e0dd503f11d7ee39d73f5c7e01eff55768b3879ff1d107d"
+source = "git+https://github.com/emailops/rust-imap?rev=bf6cced555e07f232e5d389346f6a57d8bc141d6#bf6cced555e07f232e5d389346f6a57d8bc141d6"
 dependencies = [
  "base64 0.13.1",
  "bufstream",
