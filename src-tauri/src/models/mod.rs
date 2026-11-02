@@ -428,6 +428,16 @@ pub struct SmartFilterPref {
     pub account_id: String,
 }
 
+/// Where a page of a list with a query continues: the last row delivered, in
+/// the list's `thread_ts, timestamp, id` order. Opaque to the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadCursor {
+    pub thread_ts: i64,
+    pub timestamp: i64,
+    pub id: String,
+}
+
 /// A suggestion stored in the DB (filter_type + filter_value + count)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

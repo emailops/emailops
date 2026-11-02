@@ -199,7 +199,7 @@ impl Database {
     /// Mailboxes a smart filter reaches: the live ones plus custom folders,
     /// never Spam or Trash. The same list the search box uses, so a filter
     /// and its `tag:` / `from:` token list the same mail.
-    fn filterable_mailbox(alias: &str) -> String {
+    pub(super) fn filterable_mailbox(alias: &str) -> String {
         format!(
             "({alias}.mailbox IN {live} OR {alias}.mailbox LIKE 'folder:%')",
             live = crate::db::live_mailboxes_sql!()
@@ -226,6 +226,17 @@ impl Database {
     /// the probe drives from the small `thread_latest` set into the emails
     /// primary key, never the reverse. The thread timestamp is the last column.
     fn representative_tail(limit_idx: usize, offset_idx: usize) -> String {
+        Self::thread_tail(
+            &format!("e3.is_deleted = 0 AND {}", Self::filterable_mailbox("e3")),
+            "",
+            &format!("LIMIT ?{limit_idx} OFFSET ?{offset_idx}"),
+        )
+    }
+
+    /// [`Self::representative_tail`] for a caller that names what counts as the
+    /// conversation's activity (`thread_sql`, on alias `e3`), where the page
+    /// starts (`after`, a condition on `l.thread_ts` and `e`) and its size.
+    pub(super) fn thread_tail(thread_sql: &str, after: &str, page: &str) -> String {
         format!(
             "picked AS (
                  SELECT aid, tid, mid,
@@ -237,7 +248,7 @@ impl Database {
                         (SELECT e3.timestamp
                          FROM emails e3 INDEXED BY idx_emails_thread_latest
                          WHERE e3.account_id = p.aid AND e3.thread_id = p.tid
-                           AND e3.is_deleted = 0 AND {filterable}
+                           AND {thread_sql}
                          ORDER BY e3.timestamp DESC, e3.id DESC
                          LIMIT 1) AS thread_ts
                  FROM picked p
@@ -246,16 +257,15 @@ impl Database {
              SELECT {cols}, l.thread_ts
              FROM thread_latest l
              CROSS JOIN emails e
-             WHERE e.id = l.rep_id
+             WHERE e.id = l.rep_id{after}
              ORDER BY l.thread_ts DESC, e.timestamp DESC, e.id DESC
-             LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
-            filterable = Self::filterable_mailbox("e3"),
+             {page}",
             cols = EMAIL_COLUMNS,
         )
     }
 
     /// Read the rows [`Self::representative_tail`] returns.
-    fn read_representatives(rows: &mut rusqlite::Rows<'_>) -> Result<FilteredEmailsResult> {
+    pub(super) fn read_representatives(rows: &mut rusqlite::Rows<'_>) -> Result<FilteredEmailsResult> {
         let thread_ts_idx = EMAIL_COLUMNS.split(',').count();
         let mut emails = Vec::new();
         let mut thread_latest_at = std::collections::HashMap::new();

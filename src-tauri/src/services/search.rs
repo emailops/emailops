@@ -985,7 +985,7 @@ fn build_filter_match_reason(parsed: &ParsedSearchQuery) -> String {
     }
 }
 
-fn build_effective_query(parsed: &ParsedSearchQuery) -> String {
+pub(crate) fn build_effective_query(parsed: &ParsedSearchQuery) -> String {
     parsed.keywords.join(" ")
 }
 
@@ -1123,7 +1123,7 @@ fn filter_scored_results(
         .collect()
 }
 
-fn matches_parsed_filters(email: &Email, parsed: &ParsedSearchQuery) -> bool {
+pub(crate) fn matches_parsed_filters(email: &Email, parsed: &ParsedSearchQuery) -> bool {
     if let Some(ref from) = parsed.from_filter {
         let needle = normalize_for_search(from);
         let haystack = normalize_for_search(&format!("{} {}", email.sender, email.sender_email));
