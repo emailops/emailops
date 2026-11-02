@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
+import { selectPageFailed } from '@/lib/listPaging';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
@@ -192,7 +193,7 @@ export function Inbox({
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const unreadOnly = useEmailStore((s) => s.unreadOnly);
   const setUnreadOnly = useEmailStore((s) => s.setUnreadOnly);
-  const loadMoreFailed = useEmailStore((s) => s.loadMoreFailed);
+  const loadMoreFailed = useEmailStore((s) => selectPageFailed(s.paging));
   const retryLoadMore = useEmailStore((s) => s.retryLoadMore);
 
   // Active tab selection model:
@@ -460,14 +461,14 @@ export function Inbox({
   const hasCategoryFilter =
     showCategoryFilter && selectedCategories.size > 0 && selectedCategories.size < visibleCategories.length;
   // A sidebar filter travels as a one-token query; anything else is a
-  // free-text search, which the Unread toggle does not apply to.
+  // free-text search.
   const isTextSearch = Boolean(searchQuery?.trim()) && !filterFromQuery(searchQuery);
   const emptyStateMessage: string = isSyncing
     ? t('inbox:emptyState.syncing')
-    : isTextSearch
-      ? t('inbox:emptyState.noSearchResults')
-      : unreadOnly
-        ? t('inbox:readFilter.empty')
+    : unreadOnly
+      ? t('inbox:readFilter.empty')
+      : isTextSearch
+        ? t('inbox:emptyState.noSearchResults')
         : hasActiveFilter || hasCategoryFilter
           ? t('inbox:emptyState.noFilterResults')
           : t('inbox:emptyState.noEmails');
@@ -523,7 +524,7 @@ export function Inbox({
 
             {/* Action buttons */}
             <div className="flex items-center gap-1 flex-shrink-0">
-              {!isTextSearch && <ReadFilterToggle />}
+              <ReadFilterToggle />
               {hasMore && !isLoadingMore && (
                 <button
                   onClick={() => {

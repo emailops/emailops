@@ -64,7 +64,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
-import { appendFilterToken, filterToken, planListSource } from '@/lib/filterQuery';
+import { appendFilterToken, filterToken } from '@/lib/filterQuery';
 import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
@@ -1323,22 +1323,10 @@ function AppInner() {
     [addLog],
   );
 
+  // The overlay's rows are a preview: the list pages from its own cursor.
   const handleApplySearchWithResults = useCallback(
-    (query: string, emails: Email[]) => {
-      // The overlay searched every live mailbox; its results are the list's
-      // only for a plain search outside Sent/Archive/a folder. A one-filter
-      // query pages, and a view narrows — both refetch.
-      const view = isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox';
-      const source = planListSource(query, view);
-      if (source.kind !== 'search' || source.mailbox !== undefined) {
-        handleApplySearch(query);
-        return;
-      }
-      setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
-      useEmailStore.getState().applySearchResults(query, emails);
-      addLog('info', 'search', `Filtering inbox: "${query}" (reused ${emails.length} results)`);
-    },
-    [addLog, handleApplySearch, viewMode],
+    (query: string, _emails: Email[]) => handleApplySearch(query),
+    [handleApplySearch],
   );
 
   // A smart filter writes its query into the search box (DECISIONS

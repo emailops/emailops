@@ -89,6 +89,7 @@ import type {
   TagStat,
   TaskConfig,
   TaskCountsSummary,
+  ThreadCursor,
   ThreadMessageText,
   ThreadParticipants,
   ThreadState,
@@ -769,12 +770,35 @@ export interface EmailWithScore extends Email {
   matchReason: string | null;
 }
 
+export interface ThreadPage {
+  emails: Email[];
+  /** Email id → when that row's thread last had activity. */
+  threadLatestAt: Record<string, number>;
+  nextCursor: ThreadCursor | null;
+  parsedQuery: ParsedSearchQuery | null;
+}
+
 export interface SearchResult {
   emails: EmailWithScore[];
   query: string;
   parsedQuery: ParsedSearchQuery | null;
   aiAvailable: boolean;
   searchMethod: SearchMethod;
+}
+
+/** One page of a search or filter. `accountId: null` lists every enabled
+ *  account; `cursor: null` starts at the top, and a null `nextCursor` is the end
+ *  of the list. `recordSearch` logs a typed search for the chat's context. */
+export async function listThreads(
+  accountId: string | null,
+  query: string,
+  view: MailboxView,
+  unreadOnly: boolean,
+  cursor: ThreadCursor | null,
+  limit: number,
+  recordSearch: boolean,
+): Promise<ThreadPage> {
+  return invoke('list_threads', { accountId, query, view, unreadOnly, cursor, limit, recordSearch });
 }
 
 /** `accountId: null` searches across every enabled account (unified view).

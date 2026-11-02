@@ -10,7 +10,7 @@ vi.mock('@/lib/api', () => ({
   getJunkVerdicts: vi.fn(async () => ({})),
   getEmails: vi.fn(),
   getEmailCount: vi.fn(async () => 500),
-  searchEmails: vi.fn(async () => ({ emails: [] })),
+  listThreads: vi.fn(async () => ({ emails: [], threadLatestAt: {}, nextCursor: null, parsedQuery: null })),
   listThreadSnoozes: vi.fn(async () => []),
   applyThreadAction: vi.fn(),
   getThread: vi.fn(async () => []),
@@ -56,7 +56,7 @@ describe('pre-seeded search results', () => {
 
     await useEmailStore.getState().fetchEmails('acc', null, [], false, 'inbox');
 
-    expect(api.searchEmails).not.toHaveBeenCalled();
+    expect(api.listThreads).not.toHaveBeenCalled();
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['hit']);
   });
 });
@@ -122,7 +122,11 @@ describe('a background refresh', () => {
 
 describe('load more after a failed page', () => {
   it('stays off for scrolling, and comes back when the user asks again', async () => {
-    useEmailStore.setState({ emails: [row('first')], hasMore: true, totalCount: 500 });
+    useEmailStore.setState({
+      emails: [row('first')],
+      paging: { status: 'idle', cursor: null, offset: 1 },
+      totalCount: 500,
+    });
     vi.mocked(api.getEmails).mockRejectedValueOnce(new Error('offline'));
 
     await useEmailStore.getState().loadMoreEmails('acc', null, [], 'inbox');

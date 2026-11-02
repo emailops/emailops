@@ -7,8 +7,6 @@ import type { Email, JunkVerdict } from '@/types';
 vi.mock('@/lib/api', () => ({
   getEmails: vi.fn(async () => []),
   getEmailCount: vi.fn(async () => 0),
-  searchEmails: vi.fn(async () => ({ emails: [] })),
-  getFilteredEmails: vi.fn(async () => ({ emails: [], totalCount: -1, threadLatestAt: {} })),
   listThreadSnoozes: vi.fn(async () => []),
   getJunkVerdicts: vi.fn(async () => ({})),
 }));
@@ -27,7 +25,7 @@ describe('rows wait for their verdicts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useJunkStore.setState({ verdictsByEmail: {}, loaded: {} });
-    useEmailStore.setState({ searchQuery: null, emails: [], hasMore: false, totalCount: 0, error: null });
+    useEmailStore.setState({ searchQuery: null, emails: [], totalCount: 0, error: null });
   });
 
   it('holds a first page until its verdicts are in', async () => {
@@ -63,7 +61,7 @@ describe('rows wait for their verdicts', () => {
   });
 
   it('holds the next page too', async () => {
-    useEmailStore.setState({ emails: [row('e0')], hasMore: true, totalCount: 2 });
+    useEmailStore.setState({ emails: [row('e0')], paging: { status: 'idle', cursor: null, offset: 1 }, totalCount: 2 });
     vi.mocked(api.getEmails).mockResolvedValue([row('e1')]);
     vi.mocked(api.getJunkVerdicts).mockRejectedValue(new Error('no verdicts'));
 

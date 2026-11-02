@@ -6295,6 +6295,38 @@ async fn retrieval_leaves_out_trashed_and_junk_marked_messages() {
 
 // ── Junk feedback: the chip and the company views ───────────────────────────
 
+/// A search or filter does not hide what the detector flagged, whatever the
+/// query looks like: the warning on the row is what protects the reader.
+#[tokio::test]
+async fn list_threads_shows_flagged_mail() {
+    let db = Arc::new(test_db());
+    db.insert_account(&make_account("acc-lf", "lf@example.com")).unwrap();
+    for (id, timestamp) in [("l-kept", 2000), ("l-marked", 1000)] {
+        db.insert_email(&make_email(id, "acc-lf", timestamp)).unwrap();
+        db.upsert_email_tag(id, "company", "acme", None).unwrap();
+    }
+    emailops_lib::services::junk::set_feedback(&db, "acc-lf", "l-marked", true)
+        .await
+        .unwrap();
+
+    let page = emailops_lib::services::list::list_threads(
+        &db,
+        emailops_lib::services::list::ListRequest {
+            account_id: Some("acc-lf"),
+            query: "tag:company=acme",
+            view: emailops_lib::db::emails::list::ListView::Inbox,
+            unread_only: false,
+            cursor: None,
+            limit: 50,
+        },
+    )
+    .unwrap();
+
+    let ids: Vec<&str> = page.emails.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["l-kept", "l-marked"]);
+    assert!(page.next_cursor.is_none());
+}
+
 /// Marking a message as junk shows its chip at once and takes it out of the
 /// company view and the sidebar count; "not junk" undoes both.
 #[tokio::test]

@@ -81,11 +81,15 @@ describe('snooze map reducers', () => {
   });
 
   it('snoozing leaves the inbox, unsnoozing leaves the Snoozed view', () => {
-    expect(snoozeLeavesList('snooze', 'inbox')).toBe(true);
-    expect(snoozeLeavesList('snooze', 'starred')).toBe(false);
-    expect(snoozeLeavesList('snooze', 'search')).toBe(false);
-    expect(snoozeLeavesList('unsnooze', 'snoozed')).toBe(true);
-    expect(snoozeLeavesList('unsnooze', 'inbox')).toBe(false);
+    expect(snoozeLeavesList('snooze', 'inbox', false)).toBe(true);
+    expect(snoozeLeavesList('snooze', 'starred', false)).toBe(false);
+    expect(snoozeLeavesList('unsnooze', 'snoozed', false)).toBe(true);
+    expect(snoozeLeavesList('unsnooze', 'inbox', false)).toBe(false);
+  });
+
+  it('a query reaches snoozed mail, so a snooze does not take the row out', () => {
+    expect(snoozeLeavesList('snooze', 'inbox', true)).toBe(false);
+    expect(snoozeLeavesList('unsnooze', 'snoozed', true)).toBe(false);
   });
 });
 

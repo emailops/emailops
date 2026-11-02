@@ -325,6 +325,14 @@ export interface ActiveFilter {
   value: string;
 }
 
+/** Where a page of a list with a query continues. Opaque to the UI: it comes
+ *  from one page and goes back with the next. */
+export interface ThreadCursor {
+  threadTs: number;
+  timestamp: number;
+  id: string;
+}
+
 export interface FilteredEmailsResult {
   emails: Email[];
   totalCount: number;

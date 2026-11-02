@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import type { MailboxView } from '@/lib/api';
+import { selectHasMore, selectIsLoadingMore } from '@/lib/listPaging';
 import { toQueryAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
@@ -9,9 +10,8 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
   const {
     emails,
     isLoading,
-    isLoadingMore,
+    paging,
     isLoadingThread,
-    hasMore,
     totalCount,
     error,
     searchQuery,
@@ -78,9 +78,9 @@ export function useEmails(selectedCategories: EmailCategory[] = [], mailbox: Mai
   return {
     emails,
     isLoading,
-    isLoadingMore,
+    isLoadingMore: selectIsLoadingMore(paging),
     isLoadingThread,
-    hasMore,
+    hasMore: selectHasMore(paging),
     totalCount,
     error,
     selectedEmail,

@@ -176,7 +176,7 @@ describe('loadMoreEmails after a failure', () => {
   beforeEach(() => {
     useEmailStore.getState().reset();
     vi.clearAllMocks();
-    useEmailStore.setState({ emails: [a], hasMore: true, totalCount: 500 });
+    useEmailStore.setState({ emails: [a], paging: { status: 'idle', cursor: null, offset: 1 }, totalCount: 500 });
   });
 
   it('does not retry on its own until the list is fetched again', async () => {

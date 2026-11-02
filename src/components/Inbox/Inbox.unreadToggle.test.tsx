@@ -1,6 +1,5 @@
-// The list header's All / Unread toggle: it drives the store's session flag,
-// steps aside for a free-text search (search has `is:unread`), and an empty
-// unread list says so.
+// The list header's All / Unread toggle: it drives the store's session flag in
+// every list, and an empty unread list says so.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -93,9 +92,9 @@ describe('the list Unread toggle', () => {
     expect(toggle()).not.toBeNull();
   });
 
-  it('is hidden while a free-text search is active', async () => {
+  it('stays while a free-text search is active, because it applies there too', async () => {
     await mount('invoice');
-    expect(toggle()).toBeNull();
+    expect(toggle()).not.toBeNull();
   });
 
   it('says there is nothing unread when the unread list is empty', async () => {

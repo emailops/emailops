@@ -201,6 +201,7 @@ macro_rules! app_commands {
             commands::emails::get_email_count,
             commands::emails::get_sync_status,
             commands::search::search_emails,
+            commands::search::list_threads,
             commands::search::generate_embeddings,
             commands::search::start_generate_embeddings,
             commands::search::regenerate_embeddings,

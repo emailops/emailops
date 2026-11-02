@@ -88,7 +88,7 @@ const emptyAction = () => container.querySelector<HTMLButtonElement>('[data-test
 describe('the Load more button after a failed page', () => {
   it('asks the backend again', async () => {
     const first = { id: 'first', accountId: 'acct-1', threadId: 't1' } as Email;
-    useEmailStore.setState({ emails: [first], hasMore: true, totalCount: 500 });
+    useEmailStore.setState({ emails: [first], paging: { status: 'idle', cursor: null, offset: 1 }, totalCount: 500 });
     vi.mocked(api.getEmails).mockRejectedValueOnce(new Error('offline'));
     const loadMore = () => void useEmailStore.getState().loadMoreEmails('acct-1', null, [], 'inbox');
     await act(async () => loadMore());
