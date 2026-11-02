@@ -403,6 +403,46 @@ mod tests {
         assert_eq!(suggestions.top_domains[0].count, listed("domain:empresa.example"));
     }
 
+    fn ids_of(db: &Arc<Database>, query: &str) -> Vec<String> {
+        let page = list_threads(db, request(Some("a"), query, None)).unwrap();
+        page.emails.into_iter().map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn a_typed_tag_ignores_a_company_of_the_same_name() {
+        let db = db();
+        insert(&db, "billing_intent", "a", "t1", 200);
+        insert(&db, "billing_company", "a", "t2", 100);
+        db.upsert_email_tag("billing_intent", "intent", "billing", None)
+            .unwrap();
+        db.upsert_email_tag("billing_company", "company", "billing", None)
+            .unwrap();
+
+        assert_eq!(ids_of(&db, "tag:intent=billing"), ["billing_intent"]);
+        assert_eq!(ids_of(&db, "tag:billing"), ["billing_intent", "billing_company"]);
+    }
+
+    #[test]
+    fn a_query_spans_every_category() {
+        let db = db();
+        insert(&db, "primary", "a", "t1", 200);
+        insert(&db, "promo", "a", "t2", 100);
+        db.connection()
+            .execute("UPDATE emails SET category = 'promotions' WHERE id = 'promo'", [])
+            .unwrap();
+
+        assert_eq!(ids_of(&db, "factura"), ["primary", "promo"]);
+    }
+
+    #[test]
+    fn id_still_applies_the_other_operators() {
+        let db = db();
+        insert(&db, "e1", "a", "t1", 100);
+        insert_from(&db, "e2", "a", "t2", 200, "bob@otra.example");
+
+        assert_eq!(ids_of(&db, "id:e1 id:e2 from:bob"), ["e2"]);
+    }
+
     #[test]
     fn id_lists_exact_mail_in_every_account_on_one_page() {
         let db = db();

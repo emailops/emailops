@@ -9,6 +9,7 @@ open the database read-only and never run migrations.
 
 - `cli.envelope` success and failure share one JSON shape; `error` is `{code, params, message}`.
 - `cli.readOnly` read commands (`doctor`, `search`, `show`, `emails`, …) open the DB read-only.
+- `cli.search` `search` runs the app's list: `--view` and `--unread` narrow it as the UI does, and `--trace` gives `query`, `parsedQuery`, `shown`, `offset`, `totalHits`, `exhausted`, `pages` and `ms`.
 - `cli.eval` `emailops-cli eval` runs the chat eval cases through the shared harness.
 
 ## How to get to it (user POV)

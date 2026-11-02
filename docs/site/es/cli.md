@@ -55,7 +55,7 @@ chat (los tokens llegan en directo) y el resto corresponden a los subcomandos �
 | `accounts` | Lista las cuentas configuradas |
 | `emails [--limit N] [--mailbox inbox\|sent\|spam\|trash]` | Lista los correos recientes |
 | `show <id>` | Muestra un correo (cabeceras y cuerpo) |
-| `search <consulta> [--limit N]` | Búsqueda de texto completo |
+| `search <consulta> [--limit N] [--view V] [--unread]` | Búsqueda de texto completo |
 | `chat <pregunta> [--trace]` | Hace una pregunta; `--trace` añade tiempos de enrutado y recuperación |
 | `sync [cuenta]` | Descarga el correo nuevo |
 | `calendar [--days N] [--next] [--sync]` | Próximos eventos (`--next` = solo la siguiente reunión) |

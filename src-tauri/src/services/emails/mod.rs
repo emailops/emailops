@@ -172,11 +172,10 @@ pub fn resolve_participant(db: &Database, account_id: &str, with: &str) -> Vec<S
     participant_terms(with, addresses)
 }
 
-/// Low-level mailbox search with explicit filters. Distinct from the
-/// higher-level `services::search::search_emails` (which does pattern
-/// parsing, AI query parsing, RAG hybrid retrieval, etc.) — this one is the
-/// raw FTS+filter path the chat `search_emails` tool needs. Keeps the SQL
-/// in `db::emails::search`.
+/// Low-level mailbox search with explicit filters. Distinct from
+/// `services::list::list_threads`, which lists conversations for the app —
+/// this one is the raw FTS+filter path the chat `search_emails` tool needs.
+/// Keeps the SQL in `db::emails::search`.
 #[allow(clippy::too_many_arguments)]
 pub fn search_emails_filtered(
     db: &Arc<Database>,

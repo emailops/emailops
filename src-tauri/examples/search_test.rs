@@ -1,19 +1,20 @@
-//! CLI tool for quickly testing semantic search
+//! CLI tool for quickly testing the list a search runs through
 //!
 //! Usage:
 //!   cargo run --bin search_test "your search query here"
 //!   cargo run --bin search_test --rebuild   # Rebuild FTS + embeddings first
 
 use clap::Parser;
+use emailops_lib::db::emails::list::ListView;
 use emailops_lib::db::Database;
-use emailops_lib::services::{embeddings, search};
+use emailops_lib::services::{embeddings, list};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "search_test")]
-#[command(about = "Test semantic search from the command line")]
+#[command(about = "Test a search from the command line")]
 struct Args {
     /// Search query
     #[arg(default_value = "")]
@@ -92,33 +93,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSearching: \"{}\"", args.query);
     println!("{}", "-".repeat(60));
 
-    let result = search::search_emails(&db, Some(&account_id), &args.query, true, None, None, None).await?;
+    let mut rows = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = list::list_threads(
+            &db,
+            list::ListRequest {
+                account_id: Some(&account_id),
+                query: &args.query,
+                view: ListView::Inbox,
+                unread_only: false,
+                cursor,
+                limit: 50,
+            },
+        )?;
+        rows.extend(page.emails);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
 
-    println!("Method: {:?}", result.search_method);
-    println!("Results: {}\n", result.emails.len());
+    println!("Results: {}\n", rows.len());
 
-    for (i, email) in result.emails.iter().enumerate() {
-        let score = email
-            .relevance_score
-            .map(|s| format!("{:.0}%", s * 100.0))
-            .unwrap_or_else(|| "-".to_string());
-
-        println!("{}. [{}] {}", i + 1, score, email.email.subject);
-        println!("   From: {}", email.email.sender);
+    for (i, email) in rows.iter().enumerate() {
+        println!("{}. {}", i + 1, email.subject);
+        println!("   From: {}", email.sender);
 
         if args.verbose {
-            if let Some(ref reason) = email.match_reason {
-                println!("   Reason: {}", reason);
-            }
-            println!(
-                "   Snippet: {}...",
-                email.email.snippet.chars().take(80).collect::<String>()
-            );
+            println!("   Snippet: {}...", email.snippet.chars().take(80).collect::<String>());
         }
         println!();
     }
 
-    if result.emails.is_empty() {
+    if rows.is_empty() {
         println!("No results found.");
     }
 

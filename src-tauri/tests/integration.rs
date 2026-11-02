@@ -14,6 +14,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use emailops_lib::ai::provider::FakeAiProvider;
+use emailops_lib::db::emails::list::ListPlan;
 use emailops_lib::db::Database;
 use emailops_lib::models::error::AppError;
 use emailops_lib::models::lens::{CreateLensInput, LensColumn, LensColumnType, LensSchema, LensScope};
@@ -1728,16 +1729,14 @@ fn get_filtered_emails_by_domain_returns_matching_threads() {
         .unwrap();
 
     let result = db
-        .get_filtered_emails(
+        .list_threads(
+            &ListPlan {
+                domain: Some("gmail.com".into()),
+                ..ListPlan::default()
+            },
             emailops_lib::db::AccountScope::Account("acc-f"),
-            Some("gmail.com"),
             None,
-            None,
-            None,
-            None,
-            &emailops_lib::models::EmailWindow::default(),
             50,
-            0,
         )
         .unwrap();
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
@@ -1756,27 +1755,25 @@ fn get_filtered_emails_by_sender_returns_matching_threads() {
     let db = test_db();
     db.insert_account(&make_account("acc-f", "f@example.com")).unwrap();
 
-    db.insert_email(&make_email_with("e1", "acc-f", 1000, "boss@corp.com", "inbox"))
+    db.insert_email(&make_email_with("e1", "acc-f", 1000, "boss@empresa.example", "inbox"))
         .unwrap();
-    db.insert_email(&make_email_with("e2", "acc-f", 2000, "other@corp.com", "inbox"))
+    db.insert_email(&make_email_with("e2", "acc-f", 2000, "other@empresa.example", "inbox"))
         .unwrap();
 
     let result = db
-        .get_filtered_emails(
+        .list_threads(
+            &ListPlan {
+                from_exact: Some("boss@empresa.example".into()),
+                ..ListPlan::default()
+            },
             emailops_lib::db::AccountScope::Account("acc-f"),
             None,
-            Some("boss@corp.com"),
-            None,
-            None,
-            None,
-            &emailops_lib::models::EmailWindow::default(),
             50,
-            0,
         )
         .unwrap();
     let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-    assert!(ids.contains(&"e1"), "boss@corp.com email must match");
-    assert!(!ids.contains(&"e2"), "other@corp.com email must not match");
+    assert!(ids.contains(&"e1"), "boss@empresa.example email must match");
+    assert!(!ids.contains(&"e2"), "other@empresa.example email must not match");
 }
 
 // ── P1: email CRUD edge cases ──────────────────────────────────────────────
@@ -4414,11 +4411,8 @@ fn get_filtered_emails_by_tag_returns_only_tagged() {
     let result = db
         .get_filtered_emails(
             emailops_lib::db::AccountScope::Account("acc-tag"),
-            None,
-            None,
-            Some("priority"),
-            Some("urgent"),
-            None,
+            "priority",
+            "urgent",
             &emailops_lib::models::EmailWindow::default(),
             50,
             0,
@@ -4520,16 +4514,11 @@ fn get_filtered_emails_no_filter_returns_all_inbox_emails() {
         .unwrap();
 
     let result = db
-        .get_filtered_emails(
+        .list_threads(
+            &ListPlan::default(),
             emailops_lib::db::AccountScope::Account("acc-all"),
             None,
-            None,
-            None,
-            None,
-            None,
-            &emailops_lib::models::EmailWindow::default(),
             50,
-            0,
         )
         .unwrap();
 
@@ -4554,16 +4543,11 @@ fn get_filtered_emails_no_filter_excludes_soft_deleted() {
     db.delete_email("e-gone").unwrap();
 
     let result = db
-        .get_filtered_emails(
+        .list_threads(
+            &ListPlan::default(),
             emailops_lib::db::AccountScope::Account("acc-del"),
             None,
-            None,
-            None,
-            None,
-            None,
-            &emailops_lib::models::EmailWindow::default(),
             50,
-            0,
         )
         .unwrap();
 
@@ -6341,7 +6325,7 @@ async fn junk_feedback_shows_the_chip_and_hides_the_message_from_company_views()
     let listed = |db: &Database| -> Vec<String> {
         let window = emailops_lib::models::EmailWindow::default();
         let mut ids: Vec<String> = db
-            .get_filtered_emails(scope(), None, None, Some("company"), Some("acme"), None, &window, 50, 0)
+            .get_filtered_emails(scope(), "company", "acme", &window, 50, 0)
             .expect("filtered")
             .emails
             .into_iter()

@@ -6,7 +6,6 @@ use crate::models::error::AppError;
 use crate::models::ThreadCursor;
 use crate::services;
 use crate::services::list::{ListRequest, ThreadPage};
-use crate::services::search::SearchResult;
 use crate::AppState;
 
 fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
@@ -90,71 +89,6 @@ pub async fn list_threads(
         services::memory::on_search(&state.db, id, &query);
     }
     Ok(page)
-}
-
-/// `account_id: None` searches across every enabled account (unified
-/// "All accounts" view). Search spans every category: the inbox's category
-/// tab narrows the list, not a search.
-#[tauri::command]
-pub async fn search_emails(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    account_id: Option<String>,
-    query: String,
-    use_ai: Option<bool>,
-    // The view the search runs in (`inbox`, `sent`, `archive`, `folder:<path>`).
-    mailbox: Option<String>,
-) -> Result<SearchResult, AppError> {
-    let cmd_start = std::time::Instant::now();
-    // Master AI switch overrides any caller request: when AI is disabled the
-    // search service must fall back to keyword/FTS only. Reading the flag
-    // here keeps the gate at the command boundary and avoids threading a new
-    // parameter through the service signature.
-    let ai_master_enabled = state.db.is_ai_enabled()?;
-    let use_ai_flag = use_ai.unwrap_or(true) && ai_master_enabled;
-    emit_log(
-        &app,
-        "info",
-        "search",
-        &format!("Searching: \"{}\" (AI: {})", query, use_ai_flag),
-    );
-
-    let result = services::search::search_emails(
-        &state.db,
-        account_id.as_deref(),
-        &query,
-        use_ai_flag,
-        None,
-        mailbox.as_deref(),
-        Some(app.clone()),
-    )
-    .await?;
-    emit_log(
-        &app,
-        "debug",
-        "search",
-        &format!(
-            "[timing] total={:.0}ms, query={:?}, results={}",
-            cmd_start.elapsed().as_secs_f64() * 1000.0,
-            query,
-            result.emails.len(),
-        ),
-    );
-
-    emit_log(
-        &app,
-        "success",
-        "search",
-        &format!("Found {} results via {:?}", result.emails.len(), result.search_method,),
-    );
-
-    // Memory facts are account-scoped; a unified (all-accounts) search has no
-    // single owning account, so it is not logged as a memory signal.
-    if let Some(id) = account_id.as_deref() {
-        services::memory::on_search(&state.db, id, &query);
-    }
-
-    Ok(result)
 }
 
 #[tauri::command]

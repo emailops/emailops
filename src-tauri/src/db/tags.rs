@@ -643,8 +643,6 @@ mod tests {
             search: None,
             hide_graymail: false,
             latest_tag_only: true,
-            mailbox: None,
-            unread_only: false,
             match_list: false,
         };
         let plan = db.explain_tag_board_stats(crate::db::AccountScope::AllEnabled, "company", &window, 0, 24);
@@ -819,11 +817,8 @@ mod tests {
         let listed = db
             .get_filtered_emails(
                 crate::db::AccountScope::Account(account),
-                None,
-                None,
-                Some("company"),
-                Some("globex"),
-                None,
+                "company",
+                "globex",
                 &crate::models::EmailWindow::default(),
                 50,
                 0,
@@ -910,11 +905,8 @@ mod tests {
         let list = db
             .get_filtered_emails(
                 crate::db::AccountScope::Account(account),
-                None,
-                None,
-                Some("intent"),
-                Some("request"),
-                None,
+                "intent",
+                "request",
                 &crate::models::EmailWindow::default(),
                 100,
                 0,

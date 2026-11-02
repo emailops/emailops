@@ -54,7 +54,7 @@ In der REPL ist jede Aktion ein Befehl mit `/` am Anfang: `/chat <Frage>` ist ei
 | `accounts` | Konfigurierte Konten auflisten |
 | `emails [--limit N] [--mailbox inbox\|sent\|spam\|trash]` | Neueste E-Mails auflisten |
 | `show <id>` | Eine E-Mail anzeigen (Kopfzeilen und Inhalt) |
-| `search <Suchbegriff> [--limit N]` | Volltextsuche |
+| `search <Suchbegriff> [--limit N] [--view V] [--unread]` | Volltextsuche |
 | `chat <Frage> [--trace]` | Eine Frage stellen; `--trace` ergänzt Routing- und Retrieval-Zeiten |
 | `sync [Konto]` | Neue E-Mails herunterladen |
 | `calendar [--days N] [--next] [--sync]` | Anstehende Termine (`--next` = nur der nächste) |

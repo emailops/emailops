@@ -247,14 +247,16 @@ make cli-fast ARGS="search 'invoice' --limit 10 --offset 10 --json"   # page 2
 make cli-fast ARGS="search 'from:ana invoice' --trace --json"
 ```
 
+`--view` runs the search in a view (`inbox` by default, `sent`, `archive`, `spam`, `trash`,
+`starred`, `snoozed` or `folder:<path>`), with the same reach as the app's list, and `--unread`
+is the list's Unread toggle.
+
 With `--trace`, `--json` switches from a bare emails array to
-`{ "emails": [...], "trace": { searchMethod, aiAvailable, parsedQuery, shown,
-offset, totalHits, query } }`; pretty mode prints the emails, then a trace block
-to stderr. Without `--trace` the JSON shape is unchanged (a plain emails array).
-`totalHits` is how many matches the search returned before `--limit`/`--offset`
-paging, **not** the total number of matching emails in the mailbox: the search
-service caps its own result set at 100 rows, so `totalHits` saturates there.
-`offset` is the skip applied, and `shown` is how many rows this page returned.
+`{ "emails": [...], "trace": { query, parsedQuery, shown, offset, totalHits, exhausted, pages,
+ms } }`; pretty mode prints the emails, then a trace block to stderr. Without `--trace` the JSON
+shape is unchanged (a plain emails array). The search reads pages until it covers
+`--offset` + `--limit`, so `totalHits` is the rows read. It is the number of matching
+conversations only when `exhausted` is true.
 
 ### `chat <question>`
 Ask one question against your mail and stream the answer.

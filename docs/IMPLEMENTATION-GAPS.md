@@ -779,14 +779,11 @@ are never purged.
 - **CLI-only paths the app never runs**: `classify_email_by_id`,
   `score_email_by_id`, `install_overrides`. A bug reproduced through the CLI
   exercises a single-email path the shipped app never executes, and vice versa.
-- **CLI `search` diverges on both arguments** from the UI: it always passes
-  `categories = None` (so it returns hits the app would never show), and the
-  command logs `AI: true` while `services/search.rs:171` has AI **disabled**
-  (`let _requested_ai = use_ai; let use_ai = false;`). The log line is false, in
-  the panel the user is told to check.
-- **CLI `search` paging silently caps at 100** (`services/search.rs:528`) while
-  `docs/cli.md:256` claims `totalHits` is the full match count. An agent measuring
-  recall gets a wrong number with no error.
+- ✅ **CLI `search` diverged from the UI.** The CLI and the app now call the same
+  `services::list::list_threads`, and the false `AI: true` log went with the old
+  command.
+- ✅ **CLI `search` paging silently capped at 100.** It reads pages to the end of the
+  list, and `--trace` says whether it got there (`exhausted`).
 - **`--name` clap help contradicts the code and `docs/cli.md`**
   (`cli/accounts.rs:79` says it defaults to the username; it defaults to empty and
   readers fall back to the address).

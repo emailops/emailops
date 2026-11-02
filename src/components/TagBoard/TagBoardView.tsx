@@ -267,13 +267,10 @@ export function TagBoardView({
       try {
         const result = await api.getFilteredEmails(
           column.accountId,
-          undefined,
-          undefined,
           tagType,
           column.value,
           TAG_BOARD_PAGE_SIZE,
           offset,
-          undefined,
           window,
         );
         if (loadIdRef.current !== loadId) return;
