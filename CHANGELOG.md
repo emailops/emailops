@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Spam and Trash, and the other views search what they show. Mail the junk
   check flagged is listed with its warning instead of left out. The Load more
   buttons are gone, in Contacts too.
+- **Adding an account syncs faster.** The next batch of mail downloads while the
+  current one is processed, and on IMAP the Sent folder waits until the inbox is
+  in.
 
 ### Fixed
 
@@ -65,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Before, the first edit removed them from the provider and the send went out
   without them. Until a file has been downloaded, the draft cannot be sent, and
   your edits wait here without touching the provider's copy.
+- **Sync keeps running on networks that block the connectivity check.** The app
+  now checks that it can reach your mail servers before it reports that it is
+  offline.
+- **The chat reads open PDFs reliably.** Some PDFs made the chat turn fail or
+  lost letters from words; their text now comes through whole.
 
 ## [0.6.17] — 2026-10-29
 
