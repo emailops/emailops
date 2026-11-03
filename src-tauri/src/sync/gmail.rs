@@ -5015,10 +5015,13 @@ mod batch_slotting_tests {
         assert_eq!(plan(&[denied]), RetryPlan::Wait(1_000));
     }
 
-    /// A chunk answering `first`, then `second` to anything sent after it.
-    async fn gmail_batching(first: String, second: String) -> (wiremock::MockServer, GmailClient) {
+    /// A chunk answering `first`, then `second` to anything sent after it, on an
+    /// account of its own: a rate-limit gate outlives the mock server, and the
+    /// next test may get the same port.
+    async fn gmail_batching(first: String, second: String) -> (wiremock::MockServer, GmailClient, String) {
         use wiremock::matchers::method;
         use wiremock::{Mock, MockServer, ResponseTemplate};
+        static NEXT_ACCOUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
         let answer = |body: String| ResponseTemplate::new(200).set_body_raw(body, "multipart/mixed; boundary=bnd");
         let server = MockServer::start().await;
@@ -5031,15 +5034,18 @@ mod batch_slotting_tests {
             .respond_with(answer(second))
             .mount(&server)
             .await;
-        let client = GmailClient::new("tok".into(), None, None, Some(format!("batch-{}", server.address())))
-            .with_base_url(server.uri());
-        (server, client)
+        let account = format!(
+            "batch-test-{}",
+            NEXT_ACCOUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let client = GmailClient::new("tok".into(), None, None, Some(account.clone())).with_base_url(server.uri());
+        (server, client, account)
     }
 
     #[tokio::test]
     async fn a_part_that_failed_transiently_is_fetched_again() {
         for failed in [part(1, 503, "{}"), part(1, 403, QUOTA_403)] {
-            let (server, client) = gmail_batching(
+            let (server, client, _) = gmail_batching(
                 envelope(&[part(0, 200, MESSAGE), failed]),
                 envelope(&[part(0, 200, MESSAGE)]),
             )
@@ -5056,7 +5062,7 @@ mod batch_slotting_tests {
 
     #[tokio::test]
     async fn a_part_that_failed_for_good_is_not_fetched_again() {
-        let (server, client) = gmail_batching(envelope(&[part(0, 403, DENIED_403)]), String::new()).await;
+        let (server, client, _) = gmail_batching(envelope(&[part(0, 403, DENIED_403)]), String::new()).await;
 
         let results = provider::EmailProvider::batch_get_messages(&client, &["m-1"])
             .await
@@ -5070,7 +5076,7 @@ mod batch_slotting_tests {
     /// it says is exhausted.
     #[tokio::test]
     async fn a_part_told_to_wait_for_minutes_pauses_the_account_instead_of_retrying() {
-        let (server, client) = gmail_batching(envelope(&[part_retrying_after(0, 600)]), String::new()).await;
+        let (server, client, account) = gmail_batching(envelope(&[part_retrying_after(0, 600)]), String::new()).await;
 
         let results = tokio::time::timeout(
             Duration::from_secs(5),
@@ -5082,7 +5088,6 @@ mod batch_slotting_tests {
 
         assert!(results[0].is_err());
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
-        let account = format!("batch-{}", server.address());
         assert!(rate_limit_gate_until(&account, crate::services::clock::now_secs()).is_some());
     }
 

@@ -3339,11 +3339,12 @@ mod tests {
 
         let events = logger.events();
         crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        // Tests running alongside log their own sync warnings through the same
+        // global logger, so look for the one about this account.
         let warn = events
             .iter()
-            .find(|e| e.level == "warn" && e.source == "sync")
-            .unwrap_or_else(|| panic!("no warn logged: {events:?}"));
-        assert!(warn.message.contains("idle-user@example.com"), "{}", warn.message);
+            .find(|e| e.level == "warn" && e.source == "sync" && e.message.contains("idle-user@example.com"))
+            .unwrap_or_else(|| panic!("no warn naming the account: {events:?}"));
         assert!(!warn.message.contains("not-a-real-secret"), "{}", warn.message);
     }
 
