@@ -40,7 +40,7 @@ use crate::sync::provider::{self, AttachmentInfo, EmailBody, EmailCategory, Emai
 
 pub use crate::sync::provider::EmailAttachment;
 
-const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
+pub(crate) const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
 const MAX_RETRIES: u32 = 5;
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 30_000;

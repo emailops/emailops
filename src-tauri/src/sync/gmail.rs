@@ -41,7 +41,7 @@ pub(crate) fn mailbox_from_labels(labels: &[String]) -> &'static str {
     }
 }
 
-const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
+pub(crate) const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 const GMAIL_BATCH_URL: &str = "https://www.googleapis.com/batch/gmail/v1";
 const GMAIL_MAX_RETRIES: u32 = 5;
 /// Records per `users.history.list` page (the API default; its maximum is 500).

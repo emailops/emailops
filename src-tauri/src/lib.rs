@@ -751,7 +751,7 @@ pub fn run() {
             // read its cached online flag and skip poll ticks while we're
             // offline (avoids spamming the output panel with HTTP errors that
             // the offline banner already explains).
-            let connectivity = services::connectivity::ConnectivityMonitor::start(app.handle().clone());
+            let connectivity = services::connectivity::ConnectivityMonitor::start(app.handle().clone(), db.clone());
 
             let scheduler = services::sync_scheduler::SyncScheduler::start(
                 db.clone(),
