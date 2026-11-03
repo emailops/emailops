@@ -325,7 +325,9 @@
         "services::embeddings",
         "db::embeddings",
         "services::agent_search",
-        "services::search"
+        "services::search",
+        "services::list",
+        "commands::search"
       ],
       "vitest": [
         "src/components/Inbox/InboxSearchBox",
@@ -333,7 +335,11 @@
         "src/components/Search",
         "src/lib/apiContract/busqueda.api.test",
         "src/lib/filterQuery",
+        "src/lib/listPaging",
         "src/components/Sidebar/SmartFilters"
+      ],
+      "paths": [
+        "src-tauri/examples/search_test.rs"
       ],
       "e2e": [
         "Búsqueda"
@@ -505,6 +511,7 @@
         "services::tag_priority",
         "services::classification",
         "db::filters",
+        "commands::filters",
         "commands::classification"
       ],
       "vitest": [
@@ -732,11 +739,16 @@
     }
   ],
   "transversal": {
-    "_doc": "Path prefixes of files that belong to every feature: the app shell, the shared types, the single integration test file (its tests are attributed one by one through integration_names), the Tauri config, the project logs and the verification tooling itself. A change here is reviewed through the feature it serves.",
+    "_doc": "Path prefixes of files that belong to every feature: the app shell, the shared types, the single integration test file (its tests are attributed one by one through integration_names), the Tauri config, the frontend API module, the project logs, the user docs (checked by `make docs-check`, not here) and the verification tooling itself. A change here is reviewed through the feature it serves.",
     "paths": [
       ".claude/skills/",
       "CHANGELOG.md",
       "docs/DECISIONS.md",
+      "docs/IMPLEMENTATION-GAPS.md",
+      "docs/cli.md",
+      "docs/site/",
+      "tests/e2e/TEST_PLAN.md",
+      "src/lib/api.ts",
       "scripts/generate_demo_db.py",
       "scripts/test_generate_demo_db.py",
       "src-tauri/src/lib.rs",
