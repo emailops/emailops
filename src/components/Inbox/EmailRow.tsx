@@ -89,10 +89,8 @@ export function EmailRow({
   // be a security regression, not a preference.
   const junkTag = junkChip(email.id, storedTags, verdict);
   const withoutJunk = storedTags.filter((t) => t.tagType !== 'junk');
-  const emailTags = [
-    ...(junkTag ? [junkTag] : []),
-    ...(aiEnabled ? withoutJunk.filter((t) => t.tagType !== 'company') : []),
-  ];
+  const otherTags = aiEnabled ? withoutJunk.filter((t) => t.tagType !== 'company') : [];
+  const emailTags = [...(junkTag ? [junkTag] : []), ...otherTags];
   // Deprioritize rather than hide. The message stays exactly where the server
   // put it — we never move mail — but a flagged row recedes so the eye skips it.
   // Dimming is dropped while the row is selected, so opening a flagged message
@@ -252,13 +250,20 @@ export function EmailRow({
               — {email.snippet}
             </span>
           </div>
+          {/* The junk warning sits outside the tag strip below, which narrow
+              rows hide: a flagged row never loses its warning to width. */}
+          {junkTag && (
+            <div className="flex items-center flex-shrink-0 h-6">
+              <TagChips tags={[junkTag]} compact nowrap />
+            </div>
+          )}
           {/* Fixed height + nowrap so multi-tag rows can't wrap and grow the
               row past its measured height (virtualizer would lay subsequent
               rows on top of this one until ResizeObserver caught up). Excess
               chips are clipped horizontally — same trade-off Gmail makes. */}
           <div className="hidden @3xl:flex items-center gap-1 flex-shrink-0 h-6 max-w-[20%] @4xl:max-w-[35%] overflow-hidden">
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
-            {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
+            {otherTags.length > 0 && <TagChips tags={otherTags} compact nowrap />}
           </div>
           <SnoozeBadge email={email} />
           <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">

@@ -98,6 +98,17 @@ describe('EmailRow junk warning', () => {
     expect(row.dimmed).toBe(false);
   });
 
+  it('keeps the warning out of the tag strip that narrow rows hide', () => {
+    useJunkStore.setState({ verdictsByEmail: { 'email-1': flagged } });
+
+    renderRow();
+    const chips = [...container.querySelectorAll('span')].filter((s) => s.textContent === 'phishing');
+
+    expect(chips).toHaveLength(1);
+    // Below 48rem the row hides its tag strip (`hidden @3xl:flex`).
+    expect(chips[0].closest('.hidden')).toBeNull();
+  });
+
   it('leaves clean mail alone', () => {
     useJunkStore.setState({ verdictsByEmail: { 'email-1': { ...flagged, band: 'clean' } } });
 

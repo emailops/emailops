@@ -7,7 +7,7 @@ later score.
 
 ## Sub-features
 
-- `junk.chip` a flagged message shows its kind in the row and in the thread.
+- `junk.chip` a flagged message shows its kind in the row, at any list width, and in the thread.
 - `junk.feedback` marking as junk writes the chip at once and takes the message out of the Tag Board; searches and filters keep it, with its warning. "not junk" removes both and is permanent.
 - `junk.exclusion` flagged mail is left out of the Tag Board, keyword and vector retrieval. Searches, filters and the sidebar's counts include it, and every list and the search panel paint it with its warning.
 - `junk.settings` Settings → **Junk**: detector on/off, phishing axis, what to do with flagged mail.
@@ -22,6 +22,7 @@ later score.
 Preconditions: baseline. The demo DB holds one message the owner marked as junk: *Tessellate Hosting: payment failed, plan suspended* (`insert_verification_fixtures`). Confirmed live on 30/09/2026.
 
 - Chip → `$V wd find '//div[@role="button"][contains(., "Tessellate Hosting Billing")]'` prints the row with its `Phishing` chip; the genuine *Your Tessellate Hosting plan renews in March* row has none.
+- Chip on a narrow row → with the chat panel open (row about 560 px wide, under the 48rem at which the row hides its tag strip), the `phishing` chip of that row still has a width above 0.
 - Excluded from tag views → the Tag Board oracle (`tagboard_check.mjs`) counts threads with the same rule as `db::exclude_junk_sql`, the user's own mark included.
 
 ## Gotchas

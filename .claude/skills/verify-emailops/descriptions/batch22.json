@@ -11,6 +11,7 @@
   "vitest": {
     "src/components/Documents/DocEditor.test.tsx::asks before leaving through a link while editing too": "En un documento editable, pulsar un enlace también pide confirmación antes de salir de la app.",
     "src/components/Documents/DocEditor.test.tsx::gives a link no target the shell plugin would open on its own (read-only)": "Un enlace de un documento de solo lectura se pinta sin target, porque el plugin de shell abriría el navegador por su cuenta.",
-    "src/components/Documents/DocEditor.test.tsx::gives a link no target the shell plugin would open on its own (editable)": "Un enlace de un documento editable se pinta sin target, porque el plugin de shell abriría el navegador por su cuenta."
+    "src/components/Documents/DocEditor.test.tsx::gives a link no target the shell plugin would open on its own (editable)": "Un enlace de un documento editable se pinta sin target, porque el plugin de shell abriría el navegador por su cuenta.",
+    "src/components/Inbox/EmailRow.junkVerdict.test.tsx::keeps the warning out of the tag strip that narrow rows hide": "En una fila compacta estrecha, el aviso de correo marcado sigue a la vista: va fuera de la franja de etiquetas que se oculta por debajo de 48rem y aparece una sola vez."
   }
 }
