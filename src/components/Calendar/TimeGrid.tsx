@@ -5,6 +5,7 @@ import { eventBlockStyle, eventChipStyle } from '@/lib/calendarColor';
 import {
   addDays,
   EVENT_MIN_BLOCK_PX,
+  eventBounds,
   eventColumnGeometry,
   eventsForDay,
   eventTextMode,
@@ -114,8 +115,9 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
     [i18n.language],
   );
   const spanTooltip = (event: (typeof events)[number]) => {
-    const lastMoment = event.isAllDay ? event.endTime - 1 : event.endTime;
-    const range = `${spanRangeFmt.format(event.startTime * 1000)} – ${spanRangeFmt.format(lastMoment * 1000)}`;
+    const { start, end } = eventBounds(event);
+    const lastMoment = event.isAllDay ? end - 1 : end;
+    const range = `${spanRangeFmt.format(start * 1000)} – ${spanRangeFmt.format(lastMoment * 1000)}`;
     return event.isAllDay
       ? `${event.title} · ${range}`
       : `${event.title} · ${range} · ${time(event.startTime)} – ${time(event.endTime)}`;

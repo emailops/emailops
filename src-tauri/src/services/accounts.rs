@@ -243,6 +243,7 @@ fn account_pref_keys(account_id: &str) -> (Vec<String>, Vec<String>) {
         crate::services::emails::state_refresh_last_key(account_id),
         crate::services::emails::history_cursor_key(account_id),
         crate::services::emails::backfill_done_key(account_id),
+        crate::services::emails::draft_attachments_pulled_key(account_id),
         crate::services::dashboard::server_total_pref_key(account_id),
     ];
     let prefixes = vec![

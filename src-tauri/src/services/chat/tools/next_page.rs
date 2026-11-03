@@ -133,6 +133,7 @@ mod tests {
             steps: Vec::new(),
             search_page: None,
             budget: None,
+            answer_truncated: false,
         });
         message
     }

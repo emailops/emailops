@@ -6,8 +6,7 @@
 // other on the same query.
 //
 // Modes:
-//   Baseline       — delegates to `services::search::search_emails` (FTS5 only).
-//                    This is what the user gets today; the reference point.
+//   Baseline       — FTS5 only, the reference point.
 //   Hybrid         — FTS5 ∪ vec_search, fused with Reciprocal Rank Fusion.
 //                    No LLM. Cheap and language-agnostic on the retrieval side.
 //   Smart          — Hybrid + an LLM "query understanding" step that pulls

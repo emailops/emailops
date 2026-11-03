@@ -101,6 +101,17 @@ describe('createDraftAutosaver', () => {
     expect(seen[1]).toBe('d1'); // second save upserts the same row
   });
 
+  it('saves into a draft adopted after it was created', async () => {
+    const saveDraft = vi.fn(async (req) => ({ id: req.id ?? 'd-new' }));
+    const autosaver = createDraftAutosaver(saveDraft);
+
+    autosaver.adopt('draft-chat');
+    await autosaver.save(withBody('Hola'));
+
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ id: 'draft-chat' }));
+    await expect(autosaver.flush()).resolves.toBe('draft-chat');
+  });
+
   it('serializes overlapping saves so the second still sees the first id', async () => {
     // First save is slow; a second save is enqueued before it resolves. Without
     // serialization both would send id=undefined and create two rows.

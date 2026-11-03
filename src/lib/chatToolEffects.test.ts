@@ -49,9 +49,10 @@ describe('handleChatToolEffect', () => {
     );
     expect(openComposeTab).not.toHaveBeenCalled();
     expect(openThreadReply).toHaveBeenCalledTimes(1);
-    const [accountId, emailId, body] = openThreadReply.mock.calls[0];
+    const [accountId, emailId, body, draftId] = openThreadReply.mock.calls[0];
     expect(accountId).toBe('acc1');
     expect(emailId).toBe('eml-7');
+    expect(draftId).toBe('d1');
     // Plain text — the inline ReplyCompose body is a plain-text textarea.
     expect(body).toBe('sounds good');
     expect(navigateToInbox).toHaveBeenCalledTimes(1);

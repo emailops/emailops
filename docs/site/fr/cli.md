@@ -55,7 +55,7 @@ de chat (les jetons arrivent en direct) et les autres correspondent aux sous-com
 | `accounts` | Liste les comptes configurés |
 | `emails [--limit N] [--mailbox inbox\|sent\|spam\|trash]` | Liste les e-mails récents |
 | `show <id>` | Affiche un e-mail (en-têtes et corps) |
-| `search <requête> [--limit N]` | Recherche plein texte |
+| `search <requête> [--limit N] [--view V] [--unread]` | Recherche plein texte |
 | `chat <question> [--trace]` | Pose une question ; `--trace` ajoute les temps de routage et de récupération |
 | `sync [compte]` | Télécharge le courrier nouveau |
 | `calendar [--days N] [--next] [--sync]` | Événements à venir (`--next` = prochaine réunion seulement) |

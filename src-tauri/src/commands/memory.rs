@@ -15,6 +15,7 @@ use crate::models::{CreateTaskRequest, MemoryFact, PendingTask, ThreadState};
 use crate::services;
 use crate::services::memory::config::MemoryConfig;
 use crate::services::tasks::config::TaskConfig;
+use crate::services::tasks::extractor::{next_backfill_step, BackfillStep};
 use crate::AppState;
 
 /// Cancel flag for the active memory backfill. A second call to
@@ -296,11 +297,20 @@ pub async fn start_memory_backfill(
                     emit_log(&app, "warn", "Backfill halted: memory is disabled");
                     break;
                 }
-                match services::memory::extractor::extract_batch(&db, &app, &account_id, &mem_cfg, Some(&cancel)).await
-                {
-                    // A batch stopped from the queue is not a finished backfill:
-                    // fall through to the cancel check at the top of the loop.
-                    Ok(0) if !services::task_queue::cancel_requested() => {
+                let outcome =
+                    match services::memory::extractor::extract_batch(&db, &app, &account_id, &mem_cfg, Some(&cancel))
+                        .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(e) => {
+                            emit_log(&app, "error", &format!("Backfill failed: {e}"));
+                            break;
+                        }
+                    };
+                total_processed += outcome.extracted;
+                let stopped = cancel.load(Ordering::SeqCst) || services::task_queue::cancel_requested();
+                match next_backfill_step(outcome, stopped) {
+                    BackfillStep::Finished => {
                         emit_log(
                             &app,
                             "success",
@@ -308,8 +318,20 @@ pub async fn start_memory_backfill(
                         );
                         break;
                     }
-                    Ok(n) => {
-                        total_processed += n;
+                    BackfillStep::Stalled => {
+                        emit_log(
+                            &app,
+                            "error",
+                            &format!(
+                                "Memory backfill stopped after {total_processed} emails: the last {} failed and stay queued",
+                                outcome.failed
+                            ),
+                        );
+                        break;
+                    }
+                    // A batch stopped from the queue is not a finished backfill:
+                    // the cancel check at the top of the loop ends it.
+                    BackfillStep::Continue => {
                         // Embed + consolidate every batch so the UI reflects
                         // progress. Errors are logged and ignored — the
                         // extractor already marked the rows.
@@ -325,10 +347,6 @@ pub async fn start_memory_backfill(
                         // inspector and sidebar counts refresh without manual
                         // reload or polling.
                         let _ = app.emit("memory-facts-changed", serde_json::json!({ "accountId": account_id }));
-                    }
-                    Err(e) => {
-                        emit_log(&app, "error", &format!("Backfill failed: {e}"));
-                        break;
                     }
                 }
             }
@@ -412,10 +430,18 @@ pub async fn start_task_backfill(
                     emit_source_log(&app, "warn", "tasks", "Backfill halted: tasks are disabled");
                     break;
                 }
-                match services::tasks::extractor::extract_batch(&db, &app, &account_id, &cfg, Some(&cancel)).await {
-                    // A batch stopped from the queue is not a finished backfill:
-                    // fall through to the cancel check at the top of the loop.
-                    Ok(0) if !services::task_queue::cancel_requested() => {
+                let outcome =
+                    match services::tasks::extractor::extract_batch(&db, &app, &account_id, &cfg, Some(&cancel)).await {
+                        Ok(outcome) => outcome,
+                        Err(e) => {
+                            emit_source_log(&app, "error", "tasks", &format!("Task backfill failed: {e}"));
+                            break;
+                        }
+                    };
+                total_processed += outcome.extracted;
+                let stopped = cancel.load(Ordering::SeqCst) || services::task_queue::cancel_requested();
+                match next_backfill_step(outcome, stopped) {
+                    BackfillStep::Finished => {
                         emit_source_log(
                             &app,
                             "success",
@@ -424,11 +450,21 @@ pub async fn start_task_backfill(
                         );
                         break;
                     }
-                    Ok(n) => total_processed += n,
-                    Err(e) => {
-                        emit_source_log(&app, "error", "tasks", &format!("Task backfill failed: {e}"));
+                    BackfillStep::Stalled => {
+                        emit_source_log(
+                            &app,
+                            "error",
+                            "tasks",
+                            &format!(
+                                "Task backfill stopped after {total_processed} emails: the last {} failed and stay queued",
+                                outcome.failed
+                            ),
+                        );
                         break;
                     }
+                    // A batch stopped from the queue is not a finished backfill:
+                    // the cancel check at the top of the loop ends it.
+                    BackfillStep::Continue => {}
                 }
             }
             running_clone.store(false, Ordering::SeqCst);

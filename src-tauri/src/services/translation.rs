@@ -282,22 +282,9 @@ pub async fn detect_email_language_with(ai: &AiService, db: &Database, email_id:
         sample = detect_sample(&email.subject);
     }
 
-    let code = if sample.is_empty() {
-        "und".to_string()
-    } else {
-        let template = prompts::get_template(db, "translate.detect_language")?;
-        let mut vars: HashMap<&str, String> = HashMap::new();
-        vars.insert("sample", sample);
-        let prompt = prompts::render(&template, &vars);
-        let opts = CompletionOptions {
-            temperature: Some(0.0),
-            max_tokens: Some(DETECT_MAX_TOKENS),
-            think: Some(false),
-            json_shape: None,
-        };
-        let raw = ai.complete(&prompt, "translate.detect", Some(opts)).await?;
-        normalize_detected_code(&raw).unwrap_or_else(|| "und".to_string())
-    };
+    let code = detect_sample_language(ai, db, sample)
+        .await?
+        .unwrap_or_else(|| "und".to_string());
 
     cache_detection(email_id, &code);
     // Deliberately no per-detection log line: the result is observable via the
@@ -305,6 +292,30 @@ pub async fn detect_email_language_with(ai: &AiService, db: &Database, email_id:
     // email, and stray debug logs from parallel tests would pollute suites
     // that install the global test logger and count entries by level.
     Ok(detection_result(email_id, &code, preferred))
+}
+
+/// The language of `text`, as an ISO code. `None` when there is no text or the
+/// model gave no usable code. Not cached: `text` need not be a whole email.
+pub async fn detect_text_language(ai: &AiService, db: &Database, text: &str) -> Result<Option<String>> {
+    detect_sample_language(ai, db, detect_sample(text)).await
+}
+
+async fn detect_sample_language(ai: &AiService, db: &Database, sample: String) -> Result<Option<String>> {
+    if sample.is_empty() {
+        return Ok(None);
+    }
+    let template = prompts::get_template(db, "translate.detect_language")?;
+    let mut vars: HashMap<&str, String> = HashMap::new();
+    vars.insert("sample", sample);
+    let prompt = prompts::render(&template, &vars);
+    let opts = CompletionOptions {
+        temperature: Some(0.0),
+        max_tokens: Some(DETECT_MAX_TOKENS),
+        think: Some(false),
+        json_shape: None,
+    };
+    let raw = ai.complete(&prompt, "translate.detect", Some(opts)).await?;
+    Ok(normalize_detected_code(&raw))
 }
 
 /// Translate `email_id`'s body. `target: None` resolves to the user's

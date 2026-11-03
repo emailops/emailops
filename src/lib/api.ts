@@ -89,6 +89,7 @@ import type {
   TagStat,
   TaskConfig,
   TaskCountsSummary,
+  ThreadCursor,
   ThreadMessageText,
   ThreadParticipants,
   ThreadState,
@@ -762,32 +763,27 @@ export interface ParsedSearchQuery {
   beforeTimestamp: number | null;
 }
 
-export type SearchMethod = 'rag' | 'ai_parsed' | 'pattern_parsed' | 'keyword_search';
-
-export interface EmailWithScore extends Email {
-  relevanceScore: number | null;
-  matchReason: string | null;
-}
-
-export interface SearchResult {
-  emails: EmailWithScore[];
-  query: string;
+export interface ThreadPage {
+  emails: Email[];
+  /** Email id → when that row's thread last had activity. */
+  threadLatestAt: Record<string, number>;
+  nextCursor: ThreadCursor | null;
   parsedQuery: ParsedSearchQuery | null;
-  aiAvailable: boolean;
-  searchMethod: SearchMethod;
 }
 
-/** `accountId: null` searches across every enabled account (unified view).
- *  Search spans every category — the inbox tab does not narrow it.
- *  `mailbox` limits it to the view it runs in (`sent`, `archive`,
- *  `folder:<path>`); absent = every live mailbox. */
-export async function searchEmails(
+/** One page of a search or filter. `accountId: null` lists every enabled
+ *  account; `cursor: null` starts at the top, and a null `nextCursor` is the end
+ *  of the list. `recordSearch` logs a typed search for the chat's context. */
+export async function listThreads(
   accountId: string | null,
-  query?: string,
-  useAi?: boolean,
-  mailbox?: string,
-): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi, mailbox });
+  query: string,
+  view: MailboxView,
+  unreadOnly: boolean,
+  cursor: ThreadCursor | null,
+  limit: number,
+  recordSearch: boolean,
+): Promise<ThreadPage> {
+  return invoke('list_threads', { accountId, query, view, unreadOnly, cursor, limit, recordSearch });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {
@@ -839,30 +835,18 @@ export async function getSavedSuggestions(accountId: string | null): Promise<Sma
   return invoke('get_saved_suggestions', { accountId });
 }
 
-/** `accountId: null` filters across every enabled account (unified view). */
+/** One tag's conversations, for the Tag Board. `accountId: null` lists every
+ *  enabled account (unified view). */
 export async function getFilteredEmails(
   accountId: string | null,
-  domain?: string,
-  senderEmail?: string,
-  tagType?: string,
-  tagValue?: string,
+  tagType: string,
+  tagValue: string,
   limit?: number,
   offset?: number,
-  attachmentExt?: string,
   /** Category / time-range narrowing. Omitted = every category, all of time. */
   window?: EmailWindow,
 ): Promise<FilteredEmailsResult> {
-  return invoke('get_filtered_emails', {
-    accountId,
-    domain,
-    senderEmail,
-    tagType,
-    tagValue,
-    limit,
-    offset,
-    attachmentExt,
-    window,
-  });
+  return invoke('get_filtered_emails', { accountId, tagType, tagValue, window, limit, offset });
 }
 
 /** Live thread counts per tag value for one classified tag type — the tag

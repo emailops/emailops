@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -13,6 +13,8 @@ use crate::ai::provider::{
     CompletionOptions, CompletionResult, EmbeddingResult, ModelInfo, ModelPricing, ProviderType, ToolStreamResult,
 };
 use crate::models::error::{AppError, Result};
+use crate::services::chat::{local_date, local_day_start_in};
+use crate::services::clock::Clock;
 
 const OLLAMA_DEFAULT_BASE_URL: &str = "http://localhost:11434";
 
@@ -49,6 +51,12 @@ const EMBEDDING_MODEL: &str = "nomic-embed-text";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const EMBEDDING_TIMEOUT: Duration = Duration::from_secs(30);
 const GENERATION_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long Ollama may take to start a streamed reply. It sends nothing while
+/// it loads the model and prefills the prompt, which on a laptop can take
+/// minutes.
+const STREAM_FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long a streamed reply may stay silent once it has started.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Default `keep_alive` window sent to Ollama. Ollama defaults to 5 minutes,
 /// which on a constrained M1 with 16 GB RAM means the model is frequently
@@ -227,6 +235,9 @@ struct OllamaChatStreamChunk {
     eval_count: Option<u32>,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
+    /// `"length"` when generation stopped at `num_predict`.
+    #[serde(default)]
+    done_reason: Option<String>,
 }
 
 /// Splits an NDJSON byte stream into lines. Network chunks can end mid-line,
@@ -309,6 +320,8 @@ pub struct ChatStreamResult {
     pub prefill_ms: Option<i64>,
     /// Ollama does not report KV-cache reuse — always `None`.
     pub cached_prompt_tokens: Option<u32>,
+    /// The reply stopped at `num_predict`.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -378,6 +391,21 @@ pub struct OllamaClient {
     /// but the caller (AiService) may override it from the
     /// `chat.keep_alive_seconds` user preference.
     keep_alive: String,
+    first_token_timeout: Duration,
+    stream_idle_timeout: Duration,
+}
+
+/// The next chunk of a streamed reply, `None` at its end. A stream silent for
+/// `wait` is an error: a stuck model would otherwise hold the AI queue for good.
+async fn next_stream_chunk<S, B>(stream: &mut S, wait: Duration, what: &str) -> Result<Option<B>>
+where
+    S: futures::Stream<Item = reqwest::Result<B>> + Unpin,
+{
+    tokio::time::timeout(wait, stream.next())
+        .await
+        .map_err(|_| super::openrouter::stream_stalled(wait, "Ollama"))?
+        .transpose()
+        .map_err(|e| AppError::AiError(format!("Ollama {what} read error: {e}")))
 }
 
 impl OllamaClient {
@@ -400,6 +428,8 @@ impl OllamaClient {
             model: model.unwrap_or(DEFAULT_MODEL).to_string(),
             embedding_model: embedding_model.unwrap_or(EMBEDDING_MODEL).to_string(),
             keep_alive: DEFAULT_KEEP_ALIVE.to_string(),
+            first_token_timeout: STREAM_FIRST_TOKEN_TIMEOUT,
+            stream_idle_timeout: STREAM_IDLE_TIMEOUT,
         }
     }
 
@@ -762,12 +792,10 @@ impl OllamaClient {
             format: None,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
+        let send = self.client.post(&url).json(&request).send();
+        let response = tokio::time::timeout(self.first_token_timeout, send)
             .await
+            .map_err(|_| super::openrouter::stream_stalled(self.first_token_timeout, "Ollama"))?
             .map_err(|e| AppError::AiError(format!("Failed to connect to Ollama for chat stream: {}", e)))?;
 
         if !response.status().is_success() {
@@ -783,11 +811,16 @@ impl OllamaClient {
         let mut stream = response.bytes_stream();
         let mut lines = NdjsonLines::default();
 
+        let mut started = false;
         loop {
-            let (batch, ended) = match stream.next().await {
-                Some(chunk) => {
-                    let bytes =
-                        chunk.map_err(|e| AppError::AiError(format!("Ollama chat stream read error: {}", e)))?;
+            let wait = if started {
+                self.stream_idle_timeout
+            } else {
+                self.first_token_timeout
+            };
+            let (batch, ended) = match next_stream_chunk(&mut stream, wait, "chat stream").await? {
+                Some(bytes) => {
+                    started = true;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -806,6 +839,7 @@ impl OllamaClient {
                                 prompt_eval_count: None,
                                 prefill_ms: None,
                                 cached_prompt_tokens: None,
+                                truncated: false,
                             });
                         }
                     }
@@ -817,6 +851,7 @@ impl OllamaClient {
                         prompt_eval_count: parsed.prompt_eval_count,
                         prefill_ms: None,
                         cached_prompt_tokens: None,
+                        truncated: stopped_at_limit(parsed.done_reason.as_deref()),
                     });
                 }
             }
@@ -837,7 +872,7 @@ impl OllamaClient {
         messages: &[OllamaChatMessage],
         tools: &[serde_json::Value],
         mut on_token: Box<dyn FnMut(String) -> bool + Send>,
-    ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>)> {
+    ) -> Result<(OllamaChatMessage, Option<u32>, Option<u32>, bool)> {
         let url = self.endpoint("/api/chat")?;
         let request = OllamaChatRequest {
             model: self.model.clone(),
@@ -850,12 +885,10 @@ impl OllamaClient {
             format: None,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
+        let send = self.client.post(&url).json(&request).send();
+        let response = tokio::time::timeout(self.first_token_timeout, send)
             .await
+            .map_err(|_| super::openrouter::stream_stalled(self.first_token_timeout, "Ollama"))?
             .map_err(|e| AppError::AiError(format!("Failed to connect to Ollama for tool stream: {}", e)))?;
 
         if !response.status().is_success() {
@@ -881,11 +914,16 @@ impl OllamaClient {
             thinking: String::new(),
         };
 
+        let mut started = false;
         loop {
-            let (batch, ended) = match stream.next().await {
-                Some(chunk) => {
-                    let bytes =
-                        chunk.map_err(|e| AppError::AiError(format!("Ollama tool stream read error: {}", e)))?;
+            let wait = if started {
+                self.stream_idle_timeout
+            } else {
+                self.first_token_timeout
+            };
+            let (batch, ended) = match next_stream_chunk(&mut stream, wait, "tool stream").await? {
+                Some(bytes) => {
+                    started = true;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -902,7 +940,7 @@ impl OllamaClient {
                         accumulated.push_str(&msg.content);
                         if !on_token(msg.content.clone()) {
                             // Cancelled by caller — return what we have.
-                            return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                            return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count, false));
                         }
                     }
                 }
@@ -913,7 +951,13 @@ impl OllamaClient {
                     prompt_eval_count = parsed.prompt_eval_count;
                 }
                 if parsed.done {
-                    return Ok((finalize(accumulated, tool_calls), eval_count, prompt_eval_count));
+                    let truncated = stopped_at_limit(parsed.done_reason.as_deref());
+                    return Ok((
+                        finalize(accumulated, tool_calls),
+                        eval_count,
+                        prompt_eval_count,
+                        truncated,
+                    ));
                 }
             }
             if ended {
@@ -1207,6 +1251,7 @@ impl AIProvider for OllamaClient {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: result.truncated,
         })
     }
 
@@ -1217,7 +1262,7 @@ impl AIProvider for OllamaClient {
         on_token: Box<dyn FnMut(String) -> bool + Send>,
     ) -> Result<ToolStreamResult> {
         let ollama_msgs = ai_messages_to_ollama(&messages);
-        let (result, eval_count, prompt_eval_count) = self
+        let (result, eval_count, prompt_eval_count, truncated) = self
             .chat_stream_with_tools_internal(&ollama_msgs, &tools, on_token)
             .await?;
         // `ollama_message_to_ai` clears content when tool_calls are present, so a
@@ -1236,6 +1281,7 @@ impl AIProvider for OllamaClient {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated,
         })
     }
 
@@ -1422,32 +1468,35 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         has_filter = true;
     }
 
+    let clock = crate::services::clock::current();
+    let clock = clock.as_ref();
+
     if let Some(value) = operator_value(&tokens, &["after:", "despues:", "después:"]) {
-        if let Some(ts) = parse_date_to_timestamp(&value) {
-            parsed.after_timestamp = Some(ts);
+        if let Some(date) = parse_typed_date(&value) {
+            parsed.after_timestamp = Some(local_day_start_in(date, clock));
             has_filter = true;
         }
     }
 
     if let Some(value) = operator_value(&tokens, &["before:", "antes:"]) {
-        if let Some(ts) = parse_date_to_timestamp(&value) {
-            parsed.before_timestamp = Some(end_of_day_timestamp(ts));
+        if let Some(end) = parse_typed_date(&value).and_then(|date| end_of_day_in(date, clock)) {
+            parsed.before_timestamp = Some(end);
             has_filter = true;
         }
     }
 
     if has_word("today") || has_word("hoy") {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_today_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(Some(start_of_today_in(clock)));
         has_filter = true;
     }
 
     if has_seq(&["this", "week"]) || has_seq(&["esta", "semana"]) {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_week_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(Some(start_of_week_in(clock)));
         has_filter = true;
     }
 
     if has_seq(&["this", "month"]) || has_seq(&["este", "mes"]) {
-        parsed.after_timestamp = parsed.after_timestamp.or_else(start_of_month_timestamp);
+        parsed.after_timestamp = parsed.after_timestamp.or(start_of_month_in(clock));
         has_filter = true;
     }
 
@@ -1456,14 +1505,16 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         if let Some(value) = strip_prefix_ci(token, "tag:") {
             let value = value.trim_matches('"').trim();
             if !value.is_empty() {
-                parsed.tag_filters.push(value.to_lowercase());
+                // Kept as typed: a tag's case is part of its stored value, and
+                // SQLite folds ASCII only, so lowering here would lose `Ñ`.
+                parsed.tag_filters.push(value.to_string());
                 has_filter = true;
             }
         }
     }
 
     if has_filter {
-        parsed.keywords = extract_residual_keywords(query);
+        parsed.keywords = extract_residual_keywords(&tokens);
         let from_filter = parsed.from_filter.clone();
         let to_filter = parsed.to_filter.clone();
         let subject_filter = parsed.subject_filter.clone();
@@ -1575,9 +1626,18 @@ fn phrase_filter(tokens: &[String], words: &[String], patterns: &[&[&str]]) -> O
     None
 }
 
-fn extract_residual_keywords(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
+/// The free words of a query. An operator's token stays whole, quotes included,
+/// so its value leaves with it; a quoted phrase is ordinary words.
+fn extract_residual_keywords(tokens: &[String]) -> Vec<String> {
+    tokens
+        .iter()
+        .flat_map(|token| {
+            if token.contains(':') {
+                vec![token.as_str()]
+            } else {
+                token.split_whitespace().collect()
+            }
+        })
         .filter_map(|word| {
             let normalized = normalize_token(word);
             if normalized.is_empty()
@@ -1661,7 +1721,7 @@ fn normalize_token(token: &str) -> String {
 /// `DD-MM-YYYY`, and `DD/MM/YYYY` (and their `/`-separated / `-`-separated
 /// equivalents). The format is inferred from the size of the first part —
 /// four digits is a year, one-or-two digits is a day-of-month.
-fn parse_date_to_timestamp(date_str: &str) -> Option<i64> {
+fn parse_typed_date(date_str: &str) -> Option<NaiveDate> {
     let parts: Vec<&str> = date_str.split(['-', '/']).collect();
     if parts.len() != 3 {
         return None;
@@ -1686,34 +1746,32 @@ fn parse_date_to_timestamp(date_str: &str) -> Option<i64> {
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let date = NaiveDate::from_ymd_opt(year, month, day)?;
-    let datetime = NaiveDateTime::new(date, NaiveTime::from_hms_opt(0, 0, 0)?);
-    Some(datetime.and_utc().timestamp())
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
-fn start_of_today_timestamp() -> Option<i64> {
-    Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .map(|dt| dt.and_utc().timestamp())
+/// The last second of `date` in the clock's zone. Measured from the next
+/// midnight, because a day with a daylight-saving change is not 24 hours long.
+fn end_of_day_in(date: NaiveDate, clock: &dyn Clock) -> Option<i64> {
+    date.succ_opt().map(|next| local_day_start_in(next, clock) - 1)
 }
 
-fn start_of_week_timestamp() -> Option<i64> {
-    let now = Utc::now();
-    let days_since_monday = now.weekday().num_days_from_monday();
-    let monday = now.date_naive() - chrono::Duration::days(days_since_monday as i64);
-    monday.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc().timestamp())
+fn today_in(clock: &dyn Clock) -> NaiveDate {
+    local_date(clock.now_secs(), clock.utc_offset_secs())
 }
 
-fn start_of_month_timestamp() -> Option<i64> {
-    let now = Utc::now();
-    NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|dt| dt.and_utc().timestamp())
+fn start_of_today_in(clock: &dyn Clock) -> i64 {
+    local_day_start_in(today_in(clock), clock)
 }
 
-fn end_of_day_timestamp(timestamp: i64) -> i64 {
-    timestamp + 86_399
+fn start_of_week_in(clock: &dyn Clock) -> i64 {
+    let today = today_in(clock);
+    let days_since_monday = today.weekday().num_days_from_monday();
+    local_day_start_in(today - chrono::Duration::days(days_since_monday as i64), clock)
+}
+
+fn start_of_month_in(clock: &dyn Clock) -> Option<i64> {
+    let today = today_in(clock);
+    NaiveDate::from_ymd_opt(today.year(), today.month(), 1).map(|first| local_day_start_in(first, clock))
 }
 
 fn deserialize_optional_after_timestamp<'de, D>(deserializer: D) -> std::result::Result<Option<i64>, D::Error>
@@ -1742,14 +1800,14 @@ where
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::Number(number)) => Ok(number.as_i64()),
         Some(serde_json::Value::String(text)) => {
-            let parsed = parse_date_to_timestamp(&text).map(|timestamp| {
+            let clock = crate::services::clock::current();
+            Ok(parse_typed_date(&text).and_then(|date| {
                 if end_of_day {
-                    end_of_day_timestamp(timestamp)
+                    end_of_day_in(date, clock.as_ref())
                 } else {
-                    timestamp
+                    Some(local_day_start_in(date, clock.as_ref()))
                 }
-            });
-            Ok(parsed)
+            }))
         }
         Some(other) => Err(serde::de::Error::custom(format!(
             "unsupported timestamp value: {}",
@@ -1760,47 +1818,96 @@ where
 
 #[cfg(test)]
 mod date_parser_tests {
-    use super::parse_date_to_timestamp;
+    use super::*;
+    use crate::services::clock::ZonedClock;
+    use chrono::DateTime;
+
+    fn at(rfc3339: &str) -> i64 {
+        DateTime::parse_from_rfc3339(rfc3339).expect("a valid date").timestamp()
+    }
+
+    fn madrid(now: &str) -> ZonedClock {
+        ZonedClock::new(at(now), chrono_tz::Europe::Madrid)
+    }
+
+    fn day(text: &str) -> NaiveDate {
+        parse_typed_date(text).expect("a valid day")
+    }
+
+    #[test]
+    fn a_typed_day_runs_from_local_midnight_to_local_midnight() {
+        let clock = madrid("2026-01-15T12:00:00Z");
+        assert_eq!(
+            local_day_start_in(day("2026-01-10"), &clock),
+            at("2026-01-09T23:00:00Z")
+        );
+        assert_eq!(
+            end_of_day_in(day("2026-01-10"), &clock),
+            Some(at("2026-01-10T22:59:59Z"))
+        );
+    }
+
+    #[test]
+    fn a_day_that_loses_an_hour_ends_at_its_own_midnight() {
+        // Madrid moves to summer time on 29/03/2026: that day has 23 hours.
+        let clock = madrid("2026-01-15T12:00:00Z");
+        assert_eq!(
+            end_of_day_in(day("2026-03-29"), &clock),
+            Some(at("2026-03-29T21:59:59Z"))
+        );
+    }
+
+    #[test]
+    fn today_is_the_users_day_not_utcs() {
+        // Half past midnight in Madrid, still the day before in UTC.
+        let clock = madrid("2026-01-10T23:30:00Z");
+        assert_eq!(start_of_today_in(&clock), at("2026-01-10T23:00:00Z"));
+    }
+
+    #[test]
+    fn this_week_starts_on_the_users_monday() {
+        // Sunday 23:30 UTC on 11/01 is already Monday 00:30 in Madrid.
+        let clock = madrid("2026-01-11T23:30:00Z");
+        assert_eq!(start_of_week_in(&clock), at("2026-01-11T23:00:00Z"));
+    }
+
+    #[test]
+    fn this_month_starts_on_the_users_first_day() {
+        // 31/01 at 23:30 UTC is already 01/02 in Madrid.
+        let clock = madrid("2026-01-31T23:30:00Z");
+        assert_eq!(start_of_month_in(&clock), Some(at("2026-01-31T23:00:00Z")));
+    }
 
     #[test]
     fn parses_iso_format() {
-        assert!(parse_date_to_timestamp("2025-01-01").is_some());
+        assert!(parse_typed_date("2025-01-01").is_some());
     }
 
     #[test]
     fn parses_dmy_dash_format() {
         // 01-01-2025 → 2025-01-01
-        assert_eq!(
-            parse_date_to_timestamp("01-01-2025"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("01-01-2025"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn parses_dmy_slash_format() {
-        assert_eq!(
-            parse_date_to_timestamp("01/01/2025"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("01/01/2025"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn parses_iso_slash_format() {
-        assert_eq!(
-            parse_date_to_timestamp("2025/01/01"),
-            parse_date_to_timestamp("2025-01-01"),
-        );
+        assert_eq!(parse_typed_date("2025/01/01"), parse_typed_date("2025-01-01"),);
     }
 
     #[test]
     fn rejects_invalid_month() {
-        assert!(parse_date_to_timestamp("2025-13-01").is_none());
+        assert!(parse_typed_date("2025-13-01").is_none());
     }
 
     #[test]
     fn rejects_junk() {
-        assert!(parse_date_to_timestamp("yesterday").is_none());
-        assert!(parse_date_to_timestamp("2025-01").is_none());
+        assert!(parse_typed_date("yesterday").is_none());
+        assert!(parse_typed_date("2025-01").is_none());
     }
 }
 
@@ -1886,6 +1993,24 @@ mod base_url_tests {
 #[cfg(test)]
 mod pattern_parser_tests {
     use super::parse_search_query_patterns;
+
+    #[test]
+    fn a_quoted_value_leaves_no_stray_word() {
+        let parsed = parse_search_query_patterns(r#"tag:"topic=Customer Support""#).unwrap();
+        assert!(parsed.keywords.is_empty(), "keywords: {:?}", parsed.keywords);
+    }
+
+    #[test]
+    fn a_tag_value_keeps_what_was_typed() {
+        let parsed = parse_search_query_patterns(r#"tag:"company=Ñandú Ltd""#).unwrap();
+        assert_eq!(parsed.tag_filters, vec!["company=Ñandú Ltd"]);
+    }
+
+    #[test]
+    fn a_quoted_phrase_is_still_two_words() {
+        let parsed = parse_search_query_patterns(r#"after:01/10/2026 "quarterly report""#).unwrap();
+        assert_eq!(parsed.keywords, vec!["quarterly", "report"]);
+    }
 
     #[test]
     fn collects_every_id_operator() {
@@ -2129,6 +2254,45 @@ mod stream_line_tests {
     }
 
     #[tokio::test]
+    async fn a_stream_says_when_it_stopped_at_the_token_limit() {
+        let cut = stream_reply(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"},\"done\":true,\"done_reason\":\"length\"}\n",
+        )
+        .await
+        .unwrap();
+        assert!(cut.truncated);
+        let done = stream_reply(
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"done\":true,\"done_reason\":\"stop\"}\n",
+        )
+        .await
+        .unwrap();
+        assert!(!done.truncated);
+    }
+
+    #[tokio::test]
+    async fn a_tool_stream_says_when_it_stopped_at_the_token_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"},\"done\":true,\"done_reason\":\"length\"}\n",
+            ))
+            .mount(&server)
+            .await;
+        let client = OllamaClient {
+            base_url: Ok(server.uri()),
+            ..OllamaClient::new(Some("m"))
+        };
+        let result = client
+            .chat_stream_with_tools(Vec::new(), Vec::new(), Box::new(|_| true))
+            .await
+            .unwrap();
+        assert!(result.truncated);
+    }
+
+    #[tokio::test]
     async fn a_stream_that_ends_without_done_is_an_error() {
         let result = stream_reply("{\"message\":{\"role\":\"assistant\",\"content\":\"Half an\"}}\n").await;
         assert!(result.is_err(), "a cut-off reply must not pass as complete");
@@ -2150,6 +2314,79 @@ mod stream_line_tests {
                 .expect("a complete reply");
         assert_eq!(result.content, "Hi");
         assert_eq!(result.eval_count, Some(3));
+    }
+}
+
+#[cfg(test)]
+mod stream_stall_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A server that sends one line of a reply, then stays connected in silence.
+    async fn server_that_goes_quiet() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let line = "{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{line}\r\n",
+                line.len()
+            );
+            socket.write_all(head.as_bytes()).await.expect("write");
+            std::future::pending::<()>().await;
+        });
+        url
+    }
+
+    /// A server that accepts the request and never answers.
+    async fn server_that_never_answers() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+        });
+        url
+    }
+
+    fn client(url: String) -> OllamaClient {
+        OllamaClient {
+            base_url: Ok(url),
+            first_token_timeout: Duration::from_millis(200),
+            stream_idle_timeout: Duration::from_millis(200),
+            ..OllamaClient::new(Some("m"))
+        }
+    }
+
+    fn stalled<T: std::fmt::Debug>(result: &Result<T>) -> bool {
+        matches!(result, Err(AppError::AiError(m)) if m.contains("stopped responding"))
+    }
+
+    #[tokio::test]
+    async fn a_chat_stream_that_goes_quiet_is_given_up_on() {
+        let result = client(server_that_goes_quiet().await)
+            .chat_stream_internal(vec![("user".into(), "hi".into())], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_tool_stream_that_goes_quiet_is_given_up_on() {
+        let result = client(server_that_goes_quiet().await)
+            .chat_stream_with_tools_internal(&[], &[], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_given_up_on() {
+        let result = client(server_that_never_answers().await)
+            .chat_stream_with_tools_internal(&[], &[], Box::new(|_| true))
+            .await;
+        assert!(stalled(&result), "{result:?}");
     }
 }
 

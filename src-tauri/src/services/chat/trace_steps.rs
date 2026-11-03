@@ -429,6 +429,7 @@ mod tests {
             steps: vec![],
             search_page: None,
             budget: None,
+            answer_truncated: false,
         }
     }
 

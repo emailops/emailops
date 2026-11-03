@@ -47,7 +47,7 @@
     "noContactsYet": "No contacts found yet — sync some emails first.",
     "countOfTotalOne": "{{shown}} of {{total}} contact",
     "countOfTotalOther": "{{shown}} of {{total}} contacts",
-    "loadMore": "Load more",
+    "pageFailed": "More contacts could not be loaded.",
     "loading": "Loading…",
     "couldNotLoad": "Could not load contact details.",
     "selectAccount": "Select an account to view contacts."

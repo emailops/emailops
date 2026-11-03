@@ -39,6 +39,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const unsnoozeThreads = useEmailStore((s) => s.unsnoozeThreads);
   const snoozes = useEmailStore((s) => s.snoozes);
   const listScope = useEmailStore((s) => s.listScope);
+  const hasQuery = useEmailStore((s) => Boolean(s.searchQuery?.trim()));
   const accounts = useAccountStore((s) => s.accounts);
   const folders = useFolderStore((s) => s.folders);
   const foldersAccountId = useFolderStore((s) => s.accountId);
@@ -102,7 +103,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
           className="p-1.5 rounded transition-colors text-gray-500 hover:bg-gray-100 hover:text-gray-800"
           onPick={(until) => {
             const run = () => snoozeThreads(threads, until);
-            if (snoozeLeavesList('snooze', listScope)) leaving(run)();
+            if (snoozeLeavesList('snooze', listScope, hasQuery)) leaving(run)();
             else void run();
           }}
         />
@@ -113,7 +114,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
           label={t('inbox:bulk.unsnooze')}
           onClick={() => {
             const run = () => unsnoozeThreads(snoozedThreads);
-            if (snoozeLeavesList('unsnooze', listScope)) leaving(run)();
+            if (snoozeLeavesList('unsnooze', listScope, hasQuery)) leaving(run)();
             else void run();
           }}
         >

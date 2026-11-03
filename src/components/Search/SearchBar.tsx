@@ -1,11 +1,13 @@
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ParsedSearchQuery, SearchMethod, SearchResult, SenderSuggestion } from '@/lib/api';
+import { TagChips } from '@/components/common/TagChips';
+import type { MailboxView, ParsedSearchQuery, SenderSuggestion, ThreadPage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { accountColorClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { formatDate as formatDateIntl, formatTime as formatTimeIntl } from '@/lib/intl';
 import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
+import { junkChip, useJunkStore } from '@/stores/junkStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { Email } from '@/types';
 
@@ -34,20 +36,17 @@ interface SearchBarProps {
   /** Query scope: an account id, or null for the unified ("All accounts")
    *  view — the backend then searches every enabled account. */
   accountId: string | null;
+  /** The view the panel opened over: its preview lists what that view lists. */
+  view: MailboxView;
   onSelectEmail: (email: Email) => void;
   onApplySearch: (query: string) => void;
-  /** Apply search with pre-fetched results to avoid a duplicate backend call */
-  onApplySearchWithResults: (query: string, emails: Email[]) => void;
   onClose: () => void;
 }
 
-export function SearchBar({
-  accountId,
-  onSelectEmail,
-  onApplySearch,
-  onApplySearchWithResults,
-  onClose,
-}: SearchBarProps) {
+/** How many rows the panel previews. Applying the search lists them all. */
+const PREVIEW_ROWS = 50;
+
+export function SearchBar({ accountId, view, onSelectEmail, onApplySearch, onClose }: SearchBarProps) {
   useOverlay();
   const { t, i18n } = useTranslation(['common', 'inbox']);
   const locale = i18n.language || 'en';
@@ -62,17 +61,16 @@ export function SearchBar({
     () => (accountId === null ? new Map(accounts.map((a) => [a.id, a.email])) : null),
     [accountId, accounts],
   );
+  const verdicts = useJunkStore((s) => s.verdictsByEmail);
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
-  const [results, setResults] = useState<SearchResult | null>(null);
-  /** Query string the current results correspond to (so we can reuse them on submit) */
-  const [resultsQuery, setResultsQuery] = useState<string | null>(null);
+  const [results, setResults] = useState<ThreadPage | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestRequestIdRef = useRef(0);
   /** The query and promise for the currently in-flight fetch (if any) */
-  const inFlightRef = useRef<{ query: string; promise: Promise<SearchResult> } | null>(null);
+  const inFlightRef = useRef<{ query: string; promise: Promise<ThreadPage> } | null>(null);
 
   // Autocomplete state for from:/to: tokens
   const [autocomplete, setAutocomplete] = useState<{
@@ -109,10 +107,9 @@ export function SearchBar({
   }, []);
 
   const performSearch = useCallback(
-    async (searchQuery: string): Promise<SearchResult | null> => {
+    async (searchQuery: string): Promise<ThreadPage | null> => {
       if (!searchQuery.trim()) {
         setResults(null);
-        setResultsQuery(null);
         setSearchError(null);
         setIsSearching(false);
         return null;
@@ -120,7 +117,6 @@ export function SearchBar({
 
       if (!accountId && !hasAccounts) {
         setResults(null);
-        setResultsQuery(null);
         setSearchError('Select an account before searching.');
         setIsSearching(false);
         return null;
@@ -136,7 +132,13 @@ export function SearchBar({
       setIsSearching(true);
       setSearchError(null);
 
-      const promise = api.searchEmails(accountId, searchQuery, true);
+      // A search reaches flagged mail, and a hit must not paint without its warning.
+      const promise = api
+        .listThreads(accountId, searchQuery, view, false, null, PREVIEW_ROWS, false)
+        .then(async (result) => {
+          await useJunkStore.getState().fetchVerdicts(result.emails.map((email) => email.id));
+          return result;
+        });
       inFlightRef.current = { query: searchQuery, promise };
 
       try {
@@ -147,7 +149,6 @@ export function SearchBar({
         }
 
         setResults(result);
-        setResultsQuery(searchQuery);
         return result;
       } catch (error) {
         if (latestRequestIdRef.current !== requestId) {
@@ -155,7 +156,6 @@ export function SearchBar({
         }
 
         setResults(null);
-        setResultsQuery(null);
         setSearchError(errorText(error));
         return null;
       } finally {
@@ -168,7 +168,7 @@ export function SearchBar({
         }
       }
     },
-    [accountId, hasAccounts],
+    [accountId, hasAccounts, view],
   );
 
   /** Fetch sender suggestions for the current autocomplete trigger */
@@ -287,7 +287,7 @@ export function SearchBar({
   );
 
   const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
+    (e: React.FormEvent) => {
       e.preventDefault();
       // If autocomplete dropdown is showing, Enter already got intercepted by onKeyDown.
       // If it wasn't (e.g., no suggestions), fall through to normal submit.
@@ -297,52 +297,20 @@ export function SearchBar({
       }
       const trimmed = query.trim();
       if (!trimmed) return;
-
-      // Case 1: We already have fresh results for this query — reuse immediately.
-      if (results && resultsQuery === trimmed) {
-        onApplySearchWithResults(trimmed, results.emails);
-        onClose();
-        return;
-      }
-
-      // Case 2: A fetch is in flight for this query — await it and reuse its results.
-      //         This prevents triggering a second identical backend call.
-      if (inFlightRef.current && inFlightRef.current.query === trimmed) {
-        const pending = inFlightRef.current.promise;
-        // Close modal immediately for perceived responsiveness;
-        // the results will flow into the inbox when the fetch resolves.
-        onClose();
-        try {
-          const result = await pending;
-          onApplySearchWithResults(trimmed, result.emails);
-        } catch {
-          // Fetch failed — fall back to a fresh apply (which will retry).
-          onApplySearch(trimmed);
-        }
-        return;
-      }
-
-      // Case 3: No in-flight fetch — trigger a fresh backend search via the store.
       onApplySearch(trimmed);
       onClose();
     },
-    [query, results, resultsQuery, onApplySearch, onApplySearchWithResults, onClose],
+    [query, onApplySearch, onClose],
   );
 
   const handleResultClick = useCallback(
     (email: Email) => {
-      const appliedQuery = resultsQuery ?? query.trim();
-
-      if (appliedQuery && results) {
-        onApplySearchWithResults(appliedQuery, results.emails);
-      } else if (appliedQuery) {
-        onApplySearch(appliedQuery);
-      }
-
+      const appliedQuery = query.trim();
+      if (appliedQuery) onApplySearch(appliedQuery);
       onSelectEmail(email);
       onClose();
     },
-    [onApplySearch, onApplySearchWithResults, onClose, onSelectEmail, query, results, resultsQuery],
+    [onApplySearch, onClose, onSelectEmail, query],
   );
 
   return (
@@ -365,10 +333,7 @@ export function SearchBar({
               value={query}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleInputKeyDown}
-              // Semantic/RAG search is disabled server-side in `services::search`
-              // (see the `let use_ai = false` block) — keep the placeholder
-              // limited to operators that actually work today. If you re-enable
-              // RAG, swap this back to the NL hint variant.
+              // Limited to the operators the list understands.
               placeholder={t('inbox:searchBox.fullPlaceholder', {
                 operators: 'from:, to:, subject:, before:YYYY-MM-DD, after:YYYY-MM-DD, id:, tag:, tag:intent=…',
               })}
@@ -468,10 +433,6 @@ export function SearchBar({
                 <code className="text-primary-600">this month</code> {/* // i18n-ignore */}
               </div>
             </div>
-            {/* Semantic / RAG search panel intentionally omitted: it is
-                hard-disabled in `services::search`. Re-add a status pill here
-                when you flip the backend flag (and gate it on
-                `api.checkAiAvailable()` again). */}
           </div>
         )}
 
@@ -490,74 +451,59 @@ export function SearchBar({
           )}
           {results && results.emails.length > 0 && (
             <ul>
-              {results.emails.map((emailWithScore) => (
-                <li key={emailWithScore.id}>
-                  <button
-                    onClick={() => handleResultClick(emailWithScore)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 min-w-0">
-                        <span
-                          className={`font-medium truncate ${emailWithScore.isRead ? 'text-gray-700' : 'text-gray-900'}`}
-                        >
-                          {emailWithScore.sender}
-                        </span>
-                        {accountEmailById && (
-                          <span
-                            data-testid="account-chip"
-                            className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(accounts, emailWithScore.accountId)}`}
-                              aria-hidden="true"
-                            />
-                            <span className="truncate">
-                              {accountEmailById.get(emailWithScore.accountId) ?? emailWithScore.accountId}
-                            </span>
+              {results.emails.map((email) => {
+                const junk = junkChip(email.id, [], verdicts[email.id]);
+                return (
+                  <li key={email.id}>
+                    <button
+                      onClick={() => handleResultClick(email)}
+                      className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className={`font-medium truncate ${email.isRead ? 'text-gray-700' : 'text-gray-900'}`}>
+                            {email.sender}
                           </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {emailWithScore.relevanceScore !== null && (
-                          <RelevanceIndicator score={emailWithScore.relevanceScore} />
-                        )}
-                        <span className="text-xs text-gray-400">{formatDate(emailWithScore.timestamp, locale)}</span>
+                          {accountEmailById && (
+                            <span
+                              data-testid="account-chip"
+                              className="inline-flex items-center gap-1 flex-shrink-0 max-w-[16rem] rounded-full px-1.5 text-[11px] bg-gray-100 text-gray-700"
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountColorClass(accounts, email.accountId)}`}
+                                aria-hidden="true"
+                              />
+                              <span className="truncate">
+                                {accountEmailById.get(email.accountId) ?? email.accountId}
+                              </span>
+                            </span>
+                          )}
+                          {junk && (
+                            <span data-testid="junk-chip" className="flex-shrink-0">
+                              <TagChips tags={[junk]} compact nowrap />
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-xs text-gray-400">{formatDate(email.timestamp, locale)}</span>
                       </div>
-                    </div>
-                    <div className={`text-sm ${emailWithScore.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
-                      {emailWithScore.subject || '(No subject)'}
-                    </div>
-                    <div className="text-sm text-gray-400 truncate">{emailWithScore.snippet}</div>
-                    {emailWithScore.matchReason && (
-                      <div className="mt-1 text-xs text-primary-600 flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                        {emailWithScore.matchReason}
+                      <div className={`text-sm ${email.isRead ? 'text-gray-500' : 'text-gray-700'}`}>
+                        {email.subject || t('common:labels.noSubject')}
                       </div>
-                    )}
-                  </button>
-                </li>
-              ))}
+                      <div className="text-sm text-gray-400 truncate">{email.snippet}</div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
 
         {/* Footer */}
         {results && (
-          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between text-xs text-gray-500">
-            <span>
-              {results.emails.length > 0
-                ? `Found ${results.emails.length} result${results.emails.length !== 1 ? 's' : ''}`
-                : 'No results'}
-            </span>
-            <SearchMethodBadge method={results.searchMethod} />
+          <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500">
+            {results.nextCursor
+              ? t('inbox:searchPanel.firstResults', { count: results.emails.length })
+              : t('inbox:searchPanel.results', { count: results.emails.length })}
           </div>
         )}
       </div>
@@ -589,90 +535,6 @@ function ParsedQueryDisplay({ query }: { query: ParsedSearchQuery }) {
         <span>Searching: {filters.join(' • ')}</span>
       </div>
     </div>
-  );
-}
-
-function SearchMethodBadge({ method }: { method: SearchMethod }) {
-  const config: Record<SearchMethod, { label: string; icon: ReactElement; className: string }> = {
-    rag: {
-      label: 'Semantic Search (RAG)',
-      icon: (
-        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-        </svg>
-      ),
-      className: 'bg-green-100 text-green-700',
-    },
-    ai_parsed: {
-      label: 'AI Parsed',
-      icon: (
-        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-        </svg>
-      ),
-      className: 'bg-purple-100 text-purple-700',
-    },
-    pattern_parsed: {
-      label: 'Filter Search',
-      icon: (
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-          />
-        </svg>
-      ),
-      className: 'bg-blue-100 text-blue-700',
-    },
-    keyword_search: {
-      label: 'Keyword Search',
-      icon: (
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-          />
-        </svg>
-      ),
-      className: 'bg-gray-100 text-gray-600',
-    },
-  };
-
-  const { label, icon, className } = config[method] ?? config.keyword_search;
-
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${className}`}>
-      {icon}
-      {label}
-    </span>
-  );
-}
-
-function RelevanceIndicator({ score }: { score: number }) {
-  // Convert 0-1 score to percentage
-  const percentage = Math.round(score * 100);
-
-  // Color based on score
-  let colorClass = 'bg-gray-200 text-gray-600';
-  if (score >= 0.8) {
-    colorClass = 'bg-green-100 text-green-700';
-  } else if (score >= 0.65) {
-    colorClass = 'bg-blue-100 text-blue-700';
-  } else if (score >= 0.55) {
-    colorClass = 'bg-yellow-100 text-yellow-700';
-  }
-
-  return (
-    <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${colorClass}`}
-      title={`${percentage}% semantic similarity`}
-    >
-      {percentage}%
-    </span>
   );
 }
 

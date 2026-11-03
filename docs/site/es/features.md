@@ -87,8 +87,8 @@ como no leída siempre vuelve a la lista.
 <!-- claim:feat-organize-6 -->
 **Todos** y **No leídos**, encima de la lista, eligen qué muestra. **No leídos** deja solo las
 conversaciones con algún mensaje sin leer — en las vistas que listan mensajes sueltos, como el
-correo enviado y las carpetas, solo los mensajes sin leer — en todas las vistas y también con un
-filtro inteligente; mientras buscas, no aparece. Una conversación que abres sigue en la lista
+correo enviado y las carpetas, solo los mensajes sin leer — en todas las vistas, con un filtro
+inteligente y mientras buscas. Una conversación que abres sigue en la lista
 hasta que esta se recarga, y la elección dura hasta que cierras EmailOps.
 
 ## Posponer {#snooze}
@@ -160,9 +160,9 @@ que las muestra como una cuadrícula de bloques.
 <!-- claim:feat-smart-filters-2 -->
 Al hacer clic en un filtro, se escribe en el cuadro de búsqueda como una consulta que puedes
 ver y editar —`tag:priority=urgent`, `from:`, `domain:`, `ext:`— y un segundo clic la quita.
-Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro funciona
-dentro de la vista en la que estás, así que en Enviados o en una carpeta lista solo su correo,
-y la búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
+Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro o una
+búsqueda funcionan dentro de la vista en la que estás: Enviados, Spam, Papelera y las carpetas
+listan solo su correo, y la bandeja de entrada llega a todo menos a Spam y Papelera. La búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
 una búsqueda activa y ofrece quitarla. Cada grupo de etiquetas muestra primero sus diez valores
 más usados, con un botón debajo para ver el resto.
 
@@ -299,8 +299,8 @@ documento, lo que lo comparte con los destinatarios del email.
 ## Búsqueda
 
 <!-- claim:feat-search-1 -->
-Búsqueda de texto completo en asuntos, cuerpos, remitentes y adjuntos. Con la IA activada se
-suma la búsqueda semántica, que encuentra por significado en vez de por palabras exactas.
+Búsqueda de texto completo en asuntos, cuerpos y remitentes. La lista llega hasta la última
+coincidencia del correo descargado, y el correo que marca el detector de spam aparece con su aviso.
 
 <!-- claim:feat-search-2 -->
 Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:

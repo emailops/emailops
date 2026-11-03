@@ -4,7 +4,6 @@
   "emptyHint": "New messages will appear here once your mailbox syncs.",
   "loading": "Loading emails…",
   "loadingMore": "Loading more…",
-  "loadMore": "Load more",
   "noMore": "Up to date",
   "syncing": "Syncing…",
   "syncProgress": "Syncing {{current}} of {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 new email downloaded",
   "loadingEmails": "Loading emails...",
   "loadingMoreEmails": "Loading more...",
-  "noMoreEmails": "No more emails",
+  "noMoreEmails": "No more downloaded emails",
+  "noMoreEmailsSyncing": "No more downloaded emails for now. The sync may bring more.",
   "loadingThread": "Loading thread...",
   "loadingEmail": "Loading email…",
   "categoriesAria": "Email categories",
@@ -23,6 +23,15 @@
     "all": "All",
     "unread": "Unread",
     "empty": "No unread emails"
+  },
+  "emptyState": {
+    "syncing": "Syncing emails...",
+    "noSearchResults": "No emails match your search",
+    "noFilterResults": "No emails match the selected filters",
+    "noEmails": "No emails yet — try syncing or adding an account",
+    "showAll": "Show all emails",
+    "showAllCategories": "Show all categories",
+    "syncNow": "Sync now"
   },
   "noEmailSelected": "No email selected",
   "selectEmailHint": "Select an email from the list to view it here.",
@@ -124,7 +133,14 @@
     "unstar": "Remove star",
     "archive": "Archive",
     "moveToInbox": "Move to Inbox",
-    "notSpam": "Not spam — move to Inbox"
+    "notSpam": "Not spam — move to Inbox",
+    "noPreview": "(No preview)",
+    "toLine": "To: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Back",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs",
+    "messageCount_many": "{{count}} msgs"
   },
   "compose": {
     "open": "Compose",
@@ -139,6 +155,15 @@
     "pinnedSection": "Pinned",
     "suggestedSection": "Suggested",
     "noFilters": "No smart filters yet — they appear as your mailbox grows."
+  },
+  "list": {
+    "firstPageFailed": "The list could not be loaded.",
+    "pageFailed": "More emails could not be loaded."
+  },
+  "searchPanel": {
+    "firstResults": "First {{count}} results",
+    "results_one": "{{count}} result",
+    "results_other": "{{count}} results"
   },
   "searchBox": {
     "inlinePlaceholder": "Search… ({{operators}})",

@@ -457,6 +457,14 @@ export function MessageBubble({
                 )}
               </div>
             )}
+            {!isStreaming && message.trace?.answerTruncated && (
+              <div
+                data-testid="chat-truncated-notice"
+                className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900"
+              >
+                {t('chat:message.answerTruncated')}
+              </div>
+            )}
             {!isStreaming && message.trace && <ReasoningSection trace={message.trace} />}
             {!isStreaming && hasAnswer && onReject && !isRejected && (
               <WrongAnswerControl onReject={onReject} disabled={Boolean(isSending)} />

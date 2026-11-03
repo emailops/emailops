@@ -4,7 +4,7 @@ import type { OutboxEntry, OutboxUpdated, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText, isAppErrorPayload } from '@/lib/errors';
 import { formatDateTime } from '@/lib/intl';
-import { parseUndoSendDelay, UNDO_SEND_DELAY_PREF } from '@/lib/outbox';
+import { parseUndoSendDelay, SHORTEST_UNDO_SEND_DELAY, UNDO_SEND_DELAY_PREF } from '@/lib/outbox';
 import { useLogStore } from '@/stores/logStore';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -39,10 +39,14 @@ interface OutboxStore {
   fetchEntries: (accountId?: string | null) => Promise<void>;
   /** Send from a composer: 'sent' when it went out directly, 'queued' when it
    *  waits for the undo window. Throws what the direct send or the queueing
-   *  threw, so the composer keeps the text and shows the error. */
+   *  threw, so the composer keeps the text and shows the error.
+   *  `draftHoldsFiles`: the draft has file attachments the composer cannot
+   *  send itself. Only queueing reads them, so a direct send is not an option
+   *  even with undo send off: it would go out without them, and the draft
+   *  holding them would be deleted. */
   send: (
     message: OutgoingMessage,
-    opts: { draftId?: string; sendDirect: () => Promise<void> },
+    opts: { draftId?: string; sendDirect: () => Promise<void>; draftHoldsFiles?: boolean },
   ) => Promise<'sent' | 'queued'>;
   /** Schedule a message for `at`. Throws when it cannot be queued. */
   schedule: (message: OutgoingMessage, at: Date, draftId?: string) => Promise<OutboxEntry>;
@@ -135,12 +139,13 @@ export const useOutboxStore = create<OutboxStore>((set, get) => ({
     }
   },
 
-  send: async (message, { draftId, sendDirect }) => {
-    const delay = await get().loadUndoDelay();
-    if (delay === 0) {
+  send: async (message, { draftId, sendDirect, draftHoldsFiles }) => {
+    const undoDelay = await get().loadUndoDelay();
+    if (undoDelay === 0 && !draftHoldsFiles) {
       await sendDirect();
       return 'sent';
     }
+    const delay = undoDelay === 0 ? SHORTEST_UNDO_SEND_DELAY : undoDelay;
     const queued = await api.queueOutgoingEmail(message, { type: 'undo', delaySecs: delay }, draftId);
     log('info', `Sending to ${message.to.join(', ')} in ${delay}s (undo available)`);
     let toastId = 0;

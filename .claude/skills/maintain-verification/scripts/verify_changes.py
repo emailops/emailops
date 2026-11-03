@@ -23,6 +23,10 @@ files += [l.split()[-1] for l in staged if l.strip()]
 def rust_module(path):
     return path.replace("src-tauri/src/", "").replace(".rs", "").replace("/mod", "").replace("/", "::")
 def feature_of(path):
+    if any(path.startswith(pref) for pref in manifest.get("transversal", {}).get("paths", [])):
+        return "Transversal (compartido por todas las funciones)"
+    for f in manifest["features"]:
+        if any(path.startswith(pref) for pref in f.get("paths", [])): return f["name"]
     # Longest matching prefix wins, as in verify_all.py.
     if path.startswith("src-tauri/src/"):
         mod = rust_module(path)

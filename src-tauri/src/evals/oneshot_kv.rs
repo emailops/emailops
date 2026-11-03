@@ -279,7 +279,7 @@ async fn run_classifications(db: &Database, provider: &dyn AIProvider, n: usize)
             snippet: &snippet,
         };
         let prompt = build_classify_prompt(&template, &config, &language_clause, BENCH_TODAY, &email);
-        let _ = crate::services::classification::classify_with_provider(provider, &config, &prompt.full()).await;
+        let _ = crate::services::classification::classify_with_provider(db, provider, &config, &prompt.full()).await;
     }
     Ok(())
 }
@@ -289,6 +289,7 @@ async fn run_planner(db: &Database, provider: &dyn AIProvider, user_email: &str)
         .map_err(|e| EvalError::Config(format!("cannot load chat.query_plan: {e}")))?;
     let glossary = crate::services::classification::TagGlossary::load(db);
     let _ = crate::services::chat::planner::plan_search(
+        db,
         provider,
         &template,
         user_email,

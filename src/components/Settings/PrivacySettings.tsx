@@ -241,8 +241,14 @@ export function PrivacySettings() {
 
   const handlePasswordSuccess = useCallback(() => {
     setDialog(null);
-    api.hasMainPassword().then(setHasPassword);
-  }, []);
+    api
+      .hasMainPassword()
+      .then(setHasPassword)
+      .catch((e) => {
+        setSaveError(errorText(e));
+        addLog('error', 'system', `Failed to read the password state: ${errorText(e)}`);
+      });
+  }, [addLog]);
 
   const handleOpenPrivacyPolicy = useCallback(() => {
     const language = isSupportedLanguage(i18n.language) ? i18n.language : FALLBACK_LANGUAGE;

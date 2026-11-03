@@ -59,6 +59,17 @@ fn rewrite_email_id_everywhere(tx: &rusqlite::Transaction<'_>, old_id: &str, new
             params![new_id, old_id],
         )?;
     }
+    // A queued reply names its parent twice, and a sent one has dropped its
+    // payload. Sending reads the payload, so a stale id there fails the send.
+    tx.execute(
+        "UPDATE outbox SET payload = json_set(payload, '$.replyToEmailId', ?1)
+         WHERE reply_to_email_id = ?2 AND payload <> ''",
+        params![new_id, old_id],
+    )?;
+    tx.execute(
+        "UPDATE outbox SET reply_to_email_id = ?1 WHERE reply_to_email_id = ?2",
+        params![new_id, old_id],
+    )?;
     Ok(())
 }
 
@@ -503,6 +514,61 @@ mod tests {
         assert_eq!(sent, vec!["acc-1::SENT::5".to_string()]);
     }
 
+    fn queue_reply(db: &Database, id: &str, parent: &str, status: &str, payload: &str) {
+        db.connection()
+            .execute(
+                "INSERT INTO outbox (id, account_id, kind, reply_to_email_id, origin, payload, send_at,
+                                     status, created_at, updated_at)
+                 VALUES (?1, 'acc-1', 'reply', ?2, 'scheduled', ?3, 1, ?4, 0, 0)",
+                rusqlite::params![id, parent, payload, status],
+            )
+            .unwrap();
+    }
+
+    fn queued_parent(db: &Database, id: &str) -> (String, String) {
+        db.reader()
+            .query_row(
+                "SELECT reply_to_email_id, payload FROM outbox WHERE id = ?1",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn a_rekey_keeps_a_queued_reply_on_its_parent() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[email("acc-1::5", "acc-1", "inbox")]).unwrap();
+        queue_reply(
+            &db,
+            "out-1",
+            "acc-1::5",
+            "scheduled",
+            r#"{"replyToEmailId":"acc-1::5","body":"on my way"}"#,
+        );
+
+        db.migrate_email_id("acc-1::5", "acc-1::8", "inbox").unwrap();
+
+        let (column, payload) = queued_parent(&db, "out-1");
+        assert_eq!(column, "acc-1::8");
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["replyToEmailId"], "acc-1::8");
+        assert_eq!(payload["body"], "on my way");
+    }
+
+    #[test]
+    fn a_rekey_passes_over_a_sent_reply_with_no_payload() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[email("acc-1::5", "acc-1", "inbox")]).unwrap();
+        queue_reply(&db, "out-1", "acc-1::5", "sent", "");
+
+        db.migrate_email_id("acc-1::5", "acc-1::8", "inbox").unwrap();
+
+        assert_eq!(queued_parent(&db, "out-1"), ("acc-1::8".to_string(), String::new()));
+    }
+
     #[test]
     fn uid_rekey_moves_rows_and_dependents_even_when_ids_swap() {
         let db = Database::new_for_testing().unwrap();
@@ -570,7 +636,7 @@ mod tests {
             .get_failed_emails("acc-1")
             .unwrap()
             .into_iter()
-            .map(|(id, _)| id)
+            .map(|(id, _, _)| id)
             .collect();
         assert_eq!(
             failed,

@@ -4107,3 +4107,163 @@ already placed in `skills/` becomes usable through `/name` without a further ste
   run, and the request was about the feature.
 - *Removing the switch*: it is the way to drop the sidebar entry, and removing it would
   overrule anyone who turned skills off.
+
+## 2026-10-30 — The startup backup runs once a day and keeps three copies
+
+**Decision:** The startup backup copies the database in one read snapshot, at most once
+every 24 hours, keeps three copies, and is skipped with a warning in Logs when the copy
+would leave less than 2 GiB free.
+**Context:** The paced copy (5 pages every 250 ms) restarted whenever another connection
+committed, so on a real mailbox it never finished and no copy existed. Once it finishes,
+a copy per launch of a multi-GB database would rotate good copies out within a few
+restarts, and seven of them could fill the disk the live database writes to.
+**Rejected:**
+- *`VACUUM INTO`*: it needs its own code path, while the Online Backup API is already used
+  and one step gives the same single snapshot.
+- *Keeping seven copies*: on an 11 GB mailbox that is 77 GB of disk.
+- *Showing the last backup in Settings*: a new surface; the Logs panel is enough for now.
+
+## 2026-10-30 — IMAP lists a mailbox to its end and also syncs on a timer
+
+**Decision:** The IMAP inbox listing has no page cap: a page token runs out only at the
+last UID. IMAP accounts also sync every five minutes, and once per failed attempt to reach
+IDLE. A failed download is given up on only after three retries and seven days from its
+first failure.
+**Context:** The sync reads "no more pages" as "everything was listed", so the ten-page cap
+left mail stranded between stored rows. IDLE watches INBOX alone, a signal that lands during
+another sync is dropped, and a server without IDLE never raises one. Retries run on
+consecutive syncs, so a count alone was spent in minutes by a short outage.
+**Rejected:** *Reporting the cap through a new return value*: it changes the listing contract
+of every provider for a limit only IMAP had, and later slices are already bounded per batch.
+
+## 2026-10-30 — Someone else's new participant holds a shared document until the user accepts
+
+**Decision:** When a message from another participant adds addresses to an active
+document, the document goes back to an invitation. Changes keep merging, and nothing is
+mailed until the user accepts with the new list on screen. The user's own Sent copies do
+not hold it: that install already agreed.
+**Context:** Consent to automatic mail is given for named recipients (2026-10-04), so a
+list that grows on its own would mail the document to people the user never agreed to.
+**Rejected:** *Holding only the new addresses as pending*: it needs a schema change and
+new UI, while the invitation state already stops the mail and shows the list.
+
+## 2026-10-31 — The AI budget covers every paid model call
+
+**Decision:** Every OpenRouter completion, tool call and embedding of the app goes through a
+metered helper in `AiService`, so it is refused once the budget is spent and recorded when it
+costs anything. The Settings connection test is recorded and never refused. A classification
+batch stops at the first refusal, and a research run stops reading at the first refused batch
+and answers from what it found.
+**Context:** Only the chat loop and Lens were metered. Classification, research, the query
+planner, query rewrite, rerank, form filling, document reading and the guide index called the
+provider directly, so they spent past the budget without showing in the usage record.
+**Rejected:**
+- *Refusing inside each provider*: the provider has no database and cannot record usage.
+- *Letting a classification batch run on*: every remaining email would fail the same way.
+  Rule-only emails behind the first refusal wait for budget too, which is the known cost.
+
+## 2026-10-31 — A sync only deletes, skips or moves past what it has checked
+
+**Decision:** A soft delete needs a lookup that finished: any IMAP step of `locate_message`
+that fails is an error, and a vanished row with no Message-ID is left alone. A failed OAuth
+refresh asks the user to sign in only when the provider refused the grant. A folder pass keeps
+its position for a failed download for up to 24 hours, then moves on. An inbox backfill keeps
+its ceiling until a run lists the window to its end. Gmail mail that gains `INBOX` while hidden
+or not stored is brought in by the change-log pass, within the account's categories and date.
+**Context:** Each of these read a failure to find out as an answer: a dropped connection as a
+deleted message, an outage page as an expired session, a failed download as a finished page.
+IMAP lists by UID, so the oldest stored row says nothing about how far a walk got.
+**Rejected:** *Holding a folder position with no limit*: one message nothing can download would
+stop the history below it for good. *The seven-day window of the failed-download list*: a folder
+would wait a week for such a message. *Filing failed folder downloads on that list*: it has no
+mailbox column, and the provider's own parse cannot always say which folder a message is in.
+*Deleting a vanished row with no Message-ID*: it hid live mail that was only moved.
+
+## 2026-10-31 — A pulled draft holds its attachments, and a missing file holds the draft back
+
+**Decision:** A draft pulled from Gmail or Outlook stores its attachments as files under
+`attachments/<account>/drafts/`. While one of them is not on disk, because the download
+failed or the provider has no bytes to give (Outlook item and reference attachments), the
+draft is not pushed, sent or queued: edits stay local until the file arrives or the user
+removes the attachment. Outlook draft updates now always replace attachments by list, delete
+and add, which widens the 2026-09-30 entry, where that happened only past one request.
+**Context:** A draft is pushed back with exactly the files stored locally, so a draft pulled
+without them lost them at the provider on the first edit. Graph's update does not document
+`attachments` among its properties, and the payload omitted the key for an empty list, so a
+removal never reached Outlook and the next pull brought the attachment back.
+**Rejected:**
+- *Not storing a draft until all its files are here*: a draft holding something the app
+  cannot store would never appear, and the older local row could still be edited and pushed.
+- *Pushing without the missing file*: that is the loss being fixed.
+- *A `pending` column*: a row whose file is not there says the same with no migration, and
+  reading it already fails on every push and send path.
+- *Clearing the stored change tokens in a migration*: an account preference does it without
+  tying the release to a schema version.
+**Limit:** inline images come back as ordinary attachments, because a draft row keeps no
+content id: their bytes survive, but an Outlook `cid:` reference in the body stops resolving
+after an edit, and a Gmail draft shows the image in the body and as an attachment. Each push
+drops the change token, so the next pull downloads the draft's files again to compare them.
+
+## 2026-11-02 — Mail stored without its inline images is repaired when it is opened
+
+**Decision:** Opening a Gmail or Outlook message whose stored body still has `cid:` images
+fetches it again and keeps the result if it resolves more of them. A message the provider has
+answered for is not asked for again in that run; a failed fetch is retried on the next open.
+**Context:** Bodies stored before inline images were fetched by attachment id kept their
+references, and no sync rewrites a stored body, so that mail showed empty boxes for good. A
+reply can also quote an image it does not carry, and such a body never resolves.
+**Rejected:**
+- *A background pass over every such message*: it spends provider quota and disk on mail that
+  may never be opened again.
+- *Reusing `redownload_email`*: it rewrites the row, the search index and the attachments, for
+  what is one body.
+- *A column for "already tried"*: a schema change and a release coupling, to save one request
+  per run.
+
+## 2026-11-02 — Every search and filter goes through one paged list
+
+**Decision:** The sidebar filters, the search box, the search panel and the CLI all call
+`list_threads`: one row per conversation, in `thread_ts, timestamp, id` order, read from a
+cursor to the end with no cap and no Load more button. A filter and its text are one query.
+A background refresh merges its first rows into the list instead of replacing it, and a
+failed page offers Retry. This supersedes the "one-filter queries take the smart filter's
+path" part of "Smart filters write their query into the search box".
+**Context:** A search stopped at 100 conversations per account and said there was nothing
+more, a filter paged by row number and lost rows, and what a list hid depended on how the
+query was written. Plain mailboxes keep their row numbers: paging them differently is out
+of this work, and their "only unread" skip is a known risk.
+**Rejected:**
+- *Returning every match at once*: every query would load the tags and verdicts of all its
+  rows, and refreshes would still be partial, so the gap under the head would remain.
+- *Extending `get_filtered_emails` or `search_emails_inner`*: the Tag Board and the chat keep
+  their queries fixed.
+- *Removing the cap and keeping row numbers*: 20 of 135 conversations went missing in a
+  synthetic walk where rows left the set.
+
+## 2026-11-02 — Search and filters show flagged mail, with its warning
+
+**Decision:** Mail the junk detector flagged appears in every search and filter, and a row
+never paints without its warning: the list and the search panel wait for the verdicts before
+they publish rows. This supersedes "Typed search words still find junk; a smart filter's
+tokens do not", and the "always exclude junk" part of "Smart filters write their query into
+the search box". The Tag Board and the chat's retrieval still leave flagged mail out. The
+`hide` preference applies to plain mailboxes only: searching is asking for it.
+**Context:** A legitimate message flagged by mistake showed in Inbox, appeared when typing a
+word and vanished from `from:`, `tag:` and `after:`, with nothing saying so.
+**Rejected:**
+- *Hiding it behind a "show flagged" control*: a count, a state and four languages, when the
+  person searching should see what they asked for.
+- *Sending verdicts inside each page*: one more field in the contract, and it leaves plain
+  mailboxes and `id:` rows uncovered.
+
+## 2026-11-02 — A query searches what its view lists
+
+**Decision:** Sent, Archive, folders, Spam and Trash search their own mail, and Sent uses the
+same three signals as its list. The inbox reaches everything except Spam and Trash. Starred
+and Snoozed search like the inbox. This supersedes the "never Spam or Trash" part of "Smart
+filters write their query into the search box". A row leaves a list with a query only when
+it stops belonging to it, so archiving from a search in the inbox keeps the row.
+**Context:** Searching from Spam or Trash found nothing of theirs, and Sent listed one set of
+mail and searched another.
+**Rejected:**
+- *A "Search in Spam and Trash" action*: an extra step for what opening the view already says.

@@ -167,6 +167,17 @@ pub enum ServerSpamVerdict {
     Unknown,
 }
 
+/// Can an `X-Spam-*` header on this provider's mail be the receiving server's
+/// own verdict?
+///
+/// Gmail and Outlook do not write these headers, so on those accounts every one
+/// came with the message, from its sender or a relay, and says nothing about
+/// what this mailbox's server decided. A self-hosted server is where SpamAssassin
+/// and rspamd run, which leaves IMAP as the one place they can count.
+pub fn provider_writes_spam_headers(provider: &str) -> bool {
+    provider.eq_ignore_ascii_case("imap")
+}
+
 /// Interpret the collected `X-Spam-*` / rspamd headers.
 pub fn parse_server_spam(spam_headers: Option<&str>) -> ServerSpamVerdict {
     let Some(raw) = spam_headers else {
@@ -414,6 +425,45 @@ mod tests {
             "protection.outlook.com"
         ));
         assert!(authserv_matches("mx.google.com", "mx.google.com"));
+    }
+
+    // The two shapes below are synthetic: no real Exchange Online header backs
+    // them, so they record what the parser does today, not what it should do.
+    #[test]
+    fn an_outlook_verdict_naming_its_server_is_attributed() {
+        let named = headers(
+            "example-com.mail.protection.outlook.com; spf=fail smtp.mailfrom=example.com; \
+             dkim=none header.d=none; dmarc=fail action=none header.from=example.com",
+        );
+
+        let a = assess(Some(&named), expected_authserv("outlook"));
+
+        assert!(a.trusted);
+        assert_eq!(a.spf, Some(AuthResult::Fail));
+        assert_eq!(a.dmarc, Some(AuthResult::Fail));
+        assert!(a.dmarc_hard_fail());
+    }
+
+    #[test]
+    fn an_outlook_verdict_with_no_authserv_id_is_not_attributed() {
+        let bare = headers(
+            "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=example.com; \
+             dkim=none (message not signed) header.d=none;\
+             dmarc=fail action=none header.from=example.com;compauth=fail reason=000",
+        );
+        assert_eq!(
+            bare.authserv_id.as_deref(),
+            Some("spf=fail"),
+            "the first verdict is taken for the authserv-id"
+        );
+
+        let a = assess(Some(&bare), expected_authserv("outlook"));
+
+        assert!(!a.trusted);
+        assert_eq!(a.spf, None, "the first segment is skipped as the authserv-id");
+        assert_eq!(a.dmarc, Some(AuthResult::Fail));
+        assert!(a.is_unknown());
+        assert!(!a.dmarc_hard_fail());
     }
 
     #[test]

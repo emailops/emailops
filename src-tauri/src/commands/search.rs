@@ -1,9 +1,11 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::db::emails::list::ListView;
 use crate::models::error::AppError;
+use crate::models::ThreadCursor;
 use crate::services;
-use crate::services::search::SearchResult;
+use crate::services::list::{ListRequest, ThreadPage};
 use crate::AppState;
 
 fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
@@ -41,69 +43,52 @@ fn emit_embedding_error(app: &AppHandle, message: &str) {
     );
 }
 
-/// `account_id: None` searches across every enabled account (unified
-/// "All accounts" view). Search spans every category: the inbox's category
-/// tab narrows the list, not a search.
+/// The largest page a caller may ask for: what a refresh of a long list needs.
+const MAX_LIST_LIMIT: i32 = 500;
+
+/// The account a page's `search` event belongs to, when it writes one: the first
+/// page of a typed search. Refreshes, later pages and filter clicks are not
+/// searches, and a unified search has no single owning account.
+fn search_event_account(account_id: Option<&str>, is_first_page: bool, record_search: bool) -> Option<&str> {
+    account_id.filter(|_| is_first_page && record_search)
+}
+
+/// One page of a search or filter. `account_id: None` lists every enabled
+/// account, and a query spans every category: the category tabs narrow a
+/// mailbox, not a query.
 #[tauri::command]
-pub async fn search_emails(
-    app: AppHandle,
+#[allow(clippy::too_many_arguments)]
+pub async fn list_threads(
     state: State<'_, AppState>,
     account_id: Option<String>,
     query: String,
-    use_ai: Option<bool>,
-    // The view the search runs in (`inbox`, `sent`, `archive`, `folder:<path>`).
-    mailbox: Option<String>,
-) -> Result<SearchResult, AppError> {
-    let cmd_start = std::time::Instant::now();
-    // Master AI switch overrides any caller request: when AI is disabled the
-    // search service must fall back to keyword/FTS only. Reading the flag
-    // here keeps the gate at the command boundary and avoids threading a new
-    // parameter through the service signature.
-    let ai_master_enabled = state.db.is_ai_enabled()?;
-    let use_ai_flag = use_ai.unwrap_or(true) && ai_master_enabled;
-    emit_log(
-        &app,
-        "info",
-        "search",
-        &format!("Searching: \"{}\" (AI: {})", query, use_ai_flag),
-    );
-
-    let result = services::search::search_emails(
+    view: String,
+    unread_only: bool,
+    cursor: Option<ThreadCursor>,
+    limit: i32,
+    record_search: bool,
+) -> Result<ThreadPage, AppError> {
+    if !(1..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(AppError::InvalidInput(format!(
+            "limit must be between 1 and {MAX_LIST_LIMIT}"
+        )));
+    }
+    let is_first_page = cursor.is_none();
+    let page = services::list::list_threads(
         &state.db,
-        account_id.as_deref(),
-        &query,
-        use_ai_flag,
-        None,
-        mailbox.as_deref(),
-        Some(app.clone()),
-    )
-    .await?;
-    emit_log(
-        &app,
-        "debug",
-        "search",
-        &format!(
-            "[timing] total={:.0}ms, query={:?}, results={}",
-            cmd_start.elapsed().as_secs_f64() * 1000.0,
-            query,
-            result.emails.len(),
-        ),
-    );
-
-    emit_log(
-        &app,
-        "success",
-        "search",
-        &format!("Found {} results via {:?}", result.emails.len(), result.search_method,),
-    );
-
-    // Memory facts are account-scoped; a unified (all-accounts) search has no
-    // single owning account, so it is not logged as a memory signal.
-    if let Some(id) = account_id.as_deref() {
+        ListRequest {
+            account_id: account_id.as_deref(),
+            query: &query,
+            view: ListView::parse(&view)?,
+            unread_only,
+            cursor,
+            limit,
+        },
+    )?;
+    if let Some(id) = search_event_account(account_id.as_deref(), is_first_page, record_search) {
         services::memory::on_search(&state.db, id, &query);
     }
-
-    Ok(result)
+    Ok(page)
 }
 
 #[tauri::command]
@@ -276,4 +261,21 @@ pub async fn start_regenerate_embeddings(
 #[tauri::command]
 pub async fn rebuild_fts_index(state: State<'_, AppState>) -> Result<u32, AppError> {
     state.db.rebuild_fts_index()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_event_account;
+
+    #[test]
+    fn only_the_first_page_of_a_typed_search_in_one_account_is_a_search_event() {
+        assert_eq!(search_event_account(Some("acc"), true, true), Some("acc"));
+        assert_eq!(search_event_account(Some("acc"), false, true), None, "a later page");
+        assert_eq!(
+            search_event_account(Some("acc"), true, false),
+            None,
+            "a refresh or a filter click"
+        );
+        assert_eq!(search_event_account(None, true, true), None, "a unified search");
+    }
 }

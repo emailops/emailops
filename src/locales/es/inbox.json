@@ -4,7 +4,6 @@
   "emptyHint": "Los mensajes nuevos aparecerán aquí cuando se sincronice tu buzón.",
   "loading": "Cargando correos…",
   "loadingMore": "Cargando más…",
-  "loadMore": "Cargar más",
   "noMore": "Al día",
   "syncing": "Sincronizando…",
   "syncProgress": "Sincronizando {{current}} de {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "Descargado 1 correo nuevo",
   "loadingEmails": "Cargando correos...",
   "loadingMoreEmails": "Cargando más...",
-  "noMoreEmails": "No hay más correos",
+  "noMoreEmails": "No hay más correos descargados",
+  "noMoreEmailsSyncing": "No hay más correos descargados por ahora. La sincronización puede traer más.",
   "loadingThread": "Cargando hilo...",
   "loadingEmail": "Cargando correo…",
   "categoriesAria": "Categorías de correo",
@@ -23,6 +23,15 @@
     "all": "Todos",
     "unread": "No leídos",
     "empty": "No hay correos sin leer"
+  },
+  "emptyState": {
+    "syncing": "Sincronizando correos...",
+    "noSearchResults": "Ningún correo coincide con tu búsqueda",
+    "noFilterResults": "Ningún correo coincide con los filtros seleccionados",
+    "noEmails": "Aún no hay correos: prueba a sincronizar o añade una cuenta",
+    "showAll": "Mostrar todos los correos",
+    "showAllCategories": "Mostrar todas las categorías",
+    "syncNow": "Sincronizar ahora"
   },
   "noEmailSelected": "Ningún correo seleccionado",
   "selectEmailHint": "Selecciona un correo de la lista para verlo aquí.",
@@ -124,7 +133,14 @@
     "unstar": "Quitar destacado",
     "archive": "Archivar",
     "moveToInbox": "Mover a Recibidos",
-    "notSpam": "No es spam — mover a Recibidos"
+    "notSpam": "No es spam — mover a Recibidos",
+    "noPreview": "(Sin vista previa)",
+    "toLine": "Para: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Atrás",
+    "messageCount_one": "{{count}} mensaje",
+    "messageCount_other": "{{count}} mensajes",
+    "messageCount_many": "{{count}} mensajes"
   },
   "compose": {
     "open": "Redactar",
@@ -139,6 +155,15 @@
     "pinnedSection": "Fijados",
     "suggestedSection": "Sugeridos",
     "noFilters": "Aún no hay filtros inteligentes — aparecerán a medida que crezca tu buzón."
+  },
+  "list": {
+    "firstPageFailed": "No se ha podido cargar la lista.",
+    "pageFailed": "No se han podido cargar más correos."
+  },
+  "searchPanel": {
+    "firstResults": "Primeros {{count}} resultados",
+    "results_one": "{{count}} resultado",
+    "results_other": "{{count}} resultados"
   },
   "searchBox": {
     "inlinePlaceholder": "Buscar… ({{operators}})",

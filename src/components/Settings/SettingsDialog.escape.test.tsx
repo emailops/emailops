@@ -1,9 +1,11 @@
 // Every other dialog in the app closes on Escape through the shared Modal.
-// Settings is a bespoke dialog and silently ignored the key.
+// Settings is a bespoke dialog and silently ignored the key. With a dialog open
+// on top of it, the key is that dialog's: it must not throw the panel away.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Modal } from '@/components/common/Modal';
 import { SettingsDialog } from './SettingsDialog';
 
 vi.mock('react-i18next', () => ({
@@ -42,7 +44,11 @@ afterEach(() => {
 });
 
 describe('SettingsDialog', () => {
-  it('closes on Escape', () => {
+  it('closes on Escape, which the window consumes', () => {
+    // The app-wide shortcut handler registers first and consumes every Escape
+    // that reaches the window.
+    const consume = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', consume);
     const onClose = vi.fn();
     act(() =>
       root.render(
@@ -61,8 +67,42 @@ describe('SettingsDialog', () => {
       ),
     );
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     });
+    window.removeEventListener('keydown', consume);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves Escape to a dialog open on top of it', async () => {
+    const onClose = vi.fn();
+    const closeConfirmation = vi.fn();
+    await act(async () =>
+      root.render(
+        <>
+          <SettingsDialog
+            activeAccountId={null}
+            currentLayout="split"
+            onChangeLayout={() => {}}
+            tasksEnabled={false}
+            onChangeTasksEnabled={() => {}}
+            memoriesEnabled={false}
+            onChangeMemoriesEnabled={() => {}}
+            lensesEnabled={false}
+            onChangeLensesEnabled={() => {}}
+            onClose={onClose}
+          />
+          <Modal open onClose={closeConfirmation} title="Remove password">
+            <p>Sure?</p>
+          </Modal>
+        </>,
+      ),
+    );
+
+    act(() => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
+
+    expect(closeConfirmation).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

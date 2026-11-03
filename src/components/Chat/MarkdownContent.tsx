@@ -1,9 +1,10 @@
-import { Children, isValidElement, type ReactNode, useEffect, useRef } from 'react';
+import { Children, isValidElement, type ReactNode, useEffect, useRef, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { helpLinkToDocsUrl } from '@/lib/helpLinks';
 import { useLogStore } from '@/stores/logStore';
 import type { ChatMessageSource } from '@/types';
+import { ExternalLinkDialog } from '../shared/ExternalLinkDialog';
 import { CitationPill } from './CitationPill';
 import { DraftRefPill } from './DraftRefPill';
 import { EmailRefPill } from './EmailRefPill';
@@ -107,6 +108,7 @@ export function MarkdownContent({
   /** Same shape as `emailRefAllowlist` but for `draft://DRAFT_ID` links. */
   draftRefAllowlist?: string[];
 }) {
+  const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
   const byNumber = new Map<number, ChatMessageSource>();
   for (const s of sources) byNumber.set(s.citationNumber, s);
   // Set, not Array, so the link handlers' lookups are O(1).
@@ -136,181 +138,187 @@ export function MarkdownContent({
   });
 
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      urlTransform={chatUrlTransform}
-      components={{
-        // Custom link renderer: intercept citation:// and attachment:// hrefs
-        a({ href, children }) {
-          if (href?.startsWith('citation://')) {
-            const n = Number(href.slice('citation://'.length));
-            const source = byNumber.get(n);
-            if (source) {
-              return <CitationPill source={source} accountId={accountId} onOpenEmail={onOpenEmail} />;
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={chatUrlTransform}
+        components={{
+          // Custom link renderer: intercept citation:// and attachment:// hrefs
+          a({ href, children }) {
+            if (href?.startsWith('citation://')) {
+              const n = Number(href.slice('citation://'.length));
+              const source = byNumber.get(n);
+              if (source) {
+                return <CitationPill source={source} accountId={accountId} onOpenEmail={onOpenEmail} />;
+              }
+              return <>[{n}]</>;
             }
-            return <>[{n}]</>;
-          }
-          if (href?.startsWith('attachment://')) {
-            const rest = href.slice('attachment://'.length);
-            const slash = rest.indexOf('/');
-            if (slash !== -1) {
-              const ns = rest.slice(0, slash) as 'meta' | 'attach';
-              const id = rest.slice(slash + 1);
+            if (href?.startsWith('attachment://')) {
+              const rest = href.slice('attachment://'.length);
+              const slash = rest.indexOf('/');
+              if (slash !== -1) {
+                const ns = rest.slice(0, slash) as 'meta' | 'attach';
+                const id = rest.slice(slash + 1);
+                const label = typeof children === 'string' ? children : String(children);
+                return <AttachmentChip label={label} onOpen={() => onOpenAttachment?.(ns, id)} />;
+              }
+            }
+            if (href?.startsWith('email://')) {
+              const emailId = href.slice('email://'.length).trim();
               const label = typeof children === 'string' ? children : String(children);
-              return <AttachmentChip label={label} onOpen={() => onOpenAttachment?.(ns, id)} />;
+              // Validate against the structural allowlist produced by the
+              // turn's tool calls. The LLM is told (in CHAT_SYSTEM's EMAIL
+              // LINKS clause) to only emit ids from tool output, but a 4B
+              // local model will occasionally invent one — render plain text
+              // and log a warning so the regression is visible without
+              // surfacing a broken chip to the user.
+              if (!emailId || !emailAllowSet.has(emailId)) {
+                pendingWarnings.current.push(
+                  `Dropping email://${emailId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
+                );
+                return <>{children}</>;
+              }
+              return <EmailRefPill emailId={emailId} accountId={accountId} label={label} onOpenEmail={onOpenEmail} />;
             }
-          }
-          if (href?.startsWith('email://')) {
-            const emailId = href.slice('email://'.length).trim();
-            const label = typeof children === 'string' ? children : String(children);
-            // Validate against the structural allowlist produced by the
-            // turn's tool calls. The LLM is told (in CHAT_SYSTEM's EMAIL
-            // LINKS clause) to only emit ids from tool output, but a 4B
-            // local model will occasionally invent one — render plain text
-            // and log a warning so the regression is visible without
-            // surfacing a broken chip to the user.
-            if (!emailId || !emailAllowSet.has(emailId)) {
-              pendingWarnings.current.push(
-                `Dropping email://${emailId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
+            if (href?.startsWith('draft://')) {
+              const draftId = href.slice('draft://'.length).trim();
+              const label = typeof children === 'string' ? children : String(children);
+              // Same allowlist guarantee as `email://` — drafts the LLM never
+              // saw can't be opened via a chip.
+              if (!draftId || !draftAllowSet.has(draftId)) {
+                pendingWarnings.current.push(
+                  `Dropping draft://${draftId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
+                );
+                return <>{children}</>;
+              }
+              return <DraftRefPill draftId={draftId} accountId={accountId} label={label} onOpenEmail={onOpenEmail} />;
+            }
+            if (href?.startsWith('help://')) {
+              // A guide section cited by the "EmailOps help" block. No
+              // allowlist needed: the link is validated by shape and only ever
+              // opens the public docs site, so an invented anchor lands on the
+              // page top instead of anywhere harmful.
+              const docsUrl = helpLinkToDocsUrl(href);
+              if (!docsUrl) {
+                pendingWarnings.current.push(`Dropping malformed help link ${href}.`);
+                return <>{children}</>;
+              }
+              return (
+                <a
+                  href={docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={docsUrl}
+                  className="text-primary-600 underline hover:text-primary-800"
+                >
+                  {children}
+                </a>
               );
-              return <>{children}</>;
             }
-            return <EmailRefPill emailId={emailId} accountId={accountId} label={label} onOpenEmail={onOpenEmail} />;
-          }
-          if (href?.startsWith('draft://')) {
-            const draftId = href.slice('draft://'.length).trim();
-            const label = typeof children === 'string' ? children : String(children);
-            // Same allowlist guarantee as `email://` — drafts the LLM never
-            // saw can't be opened via a chip.
-            if (!draftId || !draftAllowSet.has(draftId)) {
-              pendingWarnings.current.push(
-                `Dropping draft://${draftId || '<empty>'} — not in this turn's tool allowlist (likely hallucinated).`,
-              );
-              return <>{children}</>;
-            }
-            return <DraftRefPill draftId={draftId} accountId={accountId} label={label} onOpenEmail={onOpenEmail} />;
-          }
-          if (href?.startsWith('help://')) {
-            // A guide section cited by the "EmailOps help" block. No
-            // allowlist needed: the link is validated by shape and only ever
-            // opens the public docs site, so an invented anchor lands on the
-            // page top instead of anywhere harmful.
-            const docsUrl = helpLinkToDocsUrl(href);
-            if (!docsUrl) {
-              pendingWarnings.current.push(`Dropping malformed help link ${href}.`);
+            // Any remaining non-http(s)/mailto scheme is treated as a stray
+            // model invention and rendered as plain text — keeps the bubble
+            // from launching useless browser tabs against custom schemes.
+            const isSafeExternal = !!href && /^(https?:|mailto:)/i.test(href);
+            if (!isSafeExternal) {
               return <>{children}</>;
             }
             return (
               <a
-                href={docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={docsUrl}
+                href={href}
+                title={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  setConfirmUrl(href);
+                }}
                 className="text-primary-600 underline hover:text-primary-800"
               >
                 {children}
               </a>
             );
-          }
-          // Any remaining non-http(s)/mailto scheme is treated as a stray
-          // model invention and rendered as plain text — keeps the bubble
-          // from launching useless browser tabs against custom schemes.
-          const isSafeExternal = !!href && /^(https?:|mailto:)/i.test(href);
-          if (!isSafeExternal) {
-            return <>{children}</>;
-          }
-          return (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-600 underline hover:text-primary-800"
-            >
-              {children}
-            </a>
-          );
-        },
-        // Images render as their alt text. The reply can echo text from
-        // received mail, and an `<img>` fetches its URL on render with no
-        // click, so nothing in a chat bubble may load a remote resource.
-        img({ alt }) {
-          return <>{alt}</>;
-        },
-        // Table styling
-        table({ children }) {
-          return (
-            <div className="overflow-x-auto my-2">
-              <table className="text-xs border-collapse w-full">{children}</table>
-            </div>
-          );
-        },
-        thead({ children }) {
-          return <thead className="bg-gray-200">{children}</thead>;
-        },
-        th({ children }) {
-          return <th className="border border-gray-300 px-2 py-1 font-semibold text-left">{children}</th>;
-        },
-        td({ children }) {
-          return <td className="border border-gray-300 px-2 py-1">{children}</td>;
-        },
-        tr({ children }) {
-          return <tr className="even:bg-gray-50">{children}</tr>;
-        },
-        // Code blocks
-        code({ className, children, ...props }) {
-          const isBlock = className?.startsWith('language-');
-          if (isBlock) {
+          },
+          // Images render as their alt text. The reply can echo text from
+          // received mail, and an `<img>` fetches its URL on render with no
+          // click, so nothing in a chat bubble may load a remote resource.
+          img({ alt }) {
+            return <>{alt}</>;
+          },
+          // Table styling
+          table({ children }) {
             return (
-              <pre className="my-1.5 p-2 rounded bg-gray-800 text-gray-100 text-[11px] overflow-x-auto whitespace-pre">
-                <code>{children}</code>
-              </pre>
+              <div className="overflow-x-auto my-2">
+                <table className="text-xs border-collapse w-full">{children}</table>
+              </div>
             );
-          }
-          return (
-            <code className="px-1 py-0.5 rounded bg-gray-200 text-gray-800 text-[11px] font-mono" {...props}>
-              {children}
-            </code>
-          );
-        },
-        // Lists. `list-inside` puts the marker in the same line box as
-        // the item content, but only if the content isn't wrapped in a
-        // block-level element. remark renders multi-line / blank-separated
-        // items "loose" — `<li><p>…</p></li>` — and our `<p>` renderer is
-        // block-level, so the marker ("1.") lands on one line and the
-        // chip on the next. `li()` below unwraps that single-`<p>` child
-        // so the marker, the pill, and trailing prose share one line.
-        ul({ children }) {
-          return <ul className="list-disc list-inside my-1 space-y-0.5">{children}</ul>;
-        },
-        ol({ children }) {
-          return <ol className="list-decimal list-inside my-1 space-y-0.5">{children}</ol>;
-        },
-        li({ children }) {
-          return <li>{unwrapLooseListParagraph(children)}</li>;
-        },
-        // Headings
-        h1({ children }) {
-          return <h1 className="text-base font-bold mt-2 mb-1">{children}</h1>;
-        },
-        h2({ children }) {
-          return <h2 className="text-sm font-bold mt-2 mb-1">{children}</h2>;
-        },
-        h3({ children }) {
-          return <h3 className="text-sm font-semibold mt-1.5 mb-0.5">{children}</h3>;
-        },
-        // Paragraphs — no extra margin so bubble stays compact. Routed
-        // through the named `Paragraph` function so `<li>` can detect and
-        // unwrap loose-list `<p>` children by element identity.
-        p: Paragraph,
-        // Blockquote
-        blockquote({ children }) {
-          return (
-            <blockquote className="border-l-2 border-gray-300 pl-3 my-1 text-gray-600 italic">{children}</blockquote>
-          );
-        },
-      }}
-    >
-      {preprocessContent(content)}
-    </ReactMarkdown>
+          },
+          thead({ children }) {
+            return <thead className="bg-gray-200">{children}</thead>;
+          },
+          th({ children }) {
+            return <th className="border border-gray-300 px-2 py-1 font-semibold text-left">{children}</th>;
+          },
+          td({ children }) {
+            return <td className="border border-gray-300 px-2 py-1">{children}</td>;
+          },
+          tr({ children }) {
+            return <tr className="even:bg-gray-50">{children}</tr>;
+          },
+          // Code blocks
+          code({ className, children, ...props }) {
+            const isBlock = className?.startsWith('language-');
+            if (isBlock) {
+              return (
+                <pre className="my-1.5 p-2 rounded bg-gray-800 text-gray-100 text-[11px] overflow-x-auto whitespace-pre">
+                  <code>{children}</code>
+                </pre>
+              );
+            }
+            return (
+              <code className="px-1 py-0.5 rounded bg-gray-200 text-gray-800 text-[11px] font-mono" {...props}>
+                {children}
+              </code>
+            );
+          },
+          // Lists. `list-inside` puts the marker in the same line box as
+          // the item content, but only if the content isn't wrapped in a
+          // block-level element. remark renders multi-line / blank-separated
+          // items "loose" — `<li><p>…</p></li>` — and our `<p>` renderer is
+          // block-level, so the marker ("1.") lands on one line and the
+          // chip on the next. `li()` below unwraps that single-`<p>` child
+          // so the marker, the pill, and trailing prose share one line.
+          ul({ children }) {
+            return <ul className="list-disc list-inside my-1 space-y-0.5">{children}</ul>;
+          },
+          ol({ children }) {
+            return <ol className="list-decimal list-inside my-1 space-y-0.5">{children}</ol>;
+          },
+          li({ children }) {
+            return <li>{unwrapLooseListParagraph(children)}</li>;
+          },
+          // Headings
+          h1({ children }) {
+            return <h1 className="text-base font-bold mt-2 mb-1">{children}</h1>;
+          },
+          h2({ children }) {
+            return <h2 className="text-sm font-bold mt-2 mb-1">{children}</h2>;
+          },
+          h3({ children }) {
+            return <h3 className="text-sm font-semibold mt-1.5 mb-0.5">{children}</h3>;
+          },
+          // Paragraphs — no extra margin so bubble stays compact. Routed
+          // through the named `Paragraph` function so `<li>` can detect and
+          // unwrap loose-list `<p>` children by element identity.
+          p: Paragraph,
+          // Blockquote
+          blockquote({ children }) {
+            return (
+              <blockquote className="border-l-2 border-gray-300 pl-3 my-1 text-gray-600 italic">{children}</blockquote>
+            );
+          },
+        }}
+      >
+        {preprocessContent(content)}
+      </ReactMarkdown>
+      {confirmUrl && <ExternalLinkDialog url={confirmUrl} onClose={() => setConfirmUrl(null)} />}
+    </>
   );
 }

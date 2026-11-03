@@ -15,6 +15,9 @@ export const UNDO_SEND_DELAY_OPTIONS = [0, 5, 10, 20, 30] as const;
 
 export const DEFAULT_UNDO_SEND_DELAY = 10;
 
+/** The window of a message that has to be queued with undo send off. */
+export const SHORTEST_UNDO_SEND_DELAY = 5;
+
 /** The stored preference as a window in seconds; unset or unknown values are
  *  the default. */
 export function parseUndoSendDelay(raw: string | null | undefined): number {

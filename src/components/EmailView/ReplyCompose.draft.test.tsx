@@ -147,17 +147,32 @@ describe('ReplyCompose drafts', () => {
     const onCancel = vi.fn();
     render({ onCancel });
     await typeBody('<p>Hola</p>');
-    await act(async () => button('Cancel').click());
+    await act(async () => button('common:actions.cancel').click());
     expect(api.deleteDraft).toHaveBeenCalledWith('draft-new', 'a1');
     expect(onCancel).toHaveBeenCalled();
     await leave();
+  });
+
+  it('takes over a draft the chat saved, so sending removes it', async () => {
+    const onSend = vi.fn(async () => {});
+    render({ onSend, adoptDraftId: 'draft-chat', initialBody: 'Hola Alice' });
+    await act(async () => button('compose:sendReply').click());
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'draft-chat' }));
+    await leave();
+  });
+
+  it('keeps saving into a draft the chat saved', async () => {
+    render({ adoptDraftId: 'draft-chat', initialBody: 'Hola Alice' });
+    await typeBody('<p>Hola Alice, te llamo</p>');
+    await leave();
+    expect(api.saveDraft).toHaveBeenCalledWith(expect.objectContaining({ id: 'draft-chat' }));
   });
 
   it('hands the draft id to the send so it is removed with the reply', async () => {
     const onSend = vi.fn(async () => {});
     render({ onSend });
     await typeBody('<p>Hola Alice, te llamo mañana</p>');
-    await act(async () => button('Send Reply').click());
+    await act(async () => button('compose:sendReply').click());
     expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ draftId: 'draft-new' }));
     await leave();
     expect(api.saveDraft).toHaveBeenCalledTimes(1);

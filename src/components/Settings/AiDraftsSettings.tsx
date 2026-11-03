@@ -12,7 +12,7 @@ import { SettingsPanel } from './SettingsPanel';
  *  backend. */
 const DEFAULT_PROMPT_TEMPLATE = `You are an email assistant for {persona}.
 Writing style: {style}
-Language: Match the language of the original email.
+Language: Match the language of the message you are answering.
 
 {thread_context}
 {rag_context}

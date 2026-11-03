@@ -22,7 +22,6 @@ use crate::models::{Account, AppLogEvent, ChatMessageSource, ChatTrace, Draft, E
 use crate::services::dashboard::AccountDashboard;
 use crate::services::events::EventSink;
 use crate::services::logger::Logger;
-use crate::services::search::SearchMethod;
 
 use super::{render, OutputMode, RenderStyle};
 
@@ -973,20 +972,11 @@ pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource
 /// Build the body lines of a `search --trace` block. Pure (no I/O) so the line
 /// formatting is unit-testable; [`render_search_trace`] wraps these with the
 /// header/footer and prints them to stderr.
-fn format_search_trace_lines(
-    method: &SearchMethod,
-    ai_available: bool,
-    parsed: Option<&ParsedSearchQuery>,
-    shown: usize,
-    total: usize,
-) -> Vec<String> {
-    let mut lines = vec![
-        format!("method:    {:?}", method),
-        format!("ai:        {}", if ai_available { "available" } else { "unavailable" }),
-    ];
+fn format_search_trace_lines(trace: &SearchTrace<'_>) -> Vec<String> {
+    let mut lines = Vec::new();
 
     let mut filters: Vec<String> = Vec::new();
-    if let Some(p) = parsed {
+    if let Some(p) = trace.parsed {
         if let Some(f) = &p.from_filter {
             filters.push(format!("from={f}"));
         }
@@ -1023,22 +1013,32 @@ fn format_search_trace_lines(
             filters.join(" ")
         }
     ));
-    lines.push(format!("results:   {shown} shown / {total} hits"));
+    lines.push(format!("results:   {} shown / {} read", trace.shown, trace.total));
+    lines.push(format!(
+        "pages:     {} in {} ms{}",
+        trace.pages,
+        trace.ms,
+        if trace.exhausted { ", end of the list" } else { "" }
+    ));
     lines
+}
+
+/// What `search --trace` reports. `total` counts the rows read, which only
+/// equals the rows that match when `exhausted` is true.
+pub struct SearchTrace<'a> {
+    pub parsed: Option<&'a ParsedSearchQuery>,
+    pub shown: usize,
+    pub total: usize,
+    pub exhausted: bool,
+    pub pages: usize,
+    pub ms: u64,
 }
 
 /// Print a `search --trace` block to stderr (so stdout stays a clean data
 /// channel), styled to match [`render_chat_trace`].
-pub fn render_search_trace(
-    method: &SearchMethod,
-    ai_available: bool,
-    parsed: Option<&ParsedSearchQuery>,
-    shown: usize,
-    total: usize,
-    color: bool,
-) {
+pub fn render_search_trace(trace: &SearchTrace<'_>, color: bool) {
     eprintln!("\n{}", dim("── search trace ───────────────────────", color));
-    for line in format_search_trace_lines(method, ai_available, parsed, shown, total) {
+    for line in format_search_trace_lines(trace) {
         eprintln!("{}", dim(&line, color));
     }
     eprintln!("{}", dim("───────────────────────────────────────", color));
@@ -1302,12 +1302,18 @@ mod tests {
     }
 
     #[test]
-    fn search_trace_reports_method_ai_and_counts() {
-        let lines = format_search_trace_lines(&SearchMethod::KeywordSearch, false, None, 5, 12);
-        assert_eq!(lines[0], "method:    KeywordSearch");
-        assert_eq!(lines[1], "ai:        unavailable");
-        assert_eq!(lines[2], "filters:   (none)");
-        assert_eq!(lines[3], "results:   5 shown / 12 hits");
+    fn search_trace_reports_counts_and_the_end_of_the_list() {
+        let lines = format_search_trace_lines(&SearchTrace {
+            parsed: None,
+            shown: 5,
+            total: 12,
+            exhausted: true,
+            pages: 2,
+            ms: 7,
+        });
+        assert_eq!(lines[0], "filters:   (none)");
+        assert_eq!(lines[1], "results:   5 shown / 12 read");
+        assert_eq!(lines[2], "pages:     2 in 7 ms, end of the list");
     }
 
     #[test]
@@ -1315,10 +1321,16 @@ mod tests {
         let mut parsed = parsed_with_keywords(&["invoice", "march"]);
         parsed.from_filter = Some("ana@acme.com".to_string());
         parsed.is_unread = Some(true);
-        let lines = format_search_trace_lines(&SearchMethod::PatternParsed, true, Some(&parsed), 3, 3);
-        assert_eq!(lines[1], "ai:        available");
+        let lines = format_search_trace_lines(&SearchTrace {
+            parsed: Some(&parsed),
+            shown: 3,
+            total: 3,
+            exhausted: false,
+            pages: 1,
+            ms: 1,
+        });
         assert_eq!(
-            lines[2],
+            lines[0],
             "filters:   from=ana@acme.com keywords=[invoice, march] unread"
         );
     }

@@ -3,7 +3,16 @@ import { i18n } from '@/i18n';
 import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef, ThreadSnooze } from '@/lib/api';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
-import { planListSource } from '@/lib/filterQuery';
+import { filterFromQuery, planListSource } from '@/lib/filterQuery';
+import {
+  INITIAL_PAGING,
+  type ListPaging,
+  type ListPagingAction,
+  listPagingReducer,
+  lowerCursor,
+  mergeHead,
+  threadRowKey,
+} from '@/lib/listPaging';
 import { normalizeMimeType } from '@/lib/mimeType';
 import { createPendingActionQueue } from '@/lib/pendingActions';
 import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
@@ -77,20 +86,24 @@ export function refetchLimit(loadedCount: number, pageSize: number = PAGE_SIZE, 
  * Pure helper: append a freshly-fetched page onto the existing list, dropping
  * any emails whose id is already present.
  *
- * Pagination is offset-based (`offset = emails.length`). If a new email is
- * inserted at the top of the ordering between the initial fetch and a
- * load-more — e.g. a post-send sync pulling the Sent copy to position 0 — every
- * row shifts down by one and the next page re-returns a row already in the
- * list. Appending it blindly yields two React children with the same key, which
- * React warns about and renders incorrectly. Deduplicating on append keeps keys
- * unique regardless of offset drift.
+ * A plain mailbox pages by row number. If a new email is inserted at the top of
+ * the ordering between the initial fetch and a load-more — e.g. a post-send
+ * sync pulling the Sent copy to position 0 — every row shifts down by one and
+ * the next page re-returns a row already in the list. Appending it blindly
+ * yields two React children with the same key, which React warns about and
+ * renders incorrectly. A list with a query passes `threadRowKey`: a conversation
+ * can change its row between pages, and must still show once.
  */
-export function appendUniqueEmails(existing: Email[], more: Email[]): Email[] {
-  const seen = new Set(existing.map((e) => e.id));
+export function appendUniqueEmails(
+  existing: Email[],
+  more: Email[],
+  keyOf: (email: Email) => string = (e) => e.id,
+): Email[] {
+  const seen = new Set(existing.map(keyOf));
   const additions: Email[] = [];
   for (const email of more) {
-    if (seen.has(email.id)) continue;
-    seen.add(email.id);
+    if (seen.has(keyOf(email))) continue;
+    seen.add(keyOf(email));
     additions.push(email);
   }
   return additions.length === more.length ? [...existing, ...more] : [...existing, ...additions];
@@ -150,8 +163,8 @@ export function threadRefOf(email: Pick<Email, 'accountId' | 'threadId'>): Threa
   return { accountId: email.accountId, threadId: email.threadId };
 }
 
-/** What the list on screen shows: a mailbox view, or search results. */
-export type ListScope = MailboxView | 'search';
+/** The view the list on screen runs in. */
+export type ListScope = MailboxView;
 
 type ThreadSlices = Pick<EmailStore, 'emails' | 'threadEmails' | 'selectedEmail' | 'totalCount' | 'tabs'>;
 
@@ -264,17 +277,21 @@ export function restoreThreads<S extends ThreadSlices>(current: S, before: S, fa
   };
 }
 
-/** Pure: whether `action` takes a conversation out of the list on screen. */
-export function leavesList(action: ThreadAction, list: ListScope): boolean {
+/**
+ * Pure: whether `action` takes a conversation out of the list on screen. A row
+ * leaves only when it stops belonging to what the list shows: a query in the
+ * inbox also reaches the archive, and one in Starred is not limited to stars.
+ */
+export function leavesList(action: ThreadAction, list: ListScope, hasQuery: boolean): boolean {
   switch (action) {
     case 'archive':
-      return list === 'inbox';
+      return list === 'inbox' && !hasQuery;
     case 'moveToInbox':
       return list === 'archive' || list.startsWith('folder:');
     case 'notSpam':
       return list === 'spam';
     case 'unstar':
-      return list === 'starred';
+      return list === 'starred' && !hasQuery;
     case 'delete':
       return true;
     default:
@@ -338,8 +355,9 @@ export function isBackFromSnooze(
 }
 
 /** Pure: whether snoozing takes a conversation out of the list on screen (the
- *  inbox), and unsnoozing out of the Snoozed view. */
-export function snoozeLeavesList(action: 'snooze' | 'unsnooze', list: ListScope): boolean {
+ *  inbox), and unsnoozing out of the Snoozed view. A query reaches snoozed mail. */
+export function snoozeLeavesList(action: 'snooze' | 'unsnooze', list: ListScope, hasQuery: boolean): boolean {
+  if (hasQuery) return false;
   return action === 'snooze' ? list === 'inbox' : list === 'snoozed';
 }
 
@@ -361,6 +379,9 @@ export function formatSnoozeTime(unixSeconds: number): string {
  * email on screen — which would also point Reply at the wrong message.
  */
 let threadRequestSeq = 0;
+
+/** Stale-response guard for background refreshes of a list with a query. */
+let refreshRequestSeq = 0;
 
 /** Changes whenever the user navigates to another conversation (or none):
  *  lets a slow action tell whether what it was started on is still shown. */
@@ -392,6 +413,9 @@ export interface AttachmentViewTab {
   emailId: string;
   filename: string;
   mimeType: string;
+  /** Sender of the email it came from: an HTML attachment follows the same
+   *  trusted-sender policy for remote content as that email. */
+  senderEmail: string;
   dataUrl: string;
   isLoading: boolean;
 }
@@ -436,6 +460,8 @@ export type EmailTab = EmailThreadTab | AttachmentViewTab | ComposeTab;
 export interface PendingChatDraft {
   emailId: string;
   body: string;
+  /** The draft the chat saved for this reply: the composer takes it over. */
+  draftId?: string;
 }
 
 interface EmailStore {
@@ -443,9 +469,7 @@ interface EmailStore {
   selectedEmail: Email | null;
   threadEmails: Email[];
   isLoading: boolean;
-  isLoadingMore: boolean;
   isLoadingThread: boolean;
-  hasMore: boolean;
   totalCount: number;
   error: string | null;
   searchQuery: string | null;
@@ -455,13 +479,16 @@ interface EmailStore {
   /** True only while navigateToEmail is loading its list — fetchEmails stands
    *  aside so it cannot overwrite the list being built around the focused email. */
   navigationInFlight: boolean;
-  /** One-shot flag — next fetchEmails call is a no-op (used when search results are pre-seeded) */
-  skipNextFetch: boolean;
   currentFetchId: number;
-  loadMoreLock: boolean;
-  /** A load-more failed: paging stays off until the list is fetched again, so
-   *  the scroll-triggered load-more does not retry in a tight loop. */
-  loadMoreFailed: boolean;
+  /** Where the list stands: `hasMore` and `isLoadingMore` are selectors over
+   *  it. After a failed page it stays off until the list is fetched again or
+   *  the user asks for more, so scrolling does not retry in a tight loop. */
+  paging: ListPaging;
+  /** Why the first page failed. The list shows it in place of its rows, so it
+   *  never reads as an empty result. */
+  listError: string | null;
+  /** Ask again for what failed: the first page, or the next one. */
+  retryList: (accountId: string | null, mailbox?: MailboxView) => Promise<void>;
   tabs: EmailTab[];
   activeTabId: string | null;
   /**
@@ -473,7 +500,7 @@ interface EmailStore {
   setPendingChatDraft: (draft: PendingChatDraft) => void;
   consumePendingChatDraft: () => void;
   openTab: (email: Email, focusId?: string) => Promise<void>;
-  openAttachmentTab: (meta: EmailAttachmentMeta) => Promise<void>;
+  openAttachmentTab: (meta: EmailAttachmentMeta, senderEmail: string) => Promise<void>;
   openComposeTab: (
     accountId: string,
     toAddresses?: string[],
@@ -586,8 +613,6 @@ interface EmailStore {
   moveEmail: (accountId: string, emailId: string, targetMailbox: MailboxView) => Promise<void>;
   updateEmail: (updated: Email) => void;
   setSearchQuery: (query: string) => void;
-  /** Apply a search query with already-fetched results (skips the next fetchEmails call). */
-  applySearchResults: (query: string, emails: Email[]) => void;
   clearSearchQuery: () => void;
   clearError: () => void;
   reset: () => void;
@@ -603,20 +628,7 @@ interface EmailStore {
   resetForAccount: (accountKey: string) => void;
 }
 
-/** `getFilteredEmails`' domain / sender / tag arguments for a smart filter. */
-function filterArgs(
-  filter: ActiveFilter,
-): [string | undefined, string | undefined, string | undefined, string | undefined] {
-  const isTag = ['priority', 'intent', 'topic', 'company'].includes(filter.type);
-  return [
-    filter.type === 'domain' ? filter.value : undefined,
-    filter.type === 'sender' ? filter.value : undefined,
-    isTag ? filter.type : undefined,
-    isTag ? filter.value : undefined,
-  ];
-}
-
-/** Stamp each smart-filter row with when its thread last had activity. */
+/** Stamp each row of a list with a query with when its thread last had activity. */
 function withThreadActivity(emails: Email[], threadLatestAt: Record<string, number> | undefined): Email[] {
   if (!threadLatestAt) return emails;
   return emails.map((e) => (threadLatestAt[e.id] === undefined ? e : { ...e, threadLatestAt: threadLatestAt[e.id] }));
@@ -627,19 +639,24 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   selectedEmail: null,
   threadEmails: [],
   isLoading: false,
-  isLoadingMore: false,
   isLoadingThread: false,
-  hasMore: true,
   totalCount: 0,
   error: null,
   searchQuery: null,
   focusEmailId: null,
   navigationMode: false,
   navigationInFlight: false,
-  skipNextFetch: false,
   currentFetchId: 0,
-  loadMoreLock: false,
-  loadMoreFailed: false,
+  paging: INITIAL_PAGING,
+  listError: null,
+  retryList: async (accountId, mailbox) => {
+    if (get().emails.length === 0) {
+      await get().fetchEmails(accountId, null, [], false, mailbox);
+      return;
+    }
+    set((state) => ({ paging: listPagingReducer(state.paging, { type: 'retried' }) }));
+    await get().loadMoreEmails(accountId, null, [], mailbox);
+  },
   tabs: [],
   activeTabId: null,
   pendingChatDraft: null,
@@ -657,24 +674,24 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   openTab: async (email, focusId) => {
     if (!email.isRead) void get().markAsRead(email.accountId, email.id);
 
-    const existing = get().tabs.find((t) => t.id === email.threadId);
+    // Thread ids are only unique per account.
+    const tabId = keyOf(email);
+    const existing = get().tabs.find((t) => t.id === tabId);
     if (existing) {
       // Opening another email of an open thread shows that email.
       set((state) => ({
-        activeTabId: email.threadId,
+        activeTabId: tabId,
         tabs:
           focusId === undefined
             ? state.tabs
-            : state.tabs.map((t) =>
-                t.type === 'thread' && t.id === email.threadId ? { ...t, focusEmailId: focusId } : t,
-              ),
+            : state.tabs.map((t) => (t.type === 'thread' && t.id === tabId ? { ...t, focusEmailId: focusId } : t)),
       }));
       return;
     }
 
     const newTab: EmailThreadTab = {
       type: 'thread',
-      id: email.threadId,
+      id: tabId,
       threadId: email.threadId,
       accountId: email.accountId,
       subject: email.subject,
@@ -682,10 +699,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       isLoading: true,
       focusEmailId: focusId ?? null,
     };
-    set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: email.threadId }));
+    set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: tabId }));
     const loadId = ++threadRequestSeq;
-    tabLoadIds.set(email.threadId, loadId);
-    const isCurrentLoad = () => tabLoadIds.get(email.threadId) === loadId;
+    tabLoadIds.set(tabId, loadId);
+    const isCurrentLoad = () => tabLoadIds.get(tabId) === loadId;
 
     try {
       const [threadEmails, selectedBody] = await Promise.all([
@@ -697,20 +714,20 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       const withBody = threadEmails.map((e) => (e.id === email.id ? { ...e, body: selectedBody } : e));
       set((state) => ({
         tabs: state.tabs.map((t) =>
-          t.type === 'thread' && t.id === email.threadId ? { ...t, threadEmails: withBody, isLoading: false } : t,
+          t.type === 'thread' && t.id === tabId ? { ...t, threadEmails: withBody, isLoading: false } : t,
         ),
       }));
     } catch {
       if (!isCurrentLoad()) return;
       set((state) => ({
         tabs: state.tabs.map((t) =>
-          t.type === 'thread' && t.id === email.threadId ? { ...t, threadEmails: [email], isLoading: false } : t,
+          t.type === 'thread' && t.id === tabId ? { ...t, threadEmails: [email], isLoading: false } : t,
         ),
       }));
     }
   },
 
-  openAttachmentTab: async (meta) => {
+  openAttachmentTab: async (meta, senderEmail) => {
     const existing = get().tabs.find((t) => t.id === meta.id);
     if (existing) {
       set({ activeTabId: meta.id });
@@ -727,6 +744,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       emailId: meta.emailId,
       filename: meta.filename,
       mimeType,
+      senderEmail,
       dataUrl: '',
       isLoading: true,
     };
@@ -790,23 +808,23 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     // every later search or filter until the account changed.
     if (get().navigationInFlight) return;
 
-    // Skip if results were pre-seeded via applySearchResults
-    if (get().skipNextFetch) {
-      set({ skipNextFetch: false });
+    const { searchQuery, unreadOnly } = get();
+    const view = mailbox ?? 'inbox';
+    const source = planListSource(searchQuery);
+
+    // A refresh of a list with a query is the same list: it merges its first
+    // rows in and leaves the list id alone, so a page in flight still lands.
+    if (silent && source.kind === 'query') {
+      await refreshQueryList(accountId, source.query, view, unreadOnly);
       return;
     }
-    // Opening a list (another mailbox, a filter, a search) may depend on an
-    // archive/delete still in its undo window — e.g. the Archive view must
-    // show what was just archived — so it commits first.
-    if (!silent && pendingThreadActions.pendingCount() > 0) {
-      await pendingThreadActions.flushAll();
-    }
+
     // Increment fetch ID to track this operation and cancel stale ones
     const fetchId = get().currentFetchId + 1;
-    const { searchQuery, unreadOnly } = get();
-    const source = planListSource(searchQuery, mailbox ?? 'inbox');
 
-    // Silent mode: background refresh after sync — never show loading or clear the list.
+    // Silent mode: background refresh after sync — never show loading or clear the list,
+    // and leave what the user is looking at alone: the focused email, a navigated list
+    // and an error they have not read yet are not this refresh's to clear.
     // Non-silent: show loading indicator. Clear the email list only when a filter or
     // search is active (because results will be completely different). When switching
     // to an empty inbox with no filter/search, keep whatever is in the list so there
@@ -816,16 +834,31 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       set({
         isLoading: true,
         ...(shouldClear ? { emails: [] } : {}),
+        paging: INITIAL_PAGING,
         error: null,
+        listError: null,
         currentFetchId: fetchId,
         navigationMode: false,
         focusEmailId: null,
       });
     } else {
-      set({ error: null, currentFetchId: fetchId, navigationMode: false, focusEmailId: null });
+      set({ currentFetchId: fetchId });
     }
 
-    set({ listScope: source.kind === 'search' ? 'search' : source.kind === 'filter' ? 'inbox' : (mailbox ?? 'inbox') });
+    set({ listScope: view });
+
+    // The query itself stays out of the log: it can hold names and addresses.
+    const reportsSearch = !silent && source.kind === 'query';
+    if (reportsSearch) useLogStore.getState().addLog('info', 'search', 'Listing a search');
+
+    // Opening a list (another mailbox, a filter, a search) may depend on an
+    // archive/delete still in its undo window — e.g. the Archive view must
+    // show what was just archived — so it commits first. The fetch id is taken
+    // by now: a list opened during the wait replaces this one, not the reverse.
+    if (!silent && pendingThreadActions.pendingCount() > 0) {
+      await pendingThreadActions.flushAll();
+      if (get().currentFetchId !== fetchId) return;
+    }
 
     // A background refresh is meant to be transparent, so it has to come back
     // with everything the user had already paged in — see refetchLimit.
@@ -834,25 +867,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     try {
       let emails: Email[];
       let totalCount: number;
+      let loaded: ListPagingAction;
 
-      if (source.kind === 'filter') {
-        // A one-filter query: the smart filter's paged path lists the same
-        // mail as searching its token (DECISIONS 2026-10-08).
-        const result = await api.getFilteredEmails(
-          accountId,
-          ...filterArgs(source.filter),
-          limit,
-          0,
-          source.filter.type === 'attachment_ext' ? source.filter.value : undefined,
-          { mailbox: source.mailbox, unreadOnly },
-        );
-        emails = withThreadActivity(result.emails, result.threadLatestAt);
-        totalCount = result.totalCount;
-      } else if (source.kind === 'search') {
-        // Search mode — use search API, preserve backend result order
-        const result = await api.searchEmails(accountId, source.query, true, source.mailbox);
-        emails = result.emails;
-        totalCount = result.emails.length;
+      if (source.kind === 'query') {
+        // A typed search is a signal for the chat; a filter click is not.
+        const recordSearch = !filterFromQuery(source.query);
+        const page = await api.listThreads(accountId, source.query, view, unreadOnly, null, limit, recordSearch);
+        emails = withThreadActivity(page.emails, page.threadLatestAt);
+        totalCount = emails.length;
+        loaded = { type: 'pageLoaded', cursor: page.nextCursor, offset: 0, hasMore: page.nextCursor !== null };
       } else {
         [emails, totalCount] = await Promise.all([
           api.getEmails(accountId, limit, 0, mailbox, unreadOnly),
@@ -860,92 +883,119 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           // while listing Sent made hasMore compare two different sets.
           api.getEmailCount(accountId, mailbox, unreadOnly),
         ]);
+        loaded = {
+          type: 'pageLoaded',
+          cursor: null,
+          offset: emails.length,
+          hasMore: computeHasMore(emails.length, totalCount),
+        };
       }
 
       // The snooze records ride along: the rows' markers and the Snoozed
       // view's wake times read them.
       void get().fetchSnoozes(accountId);
 
+      // A flagged row never paints without its warning (see EmailRow).
+      await useJunkStore.getState().fetchVerdicts(emails.map((e) => e.id));
+
       // Only update state if this is still the current fetch operation
       if (get().currentFetchId === fetchId) {
-        set({
-          emails: withoutPendingRemovals(emails, get().pendingRemovals),
+        set((state) => ({
+          emails: withoutPendingRemovals(emails, state.pendingRemovals),
           totalCount,
           isLoading: false,
-          hasMore: computeHasMore(emails.length, totalCount),
-          loadMoreLock: false,
-          loadMoreFailed: false,
-        });
+          paging: listPagingReducer(state.paging, loaded),
+        }));
+        if (reportsSearch) useLogStore.getState().addLog('success', 'search', `Listed ${emails.length} rows`);
       }
     } catch (error) {
       // Only update state if this is still the current fetch operation
-      if (get().currentFetchId === fetchId) {
-        set({ error: errorText(error), isLoading: false });
+      if (get().currentFetchId !== fetchId) return;
+      useLogStore.getState().addLog('error', 'search', `Could not load the list: ${errorText(error)}`);
+      if (silent) {
+        set({ isLoading: false });
+        return;
       }
+      // Rows of the list being left must not stand in for this one.
+      set((state) => ({
+        emails: [],
+        listError: errorText(error),
+        isLoading: false,
+        paging: listPagingReducer(state.paging, { type: 'failed' }),
+      }));
     }
   },
 
   loadMoreEmails: async (accountId, _filter, _selectedCategories, mailbox) => {
-    const {
-      isLoadingMore,
-      hasMore,
-      emails,
-      totalCount,
-      loadMoreLock,
-      loadMoreFailed,
-      currentFetchId,
-      searchQuery,
-      unreadOnly,
-    } = get();
+    const { paging, totalCount, currentFetchId, searchQuery, unreadOnly } = get();
+    if (paging.status !== 'idle') return;
+    const source = planListSource(searchQuery);
+    if (source.kind === 'query' && paging.cursor === null) return;
 
-    // A search returns all its results at once; a one-filter query pages.
-    const source = planListSource(searchQuery, mailbox ?? 'inbox');
-    if (source.kind === 'search') return;
-
-    // Use both isLoadingMore flag and lock to prevent concurrent operations
-    if (isLoadingMore || !hasMore || loadMoreLock || loadMoreFailed) {
-      return;
-    }
-
-    // Acquire lock and set loading state
-    set({ isLoadingMore: true, loadMoreLock: true });
+    const dispatch = (action: ListPagingAction) =>
+      set((state) => ({ paging: listPagingReducer(state.paging, action) }));
+    dispatch({ type: 'requested' });
 
     try {
-      // Capture the offset at the start to avoid race conditions
-      const offset = emails.length;
-
       let moreEmails: Email[];
-      if (source.kind === 'filter') {
-        const result = await api.getFilteredEmails(
+      let nextCursor: ListPaging['cursor'] = null;
+      if (source.kind === 'query') {
+        const page = await api.listThreads(
           accountId,
-          ...filterArgs(source.filter),
+          source.query,
+          mailbox ?? 'inbox',
+          unreadOnly,
+          paging.cursor,
           PAGE_SIZE,
-          offset,
-          source.filter.type === 'attachment_ext' ? source.filter.value : undefined,
-          { mailbox: source.mailbox, unreadOnly },
+          false,
         );
-        moreEmails = withThreadActivity(result.emails, result.threadLatestAt);
+        moreEmails = withThreadActivity(page.emails, page.threadLatestAt);
+        nextCursor = page.nextCursor;
       } else {
-        moreEmails = await api.getEmails(accountId, PAGE_SIZE, offset, mailbox, unreadOnly);
+        moreEmails = await api.getEmails(accountId, PAGE_SIZE, paging.offset, mailbox, unreadOnly);
       }
+
+      await useJunkStore.getState().fetchVerdicts(moreEmails.map((e) => e.id));
 
       // Check if fetch ID changed (account switched during load)
       if (get().currentFetchId !== currentFetchId) {
-        set({ isLoadingMore: false, loadMoreLock: false });
+        dispatch({ type: 'cancelled' });
         return;
       }
 
-      const newTotal = emails.length + moreEmails.length;
-
-      set((state) => ({
-        emails: appendUniqueEmails(state.emails, withoutPendingRemovals(moreEmails, state.pendingRemovals)),
-        isLoadingMore: false,
-        loadMoreLock: false,
-        hasMore: computeHasMoreAfterPage(newTotal, moreEmails.length, totalCount),
-      }));
+      // The next row number counts what the backend delivered, not what was
+      // new here: a page of repeats still has to move the list forward.
+      const offset = paging.offset + moreEmails.length;
+      set((state) => {
+        const rows = withoutPendingRemovals(moreEmails, state.pendingRemovals);
+        return source.kind === 'query'
+          ? {
+              emails: appendUniqueEmails(state.emails, rows, threadRowKey),
+              paging: listPagingReducer(state.paging, {
+                type: 'pageLoaded',
+                cursor: lowerCursor(state.paging.cursor, nextCursor),
+                offset: 0,
+                hasMore: nextCursor !== null,
+              }),
+            }
+          : {
+              emails: appendUniqueEmails(state.emails, rows),
+              paging: listPagingReducer(state.paging, {
+                type: 'pageLoaded',
+                cursor: null,
+                offset,
+                hasMore: computeHasMoreAfterPage(offset, moreEmails.length, totalCount),
+              }),
+            };
+      });
     } catch (error) {
-      console.error('Failed to load more emails:', error);
-      set({ isLoadingMore: false, loadMoreLock: false, loadMoreFailed: true, error: errorText(error) });
+      // A failure of the list before this one says nothing about this one.
+      if (get().currentFetchId !== currentFetchId) {
+        dispatch({ type: 'cancelled' });
+        return;
+      }
+      useLogStore.getState().addLog('error', 'search', `Could not load more emails: ${errorText(error)}`);
+      dispatch({ type: 'failed' });
     }
   },
 
@@ -1054,8 +1104,12 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         emails,
         totalCount,
         isLoading: false,
-        hasMore: emails.length < totalCount,
-        loadMoreLock: false,
+        paging: listPagingReducer(INITIAL_PAGING, {
+          type: 'pageLoaded',
+          cursor: null,
+          offset: emails.length,
+          hasMore: emails.length < totalCount,
+        }),
         navigationInFlight: false,
         selectedEmail: email,
         threadEmails: [],
@@ -1178,7 +1232,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     const now = Math.floor(Date.now() / 1000);
     set((state) => {
       const patched = { ...state, snoozes: withSnoozes(state.snoozes, threads, until, now) };
-      return snoozeLeavesList('snooze', state.listScope) ? removeThreads(patched, keys) : patched;
+      return snoozeLeavesList('snooze', state.listScope, Boolean(state.searchQuery?.trim()))
+        ? removeThreads(patched, keys)
+        : patched;
     });
     let failed: ReadonlySet<string>;
     let detail = '';
@@ -1242,7 +1298,9 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     const before = get();
     set((state) => {
       const patched = { ...state, snoozes: withoutSnoozes(state.snoozes, keys) };
-      return snoozeLeavesList('unsnooze', state.listScope) ? removeThreads(patched, keys) : patched;
+      return snoozeLeavesList('unsnooze', state.listScope, Boolean(state.searchQuery?.trim()))
+        ? removeThreads(patched, keys)
+        : patched;
     });
     try {
       await api.unsnoozeThreads(threads);
@@ -1314,22 +1372,6 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   setSearchQuery: (query) => set({ searchQuery: query }),
-  applySearchResults: (query, emails) => {
-    // Pre-seed emails and mark the next effect-triggered fetchEmails as a no-op.
-    // Also bump fetchId so any already-in-flight fetch's response is discarded.
-    set((state) => ({
-      searchQuery: query,
-      emails,
-      totalCount: emails.length,
-      hasMore: false,
-      isLoading: false,
-      skipNextFetch: true,
-      currentFetchId: state.currentFetchId + 1,
-      // The bumped fetchId makes an in-flight navigateToEmail bail out
-      // before it clears its own flag; the list is ours now.
-      navigationInFlight: false,
-    }));
-  },
   clearSearchQuery: () => set({ searchQuery: null }),
 
   clearError: () => set({ error: null }),
@@ -1354,18 +1396,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       selectedEmail: null,
       threadEmails: [],
       isLoading: false,
-      isLoadingMore: false,
+      paging: INITIAL_PAGING,
+      listError: null,
       isLoadingThread: false,
-      hasMore: true,
       totalCount: 0,
       error: null,
       searchQuery: null,
       focusEmailId: null,
       navigationMode: false,
       navigationInFlight: false,
-      skipNextFetch: false,
-      loadMoreLock: false,
-      loadMoreFailed: false,
       tabs: [],
       activeTabId: null,
       pendingChatDraft: null,
@@ -1375,6 +1414,44 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     });
   },
 }));
+
+/**
+ * Merge a refresh into a list with a query. The newest refresh wins, and a
+ * refresh that outlived its list lands nowhere; its failure is the log's, since
+ * the rows on screen are still good.
+ */
+async function refreshQueryList(
+  accountId: string | null,
+  query: string,
+  view: MailboxView,
+  unreadOnly: boolean,
+): Promise<void> {
+  const { isLoading, emails, paging, currentFetchId } = useEmailStore.getState();
+  // The first page is on its way, or it failed and waits for Retry.
+  if (isLoading || (paging.status === 'failed' && emails.length === 0)) return;
+  const requestId = ++refreshRequestSeq;
+  try {
+    const limit = refetchLimit(emails.length);
+    const page = await api.listThreads(accountId, query, view, unreadOnly, null, limit, false);
+    const head = withThreadActivity(page.emails, page.threadLatestAt);
+    void useEmailStore.getState().fetchSnoozes(accountId);
+    await useJunkStore.getState().fetchVerdicts(head.map((e) => e.id));
+    if (refreshRequestSeq !== requestId || useEmailStore.getState().currentFetchId !== currentFetchId) return;
+    useEmailStore.setState((state) => {
+      const merged = mergeHead(state.emails, state.paging.cursor, {
+        emails: withoutPendingRemovals(head, state.pendingRemovals),
+        nextCursor: page.nextCursor,
+      });
+      return {
+        emails: merged.emails,
+        totalCount: merged.emails.length,
+        paging: listPagingReducer(state.paging, { type: 'refreshed', cursor: merged.cursor }),
+      };
+    });
+  } catch (error) {
+    useLogStore.getState().addLog('error', 'system', `Could not refresh the list: ${errorText(error)}`);
+  }
+}
 
 /** How long archive and delete wait for an Undo before reaching the provider. */
 export const UNDO_WINDOW_MS = 6000;
@@ -1429,7 +1506,7 @@ function applyOptimistic(
   const keys = new Set(threads.map((t) => threadKey(t.accountId, t.threadId)));
   const before = useEmailStore.getState();
   const patched = patch(before, keys);
-  const leaves = leavesList(action, before.listScope);
+  const leaves = leavesList(action, before.listScope, Boolean(before.searchQuery?.trim()));
   useEmailStore.setState(leaves ? removeThreads(patched, keys) : patched);
   return { keys, before, leaves };
 }

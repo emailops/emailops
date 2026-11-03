@@ -222,6 +222,11 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
                 subject TEXT, body TEXT, ai_generated INTEGER, status TEXT, created_at INTEGER,
                 updated_at INTEGER, provider_draft_id TEXT, cc_addresses_json TEXT, body_html TEXT,
                 provider_message_id TEXT, dirty INTEGER);
+            CREATE TABLE lenses (id TEXT PRIMARY KEY, name TEXT, account_id TEXT, scope_json TEXT, schema_json TEXT,
+                prompt_text TEXT, created_at INTEGER, updated_at INTEGER);
+            CREATE TABLE lens_rows (lens_id TEXT, email_id TEXT, account_id TEXT, extracted_json TEXT,
+                prompt_version INTEGER, email_timestamp INTEGER, extracted_at INTEGER,
+                PRIMARY KEY (lens_id, email_id));
             """
         )
         return conn
@@ -236,6 +241,18 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
 
     def _one(self, conn, sql, *params):
         return conn.execute(sql, params).fetchone()
+
+    def test_the_quote_lens_keeps_a_row_of_the_trashed_quote_and_of_its_correction(self):
+        conn, _ = self._seeded()
+
+        rows = conn.execute(
+            "SELECT e.is_deleted, r.extracted_json FROM lens_rows r JOIN emails e ON e.id = r.email_id "
+            "ORDER BY e.is_deleted"
+        ).fetchall()
+
+        self.assertEqual([deleted for deleted, _ in rows], [0, 1])
+        self.assertIn("4200", rows[0][1])
+        self.assertIn("3100", rows[1][1])
 
     def test_the_trashed_quote_is_deleted_but_still_indexed(self):
         conn, _ = self._seeded()

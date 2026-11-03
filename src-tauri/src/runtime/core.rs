@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use crate::db::Database;
 use crate::services;
@@ -132,6 +133,45 @@ impl AppCore {
             .remove(account_id);
     }
 
+    /// Ask every running and queued background task to stop and wait for the
+    /// queues to empty, for at most `timeout`. Returns whether they did.
+    ///
+    /// Stopping is cooperative, so a task that never checks is only waited for.
+    /// The request is repeated on every pass: a task on its way out can still
+    /// queue work, as a sync does with its classification and Embeddings, and a
+    /// sync that was waiting its turn clears the abort flag when it starts.
+    pub async fn stop_background_work(&self, timeout: Duration) -> bool {
+        const POLL_INTERVAL: Duration = Duration::from_millis(50);
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let sync_queues: Vec<(String, TaskQueue)> = self
+                .sync_queues
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .map(|(account_id, queue)| (account_id.clone(), queue.clone()))
+                .collect();
+            for (account_id, _) in &sync_queues {
+                services::emails::request_sync_abort(&self.sync_abort_flags, account_id);
+            }
+            let queues = [&self.ai_queue, &self.ai_background, &self.db_queue]
+                .into_iter()
+                .chain(sync_queues.iter().map(|(_, queue)| queue));
+            let mut idle = true;
+            for queue in queues {
+                queue.cancel_matching(|_| true);
+                idle &= queue.is_idle();
+            }
+            if idle {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
+
     /// Aggregate snapshot of every per-account sync queue, presented to the
     /// dashboard as a single "sync" queue. Running/pending tasks are merged
     /// as-is (their `name` already carries the account id via
@@ -231,6 +271,106 @@ mod tests {
                 .contains_key("acct-b"),
             "pruning one account must not disturb another"
         );
+    }
+
+    /// A task that runs until the queue asks it to stop, like the embedding
+    /// and classification loops.
+    async fn run_until_cancelled() {
+        while !services::task_queue::cancel_requested() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn queues_with_work(core: &AppCore) -> Vec<String> {
+        [
+            core.ai_queue.snapshot(),
+            core.ai_background.snapshot(),
+            core.db_queue.snapshot(),
+            core.sync_queue_snapshot(),
+        ]
+        .into_iter()
+        .filter(|q| !q.running.is_empty() || !q.pending.is_empty())
+        .map(|q| q.name)
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn stopping_background_work_empties_every_queue() {
+        let core = core();
+        core.ai_queue.submit_named("a", run_until_cancelled()).await;
+        core.ai_background.submit_named("b", run_until_cancelled()).await;
+        core.db_queue.submit_named("c", run_until_cancelled()).await;
+        core.sync_queue_for("acct-a")
+            .submit_named("d", run_until_cancelled())
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(core.stop_background_work(Duration::from_secs(2)).await);
+
+        assert_eq!(queues_with_work(&core), Vec::<String>::new());
+    }
+
+    /// A task on its way out can queue more work: a sync that ends queues its
+    /// classification and Embeddings.
+    #[tokio::test]
+    async fn work_queued_by_a_stopping_task_is_stopped_too() {
+        let core = core();
+        let queue = core.ai_background.clone();
+        core.ai_background
+            .submit_named("first", async move {
+                run_until_cancelled().await;
+                queue.submit_named("follow-up", run_until_cancelled()).await;
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(core.stop_background_work(Duration::from_secs(2)).await);
+
+        assert_eq!(queues_with_work(&core), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_sync_is_stopped_through_its_abort_flag() {
+        // A sync reads the account's abort flag between batches, not the queue's.
+        let core = core();
+        let flags = core.sync_abort_flags.clone();
+        core.sync_queue_for("acct-a")
+            .submit_named("sync:acct-a", async move {
+                loop {
+                    let aborted = flags
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get("acct-a")
+                        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed));
+                    if aborted {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(core.stop_background_work(Duration::from_secs(2)).await);
+
+        assert_eq!(queues_with_work(&core), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_task_that_does_not_stop_is_reported_instead_of_waited_for_forever() {
+        let core = core();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        core.db_queue
+            .submit_named("stubborn", async move {
+                let _ = released.await;
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let stopped = core.stop_background_work(Duration::from_millis(100)).await;
+
+        assert!(!stopped, "the task is still running");
+        let _ = release.send(());
     }
 
     #[test]

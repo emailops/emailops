@@ -109,7 +109,8 @@
     "rejected": "Als falsch markiert — unten erneut versucht.",
     "budgetNotice": "Ein Teil der E-Mails, auf denen diese Antwort beruht, wurde gekürzt, damit er in das Kontextfenster des Modells passt; Details können fehlen.",
     "budgetOverflow": "Diese Unterhaltung passt nicht mehr in das Kontextfenster des Modells; der Antwort können Anweisungen oder Kontext fehlen.",
-    "budgetSettings": "KI-Einstellungen"
+    "budgetSettings": "KI-Einstellungen",
+    "answerTruncated": "Diese Antwort wurde abgeschnitten, weil sie die Längenbegrenzung des Modells erreicht hat."
   },
   "processing": {
     "queued": "Warte, bis eine andere KI-Aufgabe fertig ist…",

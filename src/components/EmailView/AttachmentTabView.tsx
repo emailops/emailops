@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { PdfViewer } from '@/components/Attachments/PdfViewer';
-import { dataUrlToBase64, saveToDownloads } from '@/lib/download';
+import { EmailBody } from '@/components/EmailView/EmailBody';
+import { dataUrlToBase64, decodeDataUrlText, saveToDownloads } from '@/lib/download';
 import type { AttachmentViewTab } from '@/stores/emailStore';
 
 interface AttachmentTabViewProps {
@@ -56,13 +57,17 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
           </div>
         ) : tab.mimeType === 'text/plain' || tab.mimeType === 'text/markdown' ? (
           <pre className="w-full h-full overflow-auto p-6 text-sm text-gray-700 whitespace-pre-wrap font-mono leading-relaxed">
-            {decodeBase64Utf8(tab.dataUrl)}
+            {decodeDataUrlText(tab.dataUrl)}
           </pre>
         ) : tab.mimeType === 'application/pdf' ? (
           <PdfViewer key={tab.id} dataUrl={tab.dataUrl} title={tab.filename} />
+        ) : tab.mimeType === 'text/html' ? (
+          <div className="h-full overflow-auto p-4">
+            <EmailBody html={decodeDataUrlText(tab.dataUrl)} accountId={tab.accountId} senderEmail={tab.senderEmail} />
+          </div>
         ) : (
           // The MIME type is whatever the sender declared, so anything framed
-          // here is untrusted: HTML, SVG, XHTML or a type the WebView sniffs as
+          // here is untrusted: SVG, XHTML or a type the WebView sniffs as
           // markup could run script. An empty sandbox applies every restriction
           // (scripts, forms, popups, same-origin) yet still renders static content.
           <iframe
@@ -107,14 +112,4 @@ function AttachmentIcon({ mimeType }: { mimeType: string }) {
       />
     </svg>
   );
-}
-
-function decodeBase64Utf8(dataUrl: string): string {
-  const base64 = dataUrl.split(',')[1] ?? '';
-  try {
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    return new TextDecoder('utf-8').decode(bytes);
-  } catch {
-    return '';
-  }
 }

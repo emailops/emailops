@@ -91,7 +91,7 @@ immer zurück zur Liste.
 **Alle** und **Ungelesen** über der Liste bestimmen, was sie zeigt. **Ungelesen** behält nur
 Unterhaltungen mit einer ungelesenen Nachricht — in Ansichten mit einzelnen Nachrichten, etwa
 gesendeten E-Mails und Ordnern, nur die ungelesenen Nachrichten — in jeder Ansicht und auch mit
-einem intelligenten Filter; während einer Suche ist es ausgeblendet. Eine Unterhaltung, die Sie
+einem intelligenten Filter und während einer Suche. Eine Unterhaltung, die Sie
 öffnen, bleibt in der Liste, bis diese neu geladen wird, und die Auswahl gilt, bis Sie EmailOps
 beenden.
 
@@ -167,8 +167,8 @@ das sie als Raster aus Blöcken darstellt.
 Ein Klick auf einen Filter schreibt ihn als sichtbare, bearbeitbare Abfrage ins Suchfeld —
 `tag:priority=urgent`, `from:`, `domain:`, `ext:` — ein zweiter Klick entfernt sie wieder. Mit
 Rechtsklick und **Zur Suche hinzufügen** kombinieren Sie ihn mit der aktuellen Suche. Ein Filter
-wirkt in der Ansicht, in der Sie sich befinden: in Gesendet oder einem Ordner listet er nur deren
-E-Mails, und die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
+oder eine Suche wirkt in der Ansicht, in der Sie sich befinden: Gesendet, Spam, Papierkorb und
+Ordner listen nur ihre eigenen E-Mails, und der Eingang erreicht alles außer Spam und Papierkorb. Die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
 dass eine Suche aktiv ist, und bietet an, sie zu löschen. Jede Tag-Gruppe zeigt zuerst ihre zehn meistgenutzten Werte,
 mit einer Schaltfläche darunter für den Rest.
 
@@ -305,8 +305,8 @@ den Empfängern der E-Mail.
 ## Suche
 
 <!-- claim:feat-search-1 -->
-Volltextsuche über Betreff, Inhalt, Absender und Anhänge. Mit aktivierter KI kommt die
-semantische Suche hinzu, die nach Bedeutung statt nach exakten Wörtern sucht.
+Volltextsuche über Betreff, Inhalt und Absender. Die Liste reicht bis zum letzten Treffer in den
+heruntergeladenen E-Mails, und vom Detektor markierte E-Mails erscheinen mit ihrer Warnung.
 
 <!-- claim:feat-search-2 -->
 Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:

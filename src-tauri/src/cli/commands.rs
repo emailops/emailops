@@ -12,6 +12,9 @@ use super::output;
 use super::session::CliSession;
 use super::{Command, OutputMode, RenderStyle, SuggestionAction};
 
+/// The list's page size: `search` reads what the app reads.
+const SEARCH_PAGE_SIZE: i32 = 50;
+
 /// Execute one parsed command against the session.
 pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> {
     match command {
@@ -66,34 +69,64 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             query,
             limit,
             offset,
+            view,
+            unread,
             trace,
         } => {
             let account = session.require_account()?;
-            let result =
-                crate::services::search::search_emails(&session.db, Some(&account), &query, false, None, None, None)
-                    .await?;
-            let total = result.emails.len();
-            let emails: Vec<_> = result
-                .emails
-                .iter()
-                .skip(offset)
-                .take(limit)
-                .map(|e| e.email.clone())
-                .collect();
-            let shown = emails.len();
+            let view = crate::db::emails::list::ListView::parse(&view)?;
+            let started = std::time::Instant::now();
+            let wanted = offset + limit;
+
+            // The same pages the list reads, until they cover the slice asked
+            // for: `--trace` says whether that was the end of the list.
+            let mut rows = Vec::new();
+            let mut pages = 0;
+            let mut cursor = None;
+            let (parsed_query, exhausted) = loop {
+                let page = crate::services::list::list_threads(
+                    &session.db,
+                    crate::services::list::ListRequest {
+                        account_id: Some(&account),
+                        query: &query,
+                        view: view.clone(),
+                        unread_only: unread,
+                        cursor,
+                        limit: SEARCH_PAGE_SIZE,
+                    },
+                )?;
+                pages += 1;
+                rows.extend(page.emails);
+                cursor = page.next_cursor;
+                if cursor.is_none() || rows.len() >= wanted {
+                    break (page.parsed_query, cursor.is_none());
+                }
+            };
+            let ms = started.elapsed().as_millis() as u64;
+            let total = rows.len();
+            let emails: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+            let trace_data = output::SearchTrace {
+                parsed: parsed_query.as_ref(),
+                shown: emails.len(),
+                total,
+                exhausted,
+                pages,
+                ms,
+            };
 
             if session.mode == OutputMode::Json {
                 if trace {
                     output::emit_ok(serde_json::json!({
                         "emails": emails,
                         "trace": {
-                            "query": result.query,
-                            "searchMethod": result.search_method,
-                            "aiAvailable": result.ai_available,
-                            "parsedQuery": result.parsed_query,
-                            "shown": shown,
+                            "query": query,
+                            "parsedQuery": parsed_query,
+                            "shown": trace_data.shown,
                             "offset": offset,
                             "totalHits": total,
+                            "exhausted": exhausted,
+                            "pages": pages,
+                            "ms": ms,
                         }
                     }))
                 } else {
@@ -102,14 +135,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             } else {
                 output::render_emails(&emails, session.style)?;
                 if trace {
-                    output::render_search_trace(
-                        &result.search_method,
-                        result.ai_available,
-                        result.parsed_query.as_ref(),
-                        shown,
-                        total,
-                        session.style.color(),
-                    );
+                    output::render_search_trace(&trace_data, session.style.color());
                 }
                 Ok(())
             }

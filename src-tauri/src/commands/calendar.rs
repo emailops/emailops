@@ -202,7 +202,7 @@ pub async fn add_calendar_feed(
         &account,
         &label,
         &url,
-        std::sync::Arc::new(crate::sync::ics_feed_calendar::ReqwestIcsFetcher::default()),
+        std::sync::Arc::new(crate::sync::ics_feed_calendar::ReqwestIcsFetcher),
         chrono::Utc::now().timestamp(),
     )
     .await

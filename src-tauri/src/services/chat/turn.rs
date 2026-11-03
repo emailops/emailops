@@ -9,7 +9,7 @@ use std::time::Duration;
 use chrono::{Datelike, Utc};
 use tokio::time::timeout;
 
-use crate::ai::provider::{AIProvider, AiMessage};
+use crate::ai::provider::{AIProvider, AiMessage, MAX_TOOL_CALLS_PER_ROUND};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{
@@ -366,6 +366,7 @@ const SOURCE_FRAMING_CHARS: usize = 100;
 /// failed). Returned with the trace entries of the parts it read.
 #[allow(clippy::too_many_arguments)]
 async fn fit_open_document(
+    db: &Database,
     provider: &dyn AIProvider,
     doc: &super::open_document::OpenDocument,
     question: &str,
@@ -392,8 +393,17 @@ async fn fit_open_document(
         emit_log("info", &format!("open document: read part {done} of {total}"));
     };
     let is_cancelled = || cancelled.load(std::sync::atomic::Ordering::Relaxed);
-    let (notes, calls) =
-        read_document_in_parts(provider, doc, question, &reading, slot_chars, &on_part, &is_cancelled).await;
+    let (notes, calls) = read_document_in_parts(
+        db,
+        provider,
+        doc,
+        question,
+        &reading,
+        slot_chars,
+        &on_part,
+        &is_cancelled,
+    )
+    .await;
     let fitted = match notes {
         Some(notes) => notes.shortened(slot_chars),
         None => {
@@ -1261,7 +1271,7 @@ pub(crate) fn parse_xml_tool_calls(text: &str) -> Vec<crate::ai::provider::AiToo
             Some(_) if !explicitly_closed => continue,
             Some(s) => s + FN_OPEN.len(),
             None => {
-                if let Some(call) = parse_json_tool_call_block(block) {
+                if let Some(call) = parse_json_tool_call_block(block, explicitly_closed) {
                     out.push(call);
                 }
                 continue;
@@ -1363,16 +1373,28 @@ fn repair_name_equals(inner: &str) -> std::borrow::Cow<'_, str> {
 /// `arguments` when there is no top-level one, treats top-level keys beside
 /// `name` as the arguments when the `arguments` wrapper was dropped, defaults
 /// truly absent arguments to an empty object, and tolerates trailing garbage
-/// after the object. Returns `None` when the block is not a well-formed
-/// object or carries no resolvable tool name.
-fn parse_json_tool_call_block(inner: &str) -> Option<crate::ai::provider::AiToolCall> {
-    use crate::ai::provider::{AiToolCall, AiToolCallFunction};
+/// after the object, reads through OpenAI's `function` wrapper, and adds the
+/// braces a block the model closed (`explicitly_closed`) is short of. Returns
+/// `None` when the block is not a well-formed object or carries no resolvable
+/// tool name.
+fn parse_json_tool_call_block(inner: &str, explicitly_closed: bool) -> Option<crate::ai::provider::AiToolCall> {
+    use crate::ai::provider::{close_open_objects, AiToolCall, AiToolCallFunction};
 
     let inner = repair_name_equals(inner);
     let inner = inner.as_ref();
     let value = parse_first_json_value(inner)
-        .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))?;
+        .or_else(|| repair_missing_arguments_key(inner).and_then(|fixed| parse_first_json_value(&fixed)))
+        .or_else(|| {
+            explicitly_closed
+                .then(|| close_open_objects(inner))
+                .flatten()
+                .and_then(|fixed| parse_first_json_value(&fixed))
+        })?;
     let obj = value.as_object()?;
+    let obj = match obj.get("function").and_then(|f| f.as_object()) {
+        Some(function) if !obj.contains_key("name") => function,
+        _ => obj,
+    };
     let mut arguments = obj.get("arguments").cloned().unwrap_or_else(|| {
         // Flattened shape: the model dropped the `arguments` wrapper and put
         // the args at top level next to `name` — collect everything else.
@@ -1787,6 +1809,74 @@ fn dedupe_tool_calls(calls: Vec<crate::ai::provider::AiToolCall>) -> (Vec<crate:
     (kept, dropped)
 }
 
+/// How often a model call checks the Cancel flag from outside.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+/// How long a cancelled call gets to stop by itself before it is dropped: its
+/// token callback has said no, and a provider that ends normally still reports
+/// what the call used.
+const CANCEL_GRACE: Duration = Duration::from_secs(1);
+
+/// Await a model call until Cancel. The token callback only runs when a token
+/// arrives, so it cannot stop a provider that has gone silent; dropping the
+/// call can, on every provider.
+async fn until_cancelled<T>(
+    call: impl std::future::Future<Output = Result<T>>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<T> {
+    tokio::pin!(call);
+    while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        tokio::select! {
+            result = &mut call => return result,
+            () = tokio::time::sleep(CANCEL_POLL) => {}
+        }
+    }
+    timeout(CANCEL_GRACE, call).await.unwrap_or(Err(AppError::Cancelled))
+}
+
+/// When a streamed model call last sent a token.
+#[derive(Clone)]
+struct StreamPulse(Arc<std::sync::Mutex<tokio::time::Instant>>);
+
+impl StreamPulse {
+    fn new() -> Self {
+        Self(Arc::new(std::sync::Mutex::new(tokio::time::Instant::now())))
+    }
+
+    fn beat(&self) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
+    }
+
+    fn silent_for(&self) -> Duration {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .elapsed()
+    }
+}
+
+/// Await a streamed model call for as long as it keeps sending tokens: a long
+/// answer on a slow model is healthy, and only `limit` of silence means stuck.
+async fn until_silent<T>(
+    call: impl std::future::Future<Output = Result<T>>,
+    pulse: &StreamPulse,
+    limit: Duration,
+) -> Result<T> {
+    tokio::pin!(call);
+    loop {
+        let silent = pulse.silent_for();
+        if silent >= limit {
+            return Err(AppError::AiError(format!(
+                "The model sent nothing for {}s and may be stuck. Try a smaller model.",
+                limit.as_secs()
+            )));
+        }
+        tokio::select! {
+            result = &mut call => return result,
+            () = tokio::time::sleep(limit - silent) => {}
+        }
+    }
+}
+
 fn tool_call_key(tc: &crate::ai::provider::AiToolCall) -> String {
     format!("{}|{}", tc.function.name, canonical_json(&tc.function.arguments))
 }
@@ -2181,6 +2271,8 @@ struct ToolLoopOutcome {
     /// The user cancelled the turn: the loop stopped at the first chance it
     /// had and made no model call after it (see `chat::cancel`).
     cancelled: bool,
+    /// The round that produced the final answer stopped at the token limit.
+    answer_truncated: bool,
 }
 
 /// What a cancelled turn keeps: the reply the user already saw (when the
@@ -2736,6 +2828,9 @@ async fn run_tool_loop(
     // its direct-answer path should re-emit the answer as a single token or skip
     // (it was already shipped).
     let mut answer_streamed_live = false;
+    // Set from the round that produced the final answer: a tool round that hit
+    // the limit is not what the user reads.
+    let mut answer_truncated = false;
     // Small local models (e.g. qwen3.5-4b) sometimes "announce" they will call
     // a tool ("Voy a buscar el contacto…") and then stop without emitting an
     // actual tool_call — turning the announcement into the final answer. Allow
@@ -2967,9 +3062,13 @@ async fn run_tool_loop(
             let cancel_flag = Arc::clone(&cancel);
             Box::new(move |_token: String| !cancel_flag.load(std::sync::atomic::Ordering::Relaxed))
         };
-        let call_result =
-            AiService::chat_stream_with_tools(db, provider, messages.clone(), tools.clone(), on_token).await;
+        let call_result = until_cancelled(
+            AiService::chat_stream_with_tools(db, provider, messages.clone(), tools.clone(), on_token),
+            &cancel,
+        )
+        .await;
         let last_round_streamed_live = streamed_any.load(std::sync::atomic::Ordering::Relaxed);
+        let round_truncated = call_result.as_ref().is_ok_and(|r| r.truncated);
         let call_ms = t_call.elapsed().as_millis() as i64;
         emit_log(
             "info",
@@ -3021,6 +3120,9 @@ async fn run_tool_loop(
                     trace.input = Some(input_snapshot);
                 }
                 llm_calls.push(trace);
+                if is_cancelled() {
+                    break;
+                }
                 let msg = format!("tool-call round {} failed: {}", round, e);
                 emit_log("warn", &msg);
                 abort_error = Some(e.to_string());
@@ -3110,6 +3212,7 @@ async fn run_tool_loop(
                 // re-emitting it as a single token. Push and break.
                 had_any_answer = true;
                 answer_streamed_live = last_round_streamed_live;
+                answer_truncated = round_truncated;
                 messages.push(response);
                 break;
             }
@@ -3210,11 +3313,15 @@ async fn run_tool_loop(
         }
 
         // A repeated call in the same round adds nothing but tool-result tokens.
-        let (tool_calls, dropped_repeats) = dedupe_tool_calls(tool_calls);
-        let response = if dropped_repeats > 0 {
+        let (mut tool_calls, dropped_repeats) = dedupe_tool_calls(tool_calls);
+        let over_cap = tool_calls.len().saturating_sub(MAX_TOOL_CALLS_PER_ROUND);
+        tool_calls.truncate(MAX_TOOL_CALLS_PER_ROUND);
+        let response = if dropped_repeats + over_cap > 0 {
             emit_log(
                 "info",
-                &format!("tool_loop: dropped {dropped_repeats} repeated tool call(s) in this round"),
+                &format!(
+                    "tool_loop: dropped {dropped_repeats} repeated and {over_cap} over-cap tool call(s) in this round"
+                ),
             );
             AiMessage {
                 tool_calls: Some(tool_calls.clone()),
@@ -3343,6 +3450,7 @@ async fn run_tool_loop(
         aggregated_draft_refs,
         answer_streamed_live,
         cancelled: is_cancelled(),
+        answer_truncated,
     }
 }
 
@@ -3827,6 +3935,7 @@ async fn run_thread_bound_turn(
     // Whether the loop already shipped the answer live (skip the single-token
     // re-emit below if so). Captured before `outcome` is partially moved.
     let answer_streamed_live = outcome.answer_streamed_live;
+    let answer_truncated = outcome.answer_truncated;
 
     // If the loop ended on a direct assistant text answer, reuse it as-is;
     // otherwise stream a synthesis pass over whatever messages it produced.
@@ -3888,6 +3997,7 @@ async fn run_thread_bound_turn(
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: answer_truncated,
         })
     } else {
         // Loop produced a non-text final message (e.g. hit MAX_TOOL_ROUNDS).
@@ -3912,11 +4022,14 @@ async fn run_thread_bound_turn(
         let conv_for_token = conv_id_for_stream.clone();
         let msg_for_token = msg_id_for_stream.clone();
         let cancel_flag = Arc::clone(&cancel);
+        let pulse = StreamPulse::new();
+        let token_pulse = pulse.clone();
         let stream_fut = AiService::chat_stream(
             &db,
             provider.as_ref(),
             ai_messages,
             Box::new(move |token| {
+                token_pulse.beat();
                 let forward = gate_for_token.lock().map(|mut g| g.push(&token)).unwrap_or(token);
                 if !forward.is_empty() {
                     crate::services::events::emit(
@@ -3936,13 +4049,7 @@ async fn run_thread_bound_turn(
                 !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             }),
         );
-        let res = match timeout(STREAM_TIMEOUT, stream_fut).await {
-            Ok(res) => res,
-            Err(_) => Err(AppError::AiError(format!(
-                "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-                STREAM_TIMEOUT.as_secs()
-            ))),
-        };
+        let res = until_silent(until_cancelled(stream_fut, &cancel), &pulse, STREAM_TIMEOUT).await;
         if let Ok(r) = &res {
             turn_budget.record_call(prompt_chars, r.prompt_eval_count, r.dropped_front_tokens);
         }
@@ -3981,6 +4088,31 @@ async fn run_thread_bound_turn(
             // Safety net: strip any tool-call markup that leaked into the final
             // text before persisting, so a reload shows the cleaned-up answer.
             result.content = strip_tool_call_markup(&result.content);
+            // Same net as `run_chat_turn`: no answer text at all gets the
+            // localized hint, on screen and in the row, never a blank bubble.
+            if result.content.trim().is_empty() {
+                emit_log(
+                    "error",
+                    "thread answer empty — shipping rephrase hint instead of a blank bubble",
+                );
+                result.content = empty_answer_hint(language).to_string();
+                crate::services::events::emit(
+                    "chat-stream",
+                    ChatStreamEvent {
+                        message_id: assistant_message_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        token: result.content.clone(),
+                        done: false,
+                        error: None,
+                        token_count: None,
+                        latency_ms: None,
+                        replace: None,
+                    },
+                );
+            }
+            if result.truncated {
+                emit_log("warn", "the model reached its token limit: the answer is cut off");
+            }
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
                 db.update_chat_message_completion(&assistant_message_id, &result.content, token_count, Some(latency_ms))
@@ -4021,6 +4153,7 @@ async fn run_thread_bound_turn(
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
                 budget: turn_budget.trace(),
+                answer_truncated: result.truncated,
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {e}"));
@@ -4102,11 +4235,14 @@ async fn run_gated_synthesis_stream(
     let conv_for_token = conversation_id.to_string();
     let msg_for_token = assistant_message_id.to_string();
     let cancel_flag = Arc::clone(cancel);
+    let pulse = StreamPulse::new();
+    let token_pulse = pulse.clone();
     let stream_fut = AiService::chat_stream(
         db,
         provider,
         messages,
         Box::new(move |token| {
+            token_pulse.beat();
             // On the (unreachable) lock-poison case, forward the raw token
             // rather than drop content — persistence still strips markup as
             // the final safety net.
@@ -4129,13 +4265,7 @@ async fn run_gated_synthesis_stream(
             !cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
         }),
     );
-    let res = match timeout(stream_timeout, stream_fut).await {
-        Ok(res) => res,
-        Err(_) => Err(AppError::AiError(format!(
-            "Streaming answer exceeded {}s — model may be stuck. Try a smaller model.",
-            stream_timeout.as_secs()
-        ))),
-    };
+    let res = until_silent(until_cancelled(stream_fut, cancel), &pulse, stream_timeout).await;
     // Flush any prose the gate held back while waiting to see if a trailing
     // chunk completed a tool-call tag.
     if let Ok(mut g) = gate.lock() {
@@ -4172,7 +4302,11 @@ fn finish_cancelled_stream(
     if !cancelled {
         return result;
     }
-    let mut result = result?;
+    let mut result = match result {
+        // The call was dropped: nothing of it came back.
+        Err(AppError::Cancelled) => crate::ai::provider::ChatStreamResult::default(),
+        other => other?,
+    };
     let shown = strip_tool_call_markup(&result.content);
     let content = super::cancel::cancelled_answer(&shown, language_code);
     let note = content.get(shown.trim_end().len()..).unwrap_or(&content).to_string();
@@ -4459,8 +4593,7 @@ pub async fn run_chat_turn(
     // parameter per feature.
     context: TurnContext,
 ) -> Result<()> {
-    let started = std::time::Instant::now();
-    let result = run_chat_turn_inner(
+    let turn = Box::pin(run_chat_turn_inner(
         Arc::clone(&db),
         registry,
         conversation_id.clone(),
@@ -4472,16 +4605,24 @@ pub async fn run_chat_turn(
         history,
         categories,
         context,
-    )
-    .await;
+    ));
+    report_turn_outcome(&db, &conversation_id, &assistant_message_id, turn).await
+}
+
+/// Await a turn and report its failure; a panic counts as one, so it cannot
+/// leave the bubble spinning. The panic's text never reaches the bubble: it can
+/// quote message text.
+async fn report_turn_outcome(
+    db: &Database,
+    conversation_id: &str,
+    message_id: &str,
+    turn: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let crashed = AppError::AiError("the turn hit an internal error".to_string());
+    let result = crate::util::panic_guard::run_isolated_as(crashed, turn).await;
     if let Err(e) = &result {
-        report_turn_failure(
-            &db,
-            &conversation_id,
-            &assistant_message_id,
-            started.elapsed().as_millis() as i64,
-            e,
-        );
+        report_turn_failure(db, conversation_id, message_id, started.elapsed().as_millis() as i64, e);
     }
     result
 }
@@ -4782,7 +4923,8 @@ async fn run_chat_turn_inner(
     // LATER turn, but the history the model replays carries no tool arguments
     // — so the page to continue is recovered from the previous assistant
     // message's persisted trace.
-    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history));
+    let page_state = tools::PageState::seeded(tools::next_page::pending_page_from_history(&history))
+        .with_open_thread(ambient_refs.clone());
     if matches!(route_plan, super::routing::RoutePlan::AskPlanner { .. }) {
         emit_log(
             "info",
@@ -4871,6 +5013,7 @@ async fn run_chat_turn_inner(
         let t_plan = std::time::Instant::now();
         let glossary = crate::services::classification::TagGlossary::load(&db);
         let run = super::planner::plan_search(
+            &db,
             provider.as_ref(),
             &template,
             &user_email,
@@ -5273,6 +5416,7 @@ async fn run_chat_turn_inner(
         let shorter_ambient = match (&ambient_context, &ambient_source, plan.open_thread_chars) {
             (Some(Ambient::Document(doc)), _, Some(chars)) if chars != doc.text_chars() => {
                 let (fitted, calls) = fit_open_document(
+                    &db,
                     provider.as_ref(),
                     doc,
                     &user_question,
@@ -5367,6 +5511,7 @@ async fn run_chat_turn_inner(
         mut aggregated_draft_refs,
         loop_answer_streamed_live,
         tool_email_refs,
+        loop_answer_truncated,
     ) = if research_active {
         // Research mode replaces the tool loop: gather → read in batches →
         // write the report, all as one-shot completions on the auxiliary
@@ -5524,6 +5669,8 @@ async fn run_chat_turn_inner(
             Vec::new(),
             false,
             run.relevant,
+            // A report that ran out of budget is finished by `finish_report`.
+            false,
         )
     } else {
         emit_log("info", "stage: tool_loop");
@@ -5579,6 +5726,7 @@ async fn run_chat_turn_inner(
             // Tool-returned emails only: they decide the answer's grounding
             // (see `plan_answer_grounding`).
             outcome.aggregated_email_refs,
+            outcome.answer_truncated,
         )
     };
 
@@ -5771,6 +5919,7 @@ async fn run_chat_turn_inner(
                                 stable_tokens: None,
                                 dropped_front_tokens: None,
                                 cost_usd: None,
+                                truncated: loop_answer_truncated,
                             })
                         }
                     }
@@ -5808,6 +5957,7 @@ async fn run_chat_turn_inner(
                         stable_tokens: None,
                         dropped_front_tokens: None,
                         cost_usd: None,
+                        truncated: loop_answer_truncated,
                     })
                 }
             }
@@ -5984,6 +6134,9 @@ async fn run_chat_turn_inner(
                         replace: None,
                     },
                 );
+            }
+            if result.truncated {
+                emit_log("warn", "the model reached its token limit: the answer is cut off");
             }
             let token_count = result.eval_count.map(|c| c as i32);
             if let Err(e) =
@@ -6178,6 +6331,7 @@ async fn run_chat_turn_inner(
                 steps: Vec::new(),
                 search_page: tools::next_page::page_trace(&page_state),
                 budget: budget_trace,
+                answer_truncated: result.truncated,
             });
             if let Err(e) = db.update_chat_message_trace(&assistant_message_id, &trace) {
                 emit_log("error", &format!("failed to persist reasoning trace: {}", e));
@@ -6375,6 +6529,7 @@ mod tests {
             stable_tokens: Some(805),
             dropped_front_tokens: Some(0),
             cost_usd: None,
+            truncated: false,
         };
         let trace = build_tool_round_trace(2, 4280, Some(&result));
         assert_eq!(trace.kind, "tool_round");
@@ -6412,6 +6567,7 @@ mod tests {
             stable_tokens: Some(1193),
             dropped_front_tokens: Some(0),
             cost_usd: None,
+            truncated: false,
         };
         let trace = build_final_stream_trace(2900, Some(&result));
         assert_eq!(trace.kind, "final_stream");
@@ -8932,7 +9088,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "what is the exit fee?",
@@ -8958,7 +9116,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "q",
@@ -8981,7 +9141,9 @@ mod tests {
             unreachable!()
         };
         let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let db = Database::new_for_testing().expect("test db");
         let (fitted, calls) = fit_open_document(
+            &db,
             &provider,
             &doc,
             "q",
@@ -9488,6 +9650,23 @@ Preséntalos en una tabla markdown …";
             calls[0].function.arguments,
             serde_json::json!({"unread":true,"order":"oldest","limit":1})
         );
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_reads_a_function_wrapper_one_brace_short() {
+        // Verbatim production emission (Qwen 3.6 35B). Mirrors the runtime
+        // parser's repair.
+        let text = r#"<tool_call>{"function":{"name":"list_calendar_events","arguments":{"days":7}} </tool_call>"#;
+        let calls = parse_xml_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "list_calendar_events");
+        assert_eq!(calls[0].function.arguments, serde_json::json!({"days":7}));
+    }
+
+    #[test]
+    fn parse_xml_tool_calls_does_not_complete_a_block_the_stream_cut_off() {
+        let text = r#"<tool_call>{"name":"search_emails","arguments":{"limit":25}"#;
+        assert!(parse_xml_tool_calls(text).is_empty());
     }
 
     #[test]
@@ -10181,6 +10360,349 @@ Preséntalos en una tabla markdown …";
         assert!(provider.chat_calls().is_empty(), "no model call after the cancel");
     }
 
+    /// One thread-bound turn against `provider`, and the row it left.
+    async fn thread_bound_row(provider: crate::ai::provider::FakeAiProvider) -> ChatMessage {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.seed_test_account("a1");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+        run_thread_bound_turn(
+            Arc::clone(&db),
+            Arc::new(provider),
+            conv.id.clone(),
+            assistant.id.clone(),
+            "a1".to_string(),
+            "what does this thread say?".to_string(),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            std::time::Instant::now(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await
+        .expect("the turn");
+        db.get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row")
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_turn_without_an_answer_ships_the_hint_not_a_blank_row() {
+        // Nothing at all from the model, or a reply that strips to nothing.
+        for reply in ["", "<tool_call>"] {
+            let provider = crate::ai::provider::FakeAiProvider::new();
+            provider.push_chat_response(reply);
+            let row = thread_bound_row(provider).await;
+            assert_eq!(
+                row.content,
+                empty_answer_hint(crate::services::i18n::Language::En),
+                "reply {reply:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_answer_stopped_at_the_token_limit_is_marked() {
+        // Directly from the tool loop, or from the synthesis pass an empty
+        // round falls back to.
+        let direct = crate::ai::provider::FakeAiProvider::new();
+        direct.push_truncated_chat_message(ai_msg("assistant", "The thread says the date moved to"));
+        let via_synthesis = crate::ai::provider::FakeAiProvider::new();
+        via_synthesis.push_chat_response("");
+        via_synthesis.push_truncated_chat_message(ai_msg("assistant", "The thread says the date moved to"));
+        for provider in [direct, via_synthesis] {
+            let row = thread_bound_row(provider).await;
+            assert!(row.trace.expect("trace").answer_truncated);
+            assert_eq!(
+                row.content, "The thread says the date moved to",
+                "later turns replay this text: the mark stays out of it"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_thread_bound_answer_that_finished_is_not_marked() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_chat_response("The date moved to March.");
+        let row = thread_bound_row(provider).await;
+        assert!(!row.trace.expect("trace").answer_truncated);
+    }
+
+    /// `run_tool_loop` over one `search_emails` tool, until `provider` answers.
+    async fn tool_loop_outcome(provider: &crate::ai::provider::FakeAiProvider) -> ToolLoopOutcome {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        })
+            as Arc<dyn tools::Tool>]));
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        run_tool_loop(
+            &db,
+            &registry,
+            provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn the_tool_loop_reports_an_answer_stopped_at_the_token_limit() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.push_truncated_chat_message(ai_msg("assistant", "Half an"));
+        assert!(tool_loop_outcome(&provider).await.answer_truncated);
+    }
+
+    #[tokio::test]
+    async fn a_tool_round_stopped_at_the_token_limit_does_not_mark_the_answer() {
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let mut search = ai_tool_call("search_emails");
+        search.function.arguments = serde_json::json!({"query": "x"});
+        provider.push_truncated_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![search]),
+        });
+        provider.push_chat_response("The full answer.");
+        assert!(!tool_loop_outcome(&provider).await.answer_truncated);
+    }
+
+    /// The main path through a real provider, stubbed at the HTTP edge:
+    /// `run_chat_turn` builds its provider from the preferences, so a fake
+    /// cannot reach it.
+    #[tokio::test]
+    async fn a_mailbox_answer_stopped_at_the_token_limit_is_marked() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"The kickoff moved to\"},\"finish_reason\":\"length\"}]}\n\n\
+                 data: [DONE]\n\n",
+            ))
+            .mount(&server)
+            .await;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.seed_test_account("a1");
+        db.set_preference("ai_provider", "openai_compatible").expect("pref");
+        db.set_preference("openai_compatible_base_url", &server.uri())
+            .expect("pref");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let user = db
+            .insert_chat_message(&conv.id, "user", "when is the kickoff?", None)
+            .expect("user row");
+        let assistant = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+
+        run_chat_turn(
+            Arc::clone(&db),
+            Arc::new(tools::ToolRegistry::with_tools(vec![])),
+            conv.id.clone(),
+            user.id.clone(),
+            assistant.id.clone(),
+            "a1".to_string(),
+            "when is the kickoff?".to_string(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            TurnContext::default(),
+        )
+        .await
+        .expect("the turn");
+
+        let row = db
+            .get_chat_messages(&conv.id)
+            .expect("messages")
+            .into_iter()
+            .find(|m| m.id == assistant.id)
+            .expect("assistant row");
+        assert_eq!(row.content, "The kickoff moved to");
+        assert!(row.trace.expect("trace").answer_truncated);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_stops_a_tool_round_on_a_model_that_has_gone_silent() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(Vec::new()));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        provider.hang_chats();
+        let raise = Arc::clone(&cancel);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            raise.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        let outcome = run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::clone(&cancel),
+        )
+        .await;
+        assert!(outcome.cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_round_runs_no_more_tool_calls_than_the_cap() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        })
+            as Arc<dyn tools::Tool>]));
+        let provider = crate::ai::provider::FakeAiProvider::new();
+        let calls = (0..MAX_TOOL_CALLS_PER_ROUND + 4)
+            .map(|i| {
+                let mut call = ai_tool_call("search_emails");
+                call.function.arguments = serde_json::json!({"query": format!("q{i}")});
+                call
+            })
+            .collect();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(calls),
+        });
+        provider.push_chat_response("Done.");
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        run_tool_loop(
+            &db,
+            &registry,
+            &provider,
+            "conv-1",
+            "msg-1",
+            "acct-1",
+            &[],
+            None,
+            "q",
+            vec![("user".to_string(), "q".to_string())],
+            None,
+            false,
+            false,
+            &mut tool_traces,
+            &mut llm_calls,
+            &mut TurnBudget::unlimited(),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .await;
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), MAX_TOOL_CALLS_PER_ROUND);
+        let second_round = &provider.chat_calls()[1];
+        let announced = second_round
+            .iter()
+            .find_map(|m| m.tool_calls.as_ref())
+            .expect("the assistant's calls stay in the history");
+        assert_eq!(
+            announced.len(),
+            MAX_TOOL_CALLS_PER_ROUND,
+            "the history lists only the calls that ran"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_turn_is_reported_without_its_text() {
+        let db = Database::new_for_testing().expect("test db");
+        db.seed_test_account("a1");
+        let conv = db.create_chat_conversation("a1", "t").expect("conv");
+        let message = db
+            .insert_chat_message(&conv.id, "assistant", "", None)
+            .expect("assistant row");
+        let result = report_turn_outcome(&db, &conv.id, &message.id, async { panic!("subject: private text") }).await;
+        assert!(result.is_err());
+        let stored = db
+            .get_recent_chat_turns(&conv.id, 1)
+            .expect("turns")
+            .pop()
+            .expect("the row");
+        assert!(stored.content.starts_with("Chat failed"), "{}", stored.content);
+        assert!(!stored.content.contains("private text"), "{}", stored.content);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_call_is_dropped_shortly_after_a_cancel() {
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let result = until_cancelled(std::future::pending::<Result<()>>(), &cancel).await;
+        assert!(matches!(result, Err(AppError::Cancelled)), "{result:?}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_call_that_stops_by_itself_keeps_its_result() {
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let call = async {
+            tokio::time::sleep(CANCEL_GRACE / 2).await;
+            Ok(7)
+        };
+        assert_eq!(until_cancelled(call, &cancel).await.unwrap(), 7);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_long_answer_outlives_the_silence_limit_while_tokens_flow() {
+        let limit = Duration::from_secs(90);
+        let pulse = StreamPulse::new();
+        let beats = pulse.clone();
+        let call = async move {
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                beats.beat();
+            }
+            Ok(7)
+        };
+        assert_eq!(until_silent(call, &pulse, limit).await.unwrap(), 7);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_stream_is_given_up_on() {
+        let pulse = StreamPulse::new();
+        let result = until_silent(std::future::pending::<Result<()>>(), &pulse, Duration::from_secs(90)).await;
+        assert!(
+            matches!(&result, Err(AppError::AiError(m)) if m.contains("sent nothing for 90s")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_synthesis_dropped_by_a_cancel_ends_with_the_note() {
+        let out = finish_cancelled_stream(Err(AppError::Cancelled), true, "en", "conv-1", "msg-1").expect("ok");
+        assert_eq!(out.content, "_Cancelled by the user._");
+    }
+
     #[test]
     fn a_synthesis_cut_by_a_cancel_keeps_its_text_and_says_so() {
         let result = crate::ai::provider::ChatStreamResult {
@@ -10463,6 +10985,7 @@ Preséntalos en una tabla markdown …";
             steps: Vec::new(),
             search_page: None,
             budget: None,
+            answer_truncated: false,
         });
         msg
     }

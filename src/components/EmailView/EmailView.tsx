@@ -116,7 +116,7 @@ export function EmailView({
   onChatAboutThread,
   focusEmailId: focusEmailIdProp,
 }: EmailViewProps) {
-  const { t } = useTranslation(['inbox', 'compose']);
+  const { t } = useTranslation(['inbox', 'compose', 'common']);
   const fmt = useFormatters();
   const hint = useShortcutHint();
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
@@ -154,10 +154,21 @@ export function EmailView({
   // Attachments carried over from the message being forwarded, loaded on demand
   // — a forward that drops the boarding pass is worse than useless.
   const [forwardAttachments, setForwardAttachments] = useState<EmailAttachment[]>(EMPTY_ATTACHMENTS);
+  const [forwardFilesLoading, setForwardFilesLoading] = useState(false);
+  // A forward fills in after it is asked for. Anything that changes what the
+  // reply panel is for takes a new id, and whatever the old forward still has
+  // on its way is dropped: it must not land in another thread or composer.
+  const forwardLoadRef = useRef(0);
+  const dropForward = useCallback(() => {
+    forwardLoadRef.current += 1;
+    setForwardAttachments(EMPTY_ATTACHMENTS);
+    setForwardFilesLoading(false);
+  }, []);
   // The reply draft saved for this thread, if any: restored when the thread
   // opens, and kept current as the reply panel saves, so reopening Reply
   // continues the same draft instead of starting a second one.
   const [threadDraft, setThreadDraft] = useState<Draft | null>(null);
+  const [chatDraftId, setChatDraftId] = useState<string | undefined>(undefined);
   const [replyBody, setReplyBody] = useState('');
   const addLog = useLogStore((s) => s.addLog);
   // AI draft state. The request id is held in a ref so the event listener
@@ -219,7 +230,9 @@ export function EmailView({
   const requestAiDraft = async (instructions?: string) => {
     const target = threadEmails[threadEmails.length - 1];
     if (!target) return;
-    setReplyMode('reply-all');
+    // A reply already open keeps who it is addressed to.
+    if (!isReplyOpen || replyMode === 'forward') setReplyMode('reply-all');
+    dropForward();
     setReplyBody('');
     setDraftSources([]);
     setIsReplyOpen(true);
@@ -242,15 +255,16 @@ export function EmailView({
       if (meta.mimeType.startsWith('image/')) {
         setLightboxMeta(meta);
       } else {
-        openAttachmentTab(meta);
+        openAttachmentTab(meta, threadEmails.find((e) => e.id === meta.emailId)?.senderEmail ?? '');
       }
     },
-    [openAttachmentTab],
+    [openAttachmentTab, threadEmails],
   );
 
   const latestEmailId = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1].id : '';
   const emailTags = useTagStore((s) => s.tagsByEmail[latestEmailId] || EMPTY_TAGS);
   const latestEmailForEffect = threadEmails.length > 0 ? threadEmails[threadEmails.length - 1] : null;
+  const threadKey = latestEmailForEffect ? `${latestEmailForEffect.accountId}:${latestEmailForEffect.threadId}` : '';
   // Read inside the draft-restore effect, which must run once per thread (keyed
   // on the latest email) rather than on every refresh of these values.
   const threadEmailsRef = useRef(threadEmails);
@@ -327,14 +341,16 @@ export function EmailView({
     return match?.id ?? null;
   }, [threadEmails, searchQuery]);
 
-  // Reset compose state when the user moves to a different thread / a new
-  // latest message. Keyed on the latest email's ID, NOT its object identity:
-  // refreshThread (after a send, and on sync batch/complete events) replaces
-  // threadEmails with fresh object identities even when the content is
-  // unchanged, and an identity-keyed reset closed the reply box the moment
+  // Reset compose state when the user moves to a different thread. Keyed on
+  // the thread, NOT its latest message: a sync that brings a new message into
+  // the open thread must not close what the user is writing. Nor on object
+  // identity: refreshThread (after a send, and on sync batch/complete events)
+  // replaces threadEmails with fresh object identities even when the content
+  // is unchanged, and an identity-keyed reset closed the reply box the moment
   // it opened ("clicking Reply All does nothing").
   useEffect(() => {
-    if (!latestEmailId) {
+    dropForward();
+    if (!threadKey) {
       setIsReplyOpen(false);
       setReplyBody('');
       setDraftSources([]);
@@ -346,6 +362,7 @@ export function EmailView({
     setIsReplyOpen(false);
     setReplyBody('');
     setThreadDraft(null);
+    setChatDraftId(undefined);
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
@@ -354,7 +371,7 @@ export function EmailView({
     setThreadSearchQuery('');
     setThreadMatchIdx(0);
     setOccurrenceCounts({});
-  }, [latestEmailId]);
+  }, [threadKey, dropForward]);
 
   // Chat-generated reply draft: once the matching thread is loaded, open
   // the inline ReplyCompose with the AI body prepended on top of the
@@ -374,12 +391,14 @@ export function EmailView({
     setReplyMode('reply');
     const draft = pendingChatDraft!;
     setReplyBody((existing) => prependDraftBody(draft.body, existing));
+    setChatDraftId(draft.draftId);
     setIsReplyOpen(true);
     setDraftSources([]);
     setIsGeneratingDraft(false);
     draftTrackerRef.current.cancel();
+    dropForward();
     consumePendingChatDraft();
-  }, [pendingChatDraft, threadEmails, consumePendingChatDraft]);
+  }, [pendingChatDraft, threadEmails, consumePendingChatDraft, dropForward]);
 
   // Keyboard shortcuts (r, a, f, e, #, s, Shift+U/I, b) arrive as pane
   // commands and run through the same handlers as the toolbar buttons.
@@ -418,14 +437,14 @@ export function EmailView({
         if (isReplyOpenRef.current) return;
         setReplyMode('reply');
         setReplyBody('');
-        setForwardAttachments(EMPTY_ATTACHMENTS);
+        dropForward();
         setIsReplyOpen(true);
       })
       .catch((err) => addLog('error', 'sync', `Could not load this thread's reply draft: ${errorText(err)}`));
     return () => {
       cancelled = true;
     };
-  }, [latestEmailId, addLog]);
+  }, [latestEmailId, addLog, dropForward]);
 
   if (threadEmails.length === 0 && !isLoading) {
     return (
@@ -462,15 +481,20 @@ export function EmailView({
   const openReply = (mode: 'reply' | 'reply-all', toggle: boolean) => {
     setReplyMode(mode);
     setReplyBody('');
-    setForwardAttachments(EMPTY_ATTACHMENTS);
+    dropForward();
     setIsReplyOpen((value) => (toggle ? !value : true));
   };
   const openForward = async () => {
+    // Already forwarding: its files are in, or on their way.
+    if (isReplyOpen && replyMode === 'forward') return;
+    dropForward();
+    const loadId = forwardLoadRef.current;
     const messages = await loadForwardTexts(
       threadEmails,
       () => api.getThreadNewContent(latestEmail.accountId, latestEmail.threadId),
       (err) => addLog('error', 'sync', `Could not load the original messages to forward: ${err}`),
     );
+    if (forwardLoadRef.current !== loadId) return;
     setReplyMode('forward');
     setReplyBody(
       forwardQuote(
@@ -486,9 +510,8 @@ export function EmailView({
         (ts) => fmt.date(ts, EMAIL_DATE_OPTIONS),
       ),
     );
-    setForwardAttachments(EMPTY_ATTACHMENTS);
     setIsReplyOpen(true);
-    void loadForwardAttachments();
+    void loadForwardAttachments(loadId);
   };
   const thread = [threadRefOf(latestEmail)];
   const inInbox = threadEmails.some((e) => e.mailbox === 'inbox');
@@ -545,10 +568,13 @@ export function EmailView({
    *  message's, since the forward carries every message.
    *
    *  Runs after the compose panel is already open: the user can start typing
-   *  while a large PDF is still being encoded, and a failure here degrades to
-   *  "forward without attachments" plus a log line rather than blocking the
-   *  send. */
-  const loadForwardAttachments = async () => {
+   *  while a large PDF is still being encoded, but Send waits, as a forward
+   *  that goes out without its files cannot be taken back. A failure here
+   *  degrades to "forward without attachments" plus a log line rather than
+   *  blocking the send. */
+  const loadForwardAttachments = async (loadId: number) => {
+    const isCurrent = () => forwardLoadRef.current === loadId;
+    setForwardFilesLoading(true);
     try {
       const carried: EmailAttachment[] = [];
       const skipped: string[] = [];
@@ -556,6 +582,7 @@ export function EmailView({
       for (const email of threadEmails) {
         const metas = await api.getEmailAttachmentMetas(email.accountId, email.id);
         for (const meta of metas) {
+          if (!isCurrent()) return;
           if (bytes + meta.fileSize > MAX_FORWARD_BYTES) {
             skipped.push(meta.filename);
             continue;
@@ -565,12 +592,15 @@ export function EmailView({
           bytes += meta.fileSize;
         }
       }
+      if (!isCurrent()) return;
       if (carried.length > 0) setForwardAttachments(carried);
       if (skipped.length > 0) {
         addLog('error', 'sync', `Too large to forward, attach manually: ${skipped.join(', ')}`);
       }
     } catch (err) {
       addLog('error', 'sync', `Could not attach the original files to the forward: ${err}`);
+    } finally {
+      if (isCurrent()) setForwardFilesLoading(false);
     }
   };
 
@@ -610,14 +640,18 @@ export function EmailView({
            * controls wrap under it when there is no room.
            */}
           <h1 className="flex-[1_1_16rem] min-w-0 text-lg font-semibold text-gray-900 truncate">
-            {latestEmail.subject || '(No subject)'}
+            {latestEmail.subject || t('common:labels.noSubject')}
           </h1>
           {emailTags.length > 0 && (
             <div className="min-w-0">
               <TagChips tags={emailTags} />
             </div>
           )}
-          {isThread && <span className="flex-shrink-0 text-xs text-gray-400">{threadEmails.length} msgs</span>}
+          {isThread && (
+            <span className="flex-shrink-0 text-xs text-gray-400">
+              {t('inbox:emailView.messageCount', { count: threadEmails.length })}
+            </span>
+          )}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
             <button
               onClick={() => openReply('reply', true)}
@@ -761,7 +795,7 @@ export function EmailView({
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
-                Back
+                {t('inbox:emailView.backLabel')}
               </button>
             ) : (
               <button
@@ -779,19 +813,24 @@ export function EmailView({
         {isReplyOpen && (
           <div className="min-h-0 overflow-y-auto">
             <ReplyCompose
+              // Recipients are worked out on mount, and a forward has none of the reply's.
+              key={replyMode === 'forward' ? 'forward' : 'reply'}
               email={latestEmail}
               threadEmails={threadEmails}
               accounts={accounts}
               defaultAccountId={activeAccountId || latestEmail.accountId}
               mode={replyMode}
               restoredDraft={replyMode === 'forward' ? null : threadDraft}
+              adoptDraftId={replyMode === 'forward' ? undefined : chatDraftId}
               onDraftSaved={setThreadDraft}
               initialBody={replyBody}
               initialAttachments={forwardAttachments}
+              attachmentsLoading={forwardFilesLoading}
               isLoadingDraft={isGeneratingDraft}
               draftSources={draftSources}
               onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
               onCancel={() => {
+                dropForward();
                 setIsReplyOpen(false);
                 setThreadDraft(null);
                 setReplyBody('');
@@ -828,7 +867,7 @@ export function EmailView({
                 };
                 const closeReply = () => {
                   setThreadDraft(null);
-                  setForwardAttachments(EMPTY_ATTACHMENTS);
+                  dropForward();
                   setIsReplyOpen(false);
                 };
                 const outbox = useOutboxStore.getState();
@@ -840,6 +879,8 @@ export function EmailView({
                 await outbox.send(message, {
                   // A queued reply's draft leaves Drafts with the queueing.
                   draftId,
+                  // This panel does not hold the draft's file attachments.
+                  draftHoldsFiles: !!draftId && (threadDraft?.attachments?.length ?? 0) > 0,
                   sendDirect: async () => {
                     addLog(
                       'info',

@@ -23,7 +23,7 @@ export const TAG_BOARD_PAGE_SIZE = 8;
  *  sidebar's smart filters already use. */
 export const TAG_BOARD_MAX_COLUMNS = 15;
 
-/** Column pages fetched at once. The tag branch of `get_filtered_emails` is
+/** Column pages fetched at once. `get_filtered_emails` is
  *  index-driven and fast, but 15 simultaneous IPC round-trips on view entry
  *  still stutters the webview. */
 export const TAG_BOARD_FETCH_CONCURRENCY = 4;

@@ -12,6 +12,7 @@ use crate::ai::provider::{AIProvider, AiMessage, CompletionOptions};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::lens::{Lens, LensColumn, LensColumnType, LensSchema};
+use crate::services::ai::AiService;
 
 use super::emit_log;
 
@@ -109,7 +110,7 @@ pub async fn extract_email(
     // local models under-fill tool arguments while answering the same prompt
     // well in plain chat. Keep a text fallback for sparse or unsupported tool
     // responses.
-    let tool_result = crate::services::ai::AiService::chat_with_tools(
+    let tool_result = AiService::chat_with_tools(
         db,
         provider.as_ref(),
         &messages,
@@ -140,7 +141,7 @@ pub async fn extract_email(
     let mut best_data = match tool_extracted {
         Ok(extracted) => match validate_against_schema(&extracted, &lens.schema) {
             Ok(coerced) => coerced,
-            Err(msg) => match extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
+            Err(msg) => match extract_via_text_prompt(db, provider.as_ref(), lens, &system_msg, &user_msg).await? {
                 Ok(text_data) => {
                     return Ok(ExtractionResult {
                         data: text_data,
@@ -158,7 +159,7 @@ pub async fn extract_email(
             },
         },
         Err(tool_msg) => {
-            return match extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
+            return match extract_via_text_prompt(db, provider.as_ref(), lens, &system_msg, &user_msg).await? {
                 Ok(text_data) => Ok(ExtractionResult {
                     data: text_data,
                     status: ExtractionStatus::Ok,
@@ -174,7 +175,9 @@ pub async fn extract_email(
     };
 
     if extraction_is_sparse(&best_data, &lens.schema) {
-        if let Ok(text_data) = extract_via_text_prompt(provider.as_ref(), lens, &system_msg, &user_msg).await {
+        // Only an improvement on what the tool call returned: out of budget,
+        // that result stands, and the next email is the one refused.
+        if let Ok(Ok(text_data)) = extract_via_text_prompt(db, provider.as_ref(), lens, &system_msg, &user_msg).await {
             if extraction_score(&text_data, &lens.schema) > extraction_score(&best_data, &lens.schema) {
                 best_data = text_data;
             }
@@ -215,29 +218,31 @@ pub fn build_tool_definition(schema: &LensSchema) -> serde_json::Value {
     })
 }
 
+/// The outer error is the budget's refusal, which ends the extraction; the
+/// inner one is a retry that failed, which fails this email.
 async fn extract_via_text_prompt(
+    db: &Database,
     provider: &dyn AIProvider,
     lens: &Lens,
     system_msg: &str,
     user_msg: &str,
-) -> std::result::Result<serde_json::Value, String> {
+) -> Result<std::result::Result<serde_json::Value, String>> {
     let prompt = build_text_extraction_prompt(lens, system_msg, user_msg);
-    let response = provider
-        .complete(
-            &prompt,
-            CompletionOptions {
-                temperature: Some(0.0),
-                max_tokens: Some(1024),
-                think: Some(false),
-                json_shape: None,
-            },
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+    let options = CompletionOptions {
+        temperature: Some(0.0),
+        max_tokens: Some(1024),
+        think: Some(false),
+        json_shape: None,
+    };
+    let response = match AiService::complete_metered(db, provider, &prompt, options, "lens_extract").await {
+        Ok(response) => response,
+        Err(e @ AppError::BudgetExceeded(_)) => return Err(e),
+        Err(e) => return Ok(Err(e.to_string())),
+    };
 
-    let extracted = extract_text_response_to_json(&response.text, &lens.schema)
-        .ok_or_else(|| "model did not return parseable extraction text".to_string())?;
-    validate_against_schema(&extracted, &lens.schema)
+    Ok(extract_text_response_to_json(&response.text, &lens.schema)
+        .ok_or_else(|| "model did not return parseable extraction text".to_string())
+        .and_then(|extracted| validate_against_schema(&extracted, &lens.schema)))
 }
 
 fn build_text_extraction_prompt(lens: &Lens, system_msg: &str, user_msg: &str) -> String {
@@ -1281,6 +1286,86 @@ mod tests {
             1,
             "no paid call past the budget"
         );
+    }
+
+    /// A tool call that fails validation sends the extraction to the text
+    /// prompt. Here that call crossed the budget, so the retry is refused: the
+    /// run must end on it rather than store a failed row for this email and
+    /// for every one after it.
+    #[tokio::test]
+    async fn a_text_retry_refused_by_the_budget_ends_the_extraction() {
+        let (db, mut lens) = contact_fixture("0.004");
+        lens.schema.columns[2].column_type = LensColumnType::Number;
+        let (server, provider) = openrouter_extracting(0.004).await;
+
+        let result = extract_email(&db, provider, &lens, "email1", None).await;
+
+        assert!(
+            matches!(result, Err(AppError::BudgetExceeded(_))),
+            "got {:?}",
+            result.map(|result| (result.status, result.error_message))
+        );
+        assert_eq!(
+            server.received_requests().await.expect("requests").len(),
+            1,
+            "no paid call past the budget"
+        );
+    }
+
+    /// A sparse reply only tries to improve on what the tool call returned:
+    /// refused, the paid-for row stands.
+    #[tokio::test]
+    async fn a_sparse_extraction_keeps_what_was_paid_for_when_the_budget_refuses_the_retry() {
+        let (db, mut lens) = contact_fixture("0.004");
+        lens.schema.columns.push(LensColumn {
+            key: "invoice_number".into(),
+            label: "Invoice".into(),
+            column_type: LensColumnType::String,
+            description: String::new(),
+            enum_values: None,
+            required: true,
+            is_unique_key: false,
+        });
+        let (server, provider) = openrouter_extracting(0.004).await;
+
+        let result = extract_email(&db, provider, &lens, "email1", None)
+            .await
+            .expect("the tool call was paid for");
+
+        assert_eq!(result.status, ExtractionStatus::Ok);
+        assert_eq!(result.data["company"], "Example Labs");
+        assert_eq!(
+            server.received_requests().await.expect("requests").len(),
+            1,
+            "no paid call past the budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_paid_text_retry_counts_against_the_budget() {
+        let (db, lens) = contact_fixture("1.0");
+        let provider =
+            Arc::new(FakeAiProvider::new().with_provider_type(crate::ai::provider::ProviderType::OpenRouter));
+        provider.push_chat_response("not the fields");
+        provider.push_completion_result(crate::ai::provider::CompletionResult {
+            text: r#"{"email":"sender@example.com","phone":"555-0100","company":"Example Labs"}"#.to_string(),
+            cost_usd: 0.25,
+            ..Default::default()
+        });
+
+        let result = extract_email(&db, provider, &lens, "email1", None)
+            .await
+            .expect("extract");
+
+        assert_eq!(result.data["company"], "Example Labs");
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+        let operation: String = db
+            .reader()
+            .query_row("SELECT operation FROM ai_usage", [], |row| row.get(0))
+            .expect("usage row");
+        assert_eq!(operation, "lens_extract");
     }
 
     fn all_optional_schema() -> LensSchema {

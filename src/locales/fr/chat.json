@@ -109,7 +109,8 @@
     "rejected": "Marquée comme incorrecte — nouvelle tentative ci-dessous.",
     "budgetNotice": "Une partie des e-mails sur lesquels repose cette réponse a été raccourcie pour tenir dans la fenêtre de contexte du modèle ; des détails peuvent manquer.",
     "budgetOverflow": "Cette conversation ne tient plus dans la fenêtre de contexte du modèle ; la réponse a pu perdre des instructions ou du contexte.",
-    "budgetSettings": "Paramètres IA"
+    "budgetSettings": "Paramètres IA",
+    "answerTruncated": "Cette réponse a été coupée car elle a atteint la limite de longueur du modèle."
   },
   "processing": {
     "queued": "En attente de la fin d’une autre tâche d’IA…",

@@ -245,7 +245,7 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
         .request_async(&http_client)
         .await
-        .map_err(|e| AppError::OAuthError(format!("Token refresh failed: {}", e)))?;
+        .map_err(|e| refresh_error(config.display_name, e))?;
 
     let expires_at = token_result
         .expires_in()
@@ -259,6 +259,38 @@ pub async fn refresh_oauth_token(config: &OAuthConfig, refresh_token: &str) -> R
             .or_else(|| Some(refresh_token.to_string())),
         expires_at,
     })
+}
+
+/// Whether the provider's answer ends the grant, so only signing in again helps.
+fn grant_refused(error: &oauth2::basic::BasicErrorResponseType) -> bool {
+    use oauth2::basic::BasicErrorResponseType::{Extension, InvalidGrant};
+    match error {
+        InvalidGrant => true,
+        // Microsoft's way of asking for the user: MFA, consent, a changed password.
+        Extension(code) => matches!(code.as_str(), "interaction_required" | "consent_required"),
+        _ => false,
+    }
+}
+
+/// `AuthError` only when the provider refused the grant. Anything else (no
+/// connection, an outage page, a throttled endpoint) says nothing about the
+/// session: it is a `SyncError` the next sync retries, worded so the error
+/// banner does not offer to sign in again. The cause goes to the log because it
+/// names the token endpoint, which the banner would take for an auth problem.
+fn refresh_error<E: std::error::Error + 'static>(
+    provider: &str,
+    error: oauth2::RequestTokenError<E, oauth2::basic::BasicErrorResponse>,
+) -> AppError {
+    use oauth2::RequestTokenError::ServerResponse;
+    if let ServerResponse(response) = &error {
+        if grant_refused(response.error()) {
+            return AppError::AuthError(format!("Token refresh refused: {error}"));
+        }
+    }
+    crate::services::logger::log("warn", "sync", format!("{provider} token refresh failed: {error}"));
+    AppError::SyncError(format!(
+        "Could not renew access to {provider} right now. The account stays connected; the next sync tries again."
+    ))
 }
 
 /// Revoke a token at an RFC 7009 endpoint (Google's `/revoke`). Revoking a
@@ -443,7 +475,7 @@ fn write_callback_response(stream: &mut TcpStream, response: &str) -> Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{authorization_url, oauth_client, revoke_token, OAuthConfig};
+    use super::{authorization_url, oauth_client, refresh_oauth_token, revoke_token, AppError, OAuthConfig};
     use super::{extract_callback_code, wait_for_callback, Callback};
     use super::{prepare_callback_stream, read_callback_request, OAUTH_CALLBACK_TIMEOUT};
 
@@ -527,6 +559,75 @@ mod tests {
             client_secret: "client-secret".to_string(),
             ..OAuthConfig::gmail()
         }
+    }
+
+    /// Refresh against a token endpoint that always answers `response`.
+    async fn refresh_answered_with(response: wiremock::ResponseTemplate) -> crate::models::error::Result<()> {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+        let config = OAuthConfig {
+            token_url: format!("{}/token", server.uri()),
+            ..confidential_config()
+        };
+        refresh_oauth_token(&config, "refresh-token").await.map(|_| ())
+    }
+
+    fn assert_says_nothing_about_the_session(err: &AppError, case: &str) {
+        assert!(matches!(err, AppError::SyncError(_)), "{case}: {err:?}");
+        // The error banner offers "Sign in again" on any of these words.
+        let message = err.to_string().to_lowercase();
+        for word in ["session expired", "token", "auth"] {
+            assert!(!message.contains(word), "{case}: {message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_grant_the_provider_refused_ends_the_session() {
+        for code in ["invalid_grant", "interaction_required", "consent_required"] {
+            let response = wiremock::ResponseTemplate::new(400).set_body_json(serde_json::json!({ "error": code }));
+            let err = refresh_answered_with(response).await.expect_err(code);
+            assert!(matches!(err, AppError::AuthError(_)), "{code}: {err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refresh_without_a_verdict_on_the_grant_says_nothing_about_the_session() {
+        use wiremock::ResponseTemplate;
+        let json_error =
+            |status, code: &str| ResponseTemplate::new(status).set_body_json(serde_json::json!({ "error": code }));
+        let cases = [
+            (
+                "an outage page",
+                ResponseTemplate::new(503).set_body_string("<html>Unavailable</html>"),
+            ),
+            ("an empty 500", ResponseTemplate::new(500)),
+            ("throttled", json_error(429, "temporarily_unavailable")),
+            ("a server error", json_error(500, "server_error")),
+            ("the app's own client refused", json_error(401, "invalid_client")),
+        ];
+        for (case, response) in cases {
+            let err = refresh_answered_with(response).await.expect_err(case);
+            assert_says_nothing_about_the_session(&err, case);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_token_endpoint_out_of_reach_says_nothing_about_the_session() {
+        let closed_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a free port")
+            .port();
+        let config = OAuthConfig {
+            token_url: format!("http://127.0.0.1:{closed_port}/token"),
+            ..confidential_config()
+        };
+        let err = refresh_oauth_token(&config, "refresh-token")
+            .await
+            .expect_err("nothing listens");
+        assert_says_nothing_about_the_session(&err, "connection refused");
     }
 
     #[test]

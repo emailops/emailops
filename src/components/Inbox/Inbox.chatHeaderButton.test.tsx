@@ -47,7 +47,6 @@ async function mount(props: { onNewChat?: () => void; isChatPanelOpen?: boolean 
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={0}
         selectedEmailId={null}
         onSelectEmail={() => {}}
         onLoadMore={() => {}}

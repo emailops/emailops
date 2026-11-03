@@ -23,10 +23,12 @@ fn crashed(what: &str) -> AppError {
 
 /// Await `fut`; a panic inside it becomes an `Err` naming `what`.
 pub async fn run_isolated<T>(what: &str, fut: impl Future<Output = Result<T>>) -> Result<T> {
-    AssertUnwindSafe(fut)
-        .catch_unwind()
-        .await
-        .unwrap_or_else(|_| Err(crashed(what)))
+    run_isolated_as(crashed(what), fut).await
+}
+
+/// Await `fut`; a panic inside it becomes `error`.
+pub async fn run_isolated_as<T>(error: AppError, fut: impl Future<Output = Result<T>>) -> Result<T> {
+    AssertUnwindSafe(fut).catch_unwind().await.unwrap_or(Err(error))
 }
 
 /// Call `f`; a panic inside it becomes an `Err` naming `what`.

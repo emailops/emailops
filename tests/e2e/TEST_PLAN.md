@@ -104,8 +104,8 @@ export const test = base.extend<{}, { tauriDriver: ChildProcess }>({
 - Emails load after account selection
 - Sender, subject, snippet visible with correct contrast
 - Unread emails have blue dot and bold text
-- Scroll triggers load more (infinite scroll)
-- "Load more" button works
+- Scroll loads the next page (infinite scroll), with no button
+- A failed page shows Retry under the last row
 - Category checkboxes filter emails client-side
 - Three-dot menu opens dropdown
 - "Copy email ID" copies to clipboard

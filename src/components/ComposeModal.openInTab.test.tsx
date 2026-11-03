@@ -79,7 +79,7 @@ function byId(id: string): HTMLInputElement {
 
 async function fillComposer() {
   await typeInto(byId('compose-to-input'), 'bob@example.com');
-  const ccToggle = [...document.querySelectorAll('button')].find((b) => b.textContent === '+ Cc');
+  const ccToggle = [...document.querySelectorAll('button')].find((b) => b.textContent === '+ compose:cc');
   await act(async () => ccToggle?.click());
   await typeInto(byId('compose-cc-input'), 'carol@example.com');
   const subject = document.querySelector<HTMLInputElement>('input[placeholder="compose:subjectPlaceholderLong"]');

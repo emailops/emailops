@@ -325,6 +325,14 @@ export interface ActiveFilter {
   value: string;
 }
 
+/** Where a page of a list with a query continues. Opaque to the UI: it comes
+ *  from one page and goes back with the next. */
+export interface ThreadCursor {
+  threadTs: number;
+  timestamp: number;
+  id: string;
+}
+
 export interface FilteredEmailsResult {
   emails: Email[];
   totalCount: number;
@@ -562,12 +570,8 @@ export interface EmailWindow {
    *  only, so it lands in one board block. Off, a thread matches every tag any
    *  of its messages carries (the inbox filter rule). */
   latestTagOnly?: boolean;
-  /** Only mail stored in this mailbox (`sent`, `archive`, `folder:<path>`):
-   *  a filter applied from a view lists that view's mail. Absent = every
-   *  live mailbox. */
-  mailbox?: string;
-  /** Only conversations with an unread message (the list's Unread toggle). */
-  unreadOnly?: boolean;
+  /** Count by the list's rules, for the sidebar: folders in, flagged mail in. */
+  matchList?: boolean;
 }
 
 export interface ClassificationConfig {
@@ -916,6 +920,8 @@ export interface ChatTrace {
   /** What was cut from the prompt to fit the context window; absent when
    *  nothing was. */
   budget?: BudgetTrace | null;
+  /** The answer stopped at the model's token limit, so it ends mid-way. */
+  answerTruncated?: boolean;
 }
 
 /** Mirrors `BudgetCut`: one thing cut from a chat prompt, in the order applied. */

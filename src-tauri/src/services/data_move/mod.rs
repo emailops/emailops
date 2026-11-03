@@ -53,6 +53,8 @@ pub enum MoveProblem {
     NotEnoughSpace { needed_bytes: u64, available_bytes: u64 },
     #[error("the copy in {} does not match the original ({detail}); nothing was changed", path.display())]
     CopyMismatch { path: PathBuf, detail: String },
+    #[error("background work did not stop in time; nothing was moved")]
+    BackgroundWorkRunning,
 }
 
 impl MoveProblem {
@@ -66,6 +68,7 @@ impl MoveProblem {
             MoveProblem::NotWritable { .. } => "data_move_not_writable",
             MoveProblem::NotEnoughSpace { .. } => "data_move_not_enough_space",
             MoveProblem::CopyMismatch { .. } => "data_move_copy_mismatch",
+            MoveProblem::BackgroundWorkRunning => "data_move_background_work_running",
         }
     }
 
@@ -87,7 +90,10 @@ impl MoveProblem {
                 p.insert("path", path.display().to_string());
                 p.insert("detail", detail.clone());
             }
-            MoveProblem::EnvOverride | MoveProblem::SameFolder | MoveProblem::InsideCurrent => {}
+            MoveProblem::EnvOverride
+            | MoveProblem::SameFolder
+            | MoveProblem::InsideCurrent
+            | MoveProblem::BackgroundWorkRunning => {}
         }
         p
     }

@@ -390,7 +390,7 @@ pub async fn test_ai_provider(
         services::ai::AiService::build_provider(&state.db, &provider, &model)?
     };
 
-    let result = prov.complete("Reply with exactly: OK", Default::default()).await?;
+    let result = AiService::test_connection(&state.db, prov.as_ref()).await?;
 
     emit_log(
         &app,
