@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skills are on by default.** They left the experimental stage. The skills
   included with the app stay off until you switch them on, and if you turned
   skills off they stay off.
+- **Search and filters list every match.** A search or a filter lists every
+  conversation it matches, newest first, and loads more as you scroll; it used
+  to stop at 100 per account. Searching from Inbox covers all your mail except
+  Spam and Trash, and the other views search what they show. Mail the junk
+  check flagged is listed with its warning instead of left out. The Load more
+  buttons are gone, in Contacts too.
 
 ### Fixed
 
@@ -35,7 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at its closing line and the app adds the signature.
 - The "Sent with EmailOps" line is no longer read as part of a message, so it
   stays out of AI drafts and of the text a forward quotes.
-
 - **The chat no longer skips a tool the local model called slightly wrong.** A
   call one brace short used to run nothing, and the answer made up a result.
 - **Forwarding is safer.** Send waits for the forwarded files, and files or text
@@ -46,8 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the AI for a new draft keeps the recipients of the reply you have open.
 - Escape closes only the top dialog, dialogs keep the keyboard inside them, and
   a failed send stays on screen however long the message is.
-- Failed or empty lists offer a way forward: Load more works again after an
-  error, and empty lists offer to show all mail, show all categories or sync.
+- Failed or empty lists offer a way forward: a page that fails to load offers
+  Retry, and empty lists offer to show all mail, show all categories or sync.
 - A background sync no longer clears an error, the email you navigated to or the
   list around it, and switching lists during an undo can no longer show the
   wrong one.
