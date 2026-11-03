@@ -29,16 +29,14 @@ pub async fn get_saved_suggestions(
     services::filters::get_saved_suggestions(&state.db, account_id.as_deref())
 }
 
-/// `account_id: None` filters across every enabled account (unified view).
+/// One tag's conversations, for the Tag Board. `account_id: None` lists every
+/// enabled account (unified view).
 #[tauri::command]
 pub async fn get_filtered_emails(
     state: State<'_, AppState>,
     account_id: Option<String>,
-    domain: Option<String>,
-    sender_email: Option<String>,
-    tag_type: Option<String>,
-    tag_value: Option<String>,
-    attachment_ext: Option<String>,
+    tag_type: String,
+    tag_value: String,
     window: Option<EmailWindow>,
     limit: Option<i32>,
     offset: Option<i32>,
@@ -46,11 +44,8 @@ pub async fn get_filtered_emails(
     services::filters::get_filtered_emails(
         &state.db,
         account_id.as_deref(),
-        domain.as_deref(),
-        sender_email.as_deref(),
-        tag_type.as_deref(),
-        tag_value.as_deref(),
-        attachment_ext.as_deref(),
+        &tag_type,
+        &tag_value,
         &window.unwrap_or_default(),
         limit.unwrap_or(50),
         offset.unwrap_or(0),

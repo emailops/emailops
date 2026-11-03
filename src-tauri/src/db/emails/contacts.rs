@@ -296,34 +296,46 @@ impl Database {
         let total_after_filter = all.len() as i32;
 
         // ── Sort ─────────────────────────────────────────────────────────
+        // Every order ends in the address: the contacts come out of a HashMap,
+        // and a tie left to its order repeats or skips a row across two pages.
         let sort = query.sort.as_deref().unwrap_or("last");
         match sort {
             "total" => all.sort_by(|a, b| {
                 b.email_count
                     .cmp(&a.email_count)
                     .then_with(|| b.last_timestamp.cmp(&a.last_timestamp))
+                    .then_with(|| a.email.cmp(&b.email))
             }),
             "received" => all.sort_by(|a, b| {
                 b.received_count
                     .cmp(&a.received_count)
                     .then_with(|| b.last_timestamp.cmp(&a.last_timestamp))
+                    .then_with(|| a.email.cmp(&b.email))
             }),
             "sent" => all.sort_by(|a, b| {
                 b.sent_count
                     .cmp(&a.sent_count)
                     .then_with(|| b.last_timestamp.cmp(&a.last_timestamp))
+                    .then_with(|| a.email.cmp(&b.email))
             }),
-            "name" => all.sort_by_key(|a| a.name.to_lowercase()),
+            "name" => all.sort_by(|a, b| {
+                a.name
+                    .to_lowercase()
+                    .cmp(&b.name.to_lowercase())
+                    .then_with(|| a.email.cmp(&b.email))
+            }),
             "score" => all.sort_by(|a, b| {
                 b.relationship_score
                     .partial_cmp(&a.relationship_score)
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| b.last_timestamp.cmp(&a.last_timestamp))
+                    .then_with(|| a.email.cmp(&b.email))
             }),
             _ => all.sort_by(|a, b| {
                 b.last_timestamp
                     .cmp(&a.last_timestamp)
                     .then_with(|| b.email_count.cmp(&a.email_count))
+                    .then_with(|| a.email.cmp(&b.email))
             }),
         }
 
@@ -445,6 +457,51 @@ mod tests {
     use super::super::test_helpers::*;
     use crate::db::Database;
     use crate::models::ContactsQuery;
+
+    /// Contacts come out of a `HashMap`. With a tie left to its order, a page
+    /// boundary repeats one contact and skips another.
+    #[test]
+    fn every_sort_pages_through_ties_without_repeating_or_skipping() {
+        let db = Database::new_for_testing().unwrap();
+        for i in 0..40 {
+            let address = format!("c{i:02}@empresa.example");
+            insert_contact_email(
+                &db,
+                &format!("e{i}"),
+                "acc",
+                &format!("t{i}"),
+                "Same Name",
+                &address,
+                "[\"me@empresa.example\"]",
+                "inbox",
+                1_000,
+            );
+        }
+
+        for sort in ["last", "total", "received", "sent", "name", "score"] {
+            let mut seen = Vec::new();
+            for offset in (0..40).step_by(7) {
+                let query = ContactsQuery {
+                    sort: Some(sort.to_string()),
+                    offset: Some(offset),
+                    limit: Some(7),
+                    ..Default::default()
+                };
+                seen.extend(
+                    db.list_contacts("acc", &query)
+                        .unwrap()
+                        .items
+                        .into_iter()
+                        .map(|c| c.email),
+                );
+            }
+            let mut sorted = seen.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), 40, "{sort}");
+            assert_eq!(seen, sorted, "{sort}: a tie falls back to the address");
+        }
+    }
 
     #[test]
     fn list_contacts_aggregates_inbound_and_outbound() {

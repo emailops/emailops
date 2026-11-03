@@ -2,6 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { Modal } from '@/components/common/Modal';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -93,7 +94,7 @@ export function ComposeModal({
   onClose,
   onMaximize,
 }: ComposeModalProps) {
-  useOverlay();
+  const isTopOverlay = useOverlay();
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
@@ -312,14 +313,27 @@ export function ComposeModal({
     }
   };
 
-  // Close on Escape (but not while sending)
+  // The autosaved draft keeps the text, not the files: those live here until
+  // the message goes out, so closing with some asks first.
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const requestClose = () => {
+    if (isSending) return;
+    if ((attachments.length > 0 || isLoadingAttachments) && !sent) setConfirmingClose(true);
+    else onClose();
+  };
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+
+  // Close on Escape, unless a dialog of this composer is open on top of it.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isSending) onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      requestCloseRef.current();
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [onClose, isSending]);
+  }, [isTopOverlay]);
 
   // Debounced auto-save: persist the draft ~0.8s after the last edit. The
   // backend upserts by id and, on Gmail/Outlook, pushes to the provider's
@@ -567,7 +581,7 @@ export function ComposeModal({
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={!isSending ? onClose : undefined} />
+      <div className="absolute inset-0 bg-black/40" onClick={requestClose} />
       <div
         className={`relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh] ${fileOver ? 'ring-2 ring-primary-500' : ''}`}
         onKeyDownCapture={handleSendKey}
@@ -597,7 +611,7 @@ export function ComposeModal({
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={isSending}
               className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
             >
@@ -625,7 +639,7 @@ export function ComposeModal({
           </div>
 
           {/* To */}
-          {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}
+          {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
           {/* Cc toggle */}
           {!showCc && (
@@ -634,10 +648,10 @@ export function ComposeModal({
               onClick={() => setShowCc(true)}
               className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
             >
-              + Cc
+              + {t('compose:cc')}
             </button>
           )}
-          {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
+          {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
 
           {/* Unusual recipient warning */}
           {unusualRecipients.length > 0 && (
@@ -650,8 +664,8 @@ export function ComposeModal({
                 />
               </svg>
               <div className="text-xs text-amber-700">
-                <strong>{t('compose:unusualRecipients')}</strong> {unusualRecipients.join(', ')} — different domain than
-                the other recipients. Double-check before sending.
+                <strong>{t('compose:unusualRecipients')}</strong>{' '}
+                {t('compose:unusualRecipientsHint', { recipients: unusualRecipients.join(', ') })}
               </div>
             </div>
           )}
@@ -681,7 +695,7 @@ export function ComposeModal({
             <div className="mt-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs text-gray-500">
-                  Reading {loadingFiles.length} file{loadingFiles.length > 1 ? 's' : ''}…
+                  {t('compose:readingFiles', { count: loadingFiles.length })}
                 </span>
                 <span className="text-xs text-gray-400">{loadProgress}%</span>
               </div>
@@ -819,21 +833,50 @@ export function ComposeModal({
           <div className="flex-1" />
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={isSending || sent}
             className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
           >
-            Cancel
+            {t('common:actions.cancel')}
           </button>
           <SendSplitButton
             testId="compose-send"
-            label={isSending ? t('compose:sending') : isLoadingAttachments ? 'Loading files…' : t('compose:send')}
+            label={
+              isSending ? t('compose:sending') : isLoadingAttachments ? t('compose:loadingFiles') : t('compose:send')
+            }
             onSend={handleSend}
             onSchedule={(at) => void submit(at)}
             disabled={isSending || sent || isLoadingAttachments || !readyToSend}
           />
         </div>
       </div>
+      <Modal
+        open={confirmingClose}
+        onClose={() => setConfirmingClose(false)}
+        title={t('compose:closeWithFiles.title')}
+        size="sm"
+        zIndex={60}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingClose(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
+              {t('compose:closeWithFiles.keep')}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+            >
+              {t('common:actions.close')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('compose:closeWithFiles.body')}</p>
+      </Modal>
     </div>,
     document.body,
   );

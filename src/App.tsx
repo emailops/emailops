@@ -27,7 +27,7 @@ import { ErrorBanner } from '@/components/ErrorBanner/ErrorBanner';
 import type { RulePrefill } from '@/components/Inbox/EmailRow';
 import { Inbox } from '@/components/Inbox/Inbox';
 import { LensesView } from '@/components/Lenses/LensesView';
-import { LockScreen } from '@/components/LockScreen';
+import { LockGate } from '@/components/LockGate';
 import { LogPanel } from '@/components/LogPanel/LogPanel';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
@@ -64,7 +64,7 @@ import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
-import { appendFilterToken, filterToken, planListSource } from '@/lib/filterQuery';
+import { appendFilterToken, filterToken } from '@/lib/filterQuery';
 import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
@@ -179,9 +179,6 @@ const UPDATE_TOAST_HOST: UpdateToastHost = {
 };
 
 function App() {
-  const [isLocked, setIsLocked] = useState(false);
-  const [lockChecked, setLockChecked] = useState(false);
-
   // An archive/delete still inside its undo window is sent before the page
   // goes away (reload, window close where the webview fires it). A quit that
   // skips the event drops the action: it simply never happened.
@@ -191,17 +188,11 @@ function App() {
     return () => window.removeEventListener('beforeunload', flush);
   }, []);
 
-  useEffect(() => {
-    api.hasMainPassword().then((has) => {
-      setIsLocked(has);
-      setLockChecked(true);
-    });
-  }, []);
-
-  if (!lockChecked) return null;
-  if (isLocked) return <LockScreen onUnlock={() => setIsLocked(false)} />;
-
-  return <AppInner />;
+  return (
+    <LockGate>
+      <AppInner />
+    </LockGate>
+  );
 }
 
 function AppInner() {
@@ -506,11 +497,11 @@ function AppInner() {
     isLoadingMore,
     isLoadingThread,
     hasMore,
-    totalCount,
     selectedEmail,
     threadEmails,
     selectEmail,
     loadMore,
+    retry: retryEmails,
     refetch: refetchEmails,
     silentRefetch: silentRefetchEmails,
     error: emailError,
@@ -1102,8 +1093,8 @@ function AppInner() {
           // click handler does. `getState()` reads the latest action ref
           // rather than capturing a closure over the not-yet-declared
           // useEmailStore hook above the listener mount.
-          openThreadReply: (accountId, emailId, body) => {
-            setPendingChatDraft({ emailId, body });
+          openThreadReply: (accountId, emailId, body, draftId) => {
+            setPendingChatDraft({ emailId, body, draftId });
             useEmailStore.getState().navigateToEmail(accountId, emailId);
           },
           // Switch away from the chat view so the compose tab the chat just
@@ -1307,9 +1298,13 @@ function AppInner() {
         .join(','),
     [accounts],
   );
+  // A different set of accounts is a different list: merging a refresh into it
+  // would keep the rows of a disabled account below the first page.
+  const lastEnabledAccountsKey = useRef(enabledAccountsKey);
   useEffect(() => {
-    if (!isUnified) return;
-    silentRefetchEmailsRef.current();
+    if (lastEnabledAccountsKey.current === enabledAccountsKey) return;
+    lastEnabledAccountsKey.current = enabledAccountsKey;
+    if (isUnified) refetchEmailsRef.current();
   }, [isUnified, enabledAccountsKey]);
 
   const handleSearchSelect = useCallback(
@@ -1327,27 +1322,8 @@ function AppInner() {
       setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
       // The highlighted smart filter follows the query (filterStore).
       useEmailStore.getState().setSearchQuery(query);
-      addLog('info', 'search', `Filtering inbox: "${query}"`);
     },
     [addLog],
-  );
-
-  const handleApplySearchWithResults = useCallback(
-    (query: string, emails: Email[]) => {
-      // The overlay searched every live mailbox; its results are the list's
-      // only for a plain search outside Sent/Archive/a folder. A one-filter
-      // query pages, and a view narrows — both refetch.
-      const view = isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox';
-      const source = planListSource(query, view);
-      if (source.kind !== 'search' || source.mailbox !== undefined) {
-        handleApplySearch(query);
-        return;
-      }
-      setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
-      useEmailStore.getState().applySearchResults(query, emails);
-      addLog('info', 'search', `Filtering inbox: "${query}" (reused ${emails.length} results)`);
-    },
-    [addLog, handleApplySearch, viewMode],
   );
 
   // A smart filter writes its query into the search box (DECISIONS
@@ -1368,7 +1344,6 @@ function AppInner() {
       void selectEmail(null);
       if (query) {
         useEmailStore.getState().setSearchQuery(query);
-        addLog('info', 'search', `Filtering inbox: "${query}"`);
       } else {
         clearSearchQuery();
       }
@@ -1848,12 +1823,12 @@ function AppInner() {
                     syncProgress={syncProgress}
                     isLoadingMore={isLoadingMore}
                     hasMore={hasMore}
-                    totalCount={totalCount}
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
+                    onRetry={retryEmails}
                     onAddSenderFilter={addSenderAsFilter}
                     onHideSenderFromFilters={handleHideSenderFromFilters}
                     onCreateAttachmentRule={handleCreateAttachmentRule}
@@ -1890,6 +1865,7 @@ function AppInner() {
                     isChatPanelOpen={isChatPanelOpen}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
+                    onSync={() => void handleSync()}
                   />
                 );
 
@@ -2005,9 +1981,9 @@ function AppInner() {
       {isSearchOpen && (
         <SearchBar
           accountId={queryAccountId}
+          view={isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox'}
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
-          onApplySearchWithResults={handleApplySearchWithResults}
           onClose={() => setIsSearchOpen(false)}
         />
       )}

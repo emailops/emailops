@@ -15,6 +15,7 @@ use crate::ai::provider::AIProvider;
 use crate::db::help_docs::PREF_HELP_CORPUS_HASH;
 use crate::db::Database;
 use crate::models::error::Result;
+use crate::services::ai::AiService;
 
 use super::corpus::{corpus, corpus_hash, embedding_text};
 
@@ -88,7 +89,7 @@ pub async fn ensure_embeddings(db: &Arc<Database>, provider: &dyn AIProvider) ->
     let mut done: u32 = 0;
     for batch in pending.chunks(EMBED_BATCH) {
         let texts: Vec<String> = batch.iter().map(|(_, c)| embedding_text(c)).collect();
-        let results = match provider.embed_batch(&texts).await {
+        let results = match AiService::embed_batch_metered(db, provider, &texts).await {
             Ok(r) => r,
             Err(e) => {
                 log(
@@ -188,6 +189,44 @@ mod tests {
         assert_eq!(ensure_embeddings(&db, &provider).await.unwrap(), 0);
 
         assert!(provider.embed_calls().is_empty());
+    }
+
+    /// Best-effort as for any provider failure: out of budget the text index
+    /// keeps answering, and no section is sent to the paid embedding model.
+    #[tokio::test]
+    async fn ensure_embeddings_stops_without_a_paid_call_once_the_budget_is_spent() {
+        use crate::ai::provider::{FakeAiProvider, ProviderType};
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        ensure_text_index(&db).unwrap();
+        db.set_preference("ai_monthly_budget", "1.0").unwrap();
+        crate::services::ai::spend_for_testing(&db, 1.0);
+        let provider = FakeAiProvider::default()
+            .with_provider_type(ProviderType::OpenRouter)
+            .with_embedding_dim(768);
+
+        assert_eq!(ensure_embeddings(&db, &provider).await.unwrap(), 0);
+
+        assert!(provider.embed_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_cost_of_embedding_the_guides_counts_against_the_budget() {
+        use crate::ai::provider::{FakeAiProvider, ProviderType};
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        ensure_text_index(&db).unwrap();
+        let provider = FakeAiProvider::default()
+            .with_provider_type(ProviderType::OpenRouter)
+            .with_embedding_dim(768)
+            .with_embedding_cost(0.001);
+
+        let embedded = ensure_embeddings(&db, &provider).await.unwrap();
+
+        let usage = crate::services::ai::AiService::usage_summary(&db).unwrap();
+        assert!(
+            (usage.total_cost_usd - f64::from(embedded) * 0.001).abs() < 1e-9,
+            "{} for {embedded} sections",
+            usage.total_cost_usd
+        );
     }
 
     #[tokio::test]

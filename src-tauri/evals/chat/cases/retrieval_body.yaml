@@ -1,0 +1,29 @@
+# Embeddings must read the email's text, not its 180-character snippet.
+#
+# WHAT BROKE
+# `generate_embeddings` read `email.body`, which `get_emails_by_ids` leaves empty
+# (the text lives in `email_bodies`), so every vector was built from the snippet
+# and a passage past it could only be found by keyword.
+#
+# WHY THIS CASE WORKS ON THE DEMO DB
+# Indie Infra Weekly #89 opens with a long header, so its backups tip starts past
+# the snippet, in the first chunk of the body. The question shares no distinctive
+# word with the tip, so only a vector of the body finds it. On a demo DB embedded
+# from the snippets the answer is that nobody wrote about it.
+#
+# WHAT THIS ASSERTS
+# The answer names what the tip says: encrypt with a hardware-backed key, so the
+# provider only holds ciphertext.
+- id: retrieval_reads_past_the_snippet
+  question: "Did anyone mail me advice on keeping my hosting provider from seeing inside my saved copies?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  expected_answer_contains_any:
+    - "ciphertext"
+    - "hardware-backed"
+    - "hardware backed"
+  expected_output: "Indie Infra Weekly #89 says to encrypt before you upload: pipe the archive through age with a hardware-backed key, so the storage provider only ever holds ciphertext."
+  metrics:
+    - answer_relevancy
+    - faithfulness

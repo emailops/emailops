@@ -188,7 +188,7 @@ pub async fn get_email_body(
     email_id: String,
 ) -> Result<String, AppError> {
     services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
-    state.db.get_email_body(&email_id)
+    services::emails::body_with_inline_images(&state.db, &email_id).await
 }
 
 #[tauri::command]

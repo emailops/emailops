@@ -18,6 +18,7 @@ use crate::ai::provider::AIProvider;
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{HelpChunk, HelpTrace};
+use crate::services::ai::AiService;
 use crate::services::retrieval::{fuse_rrf, Ranking, DEFAULT_RRF_K};
 
 use super::index::embedding_model_label;
@@ -328,7 +329,7 @@ pub async fn lookup_help(
     let embedding: Option<Vec<f32>> = if vector_available {
         match query_embedding {
             Some(e) => Some(e.to_vec()),
-            None => match timeout(HELP_LOOKUP_TIMEOUT, provider.embed(query)).await {
+            None => match timeout(HELP_LOOKUP_TIMEOUT, AiService::embed_metered(db, provider, query)).await {
                 Ok(Ok(r)) => Some(r.embedding),
                 Ok(Err(e)) => {
                     log("warn", format!("help lookup: embedding failed ({e}); FTS only"));
@@ -468,6 +469,31 @@ fn log(level: &str, message: impl Into<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Out of budget the lookup falls back to the text index, as for any
+    /// embedding failure, without a paid call.
+    #[tokio::test]
+    async fn a_lookup_embeds_nothing_once_the_budget_is_spent() {
+        use crate::ai::provider::{FakeAiProvider, ProviderType};
+        let db = Arc::new(crate::db::Database::new_for_testing().unwrap());
+        crate::services::help_docs::ensure_text_index(&db).unwrap();
+        let provider = FakeAiProvider::default()
+            .with_provider_type(ProviderType::OpenRouter)
+            .with_embedding_dim(768);
+        crate::services::help_docs::ensure_embeddings(&db, &provider)
+            .await
+            .unwrap();
+        let indexed = provider.embed_calls().len();
+        db.set_preference("ai_monthly_budget", "1.0").unwrap();
+        crate::services::ai::spend_for_testing(&db, 1.0);
+
+        let (sources, _trace) = lookup_help(&db, &provider, "OpenRouter", None, "en", 3, None)
+            .await
+            .unwrap();
+
+        assert_eq!(provider.embed_calls().len(), indexed, "no paid call past the budget");
+        assert!(!sources.is_empty(), "the text index still answers");
+    }
 
     /// Sections embedded under another provider must not make a provider
     /// without an embedding model embed the question.

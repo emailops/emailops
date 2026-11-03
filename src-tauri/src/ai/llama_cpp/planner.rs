@@ -985,12 +985,29 @@ mod tests {
         }
     }
 
-    // ── Auxiliary one-shot prefix slot ──────────────────────────────────
-
     /// `n` distinct tokens, so a prefix comparison means something.
     fn seq(n: usize) -> Vec<LlamaToken> {
         (0..n as i32).map(LlamaToken::new).collect()
     }
+
+    /// A prompt past the window loses its front, and the front is the system
+    /// prompt: the turn goes on without the instructions it was given.
+    #[test]
+    #[ignore = "known gap: keeping the system prompt changes what the model receives, so the fix needs a chat eval"]
+    fn front_truncation_keeps_the_system_prompt() {
+        let system = 1500;
+        let prompt = seq(9000);
+        let budget = plan_prompt_budget(prompt.len(), 4096, 8192);
+        assert!(budget.drop_front > 0, "this prompt has to overflow the window");
+        let kept = &prompt[budget.drop_front..];
+        assert!(
+            kept.starts_with(&prompt[..system]),
+            "the first {} tokens were dropped, and the {system}-token system prompt with them",
+            budget.drop_front
+        );
+    }
+
+    // ── Auxiliary one-shot prefix slot ──────────────────────────────────
 
     #[test]
     fn aux_prefix_plan_table() {

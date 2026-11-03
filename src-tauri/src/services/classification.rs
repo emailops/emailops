@@ -765,11 +765,16 @@ fn normalise_labels(parsed: ClassificationResponse, config: &ClassificationConfi
     )
 }
 
+/// Gets the provider for an email no rule decided: per email, so a batch that
+/// rules settle loads no model.
+type LoadProvider<'a> = &'a (dyn Fn() -> Result<Arc<dyn crate::ai::provider::AIProvider>> + Sync);
+
 async fn classify_email(
     db: &Arc<Database>,
     config: &ClassificationConfig,
     compiled_rules: &[CompiledRule<'_>],
     email: &EmailToClassify<'_>,
+    load_provider: LoadProvider<'_>,
 ) -> Result<Classified> {
     // Try rule-based first (instant, no LLM cost)
     if let Some(result) = rule_based_classify(compiled_rules, email.sender_email, email.subject) {
@@ -786,9 +791,9 @@ async fn classify_email(
     // Classification uses the main AI provider/model — sharing the chat
     // model means the one-shot completion below runs on the throwaway KV
     // sequence and leaves the chat prompt cache warm (see llama_cpp::actor).
-    let provider = AiService::load_provider(db)?;
+    let provider = load_provider()?;
 
-    let run = classify_with_provider(provider.as_ref(), config, &prompt)
+    let run = classify_with_provider(db, provider.as_ref(), config, &prompt)
         .await
         .map_err(|e| match e {
             ReplyError::Empty => AppError::AiError(format!(
@@ -839,10 +844,11 @@ pub(crate) struct ClassifyRun {
     pub cached_prompt_tokens: Option<u32>,
 }
 
-/// The model half of `classify_email`: one completion, parse, normalise.
-/// Split out from the DB-bound caller so tests and the eval harness can drive
-/// it with any provider.
+/// The model half of `classify_email`: one completion under the budget, parse,
+/// normalise. Split out from the caller that loads the prompt and the provider
+/// so tests and the eval harness can drive it with any provider.
 pub(crate) async fn classify_with_provider(
+    db: &Database,
     provider: &dyn crate::ai::provider::AIProvider,
     config: &ClassificationConfig,
     prompt: &str,
@@ -860,7 +866,9 @@ pub(crate) async fn classify_with_provider(
     };
 
     let t = std::time::Instant::now();
-    let result = provider.complete(prompt, opts).await.map_err(ReplyError::Provider)?;
+    let result = AiService::complete_metered(db, provider, prompt, opts, "classify_email")
+        .await
+        .map_err(ReplyError::Provider)?;
     let latency_ms = t.elapsed().as_millis() as u64;
     let raw = result.text.trim().to_string();
     crate::ai::tracing::driver().record_generation(crate::ai::tracing::GenerationParams {
@@ -1111,6 +1119,20 @@ async fn classify_email_ids(
     config: &ClassificationConfig,
     rules: &[ClassificationRule],
 ) -> Result<Vec<(String, ClassifyMethod)>> {
+    classify_email_ids_with(db, account_id, email_ids, config, rules, &|| {
+        AiService::load_provider(db)
+    })
+    .await
+}
+
+async fn classify_email_ids_with(
+    db: &Arc<Database>,
+    account_id: &str,
+    email_ids: &[String],
+    config: &ClassificationConfig,
+    rules: &[ClassificationRule],
+    load_provider: LoadProvider<'_>,
+) -> Result<Vec<(String, ClassifyMethod)>> {
     let total = email_ids.len() as i32;
     // How each email was decided, in input order. `classify_email_by_id`
     // reports it straight back to its caller instead of inferring it from the
@@ -1169,7 +1191,7 @@ async fn classify_email_ids(
             snippet: &snippet,
         };
 
-        match classify_email(db, config, &compiled_rules, &email).await {
+        match classify_email(db, config, &compiled_rules, &email, load_provider).await {
             Ok(decision) => {
                 let Classified {
                     urgency: priority,
@@ -1205,6 +1227,16 @@ async fn classify_email_ids(
                         }
                     }),
                 );
+            }
+            // Out of budget: every email the model would decide is refused the
+            // same way. What is classified so far is written below, the rest
+            // stays unclassified for a run with budget left.
+            Err(e @ AppError::BudgetExceeded(_)) => {
+                emit_log(
+                    "error",
+                    &format!("Classification stopped after {i} of {total} emails: {e}"),
+                );
+                break;
             }
             Err(e) => {
                 errors += 1;
@@ -1246,14 +1278,23 @@ async fn classify_email_ids(
         message: format!("Classification complete: {} emails classified", classified),
     });
 
-    emit_log(
-        "success",
-        &format!(
-            "Classified {} emails ({} by rules, {} by AI, {} errors)",
-            classified, rule_matched, ai_classified, errors
-        ),
-    );
+    let (level, summary) = batch_summary(classified, rule_matched, ai_classified, errors);
+    emit_log(level, &summary);
     Ok(decisions)
+}
+
+/// Log level and text of a finished batch. An email that failed stays
+/// unclassified for the next run, so a batch with failures is no success.
+fn batch_summary(classified: u32, rule_matched: u32, ai_classified: u32, errors: u32) -> (&'static str, String) {
+    let level = match (classified, errors) {
+        (_, 0) => "success",
+        (0, _) => "error",
+        _ => "warn",
+    };
+    (
+        level,
+        format!("Classified {classified} emails ({rule_matched} by rules, {ai_classified} by AI, {errors} errors)"),
+    )
 }
 
 fn extract_json(text: &str) -> String {
@@ -1267,8 +1308,8 @@ fn extract_json(text: &str) -> String {
         text.to_string()
     };
 
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
+    if let (Some(start), Some(end)) = (text.find('{'), text.rfind('}')) {
+        if end >= start {
             return text[start..=end].to_string();
         }
     }
@@ -1321,7 +1362,7 @@ pub fn delete_rule(db: &Database, rule_id: &str, account_id: &str) -> Result<()>
 /// Find email IDs that match a rule's sender/subject patterns.
 pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Result<Vec<String>> {
     let conn = db.connection();
-    let mut conditions = vec!["e.account_id = ?1".to_string()];
+    let mut conditions = vec!["e.account_id = ?1".to_string(), "e.is_deleted = 0".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(rule.account_id.clone())];
     let mut idx = 2;
 
@@ -1363,6 +1404,19 @@ pub fn find_emails_matching_rule(db: &Database, rule: &ClassificationRule) -> Re
     Ok(ids)
 }
 
+/// The emails a rule change sends back through the model: none while
+/// classification is off.
+fn emails_to_reclassify(
+    db: &Database,
+    rule: &ClassificationRule,
+    config: &ClassificationConfig,
+) -> Result<Vec<String>> {
+    if !config.enabled {
+        return Ok(Vec::new());
+    }
+    find_emails_matching_rule(db, rule)
+}
+
 /// Reclassify emails affected by a rule change (runs in background).
 pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &ClassificationRule) -> Result<u32> {
     if !db.is_ai_enabled()? {
@@ -1370,7 +1424,7 @@ pub async fn reclassify_affected_emails(db: &Arc<Database>, rule: &Classificatio
     }
     let config = get_config(db)?;
     let rules = db.get_enabled_classification_rules(&rule.account_id)?;
-    let email_ids = find_emails_matching_rule(db, rule)?;
+    let email_ids = emails_to_reclassify(db, rule, &config)?;
 
     if email_ids.is_empty() {
         emit_log(
@@ -1422,8 +1476,31 @@ pub fn count_unclassified(db: &Database, account_id: &str) -> Result<i32> {
 }
 
 #[cfg(test)]
+mod reply_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn a_closing_brace_before_the_opening_one_is_not_a_json_span() {
+        assert_eq!(extract_json("} not json {"), "} not json {");
+    }
+
+    #[test]
+    fn the_json_span_is_cut_out_of_the_prose_around_it() {
+        assert_eq!(extract_json("Sure: {\"a\": 1} done"), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn a_batch_with_failures_is_not_reported_as_a_success() {
+        assert_eq!(batch_summary(3, 2, 1, 0).0, "success");
+        assert_eq!(batch_summary(3, 2, 1, 2).0, "warn");
+        assert_eq!(batch_summary(0, 0, 0, 5).0, "error");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::provider::{FakeAiProvider, ProviderType};
 
     fn test_config() -> ClassificationConfig {
         ClassificationConfig {
@@ -1433,6 +1510,64 @@ mod tests {
             topics: vec!["billing".to_string()],
             categories: vec!["primary".to_string()],
         }
+    }
+
+    fn db_with_a_rule_match() -> (Database, ClassificationRule) {
+        let db = Database::new_for_testing().unwrap();
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO accounts (id, provider, email, name, created_at)
+                 VALUES ('acct', 'gmail', 'me@example.com', 'Me', 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, created_at)
+                 VALUES ('a','acct','a','Weekly digest','S','news@example.com','example.com','[]','[]',
+                         'a snippet long enough to pass the length filter',100,0,'primary',0)",
+                [],
+            )
+            .unwrap();
+        }
+        let rule = ClassificationRule {
+            id: "r".into(),
+            account_id: "acct".into(),
+            name: "r".into(),
+            sender_pattern: Some("news@example.com".into()),
+            subject_pattern: None,
+            priority: "normal".into(),
+            intent: "notification".into(),
+            topic: "operations".into(),
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+        };
+        (db, rule)
+    }
+
+    #[test]
+    fn a_rule_change_sends_mail_to_the_model_only_while_classification_is_on() {
+        let (db, rule) = db_with_a_rule_match();
+        let off = ClassificationConfig {
+            enabled: false,
+            ..test_config()
+        };
+
+        assert!(emails_to_reclassify(&db, &rule, &off).unwrap().is_empty());
+        assert_eq!(emails_to_reclassify(&db, &rule, &test_config()).unwrap(), vec!["a"]);
+    }
+
+    #[test]
+    fn a_rule_change_leaves_deleted_mail_alone() {
+        let (db, rule) = db_with_a_rule_match();
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'a'", [])
+            .unwrap();
+
+        assert!(emails_to_reclassify(&db, &rule, &test_config()).unwrap().is_empty());
     }
 
     #[test]
@@ -1805,10 +1940,8 @@ mod tests {
         assert_eq!(by_subject, vec!["u".to_string()]);
     }
 
-    /// Rules classify without the model, so this runs the real loop with no
-    /// provider: stopped, it classifies nothing; not stopped, both emails.
-    #[tokio::test]
-    async fn a_stopped_classification_takes_no_further_email() {
+    /// A test DB holding one account and one synthetic email per id.
+    fn db_with_emails(ids: &[&str]) -> Arc<Database> {
         let db = Arc::new(Database::new_for_testing().unwrap());
         {
             let conn = db.connection();
@@ -1818,7 +1951,7 @@ mod tests {
                 [],
             )
             .unwrap();
-            for id in ["a", "b"] {
+            for id in ids {
                 conn.execute(
                     "INSERT INTO emails
                      (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
@@ -1830,6 +1963,14 @@ mod tests {
                 .unwrap();
             }
         }
+        db
+    }
+
+    /// Rules classify without the model, so this runs the real loop with no
+    /// provider: stopped, it classifies nothing; not stopped, both emails.
+    #[tokio::test]
+    async fn a_stopped_classification_takes_no_further_email() {
+        let db = db_with_emails(&["a", "b"]);
         let rules = [ClassificationRule {
             id: "r".into(),
             account_id: "acct".into(),
@@ -1854,6 +1995,116 @@ mod tests {
 
         let resumed = classify_email_ids(&db, "acct", &ids, &config, &rules).await.unwrap();
         assert_eq!(resumed.len(), 2);
+    }
+
+    const TAGS: &str = r#"{"urgency":"normal","intent":"request","topic":"billing"}"#;
+
+    fn ids(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(ToString::to_string).collect()
+    }
+
+    /// Run the real batch over `email_ids` with `provider` and no rules.
+    async fn classify_batch(
+        db: &Arc<Database>,
+        provider: &Arc<FakeAiProvider>,
+        email_ids: &[String],
+    ) -> Vec<(String, ClassifyMethod)> {
+        let provider = provider.clone();
+        let load_provider = move || -> Result<Arc<dyn crate::ai::provider::AIProvider>> { Ok(provider.clone()) };
+        classify_email_ids_with(db, "acct", email_ids, &taxonomy_config(), &[], &load_provider)
+            .await
+            .unwrap()
+    }
+
+    fn paid_tags(cost_usd: f64) -> crate::ai::provider::CompletionResult {
+        crate::ai::provider::CompletionResult {
+            text: TAGS.to_string(),
+            cost_usd,
+            model: "vendor/model".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// The call that crosses the budget keeps its tags; the next email is
+    /// refused before the call and ends the batch, and the rest stay
+    /// unclassified for a later run instead of failing one by one.
+    #[tokio::test]
+    async fn a_batch_stops_at_the_first_email_the_budget_refuses() {
+        let db = db_with_emails(&["a", "b", "c"]);
+        db.set_preference("ai_monthly_budget", "1.0").unwrap();
+        let provider = Arc::new(FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter));
+        provider.push_completion_result(paid_tags(1.0));
+        provider.push_completion_result(paid_tags(1.0));
+        provider.push_completion_result(paid_tags(1.0));
+
+        let decided = classify_batch(&db, &provider, &ids(&["a", "b", "c"])).await;
+
+        assert_eq!(decided.len(), 1, "{decided:?}");
+        assert_eq!(decided[0].0, "a");
+        assert_eq!(provider.completion_calls().len(), 1, "no paid call past the budget");
+        let mut left = db.get_unclassified_email_ids("acct", 10, &[], None).unwrap();
+        left.sort();
+        assert_eq!(left, ids(&["b", "c"]));
+        let usage = AiService::usage_summary(&db).unwrap();
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 1.0).abs() < 1e-9);
+    }
+
+    /// Only the budget ends a batch: another failure may be this email's own.
+    #[tokio::test]
+    async fn a_batch_goes_on_after_a_provider_failure() {
+        let db = db_with_emails(&["a", "b"]);
+        let provider = Arc::new(FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter));
+        provider.fail_completions(Some("model unavailable"));
+
+        let decided = classify_batch(&db, &provider, &ids(&["a", "b"])).await;
+
+        assert!(decided.is_empty(), "{decided:?}");
+        assert_eq!(provider.completion_calls().len(), 2);
+    }
+
+    /// A spent OpenRouter budget says nothing about a local backend: its batch
+    /// runs to the end and adds no usage rows.
+    #[tokio::test]
+    async fn a_local_batch_is_not_stopped_or_recorded() {
+        let db = db_with_emails(&["a", "b"]);
+        db.set_preference("ai_monthly_budget", "1.0").unwrap();
+        crate::services::ai::spend_for_testing(&db, 2.0);
+        let provider = Arc::new(FakeAiProvider::new());
+        provider.push_completion(TAGS);
+        provider.push_completion(TAGS);
+
+        let decided = classify_batch(&db, &provider, &ids(&["a", "b"])).await;
+
+        assert_eq!(decided.len(), 2, "{decided:?}");
+        assert_eq!(
+            AiService::usage_summary(&db).unwrap().total_calls,
+            1,
+            "only the spend row"
+        );
+    }
+
+    // Sync with its own runtime so the global seam lock is never held across
+    // an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn a_batch_stopped_by_the_budget_says_so_in_the_log() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let db = db_with_emails(&["a"]);
+        db.set_preference("ai_monthly_budget", "1.0").unwrap();
+        crate::services::ai::spend_for_testing(&db, 2.0);
+        let provider = Arc::new(FakeAiProvider::new().with_provider_type(ProviderType::OpenRouter));
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(classify_batch(&db, &provider, &ids(&["a"])));
+        let logged = logger
+            .events()
+            .into_iter()
+            .any(|e| e.level == "error" && e.message.contains("AI budget exceeded"));
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        assert!(logged, "the user must see why classification stopped");
     }
 
     #[test]
@@ -1903,10 +2154,11 @@ mod tests {
 
     #[tokio::test]
     async fn classify_with_provider_normalises_a_fenced_json_reply() {
+        let db = Database::new_for_testing().unwrap();
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("```json\n{\"intent\": \"a request\", \"topic\": \"billing\", \"urgency\": \"urgent\", \"confidence\": 0.7}\n```");
 
-        let run = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
+        let run = classify_with_provider(&db, &provider, &taxonomy_config(), "PROMPT")
             .await
             .expect("classification");
 
@@ -1921,10 +2173,11 @@ mod tests {
 
     #[tokio::test]
     async fn classify_with_provider_errors_on_an_empty_reply() {
+        let db = Database::new_for_testing().unwrap();
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("   ");
 
-        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
+        let err = classify_with_provider(&db, &provider, &taxonomy_config(), "PROMPT")
             .await
             .expect_err("empty reply must fail");
 
@@ -1933,10 +2186,11 @@ mod tests {
 
     #[tokio::test]
     async fn classify_with_provider_errors_when_the_reply_is_not_json() {
+        let db = Database::new_for_testing().unwrap();
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion("I think this is a billing request.");
 
-        let err = classify_with_provider(&provider, &taxonomy_config(), "PROMPT")
+        let err = classify_with_provider(&db, &provider, &taxonomy_config(), "PROMPT")
             .await
             .expect_err("unparseable reply must fail");
 

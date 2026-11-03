@@ -1,10 +1,10 @@
 //! Cancelling a chat turn while it runs.
 //!
-//! Each running turn registers a flag under its assistant message id. The
-//! chat's Cancel button raises it (`request_cancel`); the turn checks it
-//! between tool rounds and from the token callback, which stops generation
-//! mid-reply. A cancelled turn makes no further model call and keeps what the
-//! user already saw, followed by a note.
+//! Each turn registers a flag under its assistant message id before it joins
+//! the AI queue. The chat's Cancel button raises it (`request_cancel`); the
+//! turn checks it between tool rounds and from the token callback, which stops
+//! generation mid-reply. A cancelled turn makes no further model call and keeps
+//! what the user already saw, followed by a note.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,13 +37,16 @@ impl Drop for TurnGuard {
     }
 }
 
-/// Register the turn answering `message_id`.
+/// Register the turn answering `message_id`. Registered again when it leaves
+/// the queue, it keeps its flag, so a Cancel pressed while it waited counts.
 pub(crate) fn register_turn(message_id: &str) -> TurnGuard {
-    let flag = Arc::new(AtomicBool::new(false));
-    flags()
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(message_id.to_string(), Arc::clone(&flag));
+    let flag = Arc::clone(
+        flags()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(message_id.to_string())
+            .or_default(),
+    );
     TurnGuard {
         message_id: message_id.to_string(),
         flag,
@@ -92,6 +95,17 @@ mod tests {
         assert!(guard.is_cancelled());
         drop(guard);
         assert!(!request_cancel("msg-cancel-1"), "a finished turn cannot be cancelled");
+    }
+
+    #[test]
+    fn a_cancel_raised_in_the_queue_reaches_the_turn_when_it_starts() {
+        let queued = register_turn("msg-cancel-queued");
+        assert!(request_cancel("msg-cancel-queued"), "a queued turn can be cancelled");
+        let running = register_turn("msg-cancel-queued");
+        assert!(running.is_cancelled());
+        drop(running);
+        drop(queued);
+        assert!(!request_cancel("msg-cancel-queued"));
     }
 
     #[test]

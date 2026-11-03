@@ -1196,6 +1196,7 @@ impl LlamaCppRuntime {
             stable_tokens: Some(outcome.stable_tokens),
             dropped_front_tokens: Some(outcome.dropped_front_tokens),
             cost_usd: None,
+            truncated: outcome.truncated,
         })
     }
 
@@ -1352,6 +1353,7 @@ impl LlamaCppRuntime {
             stable_tokens: Some(outcome.stable_tokens),
             dropped_front_tokens: Some(outcome.dropped_front_tokens),
             cost_usd: None,
+            truncated: outcome.truncated,
         })
     }
 

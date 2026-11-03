@@ -76,6 +76,15 @@ describe('send', () => {
     expect(api.queueOutgoingEmail).not.toHaveBeenCalled();
   });
 
+  it('queues a reply whose draft holds files even when undo send is off', async () => {
+    vi.mocked(api.getPref).mockResolvedValue('0');
+    const sendDirect = vi.fn(async () => {});
+    const outcome = await useOutboxStore.getState().send(message, { draftId: 'd1', sendDirect, draftHoldsFiles: true });
+    expect(outcome).toBe('queued');
+    expect(sendDirect).not.toHaveBeenCalled();
+    expect(api.queueOutgoingEmail).toHaveBeenCalledWith(message, { type: 'undo', delaySecs: 5 }, 'd1');
+  });
+
   it('queues for the undo window (10 s by default) and offers Undo for that long', async () => {
     const sendDirect = vi.fn(async () => {});
     const outcome = await useOutboxStore.getState().send(message, { sendDirect, draftId: 'd1' });

@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
   hasMainPassword: vi.fn(async () => false),
   getPref: vi.fn(async () => 'false'),
   setPref: vi.fn(async () => {}),
+  setMainPassword: vi.fn(async () => {}),
 }));
 
 import * as api from '@/lib/api';
@@ -68,6 +69,28 @@ describe('PrivacySettings error handling', () => {
     await act(async () => toggle.click());
 
     expect(remoteToggle()?.getAttribute('aria-checked')).toBe('false');
+    expect(container.textContent).toContain('settings:privacy.saveFailed');
+    expect(useLogStore.getState().entries.some((e) => e.level === 'error')).toBe(true);
+  });
+
+  it('says so when the password state cannot be read back after setting one', async () => {
+    await mount();
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>('button[role="switch"]')].find((b) =>
+      b.closest('div.flex')?.textContent?.includes('settings:privacy.usePassword'),
+    );
+    await act(async () => toggle?.click());
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    for (const input of container.querySelectorAll<HTMLInputElement>('input[type="password"]')) {
+      await act(async () => {
+        setter?.call(input, 'correct horse battery staple');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+    vi.mocked(api.hasMainPassword).mockRejectedValueOnce(new Error('db locked'));
+    const save = [...container.querySelectorAll('button')].find((b) => b.textContent === 'common:actions.save');
+
+    await act(async () => save?.click());
+
     expect(container.textContent).toContain('settings:privacy.saveFailed');
     expect(useLogStore.getState().entries.some((e) => e.level === 'error')).toBe(true);
   });

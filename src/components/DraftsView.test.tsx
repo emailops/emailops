@@ -17,7 +17,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
 
 interface TestDraft {
@@ -44,14 +44,16 @@ function draft(subject: string): TestDraft {
 
 const listDrafts = vi.fn((_accountId: string) => Promise.resolve([draft('Before')] as unknown[]));
 const refreshDrafts = vi.fn((_accountId: string) => Promise.resolve(0));
+const deleteDraft = vi.fn((_id: string, _accountId: string) => Promise.resolve());
 
 vi.mock('@/lib/api', () => ({
   listDrafts: (accountId: string) => listDrafts(accountId),
   refreshDrafts: (accountId: string) => refreshDrafts(accountId),
-  deleteDraft: vi.fn(() => Promise.resolve()),
+  deleteDraft: (id: string, accountId: string) => deleteDraft(id, accountId),
 }));
 
 const { DraftsView } = await import('./DraftsView');
+const { useLogStore } = await import('@/stores/logStore');
 
 let container: HTMLDivElement;
 let root: Root;
@@ -156,5 +158,58 @@ describe('DraftsView', () => {
     await render(null);
 
     expect(container.textContent).toContain('Before');
+  });
+
+  describe('when something fails', () => {
+    beforeEach(() => {
+      useLogStore.setState({ entries: [] });
+      deleteDraft.mockClear();
+      deleteDraft.mockImplementation(() => Promise.resolve());
+    });
+
+    const errorLogged = () => useLogStore.getState().entries.some((e) => e.level === 'error');
+
+    it('says the drafts could not be loaded instead of showing an empty list', async () => {
+      listDrafts.mockImplementation(() => Promise.reject(new Error('db locked')));
+
+      await render(null);
+
+      expect(container.textContent).toContain('compose:drafts.loadFailed');
+      expect(container.textContent).not.toContain('compose:drafts.emptyLong');
+      expect(errorLogged()).toBe(true);
+    });
+
+    it('clears the error once a later load works', async () => {
+      listDrafts.mockImplementation(() => Promise.reject(new Error('db locked')));
+      await render(null);
+      listDrafts.mockImplementation(() => Promise.resolve([draft('Before')] as unknown[]));
+
+      await render(complete('acc-1'));
+
+      expect(container.textContent).not.toContain('compose:drafts.loadFailed');
+      expect(container.textContent).toContain('Before');
+    });
+
+    it('says a draft could not be deleted and keeps it on the list', async () => {
+      deleteDraft.mockImplementation(() => Promise.reject(new Error('offline')));
+      await render(null);
+      const remove = container.querySelector<HTMLButtonElement>('button[title="compose:drafts.delete"]');
+
+      await act(async () => remove?.click());
+
+      expect(container.textContent).toContain('compose:drafts.deleteFailed');
+      expect(container.textContent).toContain('Before');
+      expect(errorLogged()).toBe(true);
+    });
+
+    it('logs a provider that cannot be reached, keeping the local list', async () => {
+      refreshDrafts.mockImplementation(() => Promise.reject(new Error('offline')));
+
+      await render(null);
+
+      expect(container.textContent).toContain('Before');
+      expect(container.textContent).not.toContain('compose:drafts.loadFailed');
+      expect(errorLogged()).toBe(true);
+    });
   });
 });

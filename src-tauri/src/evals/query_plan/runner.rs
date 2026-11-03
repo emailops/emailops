@@ -158,6 +158,7 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
         let today = case.today.clone().unwrap_or_else(|| default_today.clone());
         let started = Instant::now();
         let planned = plan_search(
+            &db,
             provider.as_ref(),
             &template,
             &user_email,

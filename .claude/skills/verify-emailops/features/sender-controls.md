@@ -39,4 +39,5 @@ and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` in `email_headers`. Conf
 | a blocked sender's new mail is filed as spam during sync | integration (`sync_files_new_mail_from_a_blocked_sender_as_spam`) |
 | command arguments and payloads | contract (`src/lib/apiContract/junk.api.test.ts`, `sender_controls.rs`) |
 | Unsubscribe dialog + Cancel, Block, banner, Settings list + Unblock | e2e (`Remitentes/*`) |
+| contract | n/a as a layer of its own: `sender_controls.rs` and its payloads are checked by `src/lib/apiContract/junk.api.test.ts`, which is attributed to Junk |
 | eval | n/a: no model involved |

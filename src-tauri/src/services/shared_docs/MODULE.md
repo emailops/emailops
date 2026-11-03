@@ -15,8 +15,9 @@ email as the only transport: no server, no cloud.
   attachment's file name; no custom header is needed (the send paths cannot
   set one, and the sync keeps an allowlist).
 - **The decisions** (`planner.rs`, pure): what an arriving envelope does
-  (`plan_arrival`), who a document's mail goes to, and which documents are
-  due to be mailed (`due_flushes`, 2-minute pause after the last edit).
+  (`plan_arrival`), who a document's mail goes to, which documents are due to
+  be mailed (`due_flushes`, 2-minute pause after the last edit) and how long a
+  failing one waits (`next_flush_retry`).
 - **The executors** (`mod.rs`): create, share, accept, leave, delete, local edits,
   `flush` / `flush_due` (mail pending changes) and `ingest_arrivals` (the sync
   hook).
@@ -41,7 +42,11 @@ email as the only transport: no server, no cloud.
    an invitation) is the user's consent to the automatic mails that follow.
 2. Local edits mark the document dirty. After a pause, `flush` mails what the
    least up-to-date recipient lacks (diff against the minimum of the known
-   state vectors), then assumes every recipient has it.
+   state vectors), then assumes every recipient has it. A failed mail stays
+   pending and waits 1 minute, doubling up to 15, before the background flush
+   tries again. That wait lives in memory (`FlushRetries`, owned by the
+   scheduler loop): a restart earns one more attempt, and `flush` from the
+   editor ignores it.
 3. `ingest_arrivals` first refuses a message whose sender fails the
    provider's authentication (`planner::sender_rejection` over
    `junk::auth::assess`: DMARC fail, or SPF fail with no DMARC policy and no
@@ -50,12 +55,17 @@ email as the only transport: no server, no cloud.
    and marks the document dirty when the sender lacks something or this
    install is missing a dependency — so the next flush catches the other side
    up. A lost message is made good this way; duplicates are harmless.
-4. Update messages are marked read and archived; an invitation stays in the
-   inbox. The owner's other installs pick their own messages up from Sent.
+4. Update messages are marked read and archived, one by one: the rest of
+   their conversation is left alone, and an invitation stays in the inbox. The
+   owner's other installs pick their own messages up from Sent.
+
+Both writers of a document's content, a local save and an arrival, go through
+`merge_shared_doc_state`, which holds the write connection from the read to the
+write so neither overwrites the other.
 
 ## Depends on
 
-`db::shared_docs` (V036), `services::emails` (send, thread archive),
+`db::shared_docs` (V036), `services::emails` (send, message archive),
 `services::outbox::OutboxProviders` (provider per account for the background
 flush, run by `sync_scheduler::outbox_dispatch_loop`), `sync::provider`.
 

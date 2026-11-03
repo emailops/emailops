@@ -353,6 +353,16 @@ impl JunkSignals {
             .any(|d| lookalike::registrable_domain(&lookalike::normalize(d)) == domain)
     }
 
+    /// [`Self::sender_domain_known`] as evidence about this sender. Anyone can
+    /// hold an address on a free-mail domain, so knowing one person there says
+    /// nothing about the next.
+    pub fn sender_domain_vouches(&self) -> bool {
+        self.sender_domain_known()
+            && !self
+                .sender_domain()
+                .is_some_and(|domain| crate::util::email_addr::is_personal_email_domain(&domain))
+    }
+
     /// No prior relationship of any kind. A modifier on other evidence, never a
     /// verdict on its own — everyone the user knows was a first contact once.
     pub fn is_first_contact(&self) -> bool {
@@ -587,6 +597,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // `is_first_contact`). On a 500-message scoring batch that is millions of
     // redundant string allocations for an answer that cannot change mid-verdict.
     let sender_domain_known = signals.sender_domain_known();
+    let sender_domain_vouches = signals.sender_domain_vouches();
     let first_contact = !signals.sender_engaged && !sender_domain_known;
 
     let mut phishing = AxisBuilder::new(JunkAxis::Phishing);
@@ -619,7 +630,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // perfectly — the attacker owns the sending domain — so no amount of
     // authentication evidence will catch it.
     let impersonates = !display.is_empty()
-        && !sender_domain_known
+        && !sender_domain_vouches
         && !signals.sender_engaged
         && signals
             .known_contact_names
@@ -967,7 +978,7 @@ pub fn judge(signals: &JunkSignals, weights: &Weights) -> JunkVerdict {
     // Correspondence plus clean authentication is the strongest exculpatory
     // evidence available: the user has replied to this address (or its domain)
     // and the message provably comes from it.
-    let vouched = auth.fully_aligned() && (signals.sender_engaged || sender_domain_known);
+    let vouched = auth.fully_aligned() && (signals.sender_engaged || sender_domain_vouches);
     if vouched {
         suppressors.push(ReasonCode::EngagedSender);
     }
@@ -1192,6 +1203,34 @@ mod tests {
         let verdict = judged(&s);
         assert!(verdict.phishing.band.is_flagged(), "{:?}", verdict.phishing);
         assert!(verdict
+            .all_reason_codes()
+            .contains(&ReasonCode::DisplayNameImpersonation));
+    }
+
+    #[test]
+    fn a_known_company_domain_vouches_and_a_free_mail_one_does_not() {
+        let mut s = signals(
+            &format!("{ALIGNED}From: Stranger <synthetic-stranger@gmail.com>\n"),
+            "hello",
+        );
+        s.known_contact_domains = vec!["gmail.com".to_string()];
+        assert!(!s.sender_domain_vouches());
+
+        s.sender_email = "sam@partnerco.example".to_string();
+        s.known_contact_domains = vec!["partnerco.example".to_string()];
+        assert!(s.sender_domain_vouches());
+    }
+
+    #[test]
+    fn a_familiar_name_on_a_known_free_mail_domain_is_still_impersonation() {
+        let mut s = signals(
+            &format!("{ALIGNED}From: \"Sam Okafor\" <synthetic-impersonator@gmail.com>\n"),
+            "Are you at your desk? I need a payment handled today.",
+        );
+        s.known_contact_names = vec!["Sam Okafor".to_string()];
+        s.known_contact_domains = vec!["gmail.com".to_string()];
+
+        assert!(judged(&s)
             .all_reason_codes()
             .contains(&ReasonCode::DisplayNameImpersonation));
     }

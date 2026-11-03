@@ -1,10 +1,12 @@
 import Collaboration from '@tiptap/extension-collaboration';
 import { type Editor, EditorContent, useEditor } from '@tiptap/react';
 import { redo, undo } from '@tiptap/y-tiptap';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
 import { DOC_FIELD, docSchemaExtensions } from '@/lib/docSchema';
+import { getSafeExternalUrl } from '@/lib/emailFormatting';
+import { ExternalLinkDialog } from '../shared/ExternalLinkDialog';
 
 export { DOC_FIELD };
 
@@ -49,6 +51,7 @@ function ToolbarButton({ label, text, active, disabled = false, onClick }: Toolb
  */
 export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
   const { t } = useTranslation(['documents']);
+  const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const editor = useEditor(
     {
       editable,
@@ -57,6 +60,16 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       extensions: [...docSchemaExtensions, Collaboration.configure({ document: doc, field: DOC_FIELD })],
       editorProps: {
         handleDOMEvents: {
+          // Marks come from whoever wrote the document, so a link never
+          // navigates by itself. The caret has already moved on mouse down.
+          click: (_view, event) => {
+            const link = (event.target as Element).closest('a');
+            if (!link) return false;
+            event.preventDefault();
+            const url = getSafeExternalUrl(link.getAttribute('href') ?? '');
+            if (url) setLinkUrl(url);
+            return true;
+          },
           beforeinput: (view, event) => {
             const type = (event as InputEvent).inputType;
             if (type !== 'historyUndo' && type !== 'historyRedo') return false;
@@ -147,6 +160,7 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       <div className="flex-1 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
+      {linkUrl && <ExternalLinkDialog url={linkUrl} onClose={() => setLinkUrl(null)} />}
     </div>
   );
 }

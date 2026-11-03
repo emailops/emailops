@@ -17,6 +17,8 @@
 //! the fast path can only ever *save* a round, never break a turn.
 
 use crate::ai::provider::{AIProvider, AiToolCall, AiToolCallFunction, CompletionOptions};
+use crate::db::Database;
+use crate::services::ai::AiService;
 use crate::services::classification::TagGlossary;
 
 /// The planner's decision for a turn.
@@ -544,6 +546,7 @@ pub(crate) fn render_guide_pages() -> String {
 /// chat provider, and parse the reply into a [`Plan`]. Never errors — a provider
 /// failure degrades to [`Plan::Defer`] so the turn proceeds normally.
 pub async fn plan_search(
+    db: &Database,
     provider: &dyn AIProvider,
     template: &str,
     user_email: &str,
@@ -560,7 +563,7 @@ pub async fn plan_search(
         think: Some(false),
         json_shape: None,
     };
-    match provider.complete_with_prefix(&prefix, &suffix, opts).await {
+    match AiService::complete_with_prefix_metered(db, provider, &prefix, &suffix, opts, "chat_plan").await {
         Ok(result) => {
             let (plan, outcome) = parse_plan_detailed(&result.text);
             PlanRun {
@@ -1356,7 +1359,9 @@ mod tests {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.push_completion(r#"{"from": "marisol", "limit": 3}"#);
 
+        let db = Database::new_for_testing().expect("test db");
         let run = plan_search(
+            &db,
             &provider,
             "Question: {{query}}\nJSON:",
             "me@example.test",
@@ -1378,7 +1383,9 @@ mod tests {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.fail_completions(Some("model is not loaded"));
 
+        let db = Database::new_for_testing().expect("test db");
         let run = plan_search(
+            &db,
             &provider,
             "Question: {{query}}\nJSON:",
             "me@example.test",
@@ -1394,6 +1401,64 @@ mod tests {
         assert_eq!(run.outcome, PlanOutcome::ProviderError);
     }
 
+    /// Run the planner on a paid provider against `db`.
+    async fn plan_on(db: &Database, provider: &crate::ai::provider::FakeAiProvider) -> PlanRun {
+        plan_search(
+            db,
+            provider,
+            "Question: {{query}}\nJSON:",
+            "me@example.test",
+            "2026-06-15",
+            "mail from ana",
+            &TagGlossary::defaults(),
+            None,
+            TEST_CATALOG,
+        )
+        .await
+    }
+
+    fn paid_provider() -> crate::ai::provider::FakeAiProvider {
+        crate::ai::provider::FakeAiProvider::new().with_provider_type(crate::ai::provider::ProviderType::OpenRouter)
+    }
+
+    fn paid_plan(cost_usd: f64) -> crate::ai::provider::CompletionResult {
+        crate::ai::provider::CompletionResult {
+            text: r#"{"from": "ana"}"#.to_string(),
+            cost_usd,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_paid_plan_counts_against_the_budget() {
+        let db = Database::new_for_testing().expect("test db");
+        let provider = paid_provider();
+        provider.push_completion_result(paid_plan(0.25));
+
+        plan_on(&db, &provider).await;
+
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+    }
+
+    /// Out of budget the planner defers without a paid call: the model loop
+    /// that follows is what tells the user, with the budget message.
+    #[tokio::test]
+    async fn a_spent_budget_defers_without_calling_the_provider() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", "1.0").expect("budget");
+        let provider = paid_provider();
+        provider.push_completion_result(paid_plan(1.0));
+        plan_on(&db, &provider).await;
+
+        let run = plan_on(&db, &provider).await;
+
+        assert_eq!(run.plan, Plan::Defer);
+        assert_eq!(run.outcome, PlanOutcome::ProviderError);
+        assert_eq!(provider.completion_calls().len(), 1, "no paid call past the budget");
+    }
+
     // Sync with its own runtime so the global seam lock is never held across
     // an await point (`clippy::await_holding_lock`).
     #[test]
@@ -1402,11 +1467,13 @@ mod tests {
         let logger = crate::services::logger::install_for_testing();
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.fail_completions(Some("planner model unavailable for test"));
+        let db = Database::new_for_testing().expect("test db");
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("test runtime")
             .block_on(plan_search(
+                &db,
                 &provider,
                 "Question: {{query}}\nJSON:",
                 "me@example.test",

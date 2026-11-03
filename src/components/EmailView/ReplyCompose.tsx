@@ -1,6 +1,6 @@
-import { format } from 'date-fns';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -9,6 +9,7 @@ import { TranslateComposeControl } from '@/components/shared/TranslateComposeCon
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -54,6 +55,9 @@ interface ReplyComposeProps {
   /** A reply draft saved earlier for this thread: the panel opens with its
    *  recipients and text, and keeps saving into the same draft. */
   restoredDraft?: Draft | null;
+  /** The draft the chat saved for this reply. The panel takes it over: edits
+   *  save into it, and sending or cancelling removes it. */
+  adoptDraftId?: string;
   /** Called with the draft after every successful save. */
   onDraftSaved?: (draft: Draft) => void;
   initialBody: string;
@@ -62,6 +66,8 @@ interface ReplyComposeProps {
    *  rather than offered, because a forward that silently drops the boarding
    *  pass is worse than useless. */
   initialAttachments?: EmailAttachment[];
+  /** True while `initialAttachments` are on their way: Send waits for them. */
+  attachmentsLoading?: boolean;
   /** True while an AI draft is being generated for this reply. Disables the
    *  textarea and shows a spinner inline so the user knows the draft is
    *  being produced on the AI queue. */
@@ -179,9 +185,11 @@ export function ReplyCompose({
   defaultAccountId,
   onSend,
   onCancel,
+  adoptDraftId,
   initialBody,
   mode,
   initialAttachments = [],
+  attachmentsLoading = false,
   isLoadingDraft = false,
   draftSources = [],
   onGenerateDraft,
@@ -189,7 +197,7 @@ export function ReplyCompose({
   onDraftSaved,
 }: ReplyComposeProps) {
   const addLog = useLogStore((s) => s.addLog);
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
   // Editor holds HTML. AI drafts and the initial empty state are plain text;
@@ -271,11 +279,27 @@ export function ReplyCompose({
   const debouncedRef = useRef<DebouncedDraftSaver>(
     createDebouncedDraftSaver((state) => autosaverRef.current?.save(state) ?? Promise.resolve(), 800),
   );
+  useEffect(() => {
+    if (adoptDraftId) autosaverRef.current?.adopt(adoptDraftId);
+  }, [adoptDraftId]);
   // What the panel opened with. Opening Reply prefills the recipients (and an
   // AI draft may fill the body), so only a change from this is the user
   // writing something worth keeping.
   const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: typedText(bodyHtml) });
   const sentRef = useRef(false);
+
+  // Reply and Reply All share this panel: moving between them readdresses it,
+  // unless the user already chose the recipients.
+  const addressedMode = useRef(mode);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: on a change of mode only
+  useEffect(() => {
+    if (addressedMode.current === mode) return;
+    addressedMode.current = mode;
+    const opened = openedWith.current;
+    if (toRecipients.join() !== opened.to.join() || ccRecipients.join() !== opened.cc.join()) return;
+    openedWith.current = { ...opened, to: initialTo };
+    setToRecipients(initialTo);
+  }, [mode]);
 
   useEffect(() => {
     if (!keepsDraft || isLoadingDraft) return;
@@ -468,7 +492,7 @@ export function ReplyCompose({
       inlineImages: prepared.inlineImages.length,
       attachments: attachments.length,
     });
-    if (!ready) return;
+    if (!ready || attachmentsLoading) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       // The signature is not the user's text: "attached" in it is no promise.
@@ -507,7 +531,7 @@ export function ReplyCompose({
     }
   };
 
-  const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft);
+  const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft || attachmentsLoading);
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
@@ -609,6 +633,10 @@ export function ReplyCompose({
       onKeyDownCapture={handleSendKey}
       {...dropProps}
     >
+      {/* Pinned while the panel scrolls: with a long draft the Send button and
+          what comes after it can be far from what is on screen. */}
+      <InlineError message={sendError} className="sticky top-0 z-10 mb-3" />
+
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>
@@ -624,7 +652,7 @@ export function ReplyCompose({
       </div>
 
       {/* To field */}
-      {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}
+      {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
       {/* Cc toggle + field */}
       {!showCc && (
@@ -633,10 +661,10 @@ export function ReplyCompose({
           onClick={() => setShowCc(true)}
           className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-10"
         >
-          + Cc
+          + {t('compose:cc')}
         </button>
       )}
-      {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
+      {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
 
       {/* Unusual recipient warning */}
       {unusualRecipients.length > 0 && (
@@ -649,8 +677,8 @@ export function ReplyCompose({
             />
           </svg>
           <div className="text-xs text-amber-700">
-            <strong>{t('compose:unusualRecipients')}</strong> {unusualRecipients.join(', ')} — different domain than the
-            other recipients. Double-check before sending.
+            <strong>{t('compose:unusualRecipients')}</strong>{' '}
+            {t('compose:unusualRecipientsHint', { recipients: unusualRecipients.join(', ') })}
           </div>
         </div>
       )}
@@ -748,22 +776,24 @@ export function ReplyCompose({
           disabled={isSending}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
         >
-          Cancel
+          {t('common:actions.cancel')}
         </button>
         <SendSplitButton
           testId="reply-send"
           label={
             isSending
               ? t('compose:sending')
-              : mode === 'forward'
-                ? t('compose:forward')
-                : mode === 'reply-all'
-                  ? 'Reply All'
-                  : 'Send Reply'
+              : attachmentsLoading
+                ? t('compose:loadingFiles')
+                : mode === 'forward'
+                  ? t('compose:forward')
+                  : mode === 'reply-all'
+                    ? t('compose:sendReplyAll')
+                    : t('compose:sendReply')
           }
           onSend={() => void handleSend()}
           onSchedule={(at) => void handleSend(false, at)}
-          disabled={isSending || isLoadingDraft || !readyToSend}
+          disabled={isSending || isLoadingDraft || attachmentsLoading || !readyToSend}
         />
       </div>
 
@@ -777,12 +807,6 @@ export function ReplyCompose({
         </div>
       )}
 
-      {sendError && (
-        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-          {sendError}
-        </div>
-      )}
-
       {/* RAG sources — past threads the AI used as precedent. Collapsed by
           default so they don't push the action buttons off-screen; the user
           opens individual cards to audit retrieval quality. */}
@@ -792,10 +816,11 @@ export function ReplyCompose({
 }
 
 function DraftSourcesPanel({ sources }: { sources: DraftSource[] }) {
+  const { t } = useTranslation(['compose']);
   return (
     <div className="mt-4 pt-3 border-t border-gray-200">
       <div className="text-xs font-medium text-gray-500 mb-2">
-        Similar past threads used for context ({sources.length})
+        {t('compose:draftSources', { total: sources.length })}
       </div>
       <div className="flex flex-col gap-1.5">
         {sources.map((src) => (
@@ -807,9 +832,10 @@ function DraftSourcesPanel({ sources }: { sources: DraftSource[] }) {
 }
 
 function DraftSourceCard({ source }: { source: DraftSource }) {
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
+  const fmt = useFormatters();
   const [open, setOpen] = useState(false);
-  const dateStr = format(new Date(source.timestamp * 1000), 'PP');
+  const dateStr = fmt.date(source.timestamp);
   return (
     <div className="rounded border border-gray-200 bg-white">
       <button
@@ -825,7 +851,9 @@ function DraftSourceCard({ source }: { source: DraftSource }) {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="flex-1 min-w-0 truncate font-medium text-gray-800">{source.subject || '(No subject)'}</span>
+        <span className="flex-1 min-w-0 truncate font-medium text-gray-800">
+          {source.subject || t('common:labels.noSubject')}
+        </span>
         {source.sentByUser && (
           <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 border border-primary-100">
             {t('compose:yourReply')}

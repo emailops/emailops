@@ -341,11 +341,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     fetchConversations: async (accountId) => {
       set({ isLoadingConversations: true, error: null });
+      // The account may have changed by the time the list arrives; it is then
+      // that account's load that decides what is on screen.
+      const isCurrent = () => get().currentAccountId === accountId;
       try {
         const conversations = await api.listChatConversations(accountId);
-        set({ conversations, isLoadingConversations: false });
+        if (isCurrent()) set({ conversations, isLoadingConversations: false });
       } catch (e) {
-        set({ isLoadingConversations: false, error: errorText(e) });
+        if (isCurrent()) set({ isLoadingConversations: false, error: errorText(e) });
       }
     },
 
@@ -362,6 +365,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set({ currentAccountId: accountId, lastConversationByAccount: remembered });
 
       await get().fetchConversations(accountId);
+      if (get().currentAccountId !== accountId) return;
 
       // A conversation of this account with a turn still running (a research
       // that reads for minutes) wins: coming back to the account means coming

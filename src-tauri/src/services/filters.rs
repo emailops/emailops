@@ -153,26 +153,13 @@ pub fn get_saved_suggestions(db: &Arc<Database>, account_id: Option<&str>) -> Re
 pub fn get_filtered_emails(
     db: &Arc<Database>,
     account_id: Option<&str>,
-    domain: Option<&str>,
-    sender_email: Option<&str>,
-    tag_type: Option<&str>,
-    tag_value: Option<&str>,
-    attachment_ext: Option<&str>,
+    tag_type: &str,
+    tag_value: &str,
     window: &EmailWindow,
     limit: i32,
     offset: i32,
 ) -> Result<FilteredEmailsResult> {
-    let mut result = db.get_filtered_emails(
-        scope_of(account_id),
-        domain,
-        sender_email,
-        tag_type,
-        tag_value,
-        attachment_ext,
-        window,
-        limit,
-        offset,
-    )?;
+    let mut result = db.get_filtered_emails(scope_of(account_id), tag_type, tag_value, window, limit, offset)?;
     // One row per conversation: its star and read state are the thread's.
     crate::services::emails::widen_stars_to_threads(db, &mut result.emails)?;
     crate::services::emails::widen_unread_to_threads(db, &mut result.emails)?;
@@ -970,19 +957,7 @@ mod tests {
             hide_graymail: true,
             ..Default::default()
         };
-        let got = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("company"),
-            Some("acme"),
-            None,
-            &window,
-            50,
-            0,
-        )
-        .unwrap();
+        let got = get_filtered_emails(&db, Some("acc1"), "company", "acme", &window, 50, 0).unwrap();
         assert_eq!(got.emails.len(), 1);
         assert_eq!(got.emails[0].id, "ok");
     }
@@ -1113,38 +1088,14 @@ mod tests {
             latest_tag_only: true,
             ..Default::default()
         };
-        let under_old = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("intent"),
-            Some("request"),
-            None,
-            &window,
-            50,
-            0,
-        )
-        .unwrap();
+        let under_old = get_filtered_emails(&db, Some("acc1"), "intent", "request", &window, 50, 0).unwrap();
         assert!(
             under_old.emails.is_empty(),
             "got {:?}",
             under_old.emails.iter().map(|e| &e.id).collect::<Vec<_>>()
         );
 
-        let under_new = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("intent"),
-            Some("conversation"),
-            None,
-            &window,
-            50,
-            0,
-        )
-        .unwrap();
+        let under_new = get_filtered_emails(&db, Some("acc1"), "intent", "conversation", &window, 50, 0).unwrap();
         assert_eq!(under_new.emails.len(), 1);
         assert_eq!(under_new.emails[0].thread_id, "t1");
     }
@@ -1183,19 +1134,7 @@ mod tests {
         insert_email_tagged(&db, "spam", "acc1", "t2", "inbox", "company", "acme");
         mark_junk(&db, "spam", "spam", "junk", None);
 
-        let got = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("company"),
-            Some("acme"),
-            None,
-            &EmailWindow::default(),
-            50,
-            0,
-        )
-        .unwrap();
+        let got = get_filtered_emails(&db, Some("acc1"), "company", "acme", &EmailWindow::default(), 50, 0).unwrap();
         assert_eq!(got.emails.len(), 1);
         assert_eq!(got.emails[0].id, "ok");
     }
@@ -1744,19 +1683,7 @@ mod tests {
             categories: vec!["primary".into()],
             ..Default::default()
         };
-        let got = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("company"),
-            Some("globex"),
-            None,
-            &window,
-            50,
-            0,
-        )
-        .unwrap();
+        let got = get_filtered_emails(&db, Some("acc1"), "company", "globex", &window, 50, 0).unwrap();
         assert_eq!(got.emails.len(), 1);
         assert_eq!(got.emails[0].id, "e1");
     }
@@ -1772,19 +1699,7 @@ mod tests {
             since: Some(2_000),
             ..Default::default()
         };
-        let got = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("company"),
-            Some("globex"),
-            None,
-            &window,
-            50,
-            0,
-        )
-        .unwrap();
+        let got = get_filtered_emails(&db, Some("acc1"), "company", "globex", &window, 50, 0).unwrap();
         assert_eq!(got.emails.len(), 1);
         assert_eq!(got.emails[0].id, "new");
     }
@@ -1797,38 +1712,14 @@ mod tests {
         insert_email_tagged_at(&db, "e1", "acc1", "t1", "inbox", "company", "globex", "promotions", 1);
         insert_email_tagged_at(&db, "e2", "acc1", "t2", "inbox", "company", "globex", "social", 2);
 
-        let got = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            None,
-            Some("company"),
-            Some("globex"),
-            None,
-            &EmailWindow::default(),
-            50,
-            0,
-        )
-        .unwrap();
+        let got = get_filtered_emails(&db, Some("acc1"), "company", "globex", &EmailWindow::default(), 50, 0).unwrap();
         assert_eq!(got.emails.len(), 2);
     }
 
     // ── get_filtered_emails: the smart-filter list ──────────────────────────
 
     fn filter_by_tag(db: &Arc<Database>, tag_type: &str, value: &str, window: &EmailWindow) -> FilteredEmailsResult {
-        get_filtered_emails(
-            db,
-            Some("acc1"),
-            None,
-            None,
-            Some(tag_type),
-            Some(value),
-            None,
-            window,
-            50,
-            0,
-        )
-        .unwrap()
+        get_filtered_emails(db, Some("acc1"), tag_type, value, window, 50, 0).unwrap()
     }
 
     fn ids(result: &FilteredEmailsResult) -> Vec<&str> {
@@ -1875,45 +1766,6 @@ mod tests {
     }
 
     #[test]
-    fn sender_and_domain_filters_exclude_junk_like_the_tag_filter() {
-        let db = Arc::new(Database::new_for_testing().unwrap());
-        db.seed_test_account("acc1");
-        insert_email(&db, "real", "acc1", "t1", "ana@vendor.example", "inbox");
-        insert_email(&db, "spam", "acc1", "t2", "ana@vendor.example", "inbox");
-        mark_junk(&db, "spam", "spam", "junk", None);
-
-        let by_sender = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            None,
-            Some("ana@vendor.example"),
-            None,
-            None,
-            None,
-            &EmailWindow::default(),
-            50,
-            0,
-        )
-        .unwrap();
-        let by_domain = get_filtered_emails(
-            &db,
-            Some("acc1"),
-            Some("vendor.example"),
-            None,
-            None,
-            None,
-            None,
-            &EmailWindow::default(),
-            50,
-            0,
-        )
-        .unwrap();
-
-        assert_eq!(ids(&by_sender), ["real"]);
-        assert_eq!(ids(&by_domain), ["real"]);
-    }
-
-    #[test]
     fn filters_reach_custom_folders_but_never_spam_or_trash() {
         let db = Arc::new(Database::new_for_testing().unwrap());
         db.seed_test_account("acc1");
@@ -1936,23 +1788,6 @@ mod tests {
         let got = filter_by_tag(&db, "intent", "request", &EmailWindow::default());
 
         assert_eq!(ids(&got), ["in_folder"]);
-    }
-
-    #[test]
-    fn a_filter_inside_a_view_keeps_only_that_views_mail() {
-        // Filtering from Sent lists the sent mail that matches, not the inbox's.
-        let db = Arc::new(Database::new_for_testing().unwrap());
-        db.seed_test_account("acc1");
-        insert_email_tagged_at(&db, "received", "acc1", "t1", "inbox", "topic", "billing", "primary", 2);
-        insert_email_tagged_at(&db, "sent", "acc1", "t2", "sent", "topic", "billing", "primary", 1);
-
-        let window = EmailWindow {
-            mailbox: Some("sent".into()),
-            ..Default::default()
-        };
-        let got = filter_by_tag(&db, "topic", "billing", &window);
-
-        assert_eq!(ids(&got), ["sent"]);
     }
 
     // ── get_tag_board_stats ──────────────────────────────────────────────────

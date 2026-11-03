@@ -179,7 +179,7 @@ pub async fn run(cfg: TagRunnerConfig) -> EvalResult<TagEvalSummary> {
     // and warm-up in its latency.
     if let Some(first) = cases.first() {
         let warm = build_classify_prompt(&template, &config, &language_clause, EVAL_TODAY, &email_of(first));
-        let _ = classify_with_provider(provider.as_ref(), &config, &warm.full()).await;
+        let _ = classify_with_provider(&db, provider.as_ref(), &config, &warm.full()).await;
     }
 
     let mut runs: Vec<CaseRun> = Vec::with_capacity(cases.len());
@@ -192,7 +192,7 @@ pub async fn run(cfg: TagRunnerConfig) -> EvalResult<TagEvalSummary> {
         let mut failure: Option<String> = None;
 
         for _ in 0..repeats {
-            match classify_with_provider(provider.as_ref(), &config, &full).await {
+            match classify_with_provider(&db, provider.as_ref(), &config, &full).await {
                 Ok(run) => {
                     latencies.push(run.latency_ms);
                     if decided.is_none() {

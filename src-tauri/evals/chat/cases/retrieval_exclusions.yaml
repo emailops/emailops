@@ -55,3 +55,27 @@
   metrics:
     - answer_relevancy
     - faithfulness
+
+# A Lens row outlives the mail it was read from. The demo Lens "Renewal quotes"
+# holds a row of the trashed quote (3100 EUR) and one of its correction (4200
+# EUR); the chat's Lens tools read through the same rule as the Lens view.
+- id: lens_rows_leave_out_trashed_mail
+  question: "What does my Renewal quotes lens show?"
+  account: "ulises@emailopslabs.dev"
+  category: topic_retrieval
+  tier: full
+  expected_tools_called: ["get_lens_data"]
+  expected_answer_contains_any:
+    - "4200"
+    - "4,200"
+    - "4.200"
+    - "4 200"
+  expected_answer_not_contains:
+    - "3100"
+    - "3,100"
+    - "3.100"
+    - "3 100"
+  expected_output: "The Renewal quotes lens has one row: Larkspur Freight, with a quote of 4200 EUR."
+  metrics:
+    - answer_relevancy
+    - faithfulness

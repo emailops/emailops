@@ -1,14 +1,15 @@
 // Settings → Junk → Blocked senders: every sender the user blocked, per
 // account, each with Unblock — the reachable inverse of "Block sender".
 
-import { format } from 'date-fns';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import { useAccountStore } from '@/stores/accountStore';
 import { useSenderStore } from '@/stores/senderStore';
 
 export function BlockedSendersSettings() {
   const { t } = useTranslation(['settings']);
+  const fmt = useFormatters();
   const blocked = useSenderStore((s) => s.blocked);
   const loadBlocked = useSenderStore((s) => s.loadBlocked);
   const openDialog = useSenderStore((s) => s.openDialog);
@@ -35,7 +36,7 @@ export function BlockedSendersSettings() {
                 <div className="truncate text-gray-800">{b.address}</div>
                 <div className="truncate text-xs text-gray-500">
                   {showAccount && <span>{accountEmail(b.accountId)} · </span>}
-                  {t('settings:junk.blocked.since', { date: format(new Date(b.createdAt * 1000), 'PP') })}
+                  {t('settings:junk.blocked.since', { date: fmt.date(b.createdAt) })}
                 </div>
               </div>
               <button

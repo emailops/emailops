@@ -210,7 +210,7 @@ fn stream_request_error(status: u16, body: &str, model: &str, server: &str) -> A
     request_error(status, body, model, &format!("{what} (HTTP {status})"))
 }
 
-fn stream_stalled(idle: Duration, server: &str) -> AppError {
+pub(super) fn stream_stalled(idle: Duration, server: &str) -> AppError {
     AppError::AiError(format!(
         "{server} stopped responding ({}s without data)",
         idle.as_secs_f32()
@@ -1257,6 +1257,7 @@ impl AIProvider for OpenRouterClient {
             eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
             prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
             cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            truncated: outcome.truncated,
             content: outcome.content,
             ..Default::default()
         })
@@ -1273,6 +1274,7 @@ impl AIProvider for OpenRouterClient {
             eval_count: outcome.usage.as_ref().and_then(|u| u.completion_tokens),
             prompt_eval_count: outcome.usage.as_ref().and_then(|u| u.prompt_tokens),
             cost_usd: outcome.usage.as_ref().and_then(|u| u.cost),
+            truncated: outcome.truncated,
             message: assistant_message(outcome),
             prefill_ms: None,
             cached_prompt_tokens: None,

@@ -253,6 +253,8 @@ pub(super) struct StreamOutcome {
     pub content: String,
     pub tool_calls: Vec<AiToolCall>,
     pub usage: Option<UsageInfo>,
+    /// The reply stopped at `max_tokens`.
+    pub truncated: bool,
 }
 
 /// Builds one assistant message out of a stream's chunks.
@@ -326,12 +328,14 @@ impl StreamAccumulator {
             content: self.content,
             tool_calls: Vec::new(),
             usage: self.usage,
+            truncated: false,
         }
     }
 
     /// The complete reply. `Err` when a tool call's arguments are not valid
     /// JSON (typically a reply cut off at the output limit).
     pub fn finish(self) -> Result<StreamOutcome> {
+        let truncated = self.finish_reason.as_deref() == Some("length");
         let tool_calls = self
             .calls
             .into_iter()
@@ -363,6 +367,7 @@ impl StreamAccumulator {
             content: self.content,
             tool_calls,
             usage: self.usage,
+            truncated,
         })
     }
 }
@@ -588,6 +593,14 @@ mod tests {
         assert_eq!(usage.prompt_tokens, Some(194));
         assert_eq!(usage.completion_tokens, Some(2));
         assert_eq!(usage.cost, Some(0.0125));
+    }
+
+    #[test]
+    fn a_reply_says_when_it_stopped_at_the_output_limit() {
+        let (acc, _) = accumulate(&[r#"{"choices":[{"delta":{"content":"Half an"},"finish_reason":"length"}]}"#]);
+        assert!(acc.finish().unwrap().truncated);
+        let (acc, _) = accumulate(&[r#"{"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}"#]);
+        assert!(!acc.finish().unwrap().truncated);
     }
 
     #[test]

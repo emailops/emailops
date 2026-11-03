@@ -79,7 +79,8 @@ impl Database {
     /// Insert or update a batch of events in one transaction. Conflict target
     /// is `(account_id, calendar_id, provider_event_id)` — a re-synced instance
     /// updates in place and keeps its row id and `notified_at` marker (so an
-    /// event whose details change after the reminder fired is not re-notified).
+    /// event whose details change after the reminder fired is not re-notified),
+    /// unless it moved to another time, which is a new reminder to give.
     /// The calendar is part of the key because providers reuse one event id
     /// across every calendar the event is visible in.
     pub fn upsert_calendar_events(&self, events: &[CalendarEvent]) -> Result<()> {
@@ -107,6 +108,7 @@ impl Database {
                      meeting_platform = excluded.meeting_platform,
                      status = excluded.status,
                      html_link = excluded.html_link,
+                     notified_at = CASE WHEN start_time = excluded.start_time THEN notified_at END,
                      updated_at = excluded.updated_at,
                      recurring_event_id = excluded.recurring_event_id",
             )?;
@@ -272,11 +274,12 @@ impl Database {
         Ok(())
     }
 
-    /// Delete events starting inside `[window_start, window_end)` whose
-    /// `updated_at` predates the current sync run. Full-window resyncs upsert
-    /// every fetched instance with `updated_at = run_started_at`, so anything
-    /// older inside the window was removed upstream. Upsert-then-sweep (rather
-    /// than delete-then-insert) keeps `notified_at` on surviving rows.
+    /// Delete events overlapping `[window_start, window_end)` whose `updated_at`
+    /// predates the current sync run. Providers list every instance overlapping
+    /// the window, and a full-window resync upserts them with `updated_at =
+    /// run_started_at`, so anything older was removed upstream. Events wholly
+    /// before the window are history no sync sees, and stay. Upsert-then-sweep
+    /// (rather than delete-then-insert) keeps `notified_at` on surviving rows.
     ///
     /// Scoped to `calendar_ids` — the calendars whose fetch actually succeeded
     /// this run. A calendar that errored is left completely untouched instead
@@ -299,7 +302,7 @@ impl Database {
             .join(", ");
         let sql = format!(
             "DELETE FROM calendar_events
-             WHERE account_id = ?1 AND start_time >= ?2 AND start_time < ?3 AND updated_at < ?4
+             WHERE account_id = ?1 AND end_time > ?2 AND start_time < ?3 AND updated_at < ?4
                AND calendar_id IN ({placeholders})"
         );
         let mut args: Vec<&dyn rusqlite::ToSql> = vec![&account_id, &window_start, &window_end, &run_started_at];
@@ -633,15 +636,16 @@ mod tests {
     }
 
     #[test]
-    fn upsert_preserves_notified_at_when_event_changes() {
+    fn upsert_preserves_notified_at_when_event_details_change() {
         let db = test_db();
         db.upsert_calendar_events(&[event("acc1", "ev1", 100, 200)])
             .expect("insert");
         db.mark_calendar_event_notified("acc1:primary:ev1", 90)
             .expect("mark notified");
 
-        db.upsert_calendar_events(&[event("acc1", "ev1", 110, 210)])
-            .expect("re-sync");
+        let mut renamed = event("acc1", "ev1", 100, 230);
+        renamed.title = "Standup (renamed)".to_string();
+        db.upsert_calendar_events(&[renamed]).expect("re-sync");
 
         let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
         assert_eq!(
@@ -649,6 +653,21 @@ mod tests {
             Some(90),
             "re-sync must not reset the notified marker"
         );
+    }
+
+    #[test]
+    fn a_meeting_moved_to_another_time_gets_a_new_reminder() {
+        let db = test_db();
+        db.upsert_calendar_events(&[event("acc1", "ev1", 100, 200)])
+            .expect("insert");
+        db.mark_calendar_event_notified("acc1:primary:ev1", 90)
+            .expect("mark notified");
+
+        db.upsert_calendar_events(&[event("acc1", "ev1", 400, 500)])
+            .expect("re-sync");
+
+        let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
+        assert_eq!(events[0].notified_at, None);
     }
 
     #[test]
@@ -725,6 +744,44 @@ mod tests {
         let events = db.list_calendar_events("acc1", 0, 1_000).expect("list");
         let ids: Vec<&str> = events.iter().map(|e| e.provider_event_id.as_str()).collect();
         assert_eq!(ids, vec!["fresh", "outside"]);
+    }
+
+    /// The providers list events that overlap the window, so an event that
+    /// began before it comes back on every sync until it is deleted upstream.
+    #[test]
+    fn delete_stale_removes_a_long_event_that_began_before_the_window() {
+        let db = test_db();
+        let mut ongoing = event("acc1", "ongoing", 100, 1_000);
+        ongoing.updated_at = 1_000;
+        let mut past = event("acc1", "past", 100, 400);
+        past.updated_at = 1_000;
+        db.upsert_calendar_events(&[ongoing, past]).expect("upsert");
+
+        db.delete_stale_calendar_events("acc1", &["primary".to_string()], 500, 2_000, 5_000)
+            .expect("delete stale");
+
+        let events = db.list_calendar_events("acc1", 0, 3_000).expect("list");
+        let ids: Vec<&str> = events.iter().map(|e| e.provider_event_id.as_str()).collect();
+        assert_eq!(ids, vec!["past"], "history before the window stays");
+    }
+
+    /// Fetched zero-length events at the very start of the window do not
+    /// overlap it, so nothing says they are gone.
+    #[test]
+    fn delete_stale_leaves_what_the_fetch_could_not_see() {
+        let db = test_db();
+        let mut edge = event("acc1", "edge", 500, 500);
+        edge.updated_at = 1_000;
+        db.upsert_calendar_events(&[edge]).expect("upsert");
+
+        db.delete_stale_calendar_events("acc1", &["primary".to_string()], 500, 2_000, 5_000)
+            .expect("delete stale");
+
+        let left: i64 = db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM calendar_events", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(left, 1);
     }
 
     #[test]

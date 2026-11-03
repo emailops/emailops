@@ -195,7 +195,7 @@ async fn generate_reply_draft(
     instructions: Option<&str>,
     acknowledge_not_latest: bool,
 ) -> ToolOutput {
-    let inbound = match ctx.db.get_email_by_id(email_id) {
+    let inbound = match ctx.readable_email(email_id) {
         Ok(Some(e)) => e,
         Ok(None) => return ToolOutput::text(format!("Error: email {email_id} not found.")),
         Err(e) => return ToolOutput::text(format!("Error loading email: {e}")),
@@ -455,6 +455,18 @@ mod tests {
         let args = serde_json::json!({ "email_id": "does-not-exist" });
         let out = tool.execute(&ctx_with_db(&db, "acc"), args).await.unwrap();
         assert!(out.text.contains("not found"), "got: {}", out.text);
+        assert!(out.effects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reply_mode_answers_for_another_accounts_email_as_for_an_unknown_id() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        seed_email(&db, "old", "other", "t9", "Z", "z@example.com", "foreign subject", 100);
+        seed_email(&db, "new", "other", "t9", "Z", "z@example.com", "foreign subject", 200);
+        let tool = GenerateEmailDraftTool;
+        let args = serde_json::json!({ "email_id": "old" });
+        let out = tool.execute(&ctx_with_db(&db, "acc"), args).await.unwrap();
+        assert_eq!(out.text, "Error: email old not found.");
         assert!(out.effects.is_empty());
     }
 

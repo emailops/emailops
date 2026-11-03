@@ -1,13 +1,18 @@
 //! Pure decisions of the shared-document sync: what to do with an arriving
 //! envelope, which documents are due to be mailed, and to whom.
 
-use super::envelope::Envelope;
+use super::envelope::{Envelope, MAX_PARTICIPANTS};
 pub use crate::models::shared_docs::DocStatus;
 use crate::services::junk::auth::{AuthAssessment, AuthResult};
 
 /// Seconds without a local edit before a document's changes are mailed, so a
 /// burst of typing goes out as one message.
 pub const FLUSH_DEBOUNCE_SECS: i64 = 120;
+
+/// The wait after a first failed mail of a document's changes.
+pub const FLUSH_RETRY_BASE_SECS: i64 = 60;
+/// The longest wait, so changes still go out soon after the provider is back.
+pub const FLUSH_RETRY_MAX_SECS: i64 = 900;
 
 /// What this install already knows of the document an envelope names.
 pub struct KnownDoc<'a> {
@@ -20,6 +25,9 @@ pub struct KnownDoc<'a> {
 pub enum Arrival {
     /// Merge it into the known document.
     Apply,
+    /// Merge it and hold the document back as an invitation: someone else
+    /// added addresses, and the user only agreed to mail the old list.
+    ApplyAndHold,
     /// A document this install has never seen: store it as an invitation.
     Invitation,
     /// Leave the document alone, for the reason given (logged).
@@ -28,9 +36,20 @@ pub enum Arrival {
 
 /// Pure: decide what an envelope sent by `sender` to the account `me` does.
 /// Addresses are compared normalized (lowercase).
-pub fn plan_arrival(envelope: &Envelope, sender: &str, me: &str, known: Option<&KnownDoc<'_>>) -> Arrival {
+pub fn plan_arrival(
+    envelope: &Envelope,
+    sender: &str,
+    me: &str,
+    is_sent_copy: bool,
+    known: Option<&KnownDoc<'_>>,
+) -> Arrival {
     let sender = sender.trim().to_lowercase();
     let me = me.trim().to_lowercase();
+    // `From` is free text: the account's own address proves nothing outside
+    // its Sent mail.
+    if sender == me && !is_sent_copy {
+        return Arrival::Ignore("it names this account as sender but is not in its Sent mail");
+    }
     if !envelope.participants.contains(&sender) {
         return Arrival::Ignore("the sender is not one of its participants");
     }
@@ -43,7 +62,16 @@ pub fn plan_arrival(envelope: &Envelope, sender: &str, me: &str, known: Option<&
         Some(doc) if !doc.participants.contains(&sender) => {
             Arrival::Ignore("the sender is not one of its participants")
         }
-        Some(_) => Arrival::Apply,
+        Some(doc) => {
+            let merged = merged_participants(doc.participants, &envelope.participants).len();
+            if merged > MAX_PARTICIPANTS {
+                Arrival::Ignore("it takes the document over the participant limit")
+            } else if merged > doc.participants.len() && sender != me && doc.status == DocStatus::Active {
+                Arrival::ApplyAndHold
+            } else {
+                Arrival::Apply
+            }
+        }
     }
 }
 
@@ -76,18 +104,42 @@ pub struct FlushCandidate {
     pub dirty_since: Option<i64>,
     /// The last local change: the debounce runs from here.
     pub updated_at: i64,
+    /// When the last mail failed, the earliest time to try again.
+    pub retry_at: Option<i64>,
 }
 
 /// Pure: the documents due to be mailed at `now` — active, consented, with
-/// unsent changes and no edit for [`FLUSH_DEBOUNCE_SECS`], oldest first.
+/// unsent changes, no edit for [`FLUSH_DEBOUNCE_SECS`] and no retry still
+/// waiting, oldest first.
 pub fn due_flushes(candidates: &[FlushCandidate], now: i64) -> Vec<String> {
     let mut due: Vec<&FlushCandidate> = candidates
         .iter()
         .filter(|c| c.status == DocStatus::Active && c.consented)
         .filter(|c| c.dirty_since.is_some() && c.updated_at + FLUSH_DEBOUNCE_SECS <= now)
+        .filter(|c| c.retry_at.is_none_or(|at| at <= now))
         .collect();
     due.sort_by_key(|c| c.dirty_since);
     due.into_iter().map(|c| c.id.clone()).collect()
+}
+
+/// A document whose mail keeps failing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushRetry {
+    /// Failures in a row.
+    pub failures: u32,
+    pub retry_at: i64,
+}
+
+/// Pure: the wait after one more failure at `now`, doubling from
+/// [`FLUSH_RETRY_BASE_SECS`] up to [`FLUSH_RETRY_MAX_SECS`].
+pub fn next_flush_retry(previous: Option<&FlushRetry>, now: i64) -> FlushRetry {
+    let failures = previous.map_or(1, |p| p.failures.saturating_add(1));
+    // Any shift this large is already past the cap.
+    let delay = (FLUSH_RETRY_BASE_SECS << (failures - 1).min(16)).min(FLUSH_RETRY_MAX_SECS);
+    FlushRetry {
+        failures,
+        retry_at: now + delay,
+    }
 }
 
 /// Pure: why a message must not be taken as coming from the participant its
@@ -187,7 +239,7 @@ mod tests {
     fn an_unknown_document_from_a_participant_is_an_invitation() {
         let env = envelope(&["ana@example.com", "ben@example.org"]);
         assert_eq!(
-            plan_arrival(&env, "Ana@Example.com", "ben@example.org", None),
+            plan_arrival(&env, "Ana@Example.com", "ben@example.org", false, None),
             Arrival::Invitation
         );
     }
@@ -196,11 +248,11 @@ mod tests {
     fn a_sender_or_receiver_outside_the_participants_is_ignored() {
         let env = envelope(&["ana@example.com", "ben@example.org"]);
         assert!(matches!(
-            plan_arrival(&env, "eve@example.net", "ben@example.org", None),
+            plan_arrival(&env, "eve@example.net", "ben@example.org", false, None),
             Arrival::Ignore(_)
         ));
         assert!(matches!(
-            plan_arrival(&env, "ana@example.com", "carl@example.org", None),
+            plan_arrival(&env, "ana@example.com", "carl@example.org", false, None),
             Arrival::Ignore(_)
         ));
     }
@@ -214,12 +266,78 @@ mod tests {
         };
         let env = envelope(&["ana@example.com", "ben@example.org", "eve@example.net"]);
         assert_eq!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&known)),
-            Arrival::Apply
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&known)),
+            Arrival::ApplyAndHold
         );
         // Eve listing herself does not make her a participant here.
         assert!(matches!(
-            plan_arrival(&env, "eve@example.net", "ben@example.org", Some(&known)),
+            plan_arrival(&env, "eve@example.net", "ben@example.org", false, Some(&known)),
+            Arrival::Ignore(_)
+        ));
+    }
+
+    #[test]
+    fn only_a_sent_copy_can_speak_for_this_account() {
+        let env = envelope(&["ana@example.com", "ben@example.org"]);
+        assert!(matches!(
+            plan_arrival(&env, "Ben@Example.org", "ben@example.org", false, None),
+            Arrival::Ignore(_)
+        ));
+        assert_eq!(
+            plan_arrival(&env, "ben@example.org", "ben@example.org", true, None),
+            Arrival::Invitation
+        );
+    }
+
+    #[test]
+    fn an_added_address_holds_an_active_document_unless_the_user_added_it() {
+        let stored = owned(&["ana@example.com", "ben@example.org"]);
+        let env = envelope(&["ana@example.com", "ben@example.org", "carl@example.net"]);
+        let doc_with = |status| KnownDoc {
+            status,
+            participants: &stored,
+        };
+        let cases = [
+            ("ana@example.com", false, DocStatus::Active, Arrival::ApplyAndHold),
+            ("ana@example.com", false, DocStatus::Invited, Arrival::Apply),
+            ("ben@example.org", true, DocStatus::Active, Arrival::Apply),
+        ];
+        for (sender, is_sent_copy, status, expected) in cases {
+            let known = doc_with(status);
+            assert_eq!(
+                plan_arrival(&env, sender, "ben@example.org", is_sent_copy, Some(&known)),
+                expected,
+                "{sender} on a {status:?} document"
+            );
+        }
+    }
+
+    #[test]
+    fn the_same_participants_apply_without_holding() {
+        let stored = owned(&["ana@example.com", "ben@example.org"]);
+        let known = KnownDoc {
+            status: DocStatus::Active,
+            participants: &stored,
+        };
+        let env = envelope(&["ana@example.com", "ben@example.org"]);
+        assert_eq!(
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&known)),
+            Arrival::Apply
+        );
+    }
+
+    #[test]
+    fn a_list_over_the_limit_is_ignored() {
+        let stored: Vec<String> = (0..MAX_PARTICIPANTS - 1).map(|i| format!("p{i}@example.com")).collect();
+        let mut with_me = stored.clone();
+        with_me.push("ben@example.org".into());
+        let known = KnownDoc {
+            status: DocStatus::Active,
+            participants: &with_me,
+        };
+        let env = envelope(&["p0@example.com", "ben@example.org", "extra@example.net"]);
+        assert!(matches!(
+            plan_arrival(&env, "p0@example.com", "ben@example.org", false, Some(&known)),
             Arrival::Ignore(_)
         ));
     }
@@ -237,11 +355,11 @@ mod tests {
             participants: &stored,
         };
         assert_eq!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&invited)),
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&invited)),
             Arrival::Apply
         );
         assert!(matches!(
-            plan_arrival(&env, "ana@example.com", "ben@example.org", Some(&left)),
+            plan_arrival(&env, "ana@example.com", "ben@example.org", false, Some(&left)),
             Arrival::Ignore(_)
         ));
     }
@@ -269,7 +387,42 @@ mod tests {
             consented: true,
             dirty_since,
             updated_at,
+            retry_at: None,
         }
+    }
+
+    #[test]
+    fn a_document_waits_for_its_retry_time() {
+        let now = 1_000;
+        let mut waiting = candidate("waiting", Some(1), 1);
+        waiting.retry_at = Some(now + 1);
+        let mut ready = candidate("ready", Some(1), 1);
+        ready.retry_at = Some(now);
+        assert_eq!(due_flushes(&[waiting, ready], now), vec!["ready"]);
+    }
+
+    #[test]
+    fn each_failure_doubles_the_wait_up_to_the_cap() {
+        let now = 1_000;
+        let mut retry = None;
+        let mut delays = Vec::new();
+        for _ in 0..7 {
+            let next = next_flush_retry(retry.as_ref(), now);
+            delays.push(next.retry_at - now);
+            retry = Some(next);
+        }
+        assert_eq!(delays, vec![60, 120, 240, 480, 900, 900, 900]);
+        assert_eq!(retry.map(|r| r.failures), Some(7));
+    }
+
+    #[test]
+    fn the_wait_stays_at_the_cap_however_long_the_failures_last() {
+        let previous = FlushRetry {
+            failures: u32::MAX,
+            retry_at: 0,
+        };
+        let next = next_flush_retry(Some(&previous), 1_000);
+        assert_eq!(next.retry_at, 1_000 + FLUSH_RETRY_MAX_SECS);
     }
 
     #[test]

@@ -82,8 +82,8 @@ conversation as unread always goes back to the list.
 <!-- claim:feat-organize-6 -->
 **All** and **Unread** at the top of the list choose what it shows. **Unread** keeps only the
 conversations with an unread message — in views that list single messages, such as sent mail
-and folders, only the unread messages — in every view and with a smart filter on; it is hidden
-while you search. A conversation you open stays in the list until the list reloads, and the
+and folders, only the unread messages — in every view, with a smart filter on and while you
+search. A conversation you open stays in the list until the list reloads, and the
 choice lasts until you quit EmailOps.
 
 ## Snooze {#snooze}
@@ -152,8 +152,8 @@ feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid o
 Clicking a filter writes it into the search box as a query you can see and edit —
 `tag:priority=urgent`, `from:`, `domain:`, `ext:` — and clicking it again clears it.
 Right-click a filter and choose **Add to search** to combine it with what is already there.
-A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail,
-and the search stays set when you switch accounts; when it finds nothing, the list says a
+A filter or search works inside the view you are in: Sent, Spam, Trash and folders list only their
+own mail, and the inbox reaches everything except Spam and Trash. The search stays set when you switch accounts; when it finds nothing, the list says a
 search is active and offers to clear it. Each tag group lists its ten most-used values first,
 with a button under the group for the rest.
 
@@ -284,8 +284,8 @@ email's recipients.
 ## Search
 
 <!-- claim:feat-search-1 -->
-Full-text search over subjects, bodies, senders and attachments. With AI enabled this is
-joined by semantic search, which matches on meaning rather than exact words.
+Full-text search over subjects, bodies and senders. The list goes down to the last match in the
+mail you have downloaded, and mail the junk detector flagged shows up with its warning.
 
 <!-- claim:feat-search-2 -->
 Searches can be narrowed with operators, on their own or next to free text:

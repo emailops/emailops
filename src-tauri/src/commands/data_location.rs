@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use tauri::{AppHandle, State};
 
@@ -14,6 +15,10 @@ use crate::models::error::{AppError, Result};
 use crate::services::data_move;
 use crate::util::data_location::DataDirSource;
 use crate::AppState;
+
+/// How long a move waits for background work to stop. A queue task stops at its
+/// next email; what is still running after this does not check at all.
+const BACKGROUND_STOP_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Set once at startup: how the data folder was chosen, the platform default,
 /// and the folder the user last picked, waiting for confirmation.
@@ -154,14 +159,19 @@ pub async fn move_data_location(
         "system",
         format!("Moving the data folder to {}", target.display()),
     );
-    // Sync writes would land in the old copy after the snapshot. The app
-    // restarts once the move is done, which starts sync again.
+    // A write landing after the snapshot would stay behind in the old copy, and
+    // every commit during it restarts the SQLite backup from the first page.
+    // The app restarts once the move is done, which starts all of it again.
     state.scheduler.stop();
-    let db = state.db.clone();
-    let default_dir = location.default_dir.clone();
-    let moved = tauri::async_runtime::spawn_blocking(move || move_with_progress(&db, &current, &target, &default_dir))
-        .await
-        .map_err(|e| AppError::IoError(format!("Moving the data failed: {e}")))?;
+    let moved = if state.stop_background_work(BACKGROUND_STOP_TIMEOUT).await {
+        let db = state.db.clone();
+        let default_dir = location.default_dir.clone();
+        tauri::async_runtime::spawn_blocking(move || move_with_progress(&db, &current, &target, &default_dir))
+            .await
+            .map_err(|e| AppError::IoError(format!("Moving the data failed: {e}")))?
+    } else {
+        Err(data_move::MoveProblem::BackgroundWorkRunning.into())
+    };
     if let Err(e) = moved {
         crate::services::logger::log(
             "error",

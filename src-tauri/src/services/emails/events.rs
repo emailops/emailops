@@ -66,9 +66,13 @@ mod tests {
 
         // Goes to the UI event seam as a `sync-progress` event...
         assert_eq!(sink.count("sync-progress"), 1);
-        // ...and never to the output-panel log seam.
+        // ...and never to the output-panel log seam. Tests running alongside log
+        // through the same global logger, so only this line counts.
         assert!(
-            logger.events().is_empty(),
+            !logger
+                .events()
+                .iter()
+                .any(|e| e.message.contains("Downloading 1 of 10")),
             "progress events must not hit the output-panel log seam, got: {:?}",
             logger.events()
         );

@@ -211,9 +211,16 @@ pub enum Command {
         /// Skip this many hits before returning (for paging: page 2 = `--offset 25`).
         #[arg(long, default_value_t = 0)]
         offset: usize,
-        /// Include search diagnostics (method, AI availability, parsed filters,
-        /// hit counts). `--json` puts them under `data.trace`; pretty mode
-        /// prints a trace block after the results.
+        /// The view the search runs in: `inbox`, `sent`, `archive`, `spam`,
+        /// `trash`, `starred`, `snoozed` or `folder:<path>`.
+        #[arg(long, default_value = "inbox")]
+        view: String,
+        /// Only conversations with something unread (the list's Unread toggle).
+        #[arg(long)]
+        unread: bool,
+        /// Include search diagnostics (parsed filters, rows read, pages, time).
+        /// `--json` puts them under `data.trace`; pretty mode prints a trace
+        /// block after the results.
         #[arg(long)]
         trace: bool,
     },
@@ -717,6 +724,26 @@ mod tests {
                 assert_eq!(query, "invoice");
                 assert_eq!(limit, 25);
                 assert!(!trace);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn search_runs_in_the_inbox_unless_told_otherwise() {
+        let cli = Cli::parse_from(["emailops-cli", "search", "invoice"]);
+        match cli.command {
+            Some(Command::Search { view, unread, .. }) => {
+                assert_eq!(view, "inbox");
+                assert!(!unread);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+        let cli = Cli::parse_from(["emailops-cli", "search", "invoice", "--view", "spam", "--unread"]);
+        match cli.command {
+            Some(Command::Search { view, unread, .. }) => {
+                assert_eq!(view, "spam");
+                assert!(unread);
             }
             other => panic!("expected Search, got {other:?}"),
         }

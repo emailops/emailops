@@ -27,6 +27,7 @@ const pdfTab: AttachmentViewTab = {
   emailId: 'email-1',
   filename: 'report.pdf',
   mimeType: 'application/pdf',
+  senderEmail: 'sender@example.com',
   dataUrl: 'data:application/pdf;base64,JVBERi0=',
   isLoading: false,
 };

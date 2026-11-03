@@ -14,17 +14,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const setJunkFeedback = vi.fn(() => Promise.resolve());
+const getJunkVerdicts = vi.fn(async (): Promise<Record<string, unknown>> => ({}));
 
 vi.mock('@/lib/api', () => ({
   setJunkFeedback: (...args: unknown[]) => setJunkFeedback(...(args as [])),
   getJunkConfig: vi.fn(() => Promise.resolve({ enabled: true, phishingEnabled: false, flaggedAction: 'dim' })),
   setJunkConfig: vi.fn(() => Promise.resolve()),
-  getJunkVerdicts: vi.fn(() => Promise.resolve({})),
+  getJunkVerdicts: () => getJunkVerdicts(),
   currentPlatform: vi.fn(() => ''),
 }));
 
 import type { JunkVerdict } from '@/types';
-import { isFlagged, useJunkStore } from './junkStore';
+import { isFlagged, junkChip, useJunkStore } from './junkStore';
 import { useTagStore } from './tagStore';
 
 const FLAGGED: JunkVerdict = {
@@ -89,5 +90,50 @@ describe('junkStore.setFeedback', () => {
 
     expect(useJunkStore.getState().verdictsByEmail.e1?.userOverride).toBeNull();
     expect(useTagStore.getState().tagsByEmail.e1).toEqual([]);
+  });
+});
+
+describe('verdict loading', () => {
+  beforeEach(() => {
+    useJunkStore.setState({ verdictsByEmail: {}, loaded: {} });
+    getJunkVerdicts.mockReset();
+  });
+
+  it('fetchVerdicts lets the list see a failure', async () => {
+    getJunkVerdicts.mockRejectedValue(new Error('down'));
+
+    await expect(useJunkStore.getState().fetchVerdicts(['e1'])).rejects.toThrow('down');
+
+    expect(useJunkStore.getState().loaded).toEqual({});
+  });
+
+  it('loadVerdicts is best effort for what is already on screen', async () => {
+    getJunkVerdicts.mockRejectedValue(new Error('down'));
+
+    await expect(useJunkStore.getState().loadVerdicts(['e1'])).resolves.toBeUndefined();
+  });
+
+  it('asks once for mail with no verdict', async () => {
+    getJunkVerdicts.mockResolvedValue({});
+
+    await useJunkStore.getState().fetchVerdicts(['e1']);
+    await useJunkStore.getState().fetchVerdicts(['e1']);
+
+    expect(getJunkVerdicts).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('junkChip', () => {
+  it('builds the chip a verdict stands for', () => {
+    expect(junkChip('e1', [], FLAGGED)).toMatchObject({ tagType: 'junk', tagValue: 'spam', emailId: 'e1' });
+  });
+
+  it('keeps a tag that is already there', () => {
+    expect(junkChip('e1', [JUNK_CHIP], { ...FLAGGED, primaryKind: 'phishing' })).toBe(JUNK_CHIP);
+  });
+
+  it('gives nothing for unscored mail or a user correction', () => {
+    expect(junkChip('e1', [], undefined)).toBeUndefined();
+    expect(junkChip('e1', [JUNK_CHIP], { ...FLAGGED, userOverride: 'not_junk' })).toBeUndefined();
   });
 });

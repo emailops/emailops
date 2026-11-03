@@ -1,5 +1,5 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
@@ -11,6 +11,7 @@ import {
   linkifySegments,
   visibleAttendees,
 } from '@/lib/calendarEvent';
+import { eventBounds } from '@/lib/calendarGrid';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
@@ -62,10 +63,21 @@ export function EventDetailDialog({
   onDeleted,
   onAuthError,
 }: EventDetailDialogProps) {
-  useOverlay();
+  const isTopOverlay = useOverlay();
   const { t } = useTranslation(['calendar', 'common']);
   const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
+
+  // On the document, as the app-wide handler on the window consumes the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, isTopOverlay]);
 
   const joinUrl = event.meetingLink ? getSafeExternalUrl(event.meetingLink) : null;
   const htmlLinkUrl = event.htmlLink ? getSafeExternalUrl(event.htmlLink) : null;
@@ -124,7 +136,7 @@ export function EventDetailDialog({
 
   const sameDay = new Date(event.startTime * 1000).toDateString() === new Date(event.endTime * 1000).toDateString();
   const timeRange = event.isAllDay
-    ? `${date(event.startTime)} · ${t('calendar:allDay')}`
+    ? `${date(eventBounds(event).start)} · ${t('calendar:allDay')}`
     : sameDay
       ? `${date(event.startTime)} · ${time(event.startTime)} – ${time(event.endTime)}`
       : `${dateTime(event.startTime)} – ${dateTime(event.endTime)}`;

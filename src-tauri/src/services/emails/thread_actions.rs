@@ -378,6 +378,27 @@ pub async fn apply_to_thread(
     Ok(())
 }
 
+/// Mark one message read and take it out of the inbox: the rest of its
+/// conversation and any snooze on it stay as they are. A message that has left
+/// the inbox since it was fetched stays where it went. Records the read and
+/// archive signals [`apply_to_thread`] records, which the chat's memory header
+/// shows.
+pub async fn read_and_archive_message(db: &Arc<Database>, email_id: &str, access: &ProviderAccess<'_>) -> Result<()> {
+    let Some(email) = db.get_email(email_id)?.filter(|e| e.mailbox == "inbox") else {
+        return Ok(());
+    };
+    if !email.is_read {
+        set_flag(db, email_id, PushedFlag::Read, true, push_via(access)).await?;
+        crate::services::tasks::on_email_read(db, email_id);
+    }
+    archive_message(db, &email, writable(access)?).await?;
+    // Through the thread: IMAP and Graph re-key the row it just moved.
+    if let Some(latest) = db.get_thread(&email.account_id, &email.thread_id)?.last() {
+        crate::services::tasks::on_archived(db, &latest.id);
+    }
+    Ok(())
+}
+
 /// Local-first writes: an unreachable provider queues the push.
 fn push_via<'a>(access: &ProviderAccess<'a>) -> PushVia<'a> {
     match access {

@@ -112,6 +112,8 @@ export interface DraftAutosaver {
   save: (state: ComposeDraftState) => Promise<void>;
   /** The id of the draft row this composer is backing, or undefined if none saved yet. */
   currentId: () => string | undefined;
+  /** Back an existing draft from now on: one the chat saved for this reply. */
+  adopt: (id: string) => void;
   /** Await any in-flight/queued save and return the final draft id. */
   flush: () => Promise<string | undefined>;
 }
@@ -155,7 +157,11 @@ export function createDraftAutosaver(
     return currentId;
   };
 
-  return { save, currentId: () => currentId, flush };
+  const adopt = (id: string) => {
+    currentId = id;
+  };
+
+  return { save, currentId: () => currentId, adopt, flush };
 }
 
 /** Debounced front for a draft saver: one save per quiet period, and the

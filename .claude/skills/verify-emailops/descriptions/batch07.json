@@ -255,7 +255,6 @@
     "src-tauri/src/cli/output.rs::format_thread_date_renders_local_yyyy_mm_dd_hh_mm": "Comprueba que la fecha de un hilo se formatea como 'AAAA-MM-DD HH:MM' en hora local.",
     "src-tauri/src/cli/output.rs::body_for_display_passes_plain_text_through": "Comprueba que un cuerpo de correo en texto plano se muestra sin modificar en la vista de terminal.",
     "src-tauri/src/cli/output.rs::body_for_display_strips_html_to_readable_text": "Comprueba que un cuerpo de correo en HTML se convierte a texto legible, sin etiquetas, para la vista de terminal.",
-    "src-tauri/src/cli/output.rs::search_trace_reports_method_ai_and_counts": "Comprueba que la traza de búsqueda de la CLI informa el método usado, la disponibilidad de IA y el recuento de resultados mostrados/totales.",
     "src-tauri/src/cli/output.rs::search_trace_renders_parsed_filters": "Comprueba que la traza de búsqueda renderiza correctamente los filtros interpretados (remitente, palabras clave, no leído, etc.).",
     "src-tauri/src/cli/output.rs::body_for_display_drops_style_and_script_blocks": "Comprueba que al convertir HTML a texto se descartan por completo los bloques <style> y <script>, sin que su contenido se filtre al cuerpo mostrado.",
     "src-tauri/src/cli/output.rs::body_for_display_decodes_entities_and_keeps_paragraph_breaks": "Comprueba que la conversión de HTML a texto decodifica entidades (&amp;) y conserva los saltos entre párrafos, sin líneas en blanco sobrantes.",

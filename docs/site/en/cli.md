@@ -54,7 +54,7 @@ stream live), and the rest map onto the subcommands — `/search`, `/account`, `
 | `accounts` | List configured accounts |
 | `emails [--limit N] [--mailbox inbox\|sent\|spam\|trash]` | List recent emails |
 | `show <id>` | Show one email (headers and body) |
-| `search <query> [--limit N]` | Full-text search |
+| `search <query> [--limit N] [--view V] [--unread]` | Full-text search |
 | `chat <question> [--trace]` | Ask a question; `--trace` adds routing and retrieval timings |
 | `sync [account]` | Download new mail |
 | `calendar [--days N] [--next] [--sync]` | Upcoming events (`--next` = next meeting only) |
