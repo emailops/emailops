@@ -27,6 +27,7 @@ pub mod i18n;
 pub mod junk;
 pub mod keychain;
 pub mod lenses;
+pub mod list;
 pub mod logger;
 pub mod mail_notifications;
 pub mod memory;

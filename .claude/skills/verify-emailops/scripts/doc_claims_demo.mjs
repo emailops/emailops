@@ -498,21 +498,24 @@ export default (h) => async function demoCases() {
   // Listed with the feature in whatever state it is; read while on, below.
   const bundledListed = await js(() => !!document.querySelector('[data-testid="bundled-toggle-inbox-triage"]'));
   await closeSettings();
-  const skillsInSideBefore = (await buttons()).some((x) => x === 'Skills');
-  if (!skillsWasOn) {
+  if (skillsWasOn) {
     await tab('AI Skills');
     await flipSkills();
     await closeSettings();
   }
-  const skillsInSideAfter = (await buttons()).some((x) => x === 'Skills');
-  await claim('ai-skills-2', 'activar', {
-    covers: ['Turn them on in Settings → AI Skills with Enable skills; a Skills entry then appears in the sidebar.'],
-    how: 'Abre Ajustes → AI Skills, enciende «Enable skills» si estaba apagado y comprueba que la barra lateral pasa a tener «Skills» (y que no lo tenía con el interruptor apagado).',
+  const skillsInSideOff = (await buttons()).some((x) => x === 'Skills');
+  await tab('AI Skills');
+  await flipSkills();
+  await closeSettings();
+  const skillsInSideOn = (await buttons()).some((x) => x === 'Skills');
+  await claim('ai-skills-2', 'apagar', {
+    covers: ['Turn them off in Settings → AI Skills with Enable skills; the Skills entry then leaves the sidebar.'],
+    how: 'Abre Ajustes → AI Skills, apaga «Enable skills» y comprueba que «Skills» sale de la barra lateral; al encenderlo vuelve a aparecer para los casos siguientes.',
   }, async ({ doc }) => {
     const label = doc.bold().find((x) => /^Enable/.test(x)) || 'Enable skills';
-    return ok(skillsInSideAfter && (skillsWasOn || !skillsInSideBefore),
-      `con «${label}» encendido aparece Skills en la barra lateral${skillsWasOn ? '' : ', y no estaba antes'}`,
-      `barra lateral antes: ${skillsInSideBefore}, después: ${skillsInSideAfter}`);
+    return ok(!skillsInSideOff && skillsInSideOn,
+      `con «${label}» apagado Skills sale de la barra lateral, y vuelve al encenderlo`,
+      `barra lateral apagado: ${skillsInSideOff}, encendido: ${skillsInSideOn}`);
   });
   await view('Skills');
   await byTestId('bundled-row-inbox-triage');

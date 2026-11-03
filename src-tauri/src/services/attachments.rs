@@ -133,7 +133,7 @@ fn is_windows_reserved_name(name: &str) -> bool {
 /// `attachments/<account_id>/<file>` layout. Sanitizing through
 /// `sanitize_download_filename` first strips any path separators, so the
 /// result can never contain `/` or `\`.
-fn safe_extension(filename: &str) -> String {
+pub(crate) fn safe_extension(filename: &str) -> String {
     let safe_name = sanitize_download_filename(filename);
     Path::new(&safe_name)
         .extension()
@@ -747,7 +747,7 @@ pub(crate) async fn store_collected_attachment(
 
 /// Remove a stored attachment file, logging (not failing on) an error: the
 /// row it belonged to is already gone.
-fn remove_attachment_file(path: &Path) {
+pub(crate) fn remove_attachment_file(path: &Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1047,7 +1047,7 @@ impl RuleApplies {
 
 impl RuleApplyTicket {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed) || crate::services::task_queue::cancel_requested()
     }
 }
 
@@ -2489,6 +2489,17 @@ pub(crate) mod tests {
 
         assert_eq!(outcome.status, ApplyStatus::Failed);
         assert!(outcome.error.is_some_and(|e| e.message.contains("r1")));
+    }
+
+    /// Moving the data folder stops the queues, and an apply can scan for long.
+    #[tokio::test]
+    async fn stopping_the_queue_cancels_the_running_apply() {
+        let applies = Arc::new(RuleApplies::default());
+        let ticket = applies.begin("rule-1");
+
+        let cancelled = crate::services::task_queue::run_cancelled(async { ticket.is_cancelled() }).await;
+
+        assert!(cancelled);
     }
 
     #[test]

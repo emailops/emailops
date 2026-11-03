@@ -7,3 +7,4 @@ pub mod invite;
 pub mod meeting_link;
 pub mod notify;
 pub mod sync;
+pub mod windows_zones;

@@ -194,7 +194,10 @@ fn parse_json_object(reply: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str::<serde_json::Value>(trimmed)
         .or_else(|first| {
             let start = trimmed.find('{').ok_or_else(|| first.to_string())?;
-            let end = trimmed.rfind('}').ok_or_else(|| first.to_string())?;
+            let end = trimmed
+                .rfind('}')
+                .filter(|end| *end > start)
+                .ok_or_else(|| first.to_string())?;
             serde_json::from_str(&trimmed[start..=end]).map_err(|e| e.to_string())
         })
         .map_err(|e| format!("the reading reply is not JSON: {e}"))
@@ -289,6 +292,16 @@ pub(crate) fn collect_matches(docs: &[ResearchDoc], findings: &[Finding], direct
         });
     }
     out
+}
+
+#[cfg(test)]
+mod reply_parsing_tests {
+    use super::*;
+
+    #[test]
+    fn a_closing_brace_before_the_opening_one_is_not_a_json_span() {
+        assert!(parse_json_object("} not json {").is_err());
+    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ export function EmailTabBar({
   onSelectTab,
   onCloseTab,
 }: EmailTabBarProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   return (
     <div className="flex items-center overflow-x-auto border-b border-gray-200 bg-gray-50 flex-shrink-0 min-h-0">
       {/* Main tab — always first, no close button, content replaced by inbox clicks */}
@@ -34,7 +34,7 @@ export function EmailTabBar({
               : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
           }`}
         >
-          <span className="truncate">{mainEmail.subject || '(no subject)'}</span>
+          <span className="truncate">{mainEmail.subject || t('common:labels.noSubject')}</span>
         </button>
       )}
 
@@ -43,7 +43,7 @@ export function EmailTabBar({
         const isActive = tab.id === activeTabId;
         const title =
           tab.type === 'thread'
-            ? tab.subject || '(no subject)'
+            ? tab.subject || t('common:labels.noSubject')
             : tab.type === 'attachment'
               ? tab.filename
               : tab.subject || 'New Email';

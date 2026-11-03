@@ -47,7 +47,7 @@
     "noContactsYet": "Aún no hay contactos: sincroniza algunos correos primero.",
     "countOfTotalOne": "{{shown}} de {{total}} contacto",
     "countOfTotalOther": "{{shown}} de {{total}} contactos",
-    "loadMore": "Cargar más",
+    "pageFailed": "No se han podido cargar más contactos.",
     "loading": "Cargando…",
     "couldNotLoad": "No se pudieron cargar los detalles del contacto.",
     "selectAccount": "Selecciona una cuenta para ver los contactos."

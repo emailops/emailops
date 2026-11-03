@@ -62,6 +62,23 @@ pub struct ToolCtx<'a> {
     pub page: Option<&'a PageState>,
 }
 
+impl ToolCtx<'_> {
+    /// The email `email_id` names, when this turn may read it: one of the
+    /// chat's account, or of the thread the user has open, which in unified
+    /// mode can belong to another account. Any other id comes back as `None`,
+    /// like one that does not exist, so the answer never confirms that it is
+    /// valid elsewhere.
+    pub(crate) fn readable_email(&self, email_id: &str) -> crate::models::error::Result<Option<crate::models::Email>> {
+        let open_thread = self
+            .page
+            .is_some_and(|page| page.open_thread.iter().any(|id| id == email_id));
+        Ok(self
+            .db
+            .get_email_by_id(email_id)?
+            .filter(|email| open_thread || email.account_id == self.account_id))
+    }
+}
+
 /// One page of `search_emails` results: the call that produced it and where
 /// the next page starts. `args` is the original argument object, so the
 /// continuation re-runs the very same filters.
@@ -72,19 +89,34 @@ pub struct SearchPage {
     pub total: i32,
 }
 
-/// The conversation's current search page. Interior-mutable because tools
-/// run behind a shared `&ToolCtx`. A chat turn seeds it from the previous
-/// assistant message's trace, so "show me the next ones" works across turns.
+/// What a chat turn's tools see of the page in front of the user: the
+/// conversation's current search page and the thread open this turn. The
+/// search page is interior-mutable because tools run behind a shared
+/// `&ToolCtx`; a chat turn seeds it from the previous assistant message's
+/// trace, so "show me the next ones" works across turns.
 #[derive(Debug, Default)]
-pub struct PageState(std::sync::Mutex<Option<SearchPage>>);
+pub struct PageState {
+    search: std::sync::Mutex<Option<SearchPage>>,
+    /// Emails of the thread the user has open this turn.
+    open_thread: Vec<String>,
+}
 
 impl PageState {
     pub fn seeded(page: Option<SearchPage>) -> Self {
-        Self(std::sync::Mutex::new(page))
+        Self {
+            search: std::sync::Mutex::new(page),
+            open_thread: Vec::new(),
+        }
+    }
+
+    /// This turn's state with the thread the user has open.
+    pub fn with_open_thread(mut self, email_ids: Vec<String>) -> Self {
+        self.open_thread = email_ids;
+        self
     }
 
     pub fn remember(&self, page: SearchPage) {
-        if let Ok(mut slot) = self.0.lock() {
+        if let Ok(mut slot) = self.search.lock() {
             *slot = Some(page);
         }
     }
@@ -92,13 +124,13 @@ impl PageState {
     /// The page as the last search left it — exhausted or not — so a turn can
     /// persist it and the next turn continue (or not) from exactly there.
     pub fn snapshot(&self) -> Option<SearchPage> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+        self.search.lock().ok().and_then(|slot| slot.clone())
     }
 
     /// The page to continue, or `None` when the last search had no more
     /// results (or no search ran in this conversation).
     pub fn pending(&self) -> Option<SearchPage> {
-        self.0
+        self.search
             .lock()
             .ok()
             .and_then(|slot| slot.clone())
@@ -936,6 +968,8 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let db = Database::new(tmp.path().to_path_buf()).expect("db");
         let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "false")
+            .expect("pref");
         let before = registry.render_system_prompt_section(&db);
 
         db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
@@ -3518,6 +3552,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn get_email_body_answers_for_another_accounts_email_as_for_an_unknown_id() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "foreign",
+            "other",
+            "t9",
+            "Z",
+            "z@example.com",
+            "subj",
+            "body of the other account",
+            1,
+        );
+        let call = |id: &str| {
+            execute_tool(
+                &db,
+                "acc",
+                &[],
+                "get_email_body",
+                &arg(serde_json::json!({ "email_id": id })),
+            )
+        };
+        assert_eq!(call("foreign"), call("does-not-exist"));
+    }
+
     // ── get_thread ──────────────────────────────────────────────────────
 
     #[test]
@@ -3667,6 +3727,29 @@ mod tests {
         assert!(out.contains("invoice.pdf"), "output was: {}", out);
         assert!(out.contains("attachment://meta/att-1"), "output was: {}", out);
         assert!(out.contains("application/pdf"), "output was: {}", out);
+    }
+
+    #[test]
+    fn get_attachments_answers_for_another_accounts_email_as_for_an_unknown_id() {
+        let db = tools_test_db();
+        seed_email(&db, "foreign", "other", "t9", "Z", "z@example.com", "s", "b", 1);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, provider_attachment_id, filename, mime_type, file_size, file_path)
+                 VALUES ('att-9', 'foreign', 'other', 'pid', 'contract.pdf', 'application/pdf', 12345, NULL)",
+                [],
+            )
+            .unwrap();
+        let call = |id: &str| {
+            execute_tool(
+                &db,
+                "acc",
+                &[],
+                "get_attachments",
+                &arg(serde_json::json!({ "email_id": id })),
+            )
+        };
+        assert_eq!(call("foreign"), call("does-not-exist"));
     }
 
     // ── Unknown tool ────────────────────────────────────────────────────

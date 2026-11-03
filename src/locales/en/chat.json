@@ -109,7 +109,8 @@
     "rejected": "Marked as wrong — retried below.",
     "budgetNotice": "Some of the emails behind this answer were shortened to fit the model's context window, so details may be missing.",
     "budgetOverflow": "This conversation no longer fits the model's context window, so the answer may have missed instructions or context.",
-    "budgetSettings": "AI settings"
+    "budgetSettings": "AI settings",
+    "answerTruncated": "This answer was cut off because it reached the model's length limit."
   },
   "processing": {
     "queued": "Waiting for other AI work to finish…",

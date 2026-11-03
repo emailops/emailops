@@ -392,7 +392,7 @@ extrait à nouveau en conservant les valeurs modifiées à la main. Les valeurs 
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Expérimental.* Un skill est une procédure enregistrée que le chat suit pour un type de
+Un skill est une procédure enregistrée que le chat suit pour un type de
 demande : la présentation de votre résumé hebdomadaire, la façon de répondre à un fournisseur.
 Chaque skill est un dossier dans le dossier de données de l'app, `skills/<nom>/SKILL.md` : un
 court en-tête avec un `name` (le nom du dossier) et une `description` de ce qu'il fait et quand
@@ -401,8 +401,8 @@ que vous ne l'invoquez pas. Rien de ce que
 contient le dossier d'un skill n'est jamais exécuté.
 
 <!-- claim:ai-skills-2 -->
-Les skills sont désactivés par défaut. Activez-les dans **Paramètres → Skills IA** avec
-**Activer les skills** ; une entrée **Skills** apparaît alors dans la barre latérale.
+Les skills sont activés par défaut. Désactivez-les dans **Paramètres → Skills IA** avec
+**Activer les skills** ; l'entrée **Skills** disparaît alors de la barre latérale.
 
 <!-- claim:ai-skills-3 -->
 La vue **Skills** liste chaque skill avec son propre interrupteur et ouvre le `SKILL.md` du skill

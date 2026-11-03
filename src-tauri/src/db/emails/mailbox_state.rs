@@ -130,6 +130,16 @@ impl Database {
         Ok(changed > 0)
     }
 
+    /// Bring back a soft-deleted row the provider has put in the inbox again.
+    /// `false` for a row that is not soft-deleted.
+    pub fn apply_server_restore(&self, email_id: &str) -> Result<bool> {
+        let changed = self.connection().execute(
+            "UPDATE emails SET is_deleted = 0, mailbox = 'inbox' WHERE id = ?1 AND is_deleted = 1",
+            params![email_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Soft-delete a row the provider deleted for good. Refuses — returning
     /// `false` — for a row with a pending local change.
     pub fn apply_server_delete(&self, email_id: &str) -> Result<bool> {

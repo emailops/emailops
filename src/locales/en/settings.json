@@ -655,7 +655,7 @@
   },
   "skills": {
     "enable": "Enable skills",
-    "enableDesc": "Experimental. Run a skill in the chat by starting a message with /name. The chat never uses one on its own. When on, the Skills view appears in the sidebar to switch skills on or off and edit them.",
+    "enableDesc": "Run a skill in the chat by starting a message with /name. The chat never uses one on its own. When on, the Skills view appears in the sidebar to switch skills on or off and edit them.",
     "folderTitle": "Skills folder",
     "folderDesc": "Each skill is a folder here holding a SKILL.md file: a frontmatter block with name (the folder's name) and description, then the instructions in Markdown. Nothing about a skill reaches the chat until you invoke it.",
     "openFolder": "Open folder",

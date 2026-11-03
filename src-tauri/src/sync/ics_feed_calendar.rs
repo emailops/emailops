@@ -19,7 +19,10 @@ use chrono::TimeZone;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
-use crate::services::calendar::ics::{parse_ics_time, parse_vcalendar, unescape_text, ParsedCalendar, RawVEvent};
+use crate::services::calendar::ics::{
+    parse_ics_time, parse_vcalendar, unescape_text, with_iana_tzid, ParsedCalendar, RawVEvent,
+};
+use crate::services::unsubscribe::{host_may_be_public, PublicOnlyResolver};
 use crate::sync::calendar_provider::{
     CalendarProvider, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -46,16 +49,38 @@ pub trait IcsFetcher: Send + Sync {
 
 /// Production fetcher: https only, shared connect/request timeouts, bounded
 /// body. Failures name the host, never the URL (it carries the feed key).
-pub struct ReqwestIcsFetcher {
-    client: reqwest::Client,
+pub struct ReqwestIcsFetcher;
+
+/// Redirects a feed fetch may follow.
+const MAX_FEED_REDIRECTS: usize = 5;
+
+/// The client for one feed. The user chose the feed's own host, which may be a
+/// server on their network. A redirect was chosen by whoever answered: it is
+/// followed under [`redirect_allowed`], and a name it leads to must resolve to
+/// public addresses. One the client refuses reaches `fetch` as a failed status.
+fn feed_client(feed_host: &str) -> Result<reqwest::Client> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        // `previous` starts with the first request.
+        if redirect_allowed(attempt.url(), attempt.previous().len().saturating_sub(1)) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    crate::sync::http_client::timed_client_builder(crate::sync::http_client::API_REQUEST_TIMEOUT)
+        .redirect(policy)
+        .referer(false)
+        .dns_resolver(Arc::new(PublicOnlyResolver {
+            exempt_host: Some(feed_host.to_string()),
+        }))
+        .build()
+        .map_err(|e| AppError::SyncError(format!("calendar feed {feed_host}: {e}")))
 }
 
-impl Default for ReqwestIcsFetcher {
-    fn default() -> Self {
-        Self {
-            client: crate::sync::http_client::provider_http_client(crate::sync::http_client::API_REQUEST_TIMEOUT),
-        }
-    }
+/// Whether a feed fetch may follow a redirect to `url` after `followed` earlier
+/// ones: https, not a non-public IP literal, within the limit.
+fn redirect_allowed(url: &reqwest::Url, followed: usize) -> bool {
+    followed < MAX_FEED_REDIRECTS && url.scheme() == "https" && host_may_be_public(url)
 }
 
 /// Host part of a feed URL for messages; "feed" when it cannot be parsed.
@@ -75,8 +100,7 @@ impl IcsFetcher for ReqwestIcsFetcher {
             return Err(AppError::InvalidInput("calendar feed URL must use https".into()));
         }
         let host = feed_host(url);
-        let response = self
-            .client
+        let response = feed_client(&host)?
             .get(parsed)
             .header(reqwest::header::ACCEPT, "text/calendar, */*;q=0.1")
             .send()
@@ -311,12 +335,14 @@ impl EventBody {
     }
 }
 
+fn is_tzid(param: &str) -> bool {
+    param.get(..5).is_some_and(|name| name.eq_ignore_ascii_case("TZID="))
+}
+
 /// Add `TZID=<default>` to a floating date-time's params so every value of a
 /// feed is read in the publisher's zone (`X-WR-TIMEZONE`) instead of UTC.
 fn params_with_default_tz(params: &[String], value: &str, default_tz: Option<&str>) -> Vec<String> {
-    let has_tz = params
-        .iter()
-        .any(|p| p.len() > 5 && p[..5].eq_ignore_ascii_case("TZID="));
+    let has_tz = params.iter().any(|p| is_tzid(p));
     let is_date = params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE")) || !value.contains('T');
     match default_tz {
         Some(tz) if !has_tz && !is_date && !value.trim().ends_with('Z') => {
@@ -475,9 +501,56 @@ fn occurrence_id(uid: &str, recurrence_epoch: i64, is_all_day: bool) -> String {
     }
 }
 
+/// A rule's `UNTIL` as the `rrule` parser takes it. Anything without a `Z` it
+/// reads in the machine's zone, and it refuses that next to a zoned `DTSTART`,
+/// so the value becomes a UTC instant, read in the zone of `start_params` (UTC
+/// when they name none). A bare date covers its whole day. A floating `DTSTART`
+/// is read in the machine's zone too, so its `UNTIL` stays floating.
+fn rrule_until(until: &str, start_params: &[String], floating: bool) -> Option<String> {
+    let until = until.trim();
+    if until.ends_with('Z') {
+        return Some(until.to_string());
+    }
+    let wall = if until.contains('T') {
+        until.to_string()
+    } else {
+        format!("{until}T235959")
+    };
+    if floating {
+        return Some(wall);
+    }
+    let (epoch, _) = parse_ics_time(&wall, start_params)?;
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+    Some(dt.format("%Y%m%dT%H%M%SZ").to_string())
+}
+
+/// A master's `RRULE` value with its `UNTIL` in the parser's form.
+fn rrule_value(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -> Option<String> {
+    let start = event.first("DTSTART")?;
+    let params = if is_all_day {
+        Vec::new()
+    } else {
+        params_with_default_tz(&start.params, &start.value, default_tz)
+    };
+    let floating = !is_all_day && !start.value.trim().ends_with('Z') && !params.iter().any(|p| is_tzid(p));
+    let parts = event
+        .first_value("RRULE")?
+        .trim()
+        .split(';')
+        .map(|part| match part.split_once('=') {
+            Some((name, value)) if name.trim().eq_ignore_ascii_case("UNTIL") => {
+                rrule_until(value, &params, floating).map(|until| format!("UNTIL={until}"))
+            }
+            _ => Some(part.to_string()),
+        })
+        .collect::<Option<Vec<String>>>()?;
+    Some(parts.join(";"))
+}
+
 /// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
 /// `rrule` parser: all-day values become UTC midnights (it does not read
-/// `VALUE=DATE`), floating values get the feed's default zone.
+/// `VALUE=DATE`), floating values get the feed's default zone, `UNTIL` follows
+/// [`rrule_until`].
 fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -> Option<String> {
     let mut lines = Vec::new();
     for name in ["DTSTART", "EXDATE"] {
@@ -491,14 +564,14 @@ fn rrule_source(event: &RawVEvent, is_all_day: bool, default_tz: Option<&str>) -
             } else {
                 let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
                 let head = std::iter::once(name.to_string())
-                    .chain(params)
+                    .chain(params.iter().map(|p| with_iana_tzid(p)))
                     .collect::<Vec<_>>()
                     .join(";");
                 lines.push(format!("{head}:{}", prop.value.trim()));
             }
         }
     }
-    lines.push(format!("RRULE:{}", event.first_value("RRULE")?.trim()));
+    lines.push(format!("RRULE:{}", rrule_value(event, is_all_day, default_tz)?));
     Some(lines.join("\n"))
 }
 
@@ -676,6 +749,23 @@ mod tests {
     }
 
     const WEEKLY: &str = "UID:w@x\nDTSTART;TZID=Europe/Madrid:20260728T073000\nDTEND;TZID=Europe/Madrid:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Weekly";
+
+    /// The `rrule` parser rejects a Windows zone name, which left a recurring
+    /// event with its first occurrence only.
+    #[test]
+    fn a_recurring_event_in_a_windows_zone_keeps_all_its_occurrences() {
+        let weekly = "UID:w@x\nDTSTART;TZID=Romance Standard Time:20260728T073000\nDTEND;TZID=Romance Standard Time:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Weekly";
+        let out = expand(&[weekly], utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+        assert_eq!(
+            out.iter().map(|e| e.start_time).collect::<Vec<_>>(),
+            vec![
+                utc(2026, 7, 28, 5, 30),
+                utc(2026, 8, 4, 5, 30),
+                utc(2026, 8, 11, 5, 30),
+                utc(2026, 8, 18, 5, 30),
+            ]
+        );
+    }
 
     // ── expansion planner ────────────────────────────────────────────────
 
@@ -857,6 +947,97 @@ mod tests {
     }
 
     #[test]
+    fn an_all_day_rule_with_a_bare_until_date_keeps_every_day_through_it() {
+        let out = expand(
+            &["UID:a@x\nDTSTART;VALUE=DATE:20260801\nRRULE:FREQ=DAILY;UNTIL=20260803\nSUMMARY:Trip"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            vec![utc(2026, 8, 1, 0, 0), utc(2026, 8, 2, 0, 0), utc(2026, 8, 3, 0, 0)]
+        );
+    }
+
+    #[test]
+    fn a_timed_rule_expands_through_until_whatever_form_until_takes() {
+        // 11/08 07:30 in Madrid is 05:30Z; New York, far from any test machine's
+        // zone, proves UNTIL is read in the event's zone and not the machine's.
+        let weekly_in = |tz: &str, until: &str| {
+            format!(
+                "UID:u@x\nDTSTART;TZID={tz}:20260728T073000\nDTEND;TZID={tz}:20260728T083000\nRRULE:FREQ=WEEKLY;BYDAY=TU;{until}\nSUMMARY:U"
+            )
+        };
+        let madrid = [utc(2026, 7, 28, 5, 30), utc(2026, 8, 4, 5, 30), utc(2026, 8, 11, 5, 30)];
+        let new_york = [
+            utc(2026, 7, 28, 11, 30),
+            utc(2026, 8, 4, 11, 30),
+            utc(2026, 8, 11, 11, 30),
+        ];
+        let cases = [
+            ("Europe/Madrid", "UNTIL=20260811", madrid, "a bare date"),
+            ("Europe/Madrid", "UNTIL=20260811T073000", madrid, "a local date-time"),
+            ("Europe/Madrid", "UNTIL=20260811T053000Z", madrid, "UTC"),
+            ("America/New_York", "UNTIL=20260811", new_york, "a bare date"),
+            (
+                "America/New_York",
+                "UNTIL=20260811T073000",
+                new_york,
+                "a local date-time",
+            ),
+        ];
+        for (tz, until, expected, form) in cases {
+            let event = weekly_in(tz, until);
+            let out = expand(&[&event], utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+            let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            assert_eq!(starts, expected, "UNTIL as {form} in {tz}");
+        }
+    }
+
+    #[test]
+    fn a_utc_rule_with_a_bare_until_date_keeps_that_day() {
+        let out = expand(
+            &["UID:z@x\nDTSTART:20260728T070000Z\nRRULE:FREQ=WEEKLY;UNTIL=20260811\nSUMMARY:Z"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        assert_eq!(out.len(), 3, "{out:?}");
+    }
+
+    #[test]
+    fn a_floating_rule_with_a_bare_until_date_keeps_that_day() {
+        let out = expand(
+            &["UID:f@x\nDTSTART:20260728T073000\nRRULE:FREQ=WEEKLY;UNTIL=20260811\nSUMMARY:F"],
+            utc(2026, 7, 27, 0, 0),
+            utc(2026, 8, 24, 0, 0),
+        );
+        assert_eq!(out.len(), 3, "{out:?}");
+    }
+
+    #[test]
+    fn a_floating_rule_in_a_zoned_feed_reads_until_in_the_feed_zone() {
+        let feed = vcal(&["UID:f@x\nDTSTART:20260728T073000\nRRULE:FREQ=WEEKLY;UNTIL=20260811T073000\nSUMMARY:F"])
+            .replace("X-WR-CALNAME:Feed", "X-WR-CALNAME:Feed\r\nX-WR-TIMEZONE:Europe/Madrid");
+        let out = expand_events(&parse_vcalendar(&feed), utc(2026, 7, 27, 0, 0), utc(2026, 8, 24, 0, 0));
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            vec![utc(2026, 7, 28, 5, 30), utc(2026, 8, 4, 5, 30), utc(2026, 8, 11, 5, 30)]
+        );
+    }
+
+    #[test]
+    fn a_non_ascii_parameter_does_not_stop_the_feed() {
+        let out = expand(
+            &["UID:n@x\nDTSTART;ABCDé=1:20260729T070000Z\nSUMMARY:N"],
+            utc(2026, 7, 1, 0, 0),
+            utc(2026, 8, 1, 0, 0),
+        );
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
     fn tzid_rrule_tracks_local_wall_time_across_dst() {
         // Europe/Madrid switches to CEST on 29/03/2026: 10:00 local is 09:00Z
         // before and 08:00Z after.
@@ -907,6 +1088,99 @@ mod tests {
                 url: "https://cal.example.com/b.ics".into(),
             },
         ]
+    }
+
+    /// A listener that counts who connects, then hangs up: a redirect that
+    /// reaches it shows here whatever scheme it used.
+    async fn connection_counter() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&connections);
+        tokio::spawn(async move {
+            while listener.accept().await.is_ok() {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        (port, connections)
+    }
+
+    #[tokio::test]
+    async fn a_redirect_reaches_neither_plain_http_nor_a_private_host() {
+        use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
+
+        let (port, connections) = connection_counter().await;
+        for target in [
+            format!("http://127.0.0.1:{port}/feed.ics"),
+            format!("https://127.0.0.1:{port}/feed.ics"),
+            format!("https://localhost:{port}/feed.ics"),
+        ] {
+            let feed = MockServer::start().await;
+            Mock::given(any())
+                .respond_with(ResponseTemplate::new(302).insert_header("location", target.as_str()))
+                .mount(&feed)
+                .await;
+
+            let outcome = feed_client("127.0.0.1").expect("client").get(feed.uri()).send().await;
+
+            assert_eq!(
+                connections.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "reached {target}"
+            );
+            assert!(!outcome.is_ok_and(|r| r.status().is_success()), "{target}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_feed_the_user_chose_may_live_on_a_private_host() {
+        use wiremock::{matchers::any, Mock, MockServer, ResponseTemplate};
+
+        let feed = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&feed)
+            .await;
+        let url = format!("http://localhost:{}/feed.ics", feed.address().port());
+
+        let response = feed_client("localhost")
+            .expect("client")
+            .get(url)
+            .send()
+            .await
+            .expect("reached");
+
+        assert!(response.status().is_success());
+    }
+
+    #[test]
+    fn a_redirect_does_not_pass_the_feed_url_on_as_a_referer() {
+        // The URL holds the feed key. The client's `Debug` lists the setting
+        // only when it is on.
+        let client = feed_client("cal.example.com").expect("client");
+        assert!(!format!("{client:?}").contains("referer"), "{client:?}");
+    }
+
+    #[test]
+    fn a_redirect_is_followed_only_to_https_on_a_public_host_within_the_limit() {
+        let cases = [
+            ("https://cal.example.com/a.ics", 0, true),
+            ("https://93.184.216.34/a.ics", 0, true),
+            ("https://cal.example.com/a.ics", MAX_FEED_REDIRECTS - 1, true),
+            ("https://cal.example.com/a.ics", MAX_FEED_REDIRECTS, false),
+            ("http://cal.example.com/a.ics", 0, false),
+            ("ftp://cal.example.com/a.ics", 0, false),
+            ("https://127.0.0.1/a.ics", 0, false),
+            ("https://10.0.0.8/a.ics", 0, false),
+            ("https://192.168.1.1/a.ics", 0, false),
+            ("https://169.254.169.254/latest", 0, false),
+            ("https://[::1]/a.ics", 0, false),
+            ("https://[fd00::1]/a.ics", 0, false),
+        ];
+        for (url, followed, allowed) in cases {
+            let url = reqwest::Url::parse(url).unwrap();
+            assert_eq!(redirect_allowed(&url, followed), allowed, "{url} after {followed}");
+        }
     }
 
     #[tokio::test]

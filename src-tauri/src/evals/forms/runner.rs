@@ -169,6 +169,7 @@ pub async fn run(cfg: FormRunnerConfig) -> EvalResult<FormMetricsReport> {
 
         let started = Instant::now();
         let outcome = fill_form(
+            &db,
             provider.as_ref(),
             &template,
             form,

@@ -1,10 +1,11 @@
 // Keyboard shortcuts reach the open conversation as pane commands; EmailView
 // runs them through the same handlers as its toolbar buttons.
 
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const composers = vi.hoisted(() => ({ mounted: 0 }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock('@/lib/api', () => ({
   getPref: vi.fn(async () => null),
@@ -19,9 +20,21 @@ vi.mock('@/lib/api', () => ({
 }));
 vi.mock('./ThreadEmailItem', () => ({ ThreadEmailItem: () => null }));
 vi.mock('./ReplyCompose', () => ({
-  ReplyCompose: ({ mode, initialBody }: { mode: string; initialBody: string }) => (
-    <div data-testid="reply-compose" data-mode={mode} data-body={initialBody} />
-  ),
+  ReplyCompose: ({ mode, initialBody, adoptDraftId }: { mode: string; initialBody: string; adoptDraftId?: string }) => {
+    const [instance] = useState(() => {
+      composers.mounted += 1;
+      return composers.mounted;
+    });
+    return (
+      <div
+        data-testid="reply-compose"
+        data-mode={mode}
+        data-body={initialBody}
+        data-instance={instance}
+        data-adopt={adoptDraftId}
+      />
+    );
+  },
 }));
 
 import { initI18n } from '@/i18n';
@@ -92,6 +105,14 @@ async function command(c: Parameters<ReturnType<typeof useShortcutStore.getState
 }
 
 const reply = () => container.querySelector('[data-testid="reply-compose"]');
+
+describe('EmailView chat drafts', () => {
+  it('hands the draft the chat saved to the reply it opens', async () => {
+    useEmailStore.setState({ pendingChatDraft: { emailId: email.id, body: 'Hola', draftId: 'draft-chat' } });
+    await render();
+    expect(reply()?.getAttribute('data-adopt')).toBe('draft-chat');
+  });
+});
 
 describe('EmailView pane commands', () => {
   it('r opens the reply composer, a reply-all, f a forward', async () => {
@@ -209,5 +230,37 @@ describe('EmailView auto-advance', () => {
     await command('markUnread');
     expect(selectEmail).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('EmailView composer lifetime', () => {
+  it('keeps the composer open when a new message lands in the same thread', async () => {
+    await render();
+    await command('forward');
+
+    await render([email, { ...email, id: 'e2', timestamp: 2 } as Email]);
+
+    expect(reply()?.getAttribute('data-mode')).toBe('forward');
+  });
+
+  it('closes the composer when another thread opens', async () => {
+    await render();
+    await command('reply');
+
+    await render([{ ...email, id: 'e9', threadId: 't2' } as Email]);
+
+    expect(reply()).toBeNull();
+  });
+
+  // Recipients are worked out when the composer opens: one kept across the
+  // switch would forward someone's mail straight back to them.
+  it('starts a fresh composer when a reply turns into a forward', async () => {
+    await render();
+    await command('reply');
+    const replyInstance = reply()?.getAttribute('data-instance');
+
+    await command('forward');
+
+    expect(reply()?.getAttribute('data-instance')).not.toBe(replyInstance);
   });
 });

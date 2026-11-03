@@ -655,7 +655,7 @@
   },
   "skills": {
     "enable": "Skills aktivieren",
-    "enableDesc": "Experimentell. Starte einen Skill im Chat, indem du die Nachricht mit /name beginnst. Der Chat verwendet nie von sich aus einen. Wenn aktiviert, erscheint die Ansicht Skills in der Seitenleiste, um Skills ein- und auszuschalten und zu bearbeiten.",
+    "enableDesc": "Starte einen Skill im Chat, indem du die Nachricht mit /name beginnst. Der Chat verwendet nie von sich aus einen. Wenn aktiviert, erscheint die Ansicht Skills in der Seitenleiste, um Skills ein- und auszuschalten und zu bearbeiten.",
     "folderTitle": "Skills-Ordner",
     "folderDesc": "Jeder Skill ist hier ein Ordner mit einer Datei SKILL.md: ein Kopfblock mit name (dem Ordnernamen) und description, danach die Anweisungen in Markdown. Nichts von einem Skill erreicht den Chat, bevor du ihn aufrufst.",
     "openFolder": "Ordner öffnen",

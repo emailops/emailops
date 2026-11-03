@@ -355,6 +355,8 @@ mod tests {
             limit: 25,
             offset: 0,
             trace: true,
+            view: "inbox".to_string(),
+            unread: false,
         })));
     }
 
@@ -405,6 +407,8 @@ mod tests {
                 limit: 25,
                 offset: 0,
                 trace: false,
+                view: "inbox".to_string(),
+                unread: false,
             },
         ] {
             assert!(opens_read_only(Some(&cmd)), "{cmd:?} only reads");

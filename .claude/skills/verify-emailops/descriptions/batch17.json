@@ -7,8 +7,6 @@
     "src-tauri/src/db/emails/crud.rs::the_unread_check_seeks_the_thread": "La comprobación de «sin leer» de cada fila busca su hilo por índice en lugar de recorrer el correo sin leer de toda la cuenta.",
     "src-tauri/src/db/emails/mailbox_state.rs::unread_threads_are_the_threads_with_any_live_unread_message": "Un hilo cuenta como no leído si alguno de sus mensajes no borrados lo está, y solo dentro de su propia cuenta.",
     "src-tauri/src/db/emails/mailbox_state.rs::unread_threads_seeks_each_thread_instead_of_walking_the_account": "La consulta de hilos no leídos busca cada hilo por índice en lugar de recorrer la cuenta entera.",
-    "src-tauri/src/db/emails/search.rs::an_unread_filter_lists_threads_with_any_unread_message": "Un filtro del sidebar con «No leídos» incluye un hilo si cualquier mensaje está sin leer, aunque el que coincide con el filtro ya esté leído.",
-    "src-tauri/src/db/emails/search.rs::an_unread_tag_filter_lists_threads_with_any_unread_message": "Un filtro por etiqueta con «No leídos» deja fuera los hilos ya leídos del todo.",
     "src-tauri/src/services/emails/mod.rs::an_inbox_conversation_is_unread_when_any_message_is": "Una conversación de la bandeja se muestra como no leída si cualquiera de sus mensajes lo está, con o sin el filtro activo."
   },
   "vitest": {

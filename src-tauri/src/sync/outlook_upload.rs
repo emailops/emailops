@@ -49,8 +49,9 @@ pub struct AttachmentPlan {
     /// One route per attachment, in the order given.
     pub routes: Vec<AttachmentRoute>,
     /// Everything fits in the message's own request (`sendMail`, `reply`, the
-    /// draft create/update). Otherwise the message is created as a draft
-    /// without attachments and each one is added to it on its own.
+    /// draft create). Otherwise the message is created as a draft without
+    /// attachments and each one is added to it on its own. A draft update
+    /// always does that, whatever this says.
     pub single_request: bool,
 }
 

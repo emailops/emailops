@@ -28,6 +28,18 @@ describe('senderName', () => {
 // sanitizeEmailHtmlFull — remote-content gating
 // ---------------------------------------------------------------------------
 
+describe('sanitizeEmailHtmlFull link targets', () => {
+  it.each([
+    ['an image-map area', '<map name="m"><area href="data:text/html,x"></map>', 'area'],
+    ['an anchor', '<a href="data:text/html,x">y</a>', 'a'],
+  ])('drops a data: target on %s', (_name, input, selector) => {
+    const { html: clean } = sanitizeEmailHtmlFull(input, false);
+
+    const parsed = new DOMParser().parseFromString(clean, 'text/html');
+    expect(parsed.querySelector(selector)?.hasAttribute('href')).toBe(false);
+  });
+});
+
 describe('sanitizeEmailHtmlFull remote-content gating', () => {
   // Regression: the blocking hook only inspected IMG and SOURCE, so a sender
   // could get a guaranteed read-receipt through <video>/<audio> even with
@@ -52,6 +64,31 @@ describe('sanitizeEmailHtmlFull remote-content gating', () => {
 
     expect(clean).not.toContain('tracker.example');
     expect(hasBlockedImages).toBe(true);
+  });
+
+  // The browser resolves every one of these to a remote host.
+  it.each([
+    ['protocol-relative', '//tracker.example/p.png'],
+    ['leading whitespace', '  https://tracker.example/p.png'],
+    ['upper-case scheme', 'HTTPS://tracker.example/p.png'],
+    ['backslashes', '\\\\tracker.example/p.png'],
+    ['a slash and a backslash', '/\\tracker.example/p.png'],
+    ['a scheme without slashes', 'https:tracker.example/p.png'],
+  ])('strips a src and a poster written with %s', (_form, url) => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(
+      `<img src="${url}"><video poster="${url}"></video>`,
+      false,
+    );
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('keeps a path on the same origin: it names no remote host', () => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull('<img src="/images/logo.png">', false);
+
+    expect(clean).toContain('/images/logo.png');
+    expect(hasBlockedImages).toBe(false);
   });
 
   it('keeps remote media when the user has allowed remote content', () => {

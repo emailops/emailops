@@ -218,6 +218,47 @@ describe('selectAccount', () => {
     });
   });
 
+  // Switching accounts twice in a row: the slower list must not land on the
+  // account shown by then, nor undo what that switch restored.
+  it('ignores the conversations of an account left before they arrived', async () => {
+    useChatStore.setState({ lastConversationByAccount: { 'acct-b': 'c-b1' } });
+    let finishA: (list: ReturnType<typeof conversation>[]) => void = () => {};
+    vi.mocked(api.listChatConversations).mockImplementation((accountId) =>
+      accountId === 'acct-a'
+        ? new Promise((resolve) => {
+            finishA = resolve;
+          })
+        : Promise.resolve([conversation('c-b1')]),
+    );
+
+    const slow = useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectAccount('acct-b');
+    finishA([conversation('c-a1')]);
+    await slow;
+
+    const s = useChatStore.getState();
+    expect(s.conversations.map((c) => c.id)).toEqual(['c-b1']);
+    expect(s.activeConversationId).toBe('c-b1');
+  });
+
+  it('does not report the failure of a list nobody is waiting for', async () => {
+    let failA: (error: Error) => void = () => {};
+    vi.mocked(api.listChatConversations).mockImplementation((accountId) =>
+      accountId === 'acct-a'
+        ? new Promise((_resolve, reject) => {
+            failA = reject;
+          })
+        : Promise.resolve([conversation('c-b1')]),
+    );
+
+    const slow = useChatStore.getState().selectAccount('acct-a');
+    await useChatStore.getState().selectAccount('acct-b');
+    failA(new Error('db locked'));
+    await slow;
+
+    expect(useChatStore.getState().error).toBeNull();
+  });
+
   it('opens a fresh chat for an account not used this session', async () => {
     vi.mocked(api.listChatConversations).mockResolvedValue([conversation('c-1')]);
 

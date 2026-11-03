@@ -63,7 +63,8 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT l.id, l.name, l.icon, l.template_key, l.account_id, l.is_enabled, \
                     l.sort_order, l.prompt_version, \
-                    (SELECT COUNT(*) FROM lens_rows r WHERE r.lens_id = l.id AND r.status = 'ok') AS row_count \
+                    (SELECT COUNT(*) FROM lens_rows r JOIN emails e ON e.id = r.email_id \
+                     WHERE r.lens_id = l.id AND r.status = 'ok' AND e.is_deleted = 0) AS row_count \
              FROM lenses l \
              ORDER BY l.sort_order ASC, l.created_at ASC",
         )?;
@@ -221,6 +222,7 @@ impl Database {
 
     /// Upsert an extracted row. `overrides_json` on the existing row is preserved
     /// — this is the rule that lets users edit cells without fearing re-extraction.
+    /// So is an exclusion: only the user puts a row back in the Lens.
     pub fn upsert_lens_row(
         &self,
         lens_id: &str,
@@ -242,7 +244,7 @@ impl Database {
                 prompt_version = excluded.prompt_version, \
                 email_timestamp = excluded.email_timestamp, \
                 extracted_at = excluded.extracted_at, \
-                status = excluded.status, \
+                status = CASE status WHEN 'excluded' THEN status ELSE excluded.status END, \
                 error_message = excluded.error_message",
             params![
                 lens_id,
@@ -311,7 +313,8 @@ impl Database {
         let value = effective_value_sql(key);
         let sql = format!(
             "SELECT NULLIF({value}, '') AS v, COUNT(*) FROM lens_rows r \
-             WHERE r.lens_id = ?1 AND r.status = 'ok' \
+             JOIN emails e ON e.id = r.email_id \
+             WHERE r.lens_id = ?1 AND r.status = 'ok' AND e.is_deleted = 0 \
              GROUP BY v ORDER BY v IS NOT NULL, v COLLATE NOCASE"
         );
         let conn = self.reader();
@@ -442,7 +445,7 @@ impl Database {
                           ) AS rn \
                    FROM lens_rows r \
                    JOIN emails e ON e.id = r.email_id \
-                   WHERE r.lens_id = ?1 AND r.status = 'ok'{filter_sql} \
+                   WHERE r.lens_id = ?1 AND r.status = 'ok' AND e.is_deleted = 0{filter_sql} \
                  ) \
                  SELECT lens_id, email_id, account_id, extracted_json, overrides_json, \
                         prompt_version, email_timestamp, extracted_at, status, error_message, \
@@ -463,7 +466,7 @@ impl Database {
                         e.subject, e.sender, e.sender_email \
                  FROM lens_rows r \
                  JOIN emails e ON e.id = r.email_id \
-                 WHERE r.lens_id = ?1 AND r.status = 'ok'{filter_sql} \
+                 WHERE r.lens_id = ?1 AND r.status = 'ok' AND e.is_deleted = 0{filter_sql} \
                  ORDER BY {order_expr}{tiebreak} \
                  LIMIT ?2 OFFSET ?3",
             );
@@ -494,7 +497,7 @@ impl Database {
                     e.subject, e.sender, e.sender_email \
              FROM lens_rows r \
              JOIN emails e ON e.id = r.email_id \
-             WHERE r.lens_id = ?1 AND r.status = 'excluded' \
+             WHERE r.lens_id = ?1 AND r.status = 'excluded' AND e.is_deleted = 0 \
              ORDER BY r.email_timestamp DESC, r.email_id DESC \
              LIMIT ?2 OFFSET ?3",
         )?;
@@ -506,13 +509,16 @@ impl Database {
 
     /// `email_ids` whose `lens_rows.prompt_version < lens.prompt_version` —
     /// the set of rows that need re-extraction after a prompt/schema edit.
+    /// An excluded row or one of deleted mail needs none: nobody sees it.
     pub fn list_stale_row_email_ids(&self, lens_id: &str) -> Result<Vec<String>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
             "SELECT r.email_id \
              FROM lens_rows r \
              JOIN lenses l ON l.id = r.lens_id \
-             WHERE r.lens_id = ?1 AND r.prompt_version < l.prompt_version",
+             JOIN emails e ON e.id = r.email_id \
+             WHERE r.lens_id = ?1 AND r.prompt_version < l.prompt_version \
+               AND r.status != 'excluded' AND e.is_deleted = 0",
         )?;
         let ids = stmt
             .query_map(params![lens_id], |row| row.get::<_, String>(0))?
@@ -520,13 +526,15 @@ impl Database {
         Ok(ids)
     }
 
-    /// Count rows whose prompt_version is behind the Lens's current prompt_version.
+    /// How many rows [`Self::list_stale_row_email_ids`] lists.
     pub fn count_stale_rows(&self, lens_id: &str) -> Result<i64> {
         let conn = self.reader();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM lens_rows r \
              JOIN lenses l ON l.id = r.lens_id \
-             WHERE r.lens_id = ?1 AND r.prompt_version < l.prompt_version",
+             JOIN emails e ON e.id = r.email_id \
+             WHERE r.lens_id = ?1 AND r.prompt_version < l.prompt_version \
+               AND r.status != 'excluded' AND e.is_deleted = 0",
             params![lens_id],
             |row| row.get(0),
         )?;
@@ -584,17 +592,19 @@ impl Database {
     }
 
     pub fn add_lens_exclusion(&self, lens_id: &str, email_id: &str) -> Result<()> {
-        let conn = self.connection();
+        let mut conn = self.connection();
         // Use a transaction so the exclusion + row-marking happen atomically.
-        conn.execute(
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT OR REPLACE INTO lens_exclusions (lens_id, email_id, excluded_at) \
              VALUES (?1, ?2, ?3)",
             params![lens_id, email_id, now_secs()],
         )?;
-        conn.execute(
+        tx.execute(
             "UPDATE lens_rows SET status = 'excluded' WHERE lens_id = ?1 AND email_id = ?2",
             params![lens_id, email_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -614,16 +624,18 @@ impl Database {
     /// distinguishes a row that never produced anything; judging extraction
     /// quality is the re-extraction banner's job, not this one's.
     pub fn remove_lens_exclusion(&self, lens_id: &str, email_id: &str) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
             "DELETE FROM lens_exclusions WHERE lens_id = ?1 AND email_id = ?2",
             params![lens_id, email_id],
         )?;
-        conn.execute(
+        tx.execute(
             "UPDATE lens_rows SET status = 'ok' \
              WHERE lens_id = ?1 AND email_id = ?2 AND status = 'excluded'",
             params![lens_id, email_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1192,6 +1204,117 @@ mod exclusion_round_trip_tests {
         );
     }
 
+    /// Move the Lens past the version its rows were extracted with, as a
+    /// prompt or column edit does.
+    fn make_rows_stale(db: &Database, lens_id: &str) {
+        db.connection()
+            .execute(
+                "UPDATE lenses SET prompt_version = prompt_version + 1 WHERE id = ?1",
+                rusqlite::params![lens_id],
+            )
+            .unwrap();
+    }
+
+    fn soft_delete(db: &Database, email_id: &str) {
+        db.delete_email(email_id).unwrap();
+    }
+
+    #[test]
+    fn an_excluded_row_is_not_stale() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "kept");
+        seed_row(&db, &lens.id, "excluded");
+        db.add_lens_exclusion(&lens.id, "excluded").unwrap();
+        make_rows_stale(&db, &lens.id);
+
+        assert_eq!(db.list_stale_row_email_ids(&lens.id).unwrap(), vec!["kept"]);
+        assert_eq!(db.count_stale_rows(&lens.id).unwrap(), 1);
+    }
+
+    /// The row may be excluded while an extraction of it is in flight.
+    #[test]
+    fn an_extraction_does_not_bring_an_excluded_row_back() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        db.add_lens_exclusion(&lens.id, "e1").unwrap();
+
+        db.upsert_lens_row(&lens.id, "e1", "acc1", r#"{"vendor":"New"}"#, 2, 100, "ok", None)
+            .unwrap();
+
+        assert!(db.get_lens_rows(&lens.id, None, 50, 0).unwrap().rows.is_empty());
+        assert_eq!(db.get_excluded_lens_rows(&lens.id, 50, 0).unwrap().rows.len(), 1);
+    }
+
+    #[test]
+    fn a_stale_row_of_deleted_mail_is_not_extracted_again() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        make_rows_stale(&db, &lens.id);
+        soft_delete(&db, "e1");
+
+        assert!(db.list_stale_row_email_ids(&lens.id).unwrap().is_empty());
+        assert_eq!(db.count_stale_rows(&lens.id).unwrap(), 0);
+    }
+
+    #[test]
+    fn deleted_mail_leaves_the_excluded_list() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        db.add_lens_exclusion(&lens.id, "e1").unwrap();
+        soft_delete(&db, "e1");
+
+        assert!(db.get_excluded_lens_rows(&lens.id, 50, 0).unwrap().rows.is_empty());
+    }
+
+    /// Fail every `lens_rows` status update, as a disk error would.
+    fn block_row_updates(db: &Database) {
+        db.connection()
+            .execute_batch(
+                "CREATE TRIGGER block_lens_rows BEFORE UPDATE ON lens_rows
+                 BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+            )
+            .unwrap();
+    }
+
+    fn exclusions(db: &Database) -> i64 {
+        db.connection()
+            .query_row("SELECT COUNT(*) FROM lens_exclusions", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn excluding_a_row_is_all_or_nothing() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        block_row_updates(&db);
+
+        assert!(db.add_lens_exclusion(&lens.id, "e1").is_err());
+
+        assert_eq!(
+            exclusions(&db),
+            0,
+            "a row still listed must not be recorded as excluded"
+        );
+    }
+
+    #[test]
+    fn including_a_row_is_all_or_nothing() {
+        let db = Database::new_for_testing().expect("test db");
+        let lens = db.create_lens(&sample_input()).unwrap();
+        seed_row(&db, &lens.id, "e1");
+        db.add_lens_exclusion(&lens.id, "e1").unwrap();
+        block_row_updates(&db);
+
+        assert!(db.remove_lens_exclusion(&lens.id, "e1").is_err());
+
+        assert_eq!(exclusions(&db), 1, "a row still hidden must stay recorded as excluded");
+    }
+
     /// The undo must actually undo. Clearing only the `lens_exclusions` entry
     /// left `lens_rows.status = 'excluded'`, which `get_lens_rows` filters out —
     /// so the user pressed "include" and nothing came back.
@@ -1411,6 +1534,48 @@ mod column_filter_tests {
             .get_lens_rows_filtered(&lens.id, None, &filter(&["Acme"], false), 50, 0)
             .unwrap();
         assert_eq!(ids(&page), vec!["acme-new"], "one row per unique value, newest wins");
+    }
+
+    #[test]
+    fn deleted_mail_leaves_the_rows_the_count_and_the_column_values() {
+        let (db, lens) = setup();
+        db.delete_email("globex").unwrap();
+
+        assert_eq!(
+            ids(&db.get_lens_rows(&lens, None, 50, 0).unwrap()),
+            vec!["acme", "blank"]
+        );
+        assert_eq!(
+            db.get_lens_column_values(&lens, "vendor").unwrap(),
+            vec![
+                ColumnValueCount { value: None, count: 1 },
+                ColumnValueCount {
+                    value: Some("Acme".into()),
+                    count: 1
+                },
+            ]
+        );
+        let lenses = db.list_lenses().unwrap();
+        assert_eq!(lenses.iter().find(|l| l.id == lens).unwrap().row_count, 2);
+    }
+
+    #[test]
+    fn deleted_mail_leaves_a_lens_with_a_unique_key() {
+        let db = Database::new_for_testing().expect("test db");
+        let mut input = sample_input();
+        input.schema.columns[0].is_unique_key = true;
+        let lens = db.create_lens(&input).unwrap();
+        seed(&db, &lens.id, "acme-old", Some("Acme"), 100);
+        seed(&db, &lens.id, "acme-new", Some("Acme"), 200);
+        db.delete_email("acme-new").unwrap();
+
+        let page = db.get_lens_rows(&lens.id, None, 50, 0).unwrap();
+
+        assert_eq!(
+            ids(&page),
+            vec!["acme-old"],
+            "the newest row left, the older one stands in"
+        );
     }
 
     #[test]

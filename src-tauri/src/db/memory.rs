@@ -121,8 +121,9 @@ impl Database {
     /// this keeps the function side-effect-free and friendly to batch writes.
     /// FTS is populated in the same transaction so search stays consistent.
     pub fn insert_memory_fact(&self, fact: &MemoryFact) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO memory_facts (id, account_id, subject_kind, subject_key, fact,
                                         source, source_email_id, confidence, score, status,
                                         last_used_at, domain, vigency, company, created_at, updated_at)
@@ -148,10 +149,11 @@ impl Database {
         )?;
         // Keep FTS in sync. Errors here would leave FTS divergent from the
         // table, so propagate them rather than swallowing.
-        conn.execute(
+        tx.execute(
             "INSERT INTO memory_facts_fts (fact_id, fact, subject_key) VALUES (?1, ?2, ?3)",
             params![fact.id, fact.fact, fact.subject_key],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -159,19 +161,21 @@ impl Database {
     /// (those are managed by the consolidation job). Caller is responsible
     /// for setting updated_at.
     pub fn update_memory_fact_text(&self, fact_id: &str, new_fact: &str, updated_at: i64) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
             "UPDATE memory_facts SET fact = ?1, updated_at = ?2 WHERE id = ?3",
             params![new_fact, updated_at, fact_id],
         )?;
         // FTS row must be replaced — FTS5 doesn't support in-place UPDATE without
         // external-content mode, which we explicitly avoided.
-        conn.execute("DELETE FROM memory_facts_fts WHERE fact_id = ?1", params![fact_id])?;
-        conn.execute(
+        tx.execute("DELETE FROM memory_facts_fts WHERE fact_id = ?1", params![fact_id])?;
+        tx.execute(
             "INSERT INTO memory_facts_fts (fact_id, fact, subject_key)
              SELECT id, fact, subject_key FROM memory_facts WHERE id = ?1",
             params![fact_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1209,6 +1213,32 @@ mod tests {
         let hits = db.search_memory_facts_fts("a1", "billing", 5).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.id, "f1");
+    }
+
+    #[test]
+    fn a_fact_that_cannot_reach_the_search_index_is_not_stored() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a1");
+        db.connection().execute_batch("DROP TABLE memory_facts_fts").unwrap();
+
+        let stored = db.insert_memory_fact(&new_fact("f1", "a1", "contact", "a@example.com", "fact"));
+
+        assert!(stored.is_err());
+        assert_eq!(db.count_memory_facts("a1", None).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_edit_that_cannot_reach_the_search_index_changes_nothing() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("a1");
+        db.insert_memory_fact(&new_fact("f1", "a1", "contact", "a@example.com", "before"))
+            .unwrap();
+        db.connection().execute_batch("DROP TABLE memory_facts_fts").unwrap();
+
+        assert!(db.update_memory_fact_text("f1", "after", 2).is_err());
+
+        let facts = db.list_memory_facts("a1", None, 10).unwrap();
+        assert_eq!(facts[0].fact, "before");
     }
 
     #[test]

@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
 use crate::models::error::AppError;
+use crate::services::logger;
 
 mod bundled;
 mod problem;
@@ -44,8 +45,8 @@ pub const SKILLS_DIR: &str = "skills";
 /// can be undone by hand. It holds no `SKILL.md` itself, so the catalog skips it.
 pub const DELETED_DIR: &str = ".deleted";
 
-/// Preference key gating the whole feature. Experimental, so off unless the
-/// user turns it on in Settings → AI Skills.
+/// Preference key gating the whole feature. On unless the user turns it off
+/// in Settings → AI Skills.
 pub const SKILLS_ENABLED_PREF: &str = "skills_enabled";
 
 /// Preference holding the skills the user switched off (JSON array of names).
@@ -434,13 +435,15 @@ pub fn skills_dir(db: &Database) -> Option<PathBuf> {
     Some(parent.join(SKILLS_DIR))
 }
 
-/// Whether the feature is on. Experimental, so off until the user turns it on.
+/// Whether the feature is on: yes, until the user turns it off.
 pub fn skills_enabled(db: &Database) -> bool {
-    db.get_preference(SKILLS_ENABLED_PREF)
-        .ok()
-        .flatten()
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    match db.get_preference(SKILLS_ENABLED_PREF) {
+        Ok(value) => value.is_none_or(|v| v.eq_ignore_ascii_case("true")),
+        Err(e) => {
+            logger::log("error", "ai", format!("Could not read the skills setting: {e}"));
+            false
+        }
+    }
 }
 
 /// Names of the skills the user switched off, stored as a JSON array in

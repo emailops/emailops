@@ -8,7 +8,7 @@ import type { Email } from '@/types';
 vi.mock('@/lib/api', () => ({
   getEmails: vi.fn(async () => []),
   getEmailCount: vi.fn(async () => 0),
-  getFilteredEmails: vi.fn(async () => ({ emails: [], totalCount: -1, threadLatestAt: {} })),
+  listThreads: vi.fn(async () => ({ emails: [], threadLatestAt: {}, nextCursor: null, parsedQuery: null })),
   listThreadSnoozes: vi.fn(async () => []),
   applyThreadAction: vi.fn(async () => ({ failed: [] })),
 }));
@@ -22,7 +22,7 @@ function unreadRow(id: string): Email {
 
 describe('the Unread toggle', () => {
   beforeEach(() => {
-    useEmailStore.setState({ unreadOnly: false, searchQuery: null, emails: [], hasMore: true, totalCount: 0 });
+    useEmailStore.setState({ unreadOnly: false, searchQuery: null, emails: [], totalCount: 0 });
     vi.clearAllMocks();
   });
 
@@ -37,7 +37,11 @@ describe('the Unread toggle', () => {
 
   it('asks the next page for unread rows only', async () => {
     useEmailStore.getState().setUnreadOnly(true);
-    useEmailStore.setState({ emails: [unreadRow('a')], hasMore: true, totalCount: 2 });
+    useEmailStore.setState({
+      emails: [unreadRow('a')],
+      paging: { status: 'idle', cursor: null, offset: 1 },
+      totalCount: 2,
+    });
 
     await useEmailStore.getState().loadMoreEmails('acc', null, [], 'inbox');
 
@@ -50,8 +54,7 @@ describe('the Unread toggle', () => {
 
     await useEmailStore.getState().fetchEmails('acc', null, [], false, 'inbox');
 
-    const window = vi.mocked(api.getFilteredEmails).mock.calls[0]?.[8];
-    expect(window).toMatchObject({ unreadOnly: true });
+    expect(vi.mocked(api.listThreads).mock.calls[0]?.[3]).toBe(true);
   });
 
   it('survives a reset for another account', () => {

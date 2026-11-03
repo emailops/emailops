@@ -56,7 +56,6 @@ async function render(fullWidth: boolean, onSelect = vi.fn()) {
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={2}
         selectedEmailId={null}
         onSelectEmail={onSelect}
         onLoadMore={() => {}}

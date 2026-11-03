@@ -18,6 +18,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Skills run only when you ask.** Start a message with `/name` to apply one;
   the chat no longer picks a skill on its own.
+- **Skills are on by default.** They left the experimental stage. The skills
+  included with the app stay off until you switch them on, and if you turned
+  skills off they stay off.
+- **Search and filters list every match.** A search or a filter lists every
+  conversation it matches, newest first, and loads more as you scroll; it used
+  to stop at 100 per account. Searching from Inbox covers all your mail except
+  Spam and Trash, and the other views search what they show. Mail the junk
+  check flagged is listed with its warning instead of left out. The Load more
+  buttons are gone, in Contacts too.
+
+### Fixed
+
+- **Images in older mail come back.** Mail stored before inline images were
+  downloaded properly showed empty boxes. Such a message is now fetched again
+  when you open it.
+- **AI drafts stay in one language.** A reply is written in the language of the
+  message it answers, greeting and closing included, whatever the language of
+  your instructions, your past messages or the earlier messages in the thread.
+  A note for a missing fact comes in that language too.
+- **AI drafts no longer sign twice.** When your signature applies, a draft stops
+  at its closing line and the app adds the signature.
+- The "Sent with EmailOps" line is no longer read as part of a message, so it
+  stays out of AI drafts and of the text a forward quotes.
+- **The chat no longer skips a tool the local model called slightly wrong.** A
+  call one brace short used to run nothing, and the answer made up a result.
+- **Forwarding is safer.** Send waits for the forwarded files, and files or text
+  that finish loading after you moved on no longer reach another conversation.
+- **Discard in a compose tab now removes the draft**, after asking. Closing a
+  composer that holds attached files asks first, as drafts keep only the text.
+- Reply All switched to from an open Reply now addresses everyone, and asking
+  the AI for a new draft keeps the recipients of the reply you have open.
+- Escape closes only the top dialog, dialogs keep the keyboard inside them, and
+  a failed send stays on screen however long the message is.
+- Failed or empty lists offer a way forward: a page that fails to load offers
+  Retry, and empty lists offer to show all mail, show all categories or sync.
+- A background sync no longer clears an error, the email you navigated to or the
+  list around it, and switching lists during an undo can no longer show the
+  wrong one.
+- The same thread id on two accounts now opens two tabs, and a failed lock check
+  shows an error with Retry instead of a blank window.
+- Dates and the labels of the list, the thread view and the composers follow the
+  app language. The Drafts view shows when drafts fail to load or delete.
+- **Drafts from Gmail and Outlook keep their attachments.** A draft written
+  elsewhere now arrives with its files, and editing or sending it keeps them.
+  Before, the first edit removed them from the provider and the send went out
+  without them. Until a file has been downloaded, the draft cannot be sent, and
+  your edits wait here without touching the provider's copy.
 
 ## [0.6.17] — 2026-10-29
 

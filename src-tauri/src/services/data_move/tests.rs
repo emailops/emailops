@@ -200,7 +200,7 @@ fn moving_keeps_the_users_skills_and_every_switch() {
     let deleted = d.current.join("skills/.deleted/old-skill");
     std::fs::create_dir_all(&deleted).unwrap();
     std::fs::write(deleted.join("SKILL.md"), "deleted skill").unwrap();
-    db.set_preference(skills::SKILLS_ENABLED_PREF, "true").unwrap();
+    db.set_preference(skills::SKILLS_ENABLED_PREF, "false").unwrap();
     skills::set_skill_enabled(&db, "weekly-digest", false).unwrap();
     skills::set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
 
@@ -219,7 +219,7 @@ fn moving_keeps_the_users_skills_and_every_switch() {
         std::fs::read(d.target.join("skills/.deleted/old-skill/SKILL.md")).unwrap(),
         b"deleted skill"
     );
-    assert!(skills::skills_enabled(&moved));
+    assert!(!skills::skills_enabled(&moved));
     assert!(skills::disabled_skills(&moved).contains("weekly-digest"));
     assert!(skills::bundled_skills_on(&moved).contains("inbox-triage"));
 }

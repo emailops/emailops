@@ -10,9 +10,10 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
+import { junkChip, useJunkStore } from '@/stores/junkStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
-import type { Email, EmailCategory } from '@/types';
+import type { Email, EmailCategory, EmailTag } from '@/types';
 import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
 import { SnoozeBadge } from './SnoozeBadge';
 
@@ -22,7 +23,7 @@ export type { RulePrefill } from './EmailActionsMenu';
 // zustand 5 dropped auto-shallow on selector results, so returning `|| []`
 // inline produces a new array every render and trips React's
 // useSyncExternalStore "getSnapshot should be cached" guard.
-const EMPTY_TAGS: readonly string[] = Object.freeze([]);
+const EMPTY_TAGS: readonly EmailTag[] = Object.freeze([]);
 
 interface EmailRowProps {
   email: Email;
@@ -69,7 +70,7 @@ export function EmailRow({
   selectionActive = false,
   onCheck,
 }: EmailRowProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   // Search and smart-filter rows are dated by their thread's latest activity.
   const receivedTime = formatReceptionTime(email.threadLatestAt ?? email.timestamp);
   // Hide classification chips when the master AI switch is off — the tags
@@ -77,6 +78,7 @@ export function EmailRow({
   // explicitly opted out of seeing AI-derived metadata in the inbox.
   const aiEnabled = useAiStore((s) => s.enabled);
   const storedTags = useTagStore((s) => s.tagsByEmail[email.id] || EMPTY_TAGS);
+  const verdict = useJunkStore((s) => s.verdictsByEmail[email.id]);
   // Exclude the company tag from the right-hand chip list — it's already
   // rendered as an uppercase prefix on the subject, so showing it again on
   // the tasks/tags side is just visual noise.
@@ -85,14 +87,14 @@ export function EmailRow({
   // no network, so it is not "AI-derived metadata" the user opted out of. More
   // importantly, hiding a phishing warning because someone turned off AI would
   // be a security regression, not a preference.
-  const emailTags = aiEnabled
-    ? storedTags.filter((t) => t.tagType !== 'company')
-    : storedTags.filter((t) => t.tagType === 'junk');
+  const junkTag = junkChip(email.id, storedTags, verdict);
+  const withoutJunk = storedTags.filter((t) => t.tagType !== 'junk');
+  const otherTags = aiEnabled ? withoutJunk.filter((t) => t.tagType !== 'company') : [];
+  const emailTags = [...(junkTag ? [junkTag] : []), ...otherTags];
   // Deprioritize rather than hide. The message stays exactly where the server
   // put it — we never move mail — but a flagged row recedes so the eye skips it.
   // Dimming is dropped while the row is selected, so opening a flagged message
   // never leaves the user reading faded text.
-  const junkTag = storedTags.find((t) => t.tagType === 'junk');
   // Company tag is rendered as an uppercase chip prefix on the subject so the
   // user can scan which client/vendor a thread belongs to at a glance. We hide
   // it when the value contains '@' — that's the per-address shape produced by
@@ -237,22 +239,31 @@ export function EmailRow({
             <span
               className={`truncate min-w-0 ${email.isRead ? 'text-gray-800' : 'font-semibold text-gray-900'}`}
               title={
-                companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : email.subject || '(No subject)'
+                companyTag
+                  ? `${companyTag} — ${email.subject || t('common:labels.noSubject')}`
+                  : email.subject || t('common:labels.noSubject')
               }
             >
-              {email.subject || '(No subject)'}
+              {email.subject || t('common:labels.noSubject')}
             </span>
             <span className="text-gray-500 truncate min-w-0 flex-1" title={email.snippet}>
               — {email.snippet}
             </span>
           </div>
+          {/* The junk warning sits outside the tag strip below, which narrow
+              rows hide: a flagged row never loses its warning to width. */}
+          {junkTag && (
+            <div className="flex items-center flex-shrink-0 h-6">
+              <TagChips tags={[junkTag]} compact nowrap />
+            </div>
+          )}
           {/* Fixed height + nowrap so multi-tag rows can't wrap and grow the
               row past its measured height (virtualizer would lay subsequent
               rows on top of this one until ResizeObserver caught up). Excess
               chips are clipped horizontally — same trade-off Gmail makes. */}
           <div className="hidden @3xl:flex items-center gap-1 flex-shrink-0 h-6 max-w-[20%] @4xl:max-w-[35%] overflow-hidden">
             {email.triageStatus && <TriageBadge status={email.triageStatus} />}
-            {emailTags.length > 0 && <TagChips tags={emailTags} compact nowrap />}
+            {otherTags.length > 0 && <TagChips tags={otherTags} compact nowrap />}
           </div>
           <SnoozeBadge email={email} />
           <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">
@@ -334,14 +345,14 @@ export function EmailRow({
           </div>
           <h3
             className={`text-sm mt-0.5 truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}
-            title={companyTag ? `${companyTag} — ${email.subject || '(No subject)'}` : undefined}
+            title={companyTag ? `${companyTag} — ${email.subject || t('common:labels.noSubject')}` : undefined}
           >
             {companyTag && (
               <span className="inline-block rounded-full font-medium text-sm px-2 py-0.5 bg-gray-100 text-gray-700 mr-1.5 align-middle">
                 {companyTag}
               </span>
             )}
-            {email.subject || '(No subject)'}
+            {email.subject || t('common:labels.noSubject')}
           </h3>
           <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{email.snippet}</p>
           {/* Tag/triage row is always rendered with a *fixed* height (not min-h)
@@ -371,7 +382,7 @@ function RowCheckbox({
   alwaysVisible: boolean;
   onCheck: (opts: { range: boolean }) => void;
 }) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   return (
     <input
       type="checkbox"
@@ -395,7 +406,7 @@ function RowCheckbox({
 
 /** The row's star: toggles the conversation's star without opening it. */
 function StarToggle({ email }: { email: Email }) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
   const setThreadsStarred = useEmailStore((s) => s.setThreadsStarred);
   const label = email.isStarred ? t('inbox:emailRow.unstar') : t('inbox:emailRow.star');
   return (

@@ -1,11 +1,5 @@
 {
   "rust": {
-    "src-tauri/src/services/search.rs::search_unified_merges_enabled_accounts_newest_first": "Comprueba que la búsqueda en todas las cuentas combina resultados de las cuentas activas por fecha, sin colar cuentas deshabilitadas.",
-    "src-tauri/src/services/search.rs::search_single_account_unchanged": "Garantiza que buscar en una sola cuenta no muestra resultados de otras cuentas de la bandeja unificada.",
-    "src-tauri/src/services/search.rs::bench_search_service_from": "Benchmark manual (ignorado en CI) que mide los tiempos de una búsqueda from: contra la base de datos real de producción.",
-    "src-tauri/src/services/search.rs::bench_search_service_keyword": "Benchmark manual (ignorado en CI) que mide los tiempos de una búsqueda por palabra clave contra la base de datos de producción.",
-    "src-tauri/src/services/search.rs::verify_fallback_is_dead_code": "Diagnóstico manual (ignorado en CI) que compara FTS puro contra el fallback normalizado en la base real para ver si aún aporta resultados.",
-    "src-tauri/src/services/search.rs::report_slow_search": "Herramienta de diagnóstico manual (ignorada en CI) que reproduce y desglosa los tiempos de una búsqueda lenta en la base de producción.",
     "src-tauri/src/services/search.rs::report_vec_search": "Herramienta de diagnóstico manual (ignorada en CI) que analiza el rendimiento de la búsqueda vectorial KNN en la base de producción.",
     "src-tauri/src/services/search.rs::bench_smart_filters": "Benchmark manual (ignorado en CI) que mide los tiempos de los filtros inteligentes (dominio, remitente, etiqueta) en producción.",
     "src-tauri/src/ai/ollama.rs::parses_iso_format": "Comprueba que se reconoce una fecha en formato ISO (AAAA-MM-DD) al convertirla a timestamp.",
@@ -149,10 +143,7 @@
     "src-tauri/src/ai/ollama.rs::id_combines_with_other_operators": "Comprueba que id: convive con otros operadores como from:.",
     "src-tauri/src/ai/ollama.rs::a_word_containing_id_is_not_an_id_operator": "Garantiza que una palabra que contiene 'id:' en medio no se toma como operador id:.",
     "src-tauri/src/db/emails/crud.rs::account_emails_by_ids_returns_only_live_visible_rows_of_that_account_newest_first": "Comprueba que la búsqueda por ids solo devuelve correos visibles de la cuenta (sin borrados, spam ni papelera), del más nuevo al más antiguo.",
-    "src-tauri/src/db/emails/crud.rs::account_emails_by_ids_honours_categories": "Comprueba que la búsqueda por ids respeta las categorías seleccionadas.",
-    "src-tauri/src/services/search.rs::search_by_ids_returns_exactly_those_emails": "Garantiza que buscar id:A id:B devuelve exactamente esos correos, aunque sean del mismo hilo.",
-    "src-tauri/src/services/search.rs::search_by_ids_in_unified_mode_spans_enabled_accounts": "Comprueba que id: en la bandeja unificada encuentra correos de varias cuentas y nada más.",
-    "src-tauri/src/services/search.rs::search_by_ids_still_applies_other_operators": "Comprueba que id: combinado con subject: filtra por ambos."
+    "src-tauri/src/db/emails/crud.rs::account_emails_by_ids_honours_categories": "Comprueba que la búsqueda por ids respeta las categorías seleccionadas."
   },
   "vitest": {
     "src/components/Settings/JunkSettings.test.tsx::publishes the chosen action to the store so the inbox stops showing junk": "Comprueba que elegir 'ocultar' en el ajuste de correo junk se guarda en el store que lee la bandeja, no solo en el backend.",

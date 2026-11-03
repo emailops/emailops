@@ -16,14 +16,13 @@
 //   - in-frame search highlighting (wraps text matches in `<mark>` and scrolls
 //     the first hit into view)
 
-import { open } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
 import { type EmailSchemePlan, LIGHT_EMAIL_PLAN, planEmailScheme } from '@/lib/emailScheme';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
-import { useOverlay } from '@/stores/overlayStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { ExternalLinkDialog } from './ExternalLinkDialog';
 
 export interface EmailHtmlFrameProps {
   /** Already-sanitized HTML. Callers run `sanitizeEmailHtml(Full)` themselves. */
@@ -162,12 +161,11 @@ export const BRIDGE_SCRIPT = String.raw`
     });
     document.addEventListener('click', function(e){
       var t = e.target;
-      var a = t && t.closest ? t.closest('a') : null;
-      if (!a) return;
-      var href = a.getAttribute('href');
-      if (!href) return;
+      var link = t && t.closest ? t.closest('a, area') : null;
+      if (!link) return;
       e.preventDefault();
-      send({ type: 'link', href: href });
+      var href = link.getAttribute('href') || link.getAttribute('xlink:href');
+      if (href) send({ type: 'link', href: href });
     }, true);
     window.addEventListener('message', function(ev){
       var data = ev.data || {};
@@ -366,7 +364,6 @@ export function EmailHtmlFrame({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(40);
   const [confirmUrl, setConfirmUrl] = useState<string | null>(null);
-  useOverlay(confirmUrl !== null);
 
   // On the dark theme the message is shown dark whenever it can be; the
   // planner reads the message's markup, so the frame never looks inside the DOM.
@@ -455,16 +452,6 @@ export function EmailHtmlFrame({
     );
   }, [highlightQuery, activeMatchIndex]);
 
-  const handleConfirmOpen = useCallback(async () => {
-    if (!confirmUrl) return;
-    try {
-      await open(confirmUrl);
-    } catch (err) {
-      console.error('Failed to open URL:', err);
-    }
-    setConfirmUrl(null);
-  }, [confirmUrl]);
-
   return (
     <>
       <iframe
@@ -476,30 +463,7 @@ export function EmailHtmlFrame({
         className={className}
         style={{ width: '100%', height, border: 'none', display: 'block' }}
       />
-      {confirmUrl && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold text-gray-900">{t('inbox:emailView.openLinkTitle')}</h3>
-            <p className="mt-2 text-sm text-gray-600 break-all">{confirmUrl}</p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmUrl(null)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                {t('common:actions.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmOpen}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
-              >
-                {t('inbox:emailView.openInBrowser')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {confirmUrl && <ExternalLinkDialog url={confirmUrl} onClose={() => setConfirmUrl(null)} />}
     </>
   );
 }

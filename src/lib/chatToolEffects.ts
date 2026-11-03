@@ -134,7 +134,7 @@ export interface ChatToolEffectHandlers {
    *  thread mounts. Passed the plain-text body since the inline
    *  ReplyCompose's textarea is plain text (HTML conversion happens at
    *  send time). */
-  openThreadReply: (accountId: string, emailId: string, body: string) => void;
+  openThreadReply: (accountId: string, emailId: string, body: string, draftId?: string) => void;
   /** Switch the main view so the freshly-opened compose tab is actually
    *  visible. Without this the tab is created but stays hidden behind the
    *  chat view (the email tab bar only renders for the inbox-family views). */
@@ -177,7 +177,7 @@ export function handleChatToolEffect(payload: ChatToolEffectPayload, handlers: C
       // that order wrong would race with the navigation finishing and
       // open a stale empty Reply.
       if (typeof p.emailId === 'string' && p.emailId.length > 0) {
-        handlers.openThreadReply(p.accountId, p.emailId, p.body);
+        handlers.openThreadReply(p.accountId, p.emailId, p.body, p.draftId);
         handlers.navigateToInbox();
         log('success', 'ai', `Reply opened in thread from chat (draft ${p.draftId ?? '?'})`);
         return;

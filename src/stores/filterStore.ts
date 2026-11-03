@@ -58,7 +58,7 @@ async function fetchRankedTags(queryId: string | null): Promise<RankedTagStats> 
   const results = await Promise.all(
     CLASSIFIED_TAG_TYPES.map((type) =>
       api
-        .getTagBoardStats(queryId, type, undefined, TAG_RANK_LIMIT)
+        .getTagBoardStats(queryId, type, { matchList: true }, TAG_RANK_LIMIT)
         .then((stats) => [type, stats] as const)
         // A failed type contributes nothing rather than rejecting the batch —
         // the sidebar loses that group, not the whole section.

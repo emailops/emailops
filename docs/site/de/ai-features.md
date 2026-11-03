@@ -383,7 +383,7 @@ gekürzt; **mehr** zeigt den Rest.
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Experimentell.* Ein Skill ist eine gespeicherte Vorgehensweise, der der Chat bei einer Art von
+Ein Skill ist eine gespeicherte Vorgehensweise, der der Chat bei einer Art von
 Anfrage folgt – wie Ihre Wochenzusammenfassung aussehen soll, wie einem Lieferanten zu antworten
 ist. Jeder Skill ist ein Ordner im Datenordner der App, `skills/<name>/SKILL.md`: ein kurzer Kopf
 mit `name` (dem Ordnernamen) und einer `description`, was er tut und wann er gilt, danach die
@@ -392,8 +392,8 @@ aufrufen. Nichts in einem Skill-Ordner wird je
 ausgeführt.
 
 <!-- claim:ai-skills-2 -->
-Skills sind standardmäßig aus. Schalten Sie sie unter **Einstellungen → KI-Skills** mit
-**Skills aktivieren** ein; danach erscheint **Skills** in der Seitenleiste.
+Skills sind standardmäßig an. Schalten Sie sie unter **Einstellungen → KI-Skills** mit
+**Skills aktivieren** aus; danach verschwindet **Skills** aus der Seitenleiste.
 
 <!-- claim:ai-skills-3 -->
 Die Ansicht **Skills** listet jeden Skill mit eigenem Schalter und öffnet die `SKILL.md` des

@@ -84,7 +84,7 @@ async fn refresh_oauth_tokens_if_needed(account: &Account) -> Result<crate::mode
                             provider_label,
                             &account.email,
                             !config.client_id.is_empty(),
-                            &e.to_string(),
+                            e,
                         ));
                     }
                 }
@@ -106,25 +106,31 @@ async fn refresh_oauth_tokens_if_needed(account: &Account) -> Result<crate::mode
 ///
 /// Without an OAuth client in this build the refresh never reached the
 /// provider: the session may be perfectly valid, and re-authenticating would
-/// fail the same way, so the message names the configuration instead.
+/// fail the same way, so the message names the configuration instead. A refresh
+/// the provider did not refuse (see [`oauth::refresh_oauth_token`]) keeps its
+/// own error for the same reason.
 fn refresh_failure_error(
     provider_label: &str,
     account_email: &str,
     client_configured: bool,
-    details: &str,
+    failure: AppError,
 ) -> AppError {
     if !client_configured {
         return AppError::OAuthError(format!(
             "{provider_label} for {account_email} cannot be refreshed: this build of EmailOps has no \
              {provider_label} OAuth client configured, so it never contacted {provider_label}. The \
-             account's session is not the problem. Details: {details}"
+             account's session is not the problem. Details: {failure}"
         ));
     }
-    AppError::AuthError(format!(
-        "{provider_label} session expired and could not be refreshed automatically. \
-         Please re-authenticate the account {account_email} \
-         (Settings → Accounts → Re-authenticate). Details: {details}"
-    ))
+    match failure {
+        AppError::AuthError(details) => AppError::AuthError(format!(
+            "{provider_label} session expired and could not be refreshed automatically. \
+             Please re-authenticate the account {account_email} \
+             (Settings → Accounts → Re-authenticate). Details: {details}"
+        )),
+        // The provider never ruled on the session: nothing to re-authenticate.
+        other => other,
+    }
 }
 
 /// Wrap a provider operation error, replacing raw OAuth error messages with
@@ -154,7 +160,8 @@ mod refresh_failure_tests {
         // The dev binary was built without EMAILOPS_GMAIL_CLIENT_ID: the refresh
         // never reached Google. Telling the user to re-authenticate sent them
         // to a flow that fails the same way.
-        let err = refresh_failure_error("Gmail", "me@example.com", false, "Missing Gmail OAuth client ID.");
+        let failure = AppError::OAuthError("Missing Gmail OAuth client ID.".to_string());
+        let err = refresh_failure_error("Gmail", "me@example.com", false, failure);
         let msg = err.to_string();
         assert!(matches!(err, AppError::OAuthError(_)), "{err:?}");
         assert!(!msg.contains("session expired"), "{msg}");
@@ -164,8 +171,17 @@ mod refresh_failure_tests {
 
     #[test]
     fn a_rejected_refresh_still_asks_to_re_authenticate() {
-        let err = refresh_failure_error("Gmail", "me@example.com", true, "invalid_grant");
+        let failure = AppError::AuthError("invalid_grant".to_string());
+        let err = refresh_failure_error("Gmail", "me@example.com", true, failure);
         assert!(matches!(err, AppError::AuthError(_)), "{err:?}");
         assert!(err.to_string().contains("Re-authenticate"));
+    }
+
+    #[test]
+    fn a_refresh_that_never_got_a_verdict_is_not_an_expired_session() {
+        let failure = AppError::SyncError("Could not renew access to Gmail right now.".to_string());
+        let err = refresh_failure_error("Gmail", "me@example.com", true, failure);
+        assert!(matches!(err, AppError::SyncError(_)), "{err:?}");
+        assert!(!err.to_string().contains("session expired"), "{err}");
     }
 }

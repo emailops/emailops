@@ -4,7 +4,6 @@
   "emptyHint": "Neue Nachrichten erscheinen hier, sobald dein Postfach synchronisiert wurde.",
   "loading": "E-Mails werden geladen…",
   "loadingMore": "Mehr laden…",
-  "loadMore": "Mehr laden",
   "noMore": "Auf dem neuesten Stand",
   "syncing": "Synchronisierung…",
   "syncProgress": "Synchronisiere {{current}} von {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 neue E-Mail heruntergeladen",
   "loadingEmails": "E-Mails werden geladen...",
   "loadingMoreEmails": "Lade weitere...",
-  "noMoreEmails": "Keine weiteren E-Mails",
+  "noMoreEmails": "Keine weiteren heruntergeladenen E-Mails",
+  "noMoreEmailsSyncing": "Vorerst keine weiteren heruntergeladenen E-Mails. Die Synchronisierung kann weitere bringen.",
   "loadingThread": "Thread wird geladen...",
   "loadingEmail": "E-Mail wird geladen…",
   "categoriesAria": "E-Mail-Kategorien",
@@ -23,6 +23,15 @@
     "all": "Alle",
     "unread": "Ungelesen",
     "empty": "Keine ungelesenen E-Mails"
+  },
+  "emptyState": {
+    "syncing": "E-Mails werden synchronisiert...",
+    "noSearchResults": "Keine E-Mails passen zu deiner Suche",
+    "noFilterResults": "Keine E-Mails passen zu den ausgewählten Filtern",
+    "noEmails": "Noch keine E-Mails – synchronisiere oder füge ein Konto hinzu",
+    "showAll": "Alle E-Mails anzeigen",
+    "showAllCategories": "Alle Kategorien anzeigen",
+    "syncNow": "Jetzt synchronisieren"
   },
   "noEmailSelected": "Keine E-Mail ausgewählt",
   "selectEmailHint": "Wähle eine E-Mail aus der Liste, um sie hier anzuzeigen.",
@@ -124,7 +133,14 @@
     "unstar": "Stern entfernen",
     "archive": "Archivieren",
     "moveToInbox": "In den Posteingang verschieben",
-    "notSpam": "Kein Spam — in den Posteingang verschieben"
+    "notSpam": "Kein Spam — in den Posteingang verschieben",
+    "noPreview": "(Keine Vorschau)",
+    "toLine": "An: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Zurück",
+    "messageCount_one": "{{count}} Nachricht",
+    "messageCount_other": "{{count}} Nachrichten",
+    "messageCount_many": "{{count}} Nachrichten"
   },
   "compose": {
     "open": "Verfassen",
@@ -139,6 +155,15 @@
     "pinnedSection": "Angeheftet",
     "suggestedSection": "Vorgeschlagen",
     "noFilters": "Noch keine Smart-Filter — sie erscheinen, sobald dein Postfach wächst."
+  },
+  "list": {
+    "firstPageFailed": "Die Liste konnte nicht geladen werden.",
+    "pageFailed": "Weitere E-Mails konnten nicht geladen werden."
+  },
+  "searchPanel": {
+    "firstResults": "Erste {{count}} Ergebnisse",
+    "results_one": "{{count}} Ergebnis",
+    "results_other": "{{count}} Ergebnisse"
   },
   "searchBox": {
     "inlinePlaceholder": "Suchen… ({{operators}})",

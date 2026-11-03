@@ -322,6 +322,8 @@ pub async fn send_chat_message(
     let view_for_task = context_view.clone();
     let correction_for_task = correction.clone();
     let task_label = format!("chat:turn:{}", conversation_id);
+    // Registered before it queues: Cancel can be pressed while it waits.
+    let turn_guard = chat::cancel::register_turn(&assistant_message.id);
     // The user is watching this turn: it goes ahead of queued classification and
     // embedding work. If a task is already running it still waits for that one,
     // so say so instead of leaving a bare placeholder until the turn starts.
@@ -336,6 +338,7 @@ pub async fn send_chat_message(
     state
         .ai_queue
         .submit_priority(&task_label, async move {
+            let _turn_guard = turn_guard;
             if let Err(e) = chat::run_chat_turn(
                 db,
                 registry,

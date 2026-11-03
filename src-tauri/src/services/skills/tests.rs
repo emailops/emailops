@@ -256,10 +256,33 @@ fn catalog_for_is_empty_when_the_feature_is_off_or_there_is_no_data_dir() {
     let db = Database::new_for_testing().unwrap();
     assert!(skills_dir(&db).is_none());
     assert_eq!(catalog_for(&db), SkillCatalog::default());
-    // Experimental: off until the user switches it on.
+
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
+    assert_eq!(catalog_for(&db).names(), vec!["inbox-triage"]);
+    db.set_preference(SKILLS_ENABLED_PREF, "false").unwrap();
+    assert_eq!(catalog_for(&db), SkillCatalog::default());
+}
+
+#[test]
+fn skills_are_on_until_the_user_switches_them_off() {
+    let db = Database::new_for_testing().unwrap();
+    assert!(skills_enabled(&db));
+    db.set_preference(SKILLS_ENABLED_PREF, "false").unwrap();
     assert!(!skills_enabled(&db));
     db.set_preference(SKILLS_ENABLED_PREF, "true").unwrap();
     assert!(skills_enabled(&db));
+}
+
+#[test]
+fn a_new_install_has_skills_on_and_none_active() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = db_in(&tmp);
+    let o = overview(&db);
+    assert!(o.enabled);
+    assert!(o.bundled.iter().all(|b| !b.enabled));
+    assert!(catalog_for(&db).skills.is_empty());
 }
 
 #[test]
@@ -811,7 +834,9 @@ fn the_bundled_folder_records_its_source_commit() {
 #[test]
 fn bundled_skills_are_listed_off_while_the_feature_is_off() {
     let tmp = tempfile::tempdir().unwrap();
-    let o = overview(&db_in(&tmp));
+    let db = db_in(&tmp);
+    db.set_preference(SKILLS_ENABLED_PREF, "false").unwrap();
+    let o = overview(&db);
     assert!(!o.enabled);
     let listed: Vec<(&str, bool)> = o.bundled.iter().map(|b| (b.name.as_str(), b.enabled)).collect();
     assert_eq!(listed, vec![("follow-up-check", false), ("inbox-triage", false)]);
@@ -855,6 +880,7 @@ fn a_switched_on_bundled_skill_works_like_any_other() {
 fn a_switched_on_bundled_skill_needs_the_feature() {
     let tmp = tempfile::tempdir().unwrap();
     let db = db_in(&tmp);
+    db.set_preference(SKILLS_ENABLED_PREF, "false").unwrap();
     set_bundled_skill_enabled(&db, BUNDLED_NAME, true).unwrap();
     assert_eq!(catalog_for(&db), SkillCatalog::default());
     let listed = overview(&db);

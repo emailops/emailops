@@ -100,7 +100,7 @@ interface SidebarProps {
   tasksEnabled: boolean;
   memoriesEnabled: boolean;
   lensesEnabled: boolean;
-  /** Experimental skills switch (Settings → Skills); shows the Skills view entry. */
+  /** Skills switch (Settings → Skills); shows the Skills view entry. */
   skillsEnabled: boolean;
   /** Experimental shared-documents switch (Settings → Shared documents). */
   sharedDocsEnabled: boolean;

@@ -55,7 +55,6 @@ async function render(
         syncProgress={null}
         isLoadingMore={false}
         hasMore={false}
-        totalCount={2}
         selectedEmailId={props.selectedEmailId ?? null}
         onSelectEmail={onSelect}
         onLoadMore={() => {}}

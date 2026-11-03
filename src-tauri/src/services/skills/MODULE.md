@@ -18,7 +18,7 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   with `/name`?) and `render_skill_block` (the `<skill>` block the body travels
   in).
 - **The feature gate** — `skills_enabled` (`skills_enabled` preference).
-  Experimental and **off by default**.
+  **On by default**; a stored `false` keeps it off.
 - **Per-skill switches** — `set_skill_enabled`, stored as a JSON array of
   names in the `skills_disabled` preference. A disabled skill leaves
   `catalog_for` (so the prompt) but stays in `overview`; its folder is never
@@ -41,7 +41,7 @@ User skills for the chat: packs of Markdown instructions, one per folder under
   skill. It never returns a skill's instructions.
 - **The turn.** `chat::turn::run_chat_turn` calls `plan_skill_turn` and places
   the block; this module never builds a prompt.
-- **The UI.** Settings → Skills holds the experimental switch and the folder;
+- **The UI.** Settings → Skills holds the switch and the folder;
   the Skills view (`src/components/Skills/SkillsView.tsx`) lists skills with
   their switches and edits `SKILL.md`. The files stay the source of truth.
 - **Running code.** A skill is instructions only. Scripts or other files in a
