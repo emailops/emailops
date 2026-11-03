@@ -9,7 +9,7 @@ when the document closes. The design, limits and gaps are in `docs/EO-DOCS.md`.
 
 - `docs.create` **New** (`shared-doc-new`, `shared-doc-new-title`, `shared-doc-create`) makes a document or a sheet, which opens in its editor (`shared-doc-editor` for text).
 - `docs.edit` text through TipTap bound to the `Y.Doc`, saved to `shared_docs.state` in batches; undo only reaches this person's own changes.
-- `docs.links` a link in a document never navigates: `target` is forced to `_blank`, a remote image keeps no address to fetch, and in a read-only document a click opens `ExternalLinkDialog` with the real address.
+- `docs.links` a link in a document never navigates: it renders with no `target`, since tauri-plugin-shell opens any `target=_blank` link on its own, a remote image keeps no address to fetch, and a click in any view opens `ExternalLinkDialog` with the real address.
 - `docs.history` the panel (`shared-doc-history-toggle`) lists versions (`shared-doc-version-<id>`); a version opens read-only with `shared-doc-version-banner`.
 - `docs.share` **Share** (`shared-doc-share`) names the recipients and asks for consent; an invitation carries the full state and a readable HTML copy.
 - `docs.arrivals` sync hands every `.eodoc` message to the pure planner: apply, create an invitation or ignore; updates are marked read and archived, invitations stay in the inbox.

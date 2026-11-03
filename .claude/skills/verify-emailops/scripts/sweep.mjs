@@ -572,7 +572,7 @@ await step('EO Docs', 'crear y abrir un documento', 'New crea el documento, que 
   const saved = docRow(); const text = await js(() => document.querySelector('[data-testid="shared-doc-editor"]')?.innerText || '');
   return ok(listed && created.status === 'active' && /Plain text/.test(text) && saved.size > created.size, `documento activo; ${created.size} → ${saved.size} bytes de estado`, `listado=${listed}, fila=${JSON.stringify(saved)}, texto «${text.slice(0, 60)}»`);
 });
-await step('EO Docs', 'enlace e imagen de otra persona', 'pegar un enlace con target propio lo deja en _blank y una imagen remota no conserva su dirección; en una versión de solo lectura el enlace pide confirmación con la dirección real y Cancel no abre nada', async () => {
+await step('EO Docs', 'enlace e imagen de otra persona', 'pegar un enlace con target propio lo deja sin target, que el plugin de shell abriría por su cuenta, y una imagen remota no conserva su dirección; en una versión de solo lectura el enlace pide confirmación con la dirección real y Cancel no abre nada', async () => {
   if (!(await exists('[data-testid="shared-doc-editor"]'))) return 'FAIL: el editor no está abierto';
   const pasted = await js(() => { const ed = document.querySelector('[data-testid="shared-doc-editor"]'); const dt = new DataTransfer();
     dt.setData('text/html', '<a href="https://example.com/terms" target="_self">the terms</a> <img src="https://images.example.com/header.png" alt="header">'); dt.setData('text/plain', 'the terms');
@@ -587,7 +587,7 @@ await step('EO Docs', 'enlace e imagen de otra persona', 'pegar un enlace con ta
   // Never "Open in browser": that hands the address to the OS.
   await js(() => [...(document.querySelector('[data-testid="external-link-open"]')?.closest('.fixed').querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === 'Cancel')?.click()); await sleep(600);
   const closed = !(await exists('[data-testid="external-link-open"]'));
-  return ok(pasted.href === 'https://example.com/terms' && pasted.target === '_blank' && pasted.remoteImages === 0 && readOnly === 'false' && /https:\/\/example\.com\/terms/.test(dialog || '') && closed,
+  return ok(pasted.href === 'https://example.com/terms' && pasted.target === null && pasted.remoteImages === 0 && readOnly === 'false' && /https:\/\/example\.com\/terms/.test(dialog || '') && closed,
     `${JSON.stringify(pasted)}; diálogo «${dialog}»`, `${JSON.stringify(pasted)}, solo lectura=${readOnly}, diálogo=${dialog}, cerrado=${closed}`);
 });
 await step('EO Docs', 'borrar un documento', 'Delete pide confirmación, quita el documento de la lista y de shared_docs', async () => {
