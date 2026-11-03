@@ -631,7 +631,8 @@ async function afterWizard() {
     return ok(!missing.length, `SQLite local con ${found.map(([i, t]) => `${i}→${t}`).join(', ')}`, `sin tabla para: ${missing.join(', ')}`);
   });
   await claim('priv-where-data-5', 'EMAILOPS_DATA_DIR', {
-    covers: ['Point EMAILOPS_DATA_DIR somewhere else before launching to use a different location'],
+    covers: ['Setting EMAILOPS_DATA_DIR before launching (for a second profile) overrides that choice.'],
+    partial: 'no se prueba que gane a una ubicación elegida en Data location',
     how: 'La instancia se lanza con EMAILOPS_DATA_DIR apuntando a un directorio temporal nuevo; comprueba que la base de datos se creó ahí.',
   }, async ({ doc }) => {
     doc.match(/EMAILOPS_DATA_DIR/);

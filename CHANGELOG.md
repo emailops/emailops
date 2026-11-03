@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.18] — 2026-11-03
+
 ### Added
 
 - **Skills included with the app.** Reviewed skills you can read in full and
@@ -73,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offline.
 - **The chat reads open PDFs reliably.** Some PDFs made the chat turn fail or
   lost letters from words; their text now comes through whole.
+- **Asking the chat for the first email you sent gets it.** It used to find
+  the right email and then say it had only found the most recent one.
 
 ## [0.6.17] — 2026-10-29
 
