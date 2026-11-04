@@ -43,6 +43,10 @@
 //! - [`examine_uid_validity`]: raw, like [`select`], but it keeps the one
 //!   response code it is after.
 //!
+//! - [`advertises`]: reads the raw `CAPABILITY` reply and picks out its atoms
+//!   itself. The crate's parser rejects the whole reply over a space before
+//!   CRLF, which a real server sends (issue #243).
+//!
 //! `imap` is our fork of 2.4.1 (see `docs/DECISIONS.md`). A line its parser
 //! rejects stays in the raw response, which is where the readers above find it,
 //! and fails a typed command only once the whole response has been read, so the
@@ -618,11 +622,11 @@ pub(crate) fn describe_error(e: &imap::Error) -> String {
     }
 }
 
-/// Whether the server advertises `capability`. A `CAPABILITY` reply that cannot
-/// be read counts as not advertised: every caller has a plain IMAP4rev1 path.
+/// Whether the server advertises `capability`. A failed `CAPABILITY` counts as
+/// not advertised: every caller has a plain IMAP4rev1 path.
 pub(crate) fn advertises<T: Read + Write>(session: &mut imap::Session<T>, capability: &str) -> bool {
-    match session.capabilities() {
-        Ok(capabilities) => capabilities.iter().any(|c| format!("{c:?}").contains(capability)),
+    match session.run_command_and_read_response("CAPABILITY") {
+        Ok(raw) => response_advertises(&raw, capability),
         Err(e) => {
             crate::services::logger::log(
                 "debug",
@@ -632,6 +636,16 @@ pub(crate) fn advertises<T: Read + Write>(session: &mut imap::Session<T>, capabi
             false
         }
     }
+}
+
+/// Whether a `* CAPABILITY` line of the raw response lists `capability`, as a
+/// whole atom and in any case. Capability atoms hold no literals.
+fn response_advertises(raw: &[u8], capability: &str) -> bool {
+    String::from_utf8_lossy(raw)
+        .lines()
+        .filter_map(|line| strip_keyword(line.strip_prefix('*')?.trim_start(), "CAPABILITY"))
+        .flat_map(str::split_whitespace)
+        .any(|atom| atom.eq_ignore_ascii_case(capability))
 }
 
 /// Shorten a server response line for inclusion in a user-facing error.
@@ -1527,8 +1541,6 @@ mod tests {
 
     #[test]
     fn a_capability_reply_the_parser_rejects_does_not_derail_the_next_command() {
-        // `advertises` logs the failure, and other tests count those lines.
-        let _seam = crate::services::events::seam_test_lock();
         // CAPABILITY, then EXAMINE: the sequence behind the panic on `a3` vs `a4`.
         let mut session = session_for(
             "* CAPABILITY AUTH=PLAIN IDLE\r\n\
@@ -1540,6 +1552,39 @@ mod tests {
         assert!(!advertises(&mut session, "MOVE"));
 
         assert_eq!(examine_uid_validity(&mut session, "INBOX").unwrap(), Some(7));
+    }
+
+    #[test]
+    fn advertises_reads_a_capability_line_that_ends_in_a_space() {
+        // The shape the server in #243 sends once logged in. The crate's parser
+        // rejects the whole reply over the space before CRLF.
+        let mut session = session_for(
+            "* CAPABILITY IMAP4 IMAP4rev1 XLIST MOVE IDLE NAMESPACE CHILDREN ID UIDPLUS \r\n\
+             a2 OK Capability completed.\r\n",
+        );
+
+        assert!(advertises(&mut session, "MOVE"));
+    }
+
+    #[test]
+    fn response_advertises_matches_whole_atoms_of_capability_lines() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("* CAPABILITY IMAP4rev1 MOVE\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 move\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 UIDPLUS \r\n", "UIDPLUS", true),
+            ("* 3 EXISTS\r\n* CAPABILITY IMAP4rev1 MOVE\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 XMOVE\r\n", "MOVE", false),
+            ("* CAPABILITYX MOVE\r\n", "MOVE", false),
+            ("* OK MOVE\r\n", "MOVE", false),
+            ("", "MOVE", false),
+        ];
+        for (raw, capability, expected) in cases {
+            assert_eq!(
+                response_advertises(raw.as_bytes(), capability),
+                *expected,
+                "{raw:?} {capability}"
+            );
+        }
     }
 
     #[test]
@@ -1585,24 +1630,19 @@ mod tests {
     }
 
     #[test]
-    fn a_rejected_capability_reply_is_logged_with_its_text_masked() {
+    fn a_failed_capability_command_is_logged_and_advertises_nothing() {
         let _seam = crate::services::events::seam_test_lock();
         let logger = crate::services::logger::install_for_testing();
-        let mut session = session_for("* CAPABILITY PRIVATE=TEXT\r\na2 OK Done.\r\n");
+        let mut session = session_for("a2 BAD Command unknown.\r\n");
 
         assert!(!advertises(&mut session, "MOVE"));
 
         let events = logger.events();
         let line = events
             .iter()
-            .find(|event| event.message.contains("CAPABILITY"))
+            .find(|event| event.message.contains("IMAP CAPABILITY failed"))
             .expect("the failure is logged");
         assert_eq!(line.level, "debug");
-        assert!(
-            line.message.contains(r#""* CAPABILITY AAAAAAA=AAAA""#),
-            "{}",
-            line.message
-        );
     }
 
     #[test]

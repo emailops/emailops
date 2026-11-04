@@ -4284,8 +4284,9 @@ completion on the stream, so the next command hits an `assert_eq!` on the tag. T
 step of a sync swallows a failed `CAPABILITY` and carries on, which is exactly that sequence.
 Upstream only replaced the assert on the 3.0 alpha line, and its `main` still aborts on such
 a line. The fork does not cover `imap-proto` 0.10.2, which still panics on a few lines
-(`INTERNALDATE NIL`), hence the containment in the app. Which line that server really sends
-is not known yet; the masked log is there to find out.
+(`INTERNALDATE NIL`), hence the containment in the app. The masked log showed the line that
+server sends: a `CAPABILITY` reply ending in a space, which the parser rejects whole. So
+`advertises` reads that reply raw, like `SEARCH`, or MOVE and UIDPLUS would never be used there.
 **Rejected:**
 - *Vendoring the crate into this repo*: a fork keeps upstream's history and stays usable by
   anyone hitting the same bug.
