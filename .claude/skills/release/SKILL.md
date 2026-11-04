@@ -139,7 +139,11 @@ the new CHANGELOG section:
    in Spanish.
 3. `src/lib/releaseNotes.test.ts` ("ships notes for the current version") fails
    until all four files exist for the `package.json` version, so Phase 4 catches
-   a missing one. Stage the folder with the release commit (Phase 6).
+   a missing one. Stage the folder with the release commit (Phase 6). Run
+   `npx vitest --clearCache` after adding the folder: Vitest's on-disk module
+   cache keys `src/lib/releaseNotes.ts` by its own text, not by the files its
+   `import.meta.glob` matches, so a stale cache fails that test locally with
+   the notes in place (v0.6.18).
 4. Run `git diff --stat <previous tag> -- src-tauri/bundled-skills`. Any skill it
    shows changes for every user who has it on, with no action of theirs, so name
    each one and what changed in the CHANGELOG section and in all four notes.
