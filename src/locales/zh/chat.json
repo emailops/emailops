@@ -109,7 +109,8 @@
     "rejected": "已标记为有误——下方已重试。",
     "budgetNotice": "此回答引用的部分邮件因超出模型上下文窗口而被截短，细节可能缺失。",
     "budgetOverflow": "此对话已超出模型的上下文窗口，回答可能遗漏了指令或上下文。",
-    "budgetSettings": "AI 设置"
+    "budgetSettings": "AI 设置",
+    "answerTruncated": "该回答因达到模型输出长度上限而被截断。"
   },
   "processing": {
     "queued": "正在等待其他 AI 任务完成…",

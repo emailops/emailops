@@ -4,7 +4,6 @@
   "emptyHint": "邮箱同步后，新邮件会显示在这里。",
   "loading": "正在加载邮件…",
   "loadingMore": "正在加载更多…",
-  "loadMore": "加载更多",
   "noMore": "已是最新",
   "syncing": "正在同步…",
   "syncProgress": "正在同步 {{current}}/{{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "已下载 1 封新邮件",
   "loadingEmails": "正在加载邮件…",
   "loadingMoreEmails": "正在加载更多…",
-  "noMoreEmails": "没有更多邮件了",
+  "noMoreEmails": "没有更多已下载的邮件",
+  "noMoreEmailsSyncing": "目前没有更多已下载的邮件，同步可能还会带来新的。",
   "loadingThread": "正在加载会话…",
   "loadingEmail": "正在加载邮件…",
   "categoriesAria": "邮件分类",
@@ -23,6 +23,15 @@
     "all": "全部",
     "unread": "未读",
     "empty": "没有未读邮件"
+  },
+  "emptyState": {
+    "syncing": "正在同步邮件…",
+    "noSearchResults": "没有符合搜索条件的邮件",
+    "noFilterResults": "没有符合所选筛选条件的邮件",
+    "noEmails": "还没有邮件——试试同步或添加账号",
+    "showAll": "显示全部邮件",
+    "showAllCategories": "显示全部类别",
+    "syncNow": "立即同步"
   },
   "noEmailSelected": "未选择邮件",
   "selectEmailHint": "从列表中选择一封邮件即可在此查看。",
@@ -124,7 +133,14 @@
     "unstar": "取消星标",
     "archive": "归档",
     "moveToInbox": "移到收件箱",
-    "notSpam": "非垃圾邮件——移到收件箱"
+    "notSpam": "非垃圾邮件——移到收件箱",
+    "noPreview": "（无预览）",
+    "toLine": "收件人：{{recipients}}",
+    "ccLine": "抄送：{{recipients}}",
+    "backLabel": "返回",
+    "messageCount_one": "{{count}} 封",
+    "messageCount_other": "{{count}} 封",
+    "messageCount_many": "{{count}} 封"
   },
   "compose": {
     "open": "写邮件",
@@ -139,6 +155,15 @@
     "pinnedSection": "已固定",
     "suggestedSection": "建议",
     "noFilters": "还没有智能筛选——随着邮箱增长会自动出现。"
+  },
+  "list": {
+    "firstPageFailed": "无法加载列表。",
+    "pageFailed": "无法加载更多邮件。"
+  },
+  "searchPanel": {
+    "firstResults": "前 {{count}} 条结果",
+    "results_one": "{{count}} 条结果",
+    "results_other": "{{count}} 条结果"
   },
   "searchBox": {
     "inlinePlaceholder": "搜索…（{{operators}}）",

@@ -83,6 +83,7 @@
     "data_move_not_empty": "{{path}} 中已有文件。请选择一个空文件夹，或先删除那里的旧副本。",
     "data_move_not_writable": "EmailOps 无法写入 {{path}}。",
     "data_move_not_enough_space": "该位置可用空间不足：需要 {{needed}}，可用 {{available}}。",
-    "data_move_copy_mismatch": "{{path}} 中的副本与原始数据不一致（{{detail}}）。未做任何更改。"
+    "data_move_copy_mismatch": "{{path}} 中的副本与原始数据不一致（{{detail}}）。未做任何更改。",
+    "data_move_background_work_running": "后台任务未能及时停止，因此没有移动任何邮件。请稍后重试。重启 EmailOps 可恢复同步。"
   }
 }

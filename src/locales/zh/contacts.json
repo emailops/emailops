@@ -47,7 +47,7 @@
     "noContactsYet": "还没有联系人——请先同步一些邮件。",
     "countOfTotalOne": "{{shown}} / {{total}} 位联系人",
     "countOfTotalOther": "{{shown}} / {{total}} 位联系人",
-    "loadMore": "加载更多",
+    "pageFailed": "无法加载更多联系人。",
     "loading": "正在加载…",
     "couldNotLoad": "无法加载联系人详情。",
     "selectAccount": "请选择账户以查看联系人。"
