@@ -47,8 +47,11 @@ pre-commit:
     docs-claims:
       glob: "{docs/site/**/*.md,docs/site/claims.toml,.claude/skills/verify-emailops/scripts/doc_claims*.mjs,scripts/docs_cli_claims.py}"
       run: uv run --no-project scripts/check-docs-claims.py
-    docs-scripts-tests:
-      glob: "scripts/{docs_*,check_docs*,check-docs*,disk_clean}.py"
+    scripts-tests:
+      glob:
+        - "scripts/{docs_*,check_docs*,check-docs*,disk_clean,privacy_scan}.py"
+        - "scripts/{build_target,ensure_demo_db}.sh"
+        - "scripts/tests/*.py"
       run: uv run --no-project --with pytest pytest -q scripts/tests
     # typecheck, clippy and rustfmt-check run single gates from
     # scripts/gates.sh, which owns the exact CI flags and the Node version
@@ -62,6 +65,10 @@ pre-commit:
     rustfmt-check:
       glob: "src-tauri/src/**/*.rs"
       run: bash scripts/gates.sh fmt
+    # Block staged mail stores, app data files and the private strings
+    # listed in .git/info/private-strings — see scripts/privacy_scan.py.
+    privacy-scan:
+      run: uv run --no-project scripts/privacy_scan.py
     # Scan staged files for committed secrets. Requires gitleaks to be
     # installed locally: `brew install gitleaks`. The hook is a no-op if
     # the binary isn't present so contributors aren't blocked by setup.

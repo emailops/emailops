@@ -107,6 +107,7 @@ Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_p
 - No telemetry, no cloud sync, no external API calls except to email providers or AI providers (only when user chooses to use remote LLMs)
 - **NEVER include real names, email addresses, subjects, or other real personal data in git-tracked files** — not in test fixtures, not in code comments, not in regression test cases, not in commit messages, not in PR descriptions. When a real-world failure surfaces a personal-data string, paraphrase it into a synthetic equivalent that preserves the technical shape (length, multibyte boundaries, regex pattern, etc.) but drops the identifying content. Real bench output goes under `src-tauri/reports/` which is gitignored — keep it there.
 - **Check it with the `privacy-reviewer` subagent** (`.claude/agents/privacy-reviewer.md`) before every commit (scope `staged`), before a push or PR (scope `branch`, plus the PR title/body as `text`), and whenever a real personal-data string may have reached a tracked file. Resolve every `LEAK` with the synthetic replacement it proposes and ask the developer about every `UNSURE` before going on.
+- The pre-commit hook also runs `scripts/privacy_scan.py`, a deterministic floor under the reviewer: it blocks staged mail stores (`*.db*`, `*.sqlite`, `*.eml`, `*.mbox`), app data dirs, and added lines containing an entry of the clone-local `.git/info/private-strings` (real addresses and names, never versioned).
 
 ### Separation of Concerns
 - Tauri commands are thin wrappers that delegate to service modules
