@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Fixed
+
+- An IMAP server reply EmailOps cannot read no longer crashes the sync. If a
+  command fails because of one, Logs shows the shape of the reply with its text
+  masked. A server whose list of supported features ends in a space now moves
+  mail with its own move command when it has one, instead of a copy and a
+  delete.
 
 ## [0.6.18] — 2026-11-03
 

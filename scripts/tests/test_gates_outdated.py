@@ -26,6 +26,12 @@ required by package `calamine v0.36.0`
 """
 
 
+GIT_DEPENDENCY_FETCH = """\
+    Updating git repository `https://github.com/example/dep`
+    Updating git repository `https://github.com/example/dep`
+"""
+
+
 def _run(tmp_path: Path, output: str, code: int) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -67,3 +73,15 @@ def test_up_to_date_passes(tmp_path):
     result = _run(tmp_path, "All dependencies are up to date, yay!\n", 0)
     assert result.returncode == 0
     assert "ok" in result.stdout
+
+
+def test_fetching_a_git_dependency_does_not_count_as_outdated(tmp_path):
+    result = _run(tmp_path, GIT_DEPENDENCY_FETCH + "All dependencies are up to date, yay!\n", 0)
+    assert result.returncode == 0
+    assert "0 outdated root dependencies" in result.stdout
+
+
+def test_fetching_a_git_dependency_does_not_inflate_the_count(tmp_path):
+    result = _run(tmp_path, GIT_DEPENDENCY_FETCH + OUTDATED_TABLE, 1)
+    assert result.returncode == 1
+    assert "1 outdated root dependencies" in result.stdout
