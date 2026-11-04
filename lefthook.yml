@@ -90,11 +90,12 @@ post-checkout:
 pre-push:
   parallel: true
   commands:
-    # cargo test, clippy with and without `--features desktop` and
-    # cargo-outdated: the `push` set of scripts/gates.sh, which owns the exact
-    # CI flags. A missing cargo-outdated warns instead of blocking the push.
+    # cargo test, clippy with and without `--features desktop`, cargo-outdated
+    # and vitest: the `push` set of scripts/gates.sh, which owns the exact CI
+    # flags. A missing cargo-outdated, or a worktree without node_modules,
+    # warns instead of blocking the push.
     rust-gates:
-      run: GATES_OPTIONAL=outdated bash scripts/gates.sh push
+      run: GATES_OPTIONAL="outdated vitest" bash scripts/gates.sh push
     secrets-check:
       run: "! git diff origin/main...HEAD -- ':(exclude)*.example' ':(exclude)*.md' 2>/dev/null | grep -E '^\\+.*(sk-or-v1-[a-f0-9]{20}|GOCSPX-[A-Za-z0-9]{20})' || (echo 'ERROR: Potential secrets detected in diff' && exit 1)"
     # Catch package.json / package-lock.json drift before it breaks CI.

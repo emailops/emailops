@@ -11,7 +11,7 @@
 #
 # Usage: scripts/gates.sh <set|gate> [out_dir]      (make gates SET=... OUT=...)
 #   sets:  commit   clippy clippy-desktop fmt biome tsc   (pre-commit checks)
-#          push     rust-test clippy clippy-desktop outdated  (pre-push checks)
+#          push     rust-test clippy clippy-desktop outdated vitest  (pre-push checks)
 #          rust     rust-test clippy clippy-desktop fmt
 #          frontend biome tsc vitest
 #          all      every gate
@@ -28,7 +28,7 @@ ROOT="$PWD"
 
 case "${1:-}" in
   commit)   GATES=(clippy clippy-desktop fmt biome tsc) ;;
-  push)     GATES=(rust-test clippy clippy-desktop outdated) ;;
+  push)     GATES=(rust-test clippy clippy-desktop outdated vitest) ;;
   rust)     GATES=(rust-test clippy clippy-desktop fmt) ;;
   frontend) GATES=(biome tsc vitest) ;;
   all)      GATES=(rust-test clippy clippy-desktop fmt outdated biome tsc vitest) ;;

@@ -162,7 +162,7 @@ Every user-facing operation must emit log entries so they appear in the output p
 - NEVER include claude or other agent as author or co-author in commits
 - Before committing, pushing or opening a PR, run the `privacy-reviewer` subagent (see Privacy First) alongside the gates.
 - After implementing a feature, bug fix, or any moderate change, run the quality gates through the `gate-runner` subagent (`.claude/agents/gate-runner.md`, which runs `make gates`) with the `commit` set (clippy with and without `--features desktop`, rustfmt, biome, tsc — the exact CI flags live in `scripts/gates.sh`) and act on its report. Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures. The `no-invoke-outside-api`, JSX-literal and docs guards run in the lefthook pre-commit hook itself.
-- For changes that affect Rust behavior, also run the `gate-runner` `push` set (`cargo test`, both clippy variants, `cargo-outdated` — matches the pre-push hook) before declaring the work done.
+- For changes that affect Rust behavior, also run the `gate-runner` `push` set (`cargo test`, both clippy variants, `cargo-outdated`, `vitest` — matches the pre-push hook) before declaring the work done.
 
 ### Branch Naming
 - `feature/description` - New features
