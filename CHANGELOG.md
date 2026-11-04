@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An IMAP server reply EmailOps cannot read no longer crashes the sync. If a
+  command fails because of one, Logs shows the shape of the reply with its text
+  masked. A server whose list of supported features ends in a space now moves
+  mail with its own move command when it has one, instead of a copy and a
+  delete.
+
+## [0.6.18] — 2026-11-03
+
 ### Added
 
 - **Skills included with the app.** Reviewed skills you can read in full and
@@ -27,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Spam and Trash, and the other views search what they show. Mail the junk
   check flagged is listed with its warning instead of left out. The Load more
   buttons are gone, in Contacts too.
+- **Adding an account syncs faster.** The next batch of mail downloads while the
+  current one is processed, and on IMAP the Sent folder waits until the inbox is
+  in.
 
 ### Fixed
 
@@ -65,11 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Before, the first edit removed them from the provider and the send went out
   without them. Until a file has been downloaded, the draft cannot be sent, and
   your edits wait here without touching the provider's copy.
-- An IMAP server reply EmailOps cannot read no longer crashes the sync. If a
-  command fails because of one, Logs shows the shape of the reply with its text
-  masked. A server whose list of supported features ends in a space now moves
-  mail with its own move command when it has one, instead of a copy and a
-  delete.
+- **Sync keeps running on networks that block the connectivity check.** The app
+  now checks that it can reach your mail servers before it reports that it is
+  offline.
+- **The chat reads open PDFs reliably.** Some PDFs made the chat turn fail or
+  lost letters from words; their text now comes through whole.
+- **Asking the chat for the first email you sent gets it.** It used to find
+  the right email and then say it had only found the most recent one.
 
 ## [0.6.17] — 2026-10-29
 

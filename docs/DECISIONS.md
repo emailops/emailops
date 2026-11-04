@@ -4297,3 +4297,19 @@ server sends: a `CAPABILITY` reply ending in a space, which the parser rejects w
   strict, and the raw readers in `sync/imap_search.rs` already pick out what they need.
 - *Having the app drop the session after each swallowed failure*: the session stops itself in
   the library, so a caller that carries on cannot read message text as commands.
+
+## 2026-11-03 — A blocked connectivity probe falls back to the account mail hosts
+
+**Decision:** The connectivity probe keeps its HEAD request to `https://1.1.1.1/`. When that
+fails, the round opens a TCP connection, with no payload, to the hosts of the enabled accounts
+(the stored IMAP host, the Gmail and Graph API hosts), at most once a minute. Any success
+counts as online, and the app reports offline only after two consecutive rounds with no route.
+**Context:** On a network that blocks `1.1.1.1:443` the probe failed on every tick, so the app
+stayed offline for good and never synced, although the mail servers were reachable. The
+offline flag gates the sync loops, so a successful sync could never prove the network works.
+A false online costs one failed sync, a false offline leaves the user with no mail.
+**Rejected:**
+- *Probing another public endpoint (Baidu, QQ)*: a new third party, against Privacy First.
+- *Retrying the same probe*: the block is permanent.
+- *A setting to turn the probe off*: the affected user cannot discover it.
+- *Removing the gate*: the banner loses its signal and every offline tick becomes a sync error.

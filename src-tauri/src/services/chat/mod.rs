@@ -622,12 +622,22 @@ pub(crate) fn or_fallback_search(
 }
 
 /// Leads a search result in which some row stands for a longer thread. Only a
-/// hint: listing or counting questions don't need the rest of the thread.
-const THREAD_SIZE_HINT: &str = "(messages=N: the row is the latest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n";
+/// hint: listing or counting questions don't need the rest of the thread. It
+/// names the row the search picked — an oldest-first search represents a
+/// thread by its earliest match, and calling that row "the latest" made the
+/// model doubt a correct "first email" answer.
+fn thread_size_hint(oldest_first: bool) -> &'static str {
+    if oldest_first {
+        "(messages=N: the row is the earliest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n"
+    } else {
+        "(messages=N: the row is the latest match in a thread of N messages — call get_thread(thread_id) when the answer needs the whole conversation, e.g. to summarise an exchange)\n"
+    }
+}
 
 pub(crate) fn format_search_emails_output(
     emails: &[Email],
     thread_sizes: &std::collections::HashMap<(String, String), i64>,
+    oldest_first: bool,
 ) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
@@ -650,7 +660,7 @@ pub(crate) fn format_search_emails_output(
             .filter(|n| *n > 1)
     };
     let hint = if emails.iter().any(|e| size_of(e).is_some()) {
-        THREAD_SIZE_HINT
+        thread_size_hint(oldest_first)
     } else {
         ""
     };
@@ -718,6 +728,7 @@ pub(crate) fn format_search_emails_output_with_bodies(
     emails: &[Email],
     bodies: &std::collections::HashMap<String, String>,
     thread_sizes: &std::collections::HashMap<(String, String), i64>,
+    oldest_first: bool,
 ) -> String {
     let mut primary: Vec<&Email> = Vec::new();
     let mut updates: Vec<&Email> = Vec::new();
@@ -740,7 +751,7 @@ pub(crate) fn format_search_emails_output_with_bodies(
             .filter(|n| *n > 1)
     };
     let hint = if emails.iter().any(|e| size_of(e).is_some()) {
-        THREAD_SIZE_HINT
+        thread_size_hint(oldest_first)
     } else {
         ""
     };
@@ -850,8 +861,8 @@ mod tests {
         let bodies: std::collections::HashMap<String, String> =
             [("e2".to_string(), "pay by friday".to_string())].into_iter().collect();
         for out in [
-            format_search_emails_output(&emails, &sizes),
-            format_search_emails_output_with_bodies(&emails, &bodies, &sizes),
+            format_search_emails_output(&emails, &sizes, false),
+            format_search_emails_output_with_bodies(&emails, &bodies, &sizes, false),
         ] {
             let open = out.find("<UNTRUSTED_EMAIL>").expect("open tag");
             assert_eq!(out.matches("</UNTRUSTED_EMAIL>").count(), 1, "{out}");
@@ -861,6 +872,30 @@ mod tests {
                 out.find("Invoice").unwrap() < out.find("</UNTRUSTED_EMAIL>").unwrap(),
                 "{out}"
             );
+        }
+    }
+
+    #[test]
+    fn the_thread_hint_names_the_row_the_sort_order_picked() {
+        // "The first email I sent" came back as the opener of a six-message
+        // thread, but the hint called the row the thread's latest match and
+        // the model told the user it had only found the most recent email.
+        let emails = vec![row("e1", "t1", "New version")];
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert((String::new(), "t1".to_string()), 6);
+        let bodies = std::collections::HashMap::new();
+        for oldest_first in [false, true] {
+            let (says, never) = if oldest_first {
+                ("earliest match", "latest match")
+            } else {
+                ("latest match", "earliest match")
+            };
+            for out in [
+                format_search_emails_output(&emails, &sizes, oldest_first),
+                format_search_emails_output_with_bodies(&emails, &bodies, &sizes, oldest_first),
+            ] {
+                assert!(out.contains(says) && !out.contains(never), "{out}");
+            }
         }
     }
 

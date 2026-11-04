@@ -125,8 +125,8 @@ export default (h) => async function demoCases() {
 
   // Full-text search reaches bodies, not just subjects: "Ollama" appears only in a body.
   await claim('feat-search-1', 'texto completo', {
-    covers: ['Full-text search over subjects, bodies, senders and attachments.'],
-    partial: 'se prueba la búsqueda en el cuerpo; asuntos, remitentes y adjuntos no se prueban por separado',
+    covers: ['Full-text search over subjects, bodies and senders.'],
+    partial: 'se prueba la búsqueda en el cuerpo; asuntos y remitentes no se prueban por separado',
     how: 'Busca «Ollama», una palabra que en el buzón demo solo aparece en el cuerpo de un correo, y comprueba que la búsqueda lo encuentra.',
   }, async ({ doc }) => {
     doc.match(/Full-text search over subjects, bodies/);
@@ -249,10 +249,10 @@ export default (h) => async function demoCases() {
   // ── views ──────────────────────────────────────────────────────────────
   await view('Calendar');
   await claim('feat-calendar-1', 'vistas', {
-    covers: ['Per-account month, week and day views'],
-    how: 'En la vista Calendar del buzón demo, pulsa cada vista que nombra la doc (Month, Week, Day) y comprueba que la rejilla cambia; y que el calendario se muestra por cuenta.',
+    covers: ['Month, week and day views'],
+    how: 'En la vista Calendar del buzón demo, pulsa cada vista que nombra la doc (Month, Week, Day) y comprueba que la rejilla cambia; y que el calendario tiene selector de cuenta.',
   }, async ({ doc }) => {
-    const modes = doc.match(/Per-account (\w+), (\w+) and (\w+) views/).slice(1).map((m) => m[0].toUpperCase() + m.slice(1));
+    const modes = doc.match(/(\w+), (\w+) and (\w+) views for/).slice(1).map((m) => m[0].toUpperCase() + m.slice(1));
     const grids = [];
     for (const m of modes) {
       await press(m).catch(() => {});

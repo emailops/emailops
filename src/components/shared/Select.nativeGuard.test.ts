@@ -25,7 +25,10 @@ describe('native <select> guard', () => {
     const offenders = tsxFiles(COMPONENTS)
       .filter((f) => /<select\s/.test(readFileSync(f, 'utf8')))
       .map((f) => relative(COMPONENTS, f))
-      .filter((f) => f !== 'shared/Select.tsx');
+      // Compare through `join` rather than a literal "shared/Select.tsx":
+      // `relative()` yields platform separators, so on Windows the literal
+      // never matches and the shared component flags itself.
+      .filter((f) => f !== join('shared', 'Select.tsx'));
     expect(offenders).toEqual([]);
   });
 });
