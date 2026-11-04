@@ -4283,3 +4283,17 @@ A false online costs one failed sync, a false offline leaves the user with no ma
 - *Retrying the same probe*: the block is permanent.
 - *A setting to turn the probe off*: the affected user cannot discover it.
 - *Removing the gate*: the banner loses its signal and every offline tick becomes a sync error.
+
+## 2026-11-04 — A draft revision the provider refuses as malformed is not sent again
+
+**Decision:** When the provider answers a draft push with a malformed-request error (Gmail's
+400, typed as `InvalidInput`), the sync does not push that revision of the draft again; the
+user's next edit makes it eligible. The refusal is kept in memory only, so a restart costs one
+more attempt per such draft. Every Gmail 400 now reaches callers as `invalid_input`, not `sync`.
+**Context:** A refused draft stayed dirty and was pushed on every 60 s sync. In the 30 days to
+04/11/2026 Gmail counted 1,436 `drafts.create` calls, 96 % of them 400s, in bursts on four days.
+A 400 for the same content fails the same way every time.
+**Rejected:**
+- *Backoff for every push failure*: it still sends requests that cannot succeed, and it delays
+  the retry of transient failures.
+- *Persisting the refusal in the database*: a migration to save one attempt after a restart.

@@ -905,6 +905,9 @@ pub struct FakeEmailProvider {
     /// When `Some`, `create_draft` / `update_draft` fail with this message —
     /// simulates a provider that is reachable but refusing draft writes.
     draft_write_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, `create_draft` / `update_draft` are refused as malformed
+    /// with this message — what Gmail's 400 becomes (`InvalidInput`).
+    draft_write_rejection: std::sync::RwLock<Option<String>>,
     draft_delete_failure: std::sync::RwLock<Option<String>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
@@ -1086,6 +1089,7 @@ impl FakeEmailProvider {
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
             draft_write_failure: std::sync::RwLock::new(None),
+            draft_write_rejection: std::sync::RwLock::new(None),
             draft_delete_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
@@ -1319,6 +1323,15 @@ impl FakeEmailProvider {
         *self.draft_write_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
     }
 
+    /// Make every subsequent draft create/update be refused as malformed with
+    /// `message`, or let them through again with `None`.
+    pub fn reject_draft_writes(&self, message: Option<&str>) {
+        *self
+            .draft_write_rejection
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
     /// Make every subsequent draft delete fail with `message`, or let them
     /// through again with `None`.
     pub fn fail_draft_deletes(&self, message: Option<&str>) {
@@ -1329,6 +1342,14 @@ impl FakeEmailProvider {
     }
 
     fn draft_write_result(&self) -> Result<()> {
+        if let Some(message) = self
+            .draft_write_rejection
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            return Err(AppError::InvalidInput(message.to_string()));
+        }
         match self
             .draft_write_failure
             .read()
@@ -2105,6 +2126,7 @@ impl EmailProvider for FakeEmailProvider {
         attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
+        self.record_call("create_draft");
         self.draft_write_result()?;
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let id = format!("fake-draft-{seq}");
@@ -2138,6 +2160,7 @@ impl EmailProvider for FakeEmailProvider {
         attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
+        self.record_call("update_draft");
         self.draft_write_result()?;
         // A draft sent or deleted from another device is gone: real providers
         // answer 404, which their clients surface as `NotFound`.

@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Fixed
+
+- **A draft Gmail refuses is no longer sent again every minute.** Each sync used
+  to repeat the refused upload; now the draft waits until you edit it, and the
+  Logs panel shows Gmail's reason once.
 
 ## [0.6.18] — 2026-11-03
 

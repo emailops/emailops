@@ -8,6 +8,7 @@
 //! do the DB writes, file reads, and provider calls. The files of pulled
 //! attachments are `draft_files`' business.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -222,7 +223,12 @@ fn draft_body(body: &str, body_html: Option<&str>) -> EmailBody {
 /// Serializes draft pushes. The composer's save and the sync can both decide to
 /// push the same draft; without this, two pushes of a draft that has no
 /// provider id yet would each create one upstream and leave a duplicate.
-static DRAFT_PUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+///
+/// It also holds, per draft id, the revision the provider refused as malformed
+/// (`InvalidInput`, Gmail's 400). That content fails the same way every time,
+/// so it waits for the user's next edit instead of going out on every sync.
+/// Kept in memory only: after a restart each such draft is tried once more.
+static DRAFT_PUSH_LOCK: tokio::sync::Mutex<BTreeMap<String, i64>> = tokio::sync::Mutex::const_new(BTreeMap::new());
 
 /// Push a dirty local draft to the provider's Drafts folder and mark the
 /// revision that was sent as clean. A no-op when the draft is already clean or
@@ -233,6 +239,9 @@ static DRAFT_PUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new((
 /// rather than updated. An update the provider answers with not-found (the
 /// draft was sent or deleted from another device since) falls back to a create
 /// as well. Either way the stale id is replaced by the new one.
+///
+/// A revision the provider refused as malformed is not sent again (see
+/// [`DRAFT_PUSH_LOCK`]); the push is then a no-op until the draft changes.
 async fn push_draft(
     db: &Arc<Database>,
     account: &Account,
@@ -240,11 +249,11 @@ async fn push_draft(
     draft_id: &str,
     gone_upstream: Option<&str>,
 ) -> Result<()> {
-    let _pushing = DRAFT_PUSH_LOCK.lock().await;
+    let mut refused = DRAFT_PUSH_LOCK.lock().await;
     let Some((draft, revision)) = db.draft_for_push(draft_id)? else {
         return Ok(());
     };
-    if revision == 0 {
+    if revision == 0 || refused.get(draft_id) == Some(&revision) {
         return Ok(());
     }
 
@@ -265,26 +274,41 @@ async fn push_draft(
         .provider_draft_id
         .as_deref()
         .filter(|id| Some(*id) != gone_upstream);
-    let updated = match linked {
-        Some(existing) => match provider
-            .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
-            .await
-        {
-            Ok(id) => Some(id),
-            Err(AppError::NotFound(_)) => None,
-            Err(e) => return Err(e),
-        },
-        None => None,
-    };
-    let provider_id = match updated {
-        Some(id) => id,
-        None => {
-            provider
-                .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
-                .await?
+    let sent: Result<String> = async {
+        let updated = match linked {
+            Some(existing) => match provider
+                .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
+                .await
+            {
+                Ok(id) => Some(id),
+                Err(AppError::NotFound(_)) => None,
+                Err(e) => return Err(e),
+            },
+            None => None,
+        };
+        match updated {
+            Some(id) => Ok(id),
+            None => {
+                provider
+                    .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
+                    .await
+            }
         }
-    };
-    db.mark_draft_pushed(&draft.id, &provider_id, revision)
+    }
+    .await;
+    match sent {
+        Ok(provider_id) => {
+            // Revisions count from 1 again once the draft is clean.
+            refused.remove(draft_id);
+            db.mark_draft_pushed(&draft.id, &provider_id, revision)
+        }
+        Err(e) => {
+            if matches!(e, AppError::InvalidInput(_)) {
+                refused.insert(draft_id.to_string(), revision);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Save a composed draft locally and, when the account's provider supports
@@ -609,7 +633,8 @@ pub async fn pull_provider_drafts(
                 };
                 // One draft that cannot be pushed (an attachment file that was
                 // moved, a provider refusal) must not stop the others. It
-                // stays dirty, so the next pass tries again.
+                // stays dirty, so the next pass tries again, except a revision
+                // the provider refused as malformed (see `DRAFT_PUSH_LOCK`).
                 if let Some(pd) = provider_id.and_then(|id| changed.get(id)) {
                     if !attachments_pulled {
                         draft_files::adopt_attachments(db, account_id, &local.id, &pd.attachments)?;
@@ -848,6 +873,108 @@ mod tests {
             .expect("compose");
         assert!(draft.provider_draft_id.is_none(), "imap draft stays local");
         assert_eq!(provider.provider_drafts().len(), 0);
+    }
+
+    fn draft_writes(provider: &FakeEmailProvider) -> usize {
+        provider
+            .calls()
+            .iter()
+            .filter(|call| *call == "create_draft" || *call == "update_draft")
+            .count()
+    }
+
+    fn only_draft_id(db: &Database) -> String {
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1);
+        drafts[0].id.clone()
+    }
+
+    // Regression: Gmail answered 400 to one draft and every sync sent the same
+    // content again, once a minute, for as long as the app was open.
+    #[tokio::test]
+    async fn a_draft_the_provider_refused_as_malformed_is_not_sent_again_by_the_sync() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+
+        let err = compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+
+        pull_provider_drafts(&db, &account, &provider)
+            .await
+            .expect("first sync");
+        pull_provider_drafts(&db, &account, &provider)
+            .await
+            .expect("second sync");
+
+        assert_eq!(draft_writes(&provider), 1, "the refused content is sent once");
+    }
+
+    #[tokio::test]
+    async fn a_refused_draft_is_sent_again_once_the_user_edits_it() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+        compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        provider.reject_draft_writes(None);
+
+        let mut edit = input("a1", "Hi again", "body two");
+        edit.draft_id = Some(only_draft_id(&db));
+        compose_draft(&db, &account, edit, None).await.expect("local edit");
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        let pushed = provider.provider_drafts();
+        assert_eq!(pushed.len(), 1, "the edited draft reaches the provider");
+        assert_eq!(pushed[0].subject, "Hi again");
+    }
+
+    #[tokio::test]
+    async fn a_draft_the_provider_could_not_take_is_sent_again_by_the_next_sync() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.fail_draft_writes(Some("503 backend error"));
+        compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the push fails");
+        provider.fail_draft_writes(None);
+
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        assert_eq!(provider.provider_drafts().len(), 1, "a transient failure is retried");
+    }
+
+    // Revisions count from 1 again after every successful push, so a refusal
+    // must be forgotten once a later revision of the draft got through.
+    #[tokio::test]
+    async fn a_draft_pushed_after_a_refusal_keeps_syncing_its_later_edits() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+        compose_draft(&db, &account, input("a1", "First", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        provider.reject_draft_writes(None);
+        let draft_id = only_draft_id(&db);
+        let mut second = input("a1", "Second", "body");
+        second.draft_id = Some(draft_id.clone());
+        compose_draft(&db, &account, second, Some(&provider))
+            .await
+            .expect("the edit is pushed");
+
+        let mut third = input("a1", "Third", "body");
+        third.draft_id = Some(draft_id);
+        compose_draft(&db, &account, third, None).await.expect("local edit");
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        assert_eq!(provider.provider_drafts()[0].subject, "Third");
     }
 
     #[tokio::test]
