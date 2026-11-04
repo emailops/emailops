@@ -1,0 +1,72 @@
+{
+  "title": "记忆",
+  "subtitle": "从收件箱中提取的事实",
+  "emptyState": {
+    "title": "还没有记住任何内容",
+    "hint": "提取运行后，事实会显示在这里。助手记录的每一条你都可以编辑或删除。"
+  },
+  "eligibilityBanner": {
+    "disabled": "记忆功能已关闭。请在 设置 → AI 记忆 中启用。",
+    "noAi": "记忆功能需要先启用 AI。",
+    "openSettings": "打开设置"
+  },
+  "eligibility": {
+    "title": "提取范围",
+    "categories": "分类：",
+    "all": "全部",
+    "selfOnly": "仅账户本人发出的邮件",
+    "excludesSenders": "排除的发件人：",
+    "excludesTags": "排除的标签：",
+    "changeHint": "在 设置 → 记忆 中修改。"
+  },
+  "filters": {
+    "all": "全部",
+    "allChip": "全部",
+    "search": "搜索事实…",
+    "sortBy": "排序方式",
+    "newest": "最新",
+    "oldest": "最早",
+    "confidence": "可信度"
+  },
+  "fact": {
+    "edit": "编辑事实",
+    "delete": "删除事实",
+    "source": "来源邮件",
+    "extracted": "提取于 {{when}}",
+    "confidence": "可信度：{{value}}",
+    "companyTitle": "公司（由收件人域名推导）"
+  },
+  "actions": {
+    "extractNow": "从收件箱提取",
+    "clearAll": "清除全部记忆",
+    "clearAllConfirm": "删除所有记忆？此操作无法撤销。"
+  },
+  "status": {
+    "extracting": "正在提取事实…",
+    "lastRun": "上次运行：{{when}}",
+    "promoted": {
+      "title": "已整合",
+      "hint": "经过验证的高价值事实"
+    },
+    "candidate": {
+      "title": "候选",
+      "hint": "等待进一步印证"
+    },
+    "retired": {
+      "title": "已淘汰",
+      "hint": "已被取代或价值较低"
+    }
+  },
+  "view": {
+    "totalCount": "共 {{count}} 条",
+    "consolidatedSuffix": " · {{count}} 条已整合",
+    "candidateSuffix": " · {{count}} 条候选",
+    "companyLabel": "公司：",
+    "loadingFacts": "正在加载事实…",
+    "noFactsYet": "还没有事实。随着邮件同步和分类，记忆会逐步填充。",
+    "noMatches": "没有匹配的搜索结果。",
+    "selectAccount": "请选择账户以查看记忆。",
+    "previewEmpty": "选择一条事实可预览其来源邮件。",
+    "previewMissing": "此事实没有来源邮件（例如手动编辑或经整合产生）。"
+  }
+}

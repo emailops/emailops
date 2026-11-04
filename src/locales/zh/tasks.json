@@ -1,0 +1,68 @@
+{
+  "title": "任务",
+  "subtitle": "从收件箱中提取的待办事项",
+  "emptyState": {
+    "title": "还没有任务",
+    "hint": "当助手在新邮件中发现待办事项时，会显示在这里。"
+  },
+  "filters": {
+    "open": "待办",
+    "done": "已完成",
+    "snoozed": "已稍后",
+    "dismissed": "已忽略",
+    "all": "全部"
+  },
+  "task": {
+    "markDone": "标记完成",
+    "markOpen": "重新打开",
+    "snooze": "稍后提醒",
+    "dismiss": "忽略",
+    "edit": "编辑任务",
+    "delete": "删除任务",
+    "openSource": "打开来源邮件",
+    "due": "截止 {{date}}",
+    "noDue": "无截止日期"
+  },
+  "actions": {
+    "extractNow": "立即提取任务",
+    "clearCompleted": "清除已完成"
+  },
+  "status": {
+    "extracting": "正在提取任务…",
+    "lastRun": "上次运行：{{when}}"
+  },
+  "panel": {
+    "openCount": "{{count}} 项待办",
+    "overdueSuffix": " · {{count}} 项已逾期",
+    "dueTodaySuffix": " · {{count}} 项今天到期",
+    "waitingSuffix": " · {{count}} 项等待回复",
+    "companyLabel": "公司：",
+    "allChip": "全部",
+    "addPlaceholder": "添加任务（例如：给 Acme 发发票）",
+    "addButton": "添加",
+    "loadingTasks": "正在加载任务…",
+    "noOpenTasks": "没有待办任务。",
+    "noTasksForFilter": "「{{filter}}」下没有任务。",
+    "thisFilter": "此筛选",
+    "sections": {
+      "overdue": "已逾期",
+      "dueToday": "今天到期",
+      "upcoming": "即将到期",
+      "noDate": "无截止日期",
+      "count": "{{title}}（{{n}}）"
+    },
+    "companyTitle": "公司（由收件人域名推导）",
+    "high": "高",
+    "snooze": "稍后提醒",
+    "dismiss": "忽略",
+    "markDoneTitle": "标记完成",
+    "waitingTitle": "等待回复（{{n}}）",
+    "loadingThreads": "正在加载进行中的会话…",
+    "lastTouched": "最近更新 {{when}}",
+    "deadlineSuffix": " · 截止 {{date}}",
+    "selectAccount": "请选择账户以查看任务。",
+    "previewEmpty": "选择一个任务或会话可预览其邮件。",
+    "previewMissingTask": "此任务是手动添加的——没有来源邮件。",
+    "previewMissingThread": "此会话没有可用的来源邮件。"
+  }
+}

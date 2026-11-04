@@ -1,0 +1,54 @@
+{
+  "title": "标签面板",
+  "subtitle": "按分类标签分组的会话",
+  "groupBy": "分组方式",
+  "types": {
+    "company": "公司",
+    "priority": "优先级",
+    "intent": "意向",
+    "topic": "主题"
+  },
+  "refresh": "刷新面板",
+  "threadCount_one": "{{count}} 个会话",
+  "threadCount_other": "{{count}} 个会话",
+  "threadCount_many": "{{count}} 个会话",
+  "showMore": "显示更多",
+  "columnEmpty": "没有会话",
+  "columnError": "无法加载此标签",
+  "retry": "重试",
+  "empty": {
+    "title": "还没有标签",
+    "body": "运行 AI 分类后邮件才会被打上标签。请在设置中启用分类，然后同步或重新分类来填充此面板。",
+    "openSettings": "打开分类设置"
+  },
+  "aiDisabled": "请开启 AI 功能以分类邮件并使用此面板。",
+  "blockMenu": "屏蔽选项",
+  "hideTag": "隐藏此标签",
+  "openInInbox": "在收件箱中打开",
+  "restoreHidden_one": "显示 {{count}} 个已隐藏的标签",
+  "restoreHidden_other": "显示 {{count}} 个已隐藏的标签",
+  "restoreHidden_many": "显示 {{count}} 个已隐藏的标签",
+  "range": {
+    "label": "时间范围",
+    "all": "全部时间",
+    "today": "今天",
+    "yesterday": "昨天",
+    "last7": "最近 7 天",
+    "custom": "自定义",
+    "from": "从",
+    "to": "至"
+  },
+  "dragHint": "拖动可重新排序",
+  "searchPlaceholder": "搜索标签…",
+  "density": {
+    "label": "区块宽度",
+    "granular": "窄区块",
+    "extended": "宽区块"
+  },
+  "noMatches": {
+    "title": "没有匹配「{{query}}」的标签",
+    "body": "搜索只查标签名称，不查邮件正文。试试更短的片段，或切换分组维度。",
+    "clear": "清除搜索"
+  },
+  "you": "我"
+}

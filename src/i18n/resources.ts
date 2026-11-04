@@ -86,8 +86,28 @@ import frShortcuts from '../locales/fr/shortcuts.json';
 import frSidebar from '../locales/fr/sidebar.json';
 import frTagboard from '../locales/fr/tagboard.json';
 import frTasks from '../locales/fr/tasks.json';
+import zhAttachments from '../locales/zh/attachments.json';
+import zhAuth from '../locales/zh/auth.json';
+import zhCalendar from '../locales/zh/calendar.json';
+import zhChat from '../locales/zh/chat.json';
+import zhCommon from '../locales/zh/common.json';
+import zhCompose from '../locales/zh/compose.json';
+import zhContacts from '../locales/zh/contacts.json';
+import zhDashboard from '../locales/zh/dashboard.json';
+import zhDocuments from '../locales/zh/documents.json';
+import zhErrors from '../locales/zh/errors.json';
+import zhInbox from '../locales/zh/inbox.json';
+import zhLenses from '../locales/zh/lenses.json';
+import zhMemory from '../locales/zh/memory.json';
+import zhModal from '../locales/zh/modal.json';
+import zhNotifications from '../locales/zh/notifications.json';
+import zhSettings from '../locales/zh/settings.json';
+import zhShortcuts from '../locales/zh/shortcuts.json';
+import zhSidebar from '../locales/zh/sidebar.json';
+import zhTagboard from '../locales/zh/tagboard.json';
+import zhTasks from '../locales/zh/tasks.json';
 
-export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de'] as const;
+export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'zh'] as const;
 
 export type Language = (typeof SUPPORTED_LANGUAGES)[number];
 
@@ -216,6 +236,28 @@ export const resources = {
     attachments: deAttachments,
     shortcuts: deShortcuts,
   },
+  zh: {
+    common: zhCommon,
+    sidebar: zhSidebar,
+    settings: zhSettings,
+    modal: zhModal,
+    inbox: zhInbox,
+    chat: zhChat,
+    memory: zhMemory,
+    tasks: zhTasks,
+    tagboard: zhTagboard,
+    contacts: zhContacts,
+    compose: zhCompose,
+    auth: zhAuth,
+    calendar: zhCalendar,
+    errors: zhErrors,
+    notifications: zhNotifications,
+    lenses: zhLenses,
+    dashboard: zhDashboard,
+    documents: zhDocuments,
+    attachments: zhAttachments,
+    shortcuts: zhShortcuts,
+  },
 } as const;
 
 export const defaultNS = 'common' as const;
@@ -229,4 +271,5 @@ export const NATIVE_NAMES: Record<Language, string> = {
   es: 'Español',
   fr: 'Français',
   de: 'Deutsch',
+  zh: '中文',
 };

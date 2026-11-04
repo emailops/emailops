@@ -1,0 +1,93 @@
+{
+  "language": {
+    "english": "English",
+    "spanish": "Español",
+    "french": "Français",
+    "german": "Deutsch",
+    "sameAsUi": "同界面语言",
+    "selectLabel": "选择语言"
+  },
+  "actions": {
+    "save": "保存",
+    "cancel": "取消",
+    "close": "关闭",
+    "closeDialog": "关闭对话框",
+    "ok": "确定",
+    "yes": "是",
+    "no": "否",
+    "retry": "重试",
+    "delete": "删除",
+    "remove": "移除",
+    "edit": "编辑",
+    "add": "添加",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "continue": "继续",
+    "confirm": "确认",
+    "apply": "应用",
+    "reset": "重置",
+    "refresh": "刷新",
+    "search": "搜索",
+    "send": "发送",
+    "reply": "回复",
+    "forward": "转发",
+    "open": "打开",
+    "copy": "复制",
+    "paste": "粘贴",
+    "select": "选择",
+    "selectAll": "全选",
+    "clear": "清空",
+    "expand": "展开",
+    "collapse": "折叠",
+    "dismiss": "忽略",
+    "signIn": "登录",
+    "signOut": "退出登录",
+    "signInAgain": "重新登录",
+    "tryAgain": "再试一次",
+    "learnMore": "了解更多",
+    "viewAll": "查看全部"
+  },
+  "state": {
+    "loading": "正在加载…",
+    "error": "错误",
+    "empty": "这里还没有内容",
+    "success": "成功",
+    "saving": "正在保存…",
+    "sending": "正在发送…",
+    "syncing": "正在同步…",
+    "ready": "就绪",
+    "offline": "离线",
+    "online": "在线"
+  },
+  "time": {
+    "now": "刚刚",
+    "today": "今天",
+    "yesterday": "昨天",
+    "secondsAgo": "{{count}} 秒前",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前"
+  },
+  "units": {
+    "bytes": "B",
+    "kilobytes": "KB",
+    "megabytes": "MB",
+    "gigabytes": "GB"
+  },
+  "labels": {
+    "subject": "主题",
+    "from": "发件人",
+    "to": "收件人",
+    "cc": "抄送",
+    "bcc": "密送",
+    "date": "日期",
+    "size": "大小",
+    "noSubject": "（无主题）",
+    "unknownSender": "未知发件人",
+    "you": "你"
+  },
+  "unifiedScope": {
+    "hint": "在「全部账户」视图中，此区域只显示 {{email}}"
+  }
+}
