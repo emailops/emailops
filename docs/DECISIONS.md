@@ -4297,3 +4297,27 @@ A 400 for the same content fails the same way every time.
 - *Backoff for every push failure*: it still sends requests that cannot succeed, and it delays
   the retry of transient failures.
 - *Persisting the refusal in the database*: a migration to save one attempt after a restart.
+
+## 2026-11-04 — Agent guardrails are enforced by tracked settings and hooks, not prose
+
+**Decision:** The repo's never-do rules for agents are enforced mechanically. A tracked
+`.claude/settings.json` denies `git add -A`/`--all`/`.`, a bare `cargo clean` and reads of the
+`.env`, `.env.local` and `.env.signing` files, and asks before `git reset --hard`, `rm -rf` and
+any other `cargo clean`. Deny and ask rules win over any allow rule in a developer's
+`settings.local.json`. The pre-commit hook runs `scripts/privacy_scan.py`, which blocks staged
+mail stores, app data dirs, and added lines containing an entry of the clone-local
+`.git/info/private-strings`.
+**Context:** CLAUDE.md said "never a bare `cargo clean`", while the local allowlist
+pre-approved `git:*` and `cargo clean`. Nothing ran before a commit to catch a mail store or a
+real address; the privacy-reviewer subagent runs only when an agent remembers to call it. In the
+same change, `ensure_demo_db.sh` started deciding on a content stamp instead of mtimes (the
+2026-10-01 demo DB schema entry described the mtime check), and vitest joined the `push` gate
+set.
+**Rejected:**
+- *Keeping the rules as prose only*: the allowlist contradicted them, and agents follow allow
+  rules, not prose.
+- *An allowlist of synthetic email domains in the privacy scan*: tracked files already use more
+  than 100 distinct test domains (`acme.com`, `x.com`, generic `gmail.com` addresses), so it
+  would block ordinary test edits. A denylist of the developer's real strings is exact.
+- *User-level `~/.claude/settings.json` only*: it would not reach other contributors' sessions
+  or a fresh clone.
