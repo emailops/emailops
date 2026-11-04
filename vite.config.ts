@@ -36,7 +36,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // .claude/worktrees/ holds full checkouts; edits or an `npm ci` there
+      // would otherwise reload (or end) a `make dev` run from this checkout.
+      ignored: ['**/src-tauri/**', '**/.claude/**'],
     },
   },
 });
