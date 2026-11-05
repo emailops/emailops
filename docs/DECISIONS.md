@@ -4321,3 +4321,31 @@ set.
   would block ordinary test edits. A denylist of the developer's real strings is exact.
 - *User-level `~/.claude/settings.json` only*: it would not reach other contributors' sessions
   or a fresh clone.
+
+## 2026-11-05 — CLAUDE.md files hold rules; procedures and history live in docs/
+
+**Decision:** The three CLAUDE.md files keep only the rules an agent must follow while editing,
+each with the test or tool that enforces it. Release procedure and packaging gotchas live in
+`docs/RELEASE.md`; the incident history behind the frontend rules lives in
+`docs/FRONTEND-LESSONS.md`. A rule that clippy or biome already enforces gets one line, and a
+rule shared by backend and frontend is written once, in the root file.
+**Context:** The root CLAUDE.md loads in every session and the sub-area files in most of them;
+together they were about 67 KB, with about ten rules repeated across files and two that
+contradicted each other (a regression test "when practical" against "no exceptions").
+**Rejected:**
+- *Deleting the history*: it explains why the email-frame and CSP rules exist, and a reader
+  changing that code needs it.
+- *Moving the CLI validation loop to the skills only*: it is used outside `fix-ai-bug` and
+  `build-ai-feature`.
+
+## 2026-11-05 — AI regression cases graduate to the public eval suite by default
+
+**Decision:** When `fix-ai-bug` turns a repro green and the repro is worth keeping, it becomes a
+case in the public `src-tauri/evals/` suite, keyed to the synthetic demo persona, without asking.
+A repro that depends on real-mailbox content is re-themed onto demo data. `private-evals/` is
+used only when the behaviour cannot be reproduced on the demo DB, and only after asking.
+**Context:** The developer redirected a private graduation to the public suite on 17/09/2026:
+public cases run in `make cli-eval` and `make verify` on every change, while a private case runs
+on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
+**Rejected:**
+- *Asking "public or private?" each time*: the answer is almost always public.

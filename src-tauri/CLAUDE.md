@@ -67,60 +67,10 @@ pub type Result<T> = std::result::Result<T, EmailError>;
 - NEVER discard or ignore errors — they must always be logged and handled, and surfaced to users when relevant.
 
 ### No `.unwrap()` / `.expect(...)` in production code
-
-The crate root in `src-tauri/src/lib.rs` denies `clippy::unwrap_used` and
-`clippy::expect_used` for the entire crate. Tests are exempted via
-`clippy.toml` (`allow-unwrap-in-tests = true` / `allow-expect-in-tests = true`).
-
-When generating Rust code, **never** reach for `.unwrap()` or `.expect(...)`
-on a `Result` or `Option` in production paths. The default move is one of:
-
-- **Propagate with `?`** when the enclosing function already returns a
-  `Result`. This is correct ~95% of the time.
-- **Map and propagate** when the error type doesn't match:
-  `result.map_err(|e| AppError::SyncError(e.to_string()))?`.
-- **Pattern-match** (`match` / `if let`) when each branch needs different
-  behavior.
-- **Recover from poisoned mutexes** with
-  `lock().unwrap_or_else(PoisonError::into_inner)` instead of `.expect("…")` —
-  a previous panic on another thread should not cascade through every
-  subsequent caller.
-
-The lint may only be opted out site-by-site, with a justification comment.
-The legitimate exceptional cases (and the form to use) are:
-
-```rust
-// 1. Hard-coded literal that cannot fail by construction
-#[allow(clippy::unwrap_used)]
-let re = Regex::new(r"\b\d{4}\b").unwrap();  // syntax checked at build time
-
-// 2. Mutex poisoning where there is no meaningful recovery
-#[allow(clippy::expect_used)]
-let mut guard = m.lock().expect("cancel-flags mutex poisoned");
-
-// 3. Startup-time fail-fast in `pub fn run()` — the app cannot continue
-//    without a DB / data dir, so panic with a descriptive message
-#[allow(clippy::expect_used)]
-pub fn run() {
-    let db = Database::new(dir).expect("Failed to initialize database");
-    // …
-}
-```
-
-Rules for the opt-out:
-
-- Always co-locate `#[allow(...)]` with **one** call site or function,
-  never an entire module or the crate root.
-- Always pair it with a **one-line comment** explaining why the panic is
-  acceptable. "Infallible by construction", "no recovery possible", and
-  "fail-fast at startup" are the three accepted patterns; anything else
-  means the code should be returning a `Result` instead.
-- Prefer `.expect("descriptive message")` over `.unwrap()` when you do
-  panic — the message lands in the backtrace and helps debugging.
-
-If you find yourself wanting to reach for `.unwrap()` to "silence the
-compiler", you are almost certainly looking at an error path that needs a
-real handler. Add the variant to `AppError`, use `?`, and move on.
+`src-tauri/src/lib.rs` denies `clippy::unwrap_used` and `clippy::expect_used` (tests are exempt via `clippy.toml`).
+- Propagate with `?`, `map_err(...)?` when the error type differs, or `match`/`if let` when branches differ.
+- Recover a poisoned mutex with `lock().unwrap_or_else(PoisonError::into_inner)`.
+- Opt out only on one call site or function — never a module or the crate — with `#[allow(...)]` and a one-line reason that is one of: infallible by construction (a literal regex), no recovery possible, or fail-fast at startup in `run()`. Prefer `.expect("descriptive message")` there. Anything else should return a `Result`.
 
 ### Tauri Commands
 ```rust
@@ -137,23 +87,9 @@ pub async fn get_emails(
 ```
 
 - Tauri commands are thin wrappers that delegate to service modules. Business logic lives in services, not commands.
-- Only `commands/` performs the final `.map_err(|e| e.to_string())` at the Tauri boundary — `services/` and `db/` keep their typed errors.
 
 ### Data Structures
-```rust
-// Use serde for serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Email {
-    pub id: String,
-    pub account_id: String,
-    pub subject: String,
-    pub sender: String,
-    pub body: String,
-    pub timestamp: i64,
-    pub is_read: bool,
-}
-```
+- Structs that cross the Tauri boundary derive `Serialize`/`Deserialize` with `#[serde(rename_all = "camelCase")]`; their TypeScript types are generated with `ts-rs` (see `src/CLAUDE.md`).
 
 ## Database Conventions
 
@@ -249,16 +185,7 @@ schema. Read it to understand the full table/index/trigger structure.
 - Never use `let _ = sender.send(task)` — always handle the send error explicitly; log it and surface it in the output panel if the queue cannot accept the task.
 
 ### Backend Logging / Output Panel
-- Long-running workflows should emit structured `app-log` events for start, progress, success, and failure via `app.emit("app-log", AppLogEvent { level, source, message })`.
-- Prefer one logging path for user-visible operations; avoid mixing `println!` with UI logs for the same flow.
-- Do not log secrets, OAuth tokens, or raw sensitive email bodies.
-
-### Testing / CI
-- Add a focused regression test for production-impacting bugs when practical
-- `cargo test` should exercise real in-tree tests; avoid letting the backend ship with zero meaningful tests
-- CI must run at least frontend build/type-check plus Rust check/tests on every PR
-- Keep local data artifacts (`*.db`, caches, generated fixtures) out of Git via `.gitignore`
-- Test databases (`new_for_testing()`) must include every virtual table (FTS5, vec0), trigger, and index that the methods under test rely on. Missing any of these causes tests that either crash or silently return wrong results — giving false confidence that search/filter logic is correct.
+- Long-running workflows emit `app-log` start, progress, success and failure events (contract in the root `CLAUDE.md`). Do not mix `println!` with UI logs for the same flow, and never log secrets, OAuth tokens or raw email bodies.
 
 ## Testability & Coding Agent Practices
 
@@ -302,7 +229,7 @@ These practices keep the codebase legible to both tests and AI agents. The same 
 
 ### Any change that can move AI replies must be verified by an eval
 - "AI replies" = anything the chat, classifier, draft generator, memory extractor, lens extractor, or any other LLM-facing path emits to the user or downstream code. That includes: prompt edits, tool description / `prompt_summary` / parameter-schema changes, new or removed tools, new tool effects, retrieval / RAG ranking tweaks, post-processing on assistant content, and default-model bumps.
-- Before declaring such a change done, run the matching `examples/*_eval.rs` (chat → `chat_eval`, draft → `draft_eval`, classification → `tag_classification_eval` (`make eval-classify`; `email_classification_eval` probes a different model on a different taxonomy and has no ground truth), query planner → `query_plan_eval` (`make eval-plan`), lens → `lens_extract_eval`, memory → `memory_extract_eval`, task → `task_extract_eval`, invoice → `invoice_extract_eval`, agent search → `agent_search_eval`, chat shortcuts → `chat_shortcut_eval`). If no existing eval covers the new behaviour, add a focused case to the closest harness in the same PR.
+- Before declaring such a change done, run the matching `examples/*_eval.rs` (chat → `chat_eval`, chat shortcuts → `chat_shortcut_eval`, research answers → `research_mode_eval` (`make eval-research-mode`), draft → `draft_eval` and `draft_case_eval` (`make eval-draft-cases`, synthetic), classification → `tag_classification_eval` (`make eval-classify`; `email_classification_eval` probes a different model on a different taxonomy and has no ground truth), junk detector → `junk_eval`, translation → `translation_eval`, query planner → `query_plan_eval` (`make eval-plan`), lens → `lens_extract_eval` and `lens_template_eval` (`make eval-lenses`), form filling → `form_fill_eval` (`make eval-forms`), memory → `memory_extract_eval`, task → `task_extract_eval`, invoice → `invoice_extract_eval`, agent search → `agent_search_eval`). If no existing eval covers the new behaviour, add a focused case to the closest harness in the same PR.
 - **Scope the eval run to cases related to the change.** Do not blast the full suite for an unrelated edit — that wastes minutes per run and dilutes the signal. Use `--case <id>` to target a single case, `--tier smoke` for the curated subset, or whatever case-set flag the specific harness exposes (e.g. `chat_eval -- --case kickoff_date_es`). The "all cases" sweep is reserved for default-model / shared-prompt changes that genuinely touch every path.
 - Record the eval invocation and a one-line summary of the result in the PR description, alongside (or instead of) the regression-test note. A passing eval with the relevant cases is the AI-side equivalent of a passing unit test for deterministic code.
 
@@ -310,10 +237,10 @@ These practices keep the codebase legible to both tests and AI agents. The same 
 - Hairy modules (`services/emails/`, `services/lenses/`, `sync/`, `db/emails/`, `services/retrieval/`, `services/memory/`) carry a short `MODULE.md` at the directory root describing: what this module owns, what it depends on, the public surface, and what should NOT live here.
 - Update the README in the same PR that changes the module's surface.
 
-### Dev vs test data isolation
-- `make dev` targets the ignored repo-local app data dir (`.emailops-data/`) via `EMAILOPS_DATA_DIR`.
-- `make dev-fresh` targets a separate ignored repo-local data dir (`.emailops-data-fresh/`) — use this whenever you (or an agent) might mutate state during exploration.
-- Override `EMAILOPS_DATA_DIR` privately in `.env.local` or on the command line when a workflow needs another app data directory.
+### Data directories and DB inspection
+- `make` targets export `EMAILOPS_DATA_DIR`, defaulting to the checkout's ignored `.emailops-data/` (`Makefile`); `.env.local` or the command line can override it. `make dev-fresh` uses `.emailops-data-fresh/` — use it whenever you (or an agent) might mutate state while exploring.
+- Without `EMAILOPS_DATA_DIR`, the app and a bare `emailops-cli` resolve `--data-dir` → the folder chosen in the app → the platform default (`~/Library/Application Support/com.emailops.app/` on macOS): the developer's real mailbox.
+- **Inspecting the database while debugging:** prefer `make cli-fast ARGS="… --json"` (`doctor`, `accounts`, `search`, `show <id>`); `doctor --json` reports the `data_dir` in use. Use `sqlite3 <that data_dir>/emailops.db` only for custom joins, `.schema` or `PRAGMA` probes. The DB runs in WAL mode, so reads while the app is open are safe. Real-mailbox content never goes into tracked files.
 
 ### Regression test in the same PR as a bug fix
 - Every production-impacting bug fix lands with a focused regression test in the same PR. No exceptions. If the test infrastructure does not yet exist to write one, that is the first PR — the fix is the second.
@@ -338,17 +265,7 @@ Keep iterative Rust compile times fast and `src-tauri/target/` from ballooning.
 
 ## Lessons Learned
 
-### Tauri 2 Specifics (backend / debugging)
-- The app data directory is resolved from `EMAILOPS_DATA_DIR` when set, otherwise Tauri's platform default for the app identifier.
-- `make dev` sets `EMAILOPS_DATA_DIR` to an ignored repo-local directory, so local runs do not depend on any external app data by default.
-- **Inspecting the database while debugging.** For Makefile dev runs, the DB is under `.emailops-data/emailops.db`. Query it directly with `sqlite3`:
-  ```bash
-  DB=".emailops-data/emailops.db"
-  sqlite3 "$DB" "SELECT id, subject, sender_email, timestamp FROM emails ORDER BY timestamp DESC LIMIT 5;"
-  sqlite3 "$DB" "SELECT filename, mime_type, file_size FROM email_attachment_meta WHERE email_id = '<id>';"
-  sqlite3 "$DB" ".schema emails"
-  ```
-  Use this when validating sync results, reproducing UI bugs, or checking that a fix actually wrote the rows you expect. The app keeps the DB open in WAL mode, so concurrent reads while the app is running are safe.
+### Tauri 2 Specifics (backend)
 - `tokio::task::spawn_blocking` (and any Tokio future) cannot be called from the `.setup()` hook — the runtime hasn't started yet. Panics with "there is no reactor running". Use `std::thread::spawn` for any synchronous work that must happen at startup (e.g., database backup).
 
 ### Sync Performance

@@ -11,6 +11,8 @@ allowed-tools: Bash, Read, Edit, Write, Grep
 You are cutting a new release of EmailOps (a Tauri app shipping on macOS, Linux,
 and Windows). Follow the phases below in order. Run each phase, report a short
 status line, and **stop on the first failure** — never paper over a failing gate.
+`docs/RELEASE.md` is the reference for the build targets, per-platform packaging
+gotchas and release invariants; read it before changing any release step.
 
 ## Platforms at a glance
 
