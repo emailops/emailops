@@ -16,6 +16,8 @@
 #          frontend biome tsc vitest
 #          all      every gate
 #   or a single gate id from the lists above.
+#        scripts/gates.sh node-bin   prints the .nvmrc Node's bin dir (exit 1
+#                                    when none is installed) and runs no gate
 #
 # Frontend gates run under the Node major pinned in .nvmrc, found on PATH or
 # in nvm/fnm; without it they are skipped (and the run fails). In a
@@ -26,7 +28,24 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# Put the .nvmrc Node major first on PATH. Prints nothing and returns 1 when
+# no matching install exists.
+node_bin_for_nvmrc() {
+  local want dir
+  want="$(tr -d ' v\n' < "$ROOT/.nvmrc")"
+  want="${want%%.*}"
+  if command -v node >/dev/null && [[ "$(node --version)" == "v$want."* ]]; then
+    dirname "$(command -v node)"
+    return 0
+  fi
+  for dir in "$HOME"/.nvm/versions/node/v"$want".*/bin \
+             "$HOME"/.local/share/fnm/node-versions/v"$want".*/installation/bin; do
+    if [[ -x "$dir/node" ]]; then echo "$dir"; fi
+  done | sort -V | tail -n 1 | grep .
+}
+
 case "${1:-}" in
+  node-bin) node_bin_for_nvmrc; exit ;;
   commit)   GATES=(clippy clippy-desktop fmt biome tsc) ;;
   push)     GATES=(rust-test clippy clippy-desktop outdated vitest) ;;
   rust)     GATES=(rust-test clippy clippy-desktop fmt) ;;
@@ -47,22 +66,6 @@ if [[ -z "${CARGO_TARGET_DIR:-}" && "$ROOT" == */.claude/worktrees/* ]]; then
     CARGO_TARGET_DIR="$(cd "$main_root/src-tauri/target" && pwd -P)"
   fi
 fi
-
-# Put the .nvmrc Node major first on PATH. Prints nothing and returns 1 when
-# no matching install exists.
-node_bin_for_nvmrc() {
-  local want dir
-  want="$(tr -d ' v\n' < "$ROOT/.nvmrc")"
-  want="${want%%.*}"
-  if command -v node >/dev/null && [[ "$(node --version)" == "v$want."* ]]; then
-    dirname "$(command -v node)"
-    return 0
-  fi
-  for dir in "$HOME"/.nvm/versions/node/v"$want".*/bin \
-             "$HOME"/.local/share/fnm/node-versions/v"$want".*/installation/bin; do
-    if [[ -x "$dir/node" ]]; then echo "$dir"; fi
-  done | sort -V | tail -n 1 | grep .
-}
 
 NODE_WANT="$(tr -d ' v\n' < "$ROOT/.nvmrc")"
 NODE_BIN="$(node_bin_for_nvmrc)" || NODE_BIN=""
