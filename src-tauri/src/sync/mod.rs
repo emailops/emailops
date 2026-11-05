@@ -8,8 +8,11 @@ pub(crate) mod http_client;
 pub(crate) mod http_retry;
 pub mod ics_feed_calendar;
 pub mod imap;
+#[cfg(any(test, debug_assertions))]
+pub mod imap_fake;
 pub mod imap_search;
 mod imap_session;
+pub mod imap_transport;
 pub mod mime_builder;
 #[cfg(any(test, debug_assertions))]
 pub mod mock;
