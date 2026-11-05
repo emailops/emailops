@@ -1671,7 +1671,7 @@ impl EmailProvider for ImapClient {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
-            if !Self::select_folder_blocking(&mut session, &folder_for_select) {
+            if !Self::select_folder_checked(&mut session, &folder_for_select)? {
                 return Err(AppError::SyncError(format!(
                     "IMAP {:?} folder not found on server",
                     folder_for_select
@@ -1986,14 +1986,16 @@ impl EmailProvider for ImapClient {
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = if Self::select_folder_blocking(&mut session, &folder) {
-                imap_search::uid_store_seen(&mut session, uid, read)
-            } else {
-                Err(AppError::SyncError(format!(
-                    "IMAP {folder:?} folder not found on server"
-                )))
-            };
-            slot.checkin(session);
+            let result = Self::select_folder_checked(&mut session, &folder).and_then(|found| {
+                if found {
+                    imap_search::uid_store_seen(&mut session, uid, read)
+                } else {
+                    Err(AppError::SyncError(format!(
+                        "IMAP {folder:?} folder not found on server"
+                    )))
+                }
+            });
+            slot.release(session, &result);
             result
         })
         .await
@@ -2012,14 +2014,16 @@ impl EmailProvider for ImapClient {
         tokio::task::spawn_blocking(move || -> Result<()> {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = if Self::select_folder_blocking(&mut session, &folder) {
-                imap_search::uid_store_flagged(&mut session, uid, starred)
-            } else {
-                Err(AppError::SyncError(format!(
-                    "IMAP {folder:?} folder not found on server"
-                )))
-            };
-            slot.checkin(session);
+            let result = Self::select_folder_checked(&mut session, &folder).and_then(|found| {
+                if found {
+                    imap_search::uid_store_flagged(&mut session, uid, starred)
+                } else {
+                    Err(AppError::SyncError(format!(
+                        "IMAP {folder:?} folder not found on server"
+                    )))
+                }
+            });
+            slot.release(session, &result);
             result
         })
         .await
@@ -2196,14 +2200,16 @@ impl EmailProvider for ImapClient {
         let fetched = tokio::task::spawn_blocking(move || -> Result<Vec<imap_search::FetchedIdentity>> {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = if Self::select_folder_blocking(&mut session, &folder_for_select) {
-                imap_search::uid_fetch_identities(&mut session)
-            } else {
-                Err(AppError::SyncError(format!(
-                    "IMAP {folder_for_select:?} folder not found on server"
-                )))
-            };
-            slot.checkin(session);
+            let result = Self::select_folder_checked(&mut session, &folder_for_select).and_then(|found| {
+                if found {
+                    imap_search::uid_fetch_identities(&mut session)
+                } else {
+                    Err(AppError::SyncError(format!(
+                        "IMAP {folder_for_select:?} folder not found on server"
+                    )))
+                }
+            });
+            slot.release(session, &result);
             result
         })
         .await

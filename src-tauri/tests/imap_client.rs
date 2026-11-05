@@ -495,6 +495,28 @@ async fn a_connection_dropped_mid_operation_fails_it_and_the_next_reconnects() {
 }
 
 #[tokio::test]
+async fn a_connection_lost_at_select_is_not_reported_as_a_missing_folder() {
+    let server = FakeImapServer::standard();
+    let (id, _) = deliver_inbox(&server, 1);
+    let client = client(&server);
+    for operation in ["star", "read", "get", "identities"] {
+        client.get_message(&id).await.expect("warm up");
+        // NOOP (liveness) gets through; the SELECT does not.
+        server.fault(Fault::DropAfterCommands(1));
+
+        let result = match operation {
+            "star" => client.set_starred(&id, true).await,
+            "read" => client.set_read_state(&id, true).await,
+            "get" => client.get_message(&id).await.map(|_| ()),
+            _ => client.list_mailbox_identities("inbox").await.map(|_| ()),
+        };
+
+        let message = format!("{:?}", result.expect_err(operation));
+        assert!(!message.contains("not found"), "{operation}: {message}");
+    }
+}
+
+#[tokio::test]
 async fn untagged_responses_from_another_client_do_not_break_operations() {
     let server = FakeImapServer::standard();
     let (id, message_id) = deliver_inbox(&server, 1);

@@ -23,7 +23,7 @@ IMAP behaviour is validated at six levels. The first four run in a plain
 
 TLS uses a test CA that `scripts/imap_test.sh certs` writes under `.imap-test/certs/` (gitignored). A debug build trusts it when `EMAILOPS_IMAP_TEST_CA` names it. A release build ignores the variable. `scripts/imap_test.sh env` prints every variable the tests read. `make imap-down` stops the containers and drops their mail.
 
-Use `127.0.0.1`, not `localhost`. The client connects to the first address a name resolves to, and `localhost` resolves to `::1` first, where nothing listens.
+The containers listen on IPv4 only. `localhost` resolves to `::1` first, and the client then falls through to `127.0.0.1`. The env uses `127.0.0.1` directly to skip that refused attempt.
 
 ## Adding a case
 
