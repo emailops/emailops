@@ -232,7 +232,7 @@ content in the prefix:
   one provider may cost on another. Note which providers the feature targets;
   don't assume llamacpp.
 - **Never hardcode a model name** — query available models / read the
-  preference (see `src-tauri/CLAUDE.md` "AI / Ollama Integration"). A planner
+  preference (see `src-tauri/CLAUDE.md` "AI model selection"). A planner
   that adds a model round-trip pays latency on **every** matching turn — weigh
   it against a heuristic.
 - A new tool is only worth its prompt cost if the LLM actually picks it; a new

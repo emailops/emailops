@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(git add -A *)",
+      "Bash(git add --all *)",
+      "Bash(git add .)",
+      "Bash(cargo clean)",
+      "Read(.env)",
+      "Read(.env.local)",
+      "Read(.env.signing)"
+    ],
+    "ask": [
+      "Bash(git reset --hard *)",
+      "Bash(rm -rf *)",
+      "Bash(cargo clean *)"
+    ],
+    "allow": [
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git rev-parse *)",
+      "Bash(git ls-files *)",
+      "Bash(git worktree list *)",
+      "Bash(make cli-fast *)",
+      "Bash(make gates *)",
+      "Bash(uv run --no-project --with pytest pytest *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/claude_session_env.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -4297,3 +4297,55 @@ A 400 for the same content fails the same way every time.
 - *Backoff for every push failure*: it still sends requests that cannot succeed, and it delays
   the retry of transient failures.
 - *Persisting the refusal in the database*: a migration to save one attempt after a restart.
+
+## 2026-11-04 — Agent guardrails are enforced by tracked settings and hooks, not prose
+
+**Decision:** The repo's never-do rules for agents are enforced mechanically. A tracked
+`.claude/settings.json` denies `git add -A`/`--all`/`.`, a bare `cargo clean` and reads of the
+`.env`, `.env.local` and `.env.signing` files, and asks before `git reset --hard`, `rm -rf` and
+any other `cargo clean`. Deny and ask rules win over any allow rule in a developer's
+`settings.local.json`. The pre-commit hook runs `scripts/privacy_scan.py`, which blocks staged
+mail stores, app data dirs, and added lines containing an entry of the clone-local
+`.git/info/private-strings`.
+**Context:** CLAUDE.md said "never a bare `cargo clean`", while the local allowlist
+pre-approved `git:*` and `cargo clean`. Nothing ran before a commit to catch a mail store or a
+real address; the privacy-reviewer subagent runs only when an agent remembers to call it. In the
+same change, `ensure_demo_db.sh` started deciding on a content stamp instead of mtimes (the
+2026-10-01 demo DB schema entry described the mtime check), and vitest joined the `push` gate
+set.
+**Rejected:**
+- *Keeping the rules as prose only*: the allowlist contradicted them, and agents follow allow
+  rules, not prose.
+- *An allowlist of synthetic email domains in the privacy scan*: tracked files already use more
+  than 100 distinct test domains (`acme.com`, `x.com`, generic `gmail.com` addresses), so it
+  would block ordinary test edits. A denylist of the developer's real strings is exact.
+- *User-level `~/.claude/settings.json` only*: it would not reach other contributors' sessions
+  or a fresh clone.
+
+## 2026-11-05 — CLAUDE.md files hold rules; procedures and history live in docs/
+
+**Decision:** The three CLAUDE.md files keep only the rules an agent must follow while editing,
+each with the test or tool that enforces it. Release procedure and packaging gotchas live in
+`docs/RELEASE.md`; the incident history behind the frontend rules lives in
+`docs/FRONTEND-LESSONS.md`. A rule that clippy or biome already enforces gets one line, and a
+rule shared by backend and frontend is written once, in the root file.
+**Context:** The root CLAUDE.md loads in every session and the sub-area files in most of them;
+together they were about 67 KB, with about ten rules repeated across files and two that
+contradicted each other (a regression test "when practical" against "no exceptions").
+**Rejected:**
+- *Deleting the history*: it explains why the email-frame and CSP rules exist, and a reader
+  changing that code needs it.
+- *Moving the CLI validation loop to the skills only*: it is used outside `fix-ai-bug` and
+  `build-ai-feature`.
+
+## 2026-11-05 — AI regression cases graduate to the public eval suite by default
+
+**Decision:** When `fix-ai-bug` turns a repro green and the repro is worth keeping, it becomes a
+case in the public `src-tauri/evals/` suite, keyed to the synthetic demo persona, without asking.
+A repro that depends on real-mailbox content is re-themed onto demo data. `private-evals/` is
+used only when the behaviour cannot be reproduced on the demo DB, and only after asking.
+**Context:** The developer redirected a private graduation to the public suite on 17/09/2026:
+public cases run in `make cli-eval` and `make verify` on every change, while a private case runs
+on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
+**Rejected:**
+- *Asking "public or private?" each time*: the answer is almost always public.

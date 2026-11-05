@@ -23,7 +23,7 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
   archived message (*Studio key handover confirmed*), the Lens *Renewal quotes* with a row of each Larkspur quote, and a memory
   fact on Quayside Studios that carries an order for the model.
 - The schema comes from this checkout's migrations (`init_db` example), not from the production DB; `ensure_demo_db.sh`
-  rebuilds the demo DB when a migration is newer than it.
+  rebuilds the demo DB when the content of a migration or the generator changed since it was built.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's
   own app on port 1420 usually holds the production mailbox).
 - The red "Authentication required for account …" banners are expected on all three accounts.
