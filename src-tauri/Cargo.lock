@@ -515,12 +515,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
-name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -3313,9 +3307,9 @@ dependencies = [
 [[package]]
 name = "imap"
 version = "2.4.1"
-source = "git+https://github.com/emailops/rust-imap?rev=bf6cced555e07f232e5d389346f6a57d8bc141d6#bf6cced555e07f232e5d389346f6a57d8bc141d6"
+source = "git+https://github.com/emailops/rust-imap?rev=baa933d5c37e145499fca1e1cbb779b3f944b6a1#baa933d5c37e145499fca1e1cbb779b3f944b6a1"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.23.1",
  "bufstream",
  "chrono",
  "imap-proto",
