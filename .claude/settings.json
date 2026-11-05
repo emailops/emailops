@@ -27,5 +27,17 @@
       "Bash(make gates *)",
       "Bash(uv run --no-project --with pytest pytest *)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/claude_session_env.sh\""
+          }
+        ]
+      }
+    ]
   }
 }
