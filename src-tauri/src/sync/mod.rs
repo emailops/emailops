@@ -22,3 +22,5 @@ pub mod outlook_calendar;
 pub mod outlook_payload;
 pub mod outlook_upload;
 pub mod provider;
+#[cfg(any(test, debug_assertions))]
+pub mod provider_contract;
