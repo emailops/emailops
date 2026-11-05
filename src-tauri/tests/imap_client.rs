@@ -440,3 +440,113 @@ async fn sending_submits_over_smtp_and_files_a_seen_copy_in_sent() {
     assert_eq!(sent.len(), 1);
     assert!(sent[0].has_flag("\\Seen"));
 }
+
+// ── faults ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_refused_connection_is_retried() {
+    let server = FakeImapServer::standard();
+    server.fault(Fault::RefuseConnections(1));
+
+    let folders = client(&server).list_folders().await;
+
+    assert!(folders.is_ok(), "{folders:?}");
+    assert_eq!(server.connections(), 1, "the second attempt connected");
+}
+
+#[tokio::test]
+async fn a_throttled_login_is_retried() {
+    let server = FakeImapServer::standard();
+    server.fault(Fault::ThrottleLogins(1));
+
+    let folders = client(&server).list_folders().await;
+
+    assert!(folders.is_ok(), "{folders:?}");
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test]
+async fn rejected_credentials_are_not_retried() {
+    let server = FakeImapServer::standard();
+    server.fault(Fault::RejectLogins);
+
+    let result = client(&server).list_folders().await;
+
+    assert!(result.is_err());
+    assert_eq!(server.connections(), 1, "asking again only risks a lockout");
+}
+
+#[tokio::test]
+async fn a_connection_dropped_mid_operation_fails_it_and_the_next_reconnects() {
+    let server = FakeImapServer::standard();
+    let (id, _) = deliver_inbox(&server, 1);
+    let client = client(&server);
+    client.get_message(&id).await.expect("warm up");
+    // NOOP (liveness) and SELECT get through; the STORE does not.
+    server.fault(Fault::DropAfterCommands(2));
+
+    let during = client.set_starred(&id, true).await;
+    assert!(during.is_err(), "{during:?}");
+    assert!(!server.messages("INBOX")[0].has_flag("\\Flagged"));
+
+    client.set_starred(&id, true).await.expect("reconnects");
+    assert!(server.messages("INBOX")[0].has_flag("\\Flagged"));
+    assert_eq!(server.connections(), 2);
+}
+
+#[tokio::test]
+async fn untagged_responses_from_another_client_do_not_break_operations() {
+    let server = FakeImapServer::standard();
+    let (id, message_id) = deliver_inbox(&server, 1);
+    deliver_inbox(&server, 2);
+    let client = client(&server);
+    // Another client marks message 2 read while ours works.
+    for verb in ["SELECT", "UID SEARCH", "UID FETCH", "UID STORE"] {
+        server.fault(Fault::InterleaveNext {
+            verb: verb.to_string(),
+            line: "2 FETCH (FLAGS (\\Seen) UID 2)".to_string(),
+        });
+    }
+
+    let (refs, _) = client.list_messages(50, None, None, None, None).await.expect("list");
+    assert!(refs.iter().any(|r| r.id == id));
+    let (email, _, _) = client.get_message(&id).await.expect("get");
+    assert_eq!(email.message_id.as_deref(), Some(message_id.as_str()));
+    client.set_read_state(&id, true).await.expect("read");
+}
+
+#[tokio::test]
+async fn a_rebuilt_mailbox_reports_its_new_uid_validity() {
+    let server = FakeImapServer::standard();
+    deliver_inbox(&server, 1);
+    let client = client(&server);
+    let before = client.folder_uid_validities().await.expect("before");
+    server.renumber("INBOX");
+
+    let after = client.folder_uid_validities().await.expect("after");
+
+    let inbox = |v: &[emailops_lib::sync::provider::FolderUidValidity]| {
+        v.iter().find(|f| f.mailbox == "inbox").map(|f| f.uid_validity)
+    };
+    assert_ne!(inbox(&before), inbox(&after));
+    assert_eq!(inbox(&after), server.uid_validity("INBOX"));
+}
+
+#[tokio::test]
+async fn an_unsolicited_fetch_does_not_add_an_identity_without_a_message_id() {
+    let server = FakeImapServer::standard();
+    deliver_inbox(&server, 1);
+    deliver_inbox(&server, 2);
+    server.fault(Fault::InterleaveNext {
+        verb: "UID FETCH".to_string(),
+        line: "2 FETCH (FLAGS (\\Seen) UID 2)".to_string(),
+    });
+
+    let identities = client(&server)
+        .list_mailbox_identities("inbox")
+        .await
+        .expect("identities");
+
+    assert_eq!(identities.len(), 2, "{identities:?}");
+    assert!(identities.iter().all(|i| i.message_id.is_some()), "{identities:?}");
+}
