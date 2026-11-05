@@ -39,6 +39,17 @@ When you do need to run something the Makefile does not cover, prefer extending 
 
 **Keep the Makefile thin — it is an index, not an implementation.** A target's recipe should be a one-or-two-line invocation. Any recipe that needs multi-line shell logic (conditionals, loops, file generation, output capture) belongs in a standalone script under `scripts/`, called by a thin Makefile target (existing examples: `scripts/cli_bench.sh`, `scripts/eval_all.sh`, `scripts/fetch_bundled_models.sh`).
 
+## Worktrees and Shared State
+
+Agent work runs in worktrees under `.claude/worktrees/<name>`, one branch and one agent per checkout. Checkouts share more than git objects:
+
+- **Demo DB.** `make cli-eval`, `make demo` and `make verify` use the checkout's `.emailops-demo-data/`; when a worktree links it to the main checkout's, every checkout shares one demo DB. `scripts/ensure_demo_db.sh` rebuilds it only when the generator or the migrations change. A branch that adds a migration upgrades the shared DB and older branches then refuse it — rebuild it with `make demo-db` from the branch you are running.
+- **Build target.** `src-tauri/target` is a symlink into `/Volumes/Build` (`scripts/build_target.sh`), and a worktree may point at main's warm target. Free space with `make clean` or `make disk-clean`; never `cargo clean` or `rm -rf` what a worktree's target points to — it may be main's cache.
+- **Fresh worktrees** lack the bundled model (`src-tauri/resources/models/*.gguf`; `cargo test` and clippy fail on the missing resource path — run `make fetch-bundled-models` or link main's) and `node_modules` (symlink main's or `npm ci`).
+- **`make dev` and `make verify` never share a checkout.** They share the source tree and target, and a WebDriver build rewrites the tracked `src-tauri/gen/schemas`. Run verify from a different worktree than the developer's `make dev`.
+- **Production data dir.** A dev build pointed at it applies the branch's new migrations, and the installed release then refuses the DB until a release ships them. Ask before pointing a dev build at it.
+- **Git-local state** is shared by every worktree: the stash stack (never a bare `git stash`), `.git/info/exclude`, `.git/info/private-strings` and `.claude/settings.local.json`.
+
 ## Agent self-validation with `emailops-cli`
 
 **Mandatory skill routing.** A screenshot, trace fragment or pasted answer showing wrong chat/AI behaviour means the first tool call of the turn is `Skill fix-ai-bug`, before any grep, CLI run or edit. A request to add or change an AI surface means the first tool call is `Skill build-ai-feature`. Do not reproduce the loop by hand: the skills carry the repro, gate and report format the developer expects.

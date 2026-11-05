@@ -114,6 +114,9 @@ export const useAccountStore = create<AccountStore>((set) => ({
 - Use `addLog(level, source, message)` from `useLogStore` for UI-triggered operations (e.g., sync start/complete, embedding generation, filter refresh). Levels and sources are the shared contract in the root `CLAUDE.md`.
 - Backend-initiated events arrive via the Tauri `app-log` event — subscribe once at the app root and pipe into `useLogStore`.
 
+## i18n
+- UI strings live in `src/locales/{en,es,fr,de}/*.json`. "Embeddings"/"Embedding" and "Logs" stay in English in every locale; in Spanish the reasoning-trace label `chat:reasoning.trace.tool` stays `tool:`.
+
 ## Testing
 - Component and hook tests run in vitest + jsdom, rendering with `createRoot` inside `act` (see `AiSettings.scroll.test.tsx`).
 - End-to-end checks drive the real app over WebDriver (`verify-emailops` skill, `make verify`).
