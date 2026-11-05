@@ -120,7 +120,7 @@ fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64
 
     let mut clauses: Vec<String> = Vec::new();
     if let Some(after) = after_timestamp {
-        clauses.push(format!("SINCE {}", day((after - 86_400).max(0))));
+        clauses.push(format!("SINCE {}", day(after.saturating_sub(86_400).max(0))));
     }
     if let Some(before) = before_timestamp {
         clauses.push(format!("BEFORE {}", day(before.saturating_add(86_400))));
@@ -2514,6 +2514,10 @@ impl ImapClient {
         append_result.map_err(|e| AppError::SyncError(format!("IMAP APPEND to '{folder}' failed: {e}")))
     }
 }
+
+#[cfg(test)]
+#[path = "imap_proptests.rs"]
+mod proptests;
 
 #[cfg(test)]
 mod tests {
