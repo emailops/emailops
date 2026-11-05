@@ -4349,3 +4349,25 @@ public cases run in `make cli-eval` and `make verify` on every change, while a p
 on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
 **Rejected:**
 - *Asking "public or private?" each time*: the answer is almost always public.
+
+## 2026-11-05 — IMAP is validated against an in-memory server and local Docker servers
+
+**Decision:** `ImapClient` reaches its server through the `MailTransport` seam
+(`sync/imap_transport.rs`). Tests swap in an in-memory IMAP server (`sync/imap_fake.rs`) or
+recorded conversations, and `make imap-e2e` / `make imap-ui` run against Dovecot, Mailpit and
+Toxiproxy in Docker. A **debug** build trusts one extra CA, named by `EMAILOPS_IMAP_TEST_CA`, so
+it can reach those self-signed servers. A release build ignores the variable.
+**Context:** The developer asked for automated validation of IMAP accounts. The blocking IMAP
+halves took a TLS session, so archive, spam, star and message-state code had no tests (the
+mutants ledger listed them). The new layers found four bugs on their first run:
+- an unsolicited FETCH broke `get_message` and duplicated UIDVALIDITY identities;
+- CLI `--json` stdout carried sync logs;
+- the SEARCH window overflowed on an extreme watermark.
+
+See `docs/testing/IMAP-TESTING.md`.
+**Rejected:**
+- *A trait over every IMAP command*: a fake at the byte-stream level keeps the real `imap` crate
+  parsing in every test, and needed no change to the operations.
+- *GreenMail as the live server*: no STARTTLS, which every non-993 port uses here.
+- *Trusting the extra CA in release builds too*: any process able to set the environment could
+  then make the app trust a CA of its choosing.
