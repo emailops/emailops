@@ -1,0 +1,23 @@
+# Synthetic. A FETCH whose items come in an unusual order (BODY[] first,
+# FLAGS last), an INTERNALDATE in a western timezone and an RFC 2047 encoded
+# subject.
+S: * OK IMAP4rev1 ready
+C: LOGIN *
+S: {tag} OK Logged in
+C: SELECT "INBOX"
+S: * FLAGS (\Answered \Flagged \Deleted \Seen \Draft)
+S: * 1 EXISTS
+S: * OK [UIDVALIDITY 42] UIDs valid
+S: {tag} OK [READ-WRITE] Select completed
+C: UID FETCH 7 *
+S: * 1 FETCH (BODY[] {=}
+L: Message-ID: <quirk@example.test>
+L: Date: Tue, 3 Nov 2026 09:15:00 -0700
+L: From: =?UTF-8?B?w4lxdWlwZQ==?= <sender@example.test>
+L: To: user@example.test
+L: Subject: =?UTF-8?Q?Caf=C3=A9_ma=C3=B1ana?=
+L: Content-Type: text/plain; charset=utf-8
+L:
+L: Synthetic body.
+S+:  UID 7 INTERNALDATE "03-Nov-2026 09:15:00 -0700" FLAGS (\Flagged \Seen))
+S: {tag} OK Fetch completed

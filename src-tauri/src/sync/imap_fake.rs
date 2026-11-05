@@ -1282,3 +1282,230 @@ mod tests {
         assert!(criteria.iter().all(|c| c.matches(&message)));
     }
 }
+
+// ── Transcript replay ───────────────────────────────────────────────────────
+
+/// A server that replays a recorded IMAP conversation, for responses neither
+/// [`FakeImapServer`] nor a real test server produce on demand (folder names
+/// sent as literals, odd FETCH item order, `* BYE` mid-command, `[ALERT]`…).
+///
+/// Transcript format, one connection per `=== connection` section (the first
+/// marker may be omitted):
+///
+/// ```text
+/// # comment
+/// S: * OK greeting            server line; `{tag}` is the current command's tag
+/// C: LOGIN *                  the next command, without its tag; a trailing `*`
+///                             matches any rest of the line
+/// S: * 1 FETCH (BODY[] {=}    `{=}` opens a literal made of the `L:` lines below
+/// L: Subject: Hi              one literal line (joined with CRLF)
+/// S+: )                       continues the line the literal interrupted
+/// ```
+///
+/// A command that does not match the script is recorded in
+/// [`ReplayServer::mismatches`] and the connection closes.
+#[derive(Clone)]
+pub struct ReplayServer {
+    inner: Arc<Mutex<ReplayState>>,
+}
+
+#[derive(Debug, Clone)]
+enum ReplayStep {
+    Expect(String),
+    Send(Vec<u8>),
+}
+
+#[derive(Default)]
+struct ReplayState {
+    connections: VecDeque<VecDeque<ReplayStep>>,
+    mismatches: Vec<String>,
+    unused: usize,
+}
+
+impl ReplayServer {
+    pub fn from_transcript(transcript: &str) -> Self {
+        let mut connections: VecDeque<VecDeque<ReplayStep>> = VecDeque::new();
+        let mut current: VecDeque<ReplayStep> = VecDeque::new();
+        let mut literal: Option<(Vec<u8>, Vec<String>)> = None;
+        let flush_literal = |current: &mut VecDeque<ReplayStep>, literal: &mut Option<(Vec<u8>, Vec<String>)>| {
+            if let Some((mut head, lines)) = literal.take() {
+                let body = lines.join("\r\n");
+                head.extend(format!("{{{}}}\r\n", body.len()).into_bytes());
+                head.extend(body.into_bytes());
+                current.push_back(ReplayStep::Send(head));
+            }
+        };
+        for line in transcript.lines() {
+            if let Some(rest) = line.strip_prefix("L:") {
+                if let Some((_, lines)) = literal.as_mut() {
+                    lines.push(rest.strip_prefix(' ').unwrap_or(rest).to_string());
+                }
+                continue;
+            }
+            flush_literal(&mut current, &mut literal);
+            if line.starts_with("=== connection") {
+                if !current.is_empty() {
+                    connections.push_back(std::mem::take(&mut current));
+                }
+            } else if let Some(rest) = line.strip_prefix("C: ") {
+                current.push_back(ReplayStep::Expect(rest.to_string()));
+            } else if let Some(rest) = line.strip_prefix("S+:") {
+                let rest = rest.strip_prefix(' ').unwrap_or(rest);
+                current.push_back(ReplayStep::Send(format!("{rest}\r\n").into_bytes()));
+            } else if let Some(rest) = line.strip_prefix("S: ") {
+                match rest.strip_suffix("{=}") {
+                    Some(head) => literal = Some((head.as_bytes().to_vec(), Vec::new())),
+                    None => current.push_back(ReplayStep::Send(format!("{rest}\r\n").into_bytes())),
+                }
+            }
+        }
+        flush_literal(&mut current, &mut literal);
+        if !current.is_empty() {
+            connections.push_back(current);
+        }
+        Self {
+            inner: Arc::new(Mutex::new(ReplayState {
+                connections,
+                ..ReplayState::default()
+            })),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ReplayState> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Commands that did not match the script, with what was expected.
+    pub fn mismatches(&self) -> Vec<String> {
+        self.lock().mismatches.clone()
+    }
+
+    /// Scripted steps never reached, over all connections. Non-zero means the
+    /// client stopped earlier than the recording.
+    pub fn unused_steps(&self) -> usize {
+        let state = self.lock();
+        state.unused + state.connections.iter().map(VecDeque::len).sum::<usize>()
+    }
+
+    pub fn transport(&self) -> Arc<dyn MailTransport> {
+        Arc::new(self.clone())
+    }
+}
+
+#[async_trait]
+impl MailTransport for ReplayServer {
+    fn open_imap(&self, _creds: &ImapCredentials) -> std::result::Result<Box<dyn ImapStream>, imap::Error> {
+        let script = self.lock().connections.pop_front().ok_or_else(|| {
+            imap::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "the transcript has no more connections",
+            ))
+        })?;
+        let mut connection = ReplayConnection {
+            server: self.clone(),
+            script,
+            input: Vec::new(),
+            output: VecDeque::new(),
+            tag: String::new(),
+            closed: false,
+        };
+        connection.send_until_expect();
+        Ok(Box::new(connection))
+    }
+
+    async fn send_smtp(&self, _creds: &ImapCredentials, _email: lettre::Message) -> Result<()> {
+        Err(AppError::SyncError("ReplayServer does not speak SMTP".to_string()))
+    }
+
+    async fn test_smtp(&self, _creds: &ImapCredentials) -> Result<()> {
+        Ok(())
+    }
+}
+
+struct ReplayConnection {
+    server: ReplayServer,
+    script: VecDeque<ReplayStep>,
+    input: Vec<u8>,
+    output: VecDeque<u8>,
+    tag: String,
+    closed: bool,
+}
+
+impl Drop for ReplayConnection {
+    fn drop(&mut self) {
+        self.server.lock().unused += self.script.len();
+    }
+}
+
+impl ReplayConnection {
+    /// Send scripted server output up to the next expected command.
+    fn send_until_expect(&mut self) {
+        while let Some(ReplayStep::Send(bytes)) = self.script.front() {
+            let text = String::from_utf8_lossy(bytes).replace("{tag}", &self.tag);
+            self.output.extend(text.into_bytes());
+            self.script.pop_front();
+        }
+        if self.script.is_empty() {
+            // The recording ends here: the server hung up.
+            self.closed = true;
+        }
+    }
+}
+
+impl Read for ReplayConnection {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(self.output.len());
+        for (slot, byte) in buf.iter_mut().zip(self.output.drain(..n)) {
+            *slot = byte;
+        }
+        Ok(n)
+    }
+}
+
+impl Write for ReplayConnection {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.closed {
+            // The recording hung up here, as the real server did.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the recorded server closed the connection",
+            ));
+        }
+        self.input.extend_from_slice(buf);
+        while let Some(end) = find_crlf(&self.input) {
+            let line: Vec<u8> = self.input.drain(..end + 2).take(end).collect();
+            let line = String::from_utf8_lossy(&line).into_owned();
+            let (tag, command) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+            match self.script.pop_front() {
+                Some(ReplayStep::Expect(pattern)) if command_matches(&pattern, command) => {
+                    self.tag = tag.to_string();
+                    self.send_until_expect();
+                }
+                other => {
+                    let expected = match other {
+                        Some(ReplayStep::Expect(p)) => p,
+                        _ => "<end of transcript>".to_string(),
+                    };
+                    self.server
+                        .lock()
+                        .mismatches
+                        .push(format!("got `{}`, expected `{expected}`", redact_login(command)));
+                    self.script.clear();
+                    self.closed = true;
+                }
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn command_matches(pattern: &str, command: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => command.starts_with(prefix),
+        None => command == pattern,
+    }
+}

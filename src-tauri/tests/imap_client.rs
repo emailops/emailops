@@ -550,3 +550,61 @@ async fn an_unsolicited_fetch_does_not_add_an_identity_without_a_message_id() {
     assert_eq!(identities.len(), 2, "{identities:?}");
     assert!(identities.iter().all(|i| i.message_id.is_some()), "{identities:?}");
 }
+
+// ── model-based property ────────────────────────────────────────────────────
+
+mod flag_model {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone, Copy)]
+    enum Op {
+        Star(bool),
+        Read(bool),
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![any::<bool>().prop_map(Op::Star), any::<bool>().prop_map(Op::Read)]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// Any sequence of star / read changes leaves the server, and what
+        /// `fetch_message_states` reports, equal to a model that just records
+        /// the last value set per message.
+        #[test]
+        fn flag_changes_match_a_simple_model(ops in proptest::collection::vec((0usize..3, op()), 0..25)) {
+            let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
+            runtime.block_on(async {
+                let server = FakeImapServer::standard();
+                let ids: Vec<String> = (1..=3).map(|n| deliver_inbox(&server, n).0).collect();
+                let client = client(&server);
+                let mut model = [(false, false); 3];
+                for (index, op) in &ops {
+                    match op {
+                        Op::Star(on) => {
+                            client.set_starred(&ids[*index], *on).await.expect("star");
+                            model[*index].0 = *on;
+                        }
+                        Op::Read(on) => {
+                            client.set_read_state(&ids[*index], *on).await.expect("read");
+                            model[*index].1 = *on;
+                        }
+                    }
+                }
+                let stored = server.messages("INBOX");
+                let states = client.fetch_message_states(&ids).await.expect("states").expect("supported");
+                for (index, (starred, read)) in model.iter().enumerate() {
+                    prop_assert_eq!(stored[index].has_flag("\\Flagged"), *starred);
+                    prop_assert_eq!(stored[index].has_flag("\\Seen"), *read);
+                    prop_assert_eq!(
+                        states.get(&ids[index]),
+                        Some(&RemoteMessageState::Present { is_read: *read, is_starred: Some(*starred) })
+                    );
+                }
+                Ok(())
+            })?;
+        }
+    }
+}
