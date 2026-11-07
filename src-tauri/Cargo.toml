@@ -238,6 +238,8 @@ tempfile = "3"
 # transcripts in integration tests. Not linked into release builds — the
 # mock module is gated behind `cfg(any(test, debug_assertions))`.
 wiremock = "0.6"
+# Property tests for the IMAP wire helpers and id codecs (`sync/imap_proptests.rs`).
+proptest = "1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Build profiles — compile-time optimizations for iterative development

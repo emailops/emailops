@@ -100,6 +100,14 @@ impl<S> SessionSlot<S> {
             sessions.push(session);
         }
     }
+
+    /// Hand `session` back after an operation: kept when it succeeded, closed
+    /// when it failed, since the failure may be the connection itself.
+    pub(crate) fn release<T, E>(&self, session: S, result: &Result<T, E>) {
+        if result.is_ok() {
+            self.checkin(session);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -166,6 +174,28 @@ mod tests {
         let slot = SessionSlot::new();
         let connects = Cell::new(0);
         let _failed_operation = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        let next = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        assert_eq!(next, Fake(2));
+    }
+
+    #[test]
+    fn a_session_whose_operation_succeeded_is_kept() {
+        let slot = SessionSlot::new();
+        let connects = Cell::new(0);
+        let first = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        slot.release(first, &Ok::<(), ()>(()));
+        let next = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        assert_eq!(next, Fake(1));
+    }
+
+    #[test]
+    fn a_session_whose_operation_failed_is_closed() {
+        // The failure may be the connection itself (a `* BYE`, a reset);
+        // keeping it would cost the next operation a NOOP on a dead socket.
+        let slot = SessionSlot::new();
+        let connects = Cell::new(0);
+        let first = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
+        slot.release(first, &Err::<(), _>("connection lost"));
         let next = slot.checkout(|_| true, counting_connect(&connects)).unwrap();
         assert_eq!(next, Fake(2));
     }

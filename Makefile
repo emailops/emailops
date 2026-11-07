@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models bundled-skills record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models bundled-skills record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants imap-up imap-down imap-live imap-e2e imap-ui
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -383,6 +383,24 @@ deploy:
 	cargo build --release --features eval --example chat_eval --manifest-path src-tauri/Cargo.toml
 	npm run tauri build -- --bundles app
 	bash scripts/install_to_applications.sh src-tauri/target/release/bundle/macos/EmailOps.app
+
+# IMAP accounts against real local servers (Dovecot + Mailpit + Toxiproxy in Docker).
+# imap-e2e = imap-live + the CLI flow; servers stay up until imap-down. See scripts/imap_e2e.sh.
+imap-up:
+	bash scripts/imap_test.sh up
+
+imap-down:
+	bash scripts/imap_test.sh down
+
+imap-live:
+	bash scripts/imap_e2e.sh live
+
+imap-e2e:
+	bash scripts/imap_e2e.sh all
+
+# The same account through the real desktop UI (fresh data dir, wizard, star + archive checked on the server).
+imap-ui:
+	bash scripts/imap_ui.sh
 
 # Full verification: every test layer, results per feature, HTML report under src-tauri/reports/verify/
 # (quick tier skips the UI, oracle and eval layers). See .claude/skills/verify-emailops/.

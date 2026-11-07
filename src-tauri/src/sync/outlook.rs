@@ -1291,7 +1291,9 @@ impl OutlookClient {
 
     fn log(&self, message: &str) {
         let Some(app) = &self.app else {
-            println!("{}", message);
+            // The CLI: through the installed logger (stderr), never stdout,
+            // which a `--json` command owns.
+            crate::services::logger::log("debug", "sync", message.to_string());
             return;
         };
         let _ = app.emit(

@@ -148,3 +148,6 @@ src-tauri/src/types/generated/
 
 # Swift Package Manager build output (created by Swift tooling run in the checkout)
 .build/
+
+# Local IMAP test servers: generated certs and state (scripts/imap_test.sh)
+/.imap-test/

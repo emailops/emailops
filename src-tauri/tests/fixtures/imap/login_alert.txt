@@ -1,0 +1,5 @@
+# Synthetic. A provider that refuses the password and asks the user to act
+# through RFC 3501's [ALERT] code; the message must reach the user.
+S: * OK ready
+C: LOGIN *
+S: {tag} NO [ALERT] Application-specific password required: visit your account security page

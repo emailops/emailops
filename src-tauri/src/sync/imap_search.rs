@@ -173,6 +173,9 @@ pub(crate) fn uid_fetch_identities<T: Read + Write>(session: &mut imap::Session<
             Ok(messages) => {
                 return Ok(messages
                     .iter()
+                    // An unsolicited FETCH (another client changed a flag)
+                    // carries neither item asked for; it is not an answer.
+                    .filter(|fetch| fetch.header().is_some() || fetch.internal_date().is_some())
                     .filter_map(|fetch| {
                         Some(FetchedIdentity {
                             uid: fetch.uid?,
@@ -321,9 +324,11 @@ pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, ui
     for attempt in 1..=FETCH_RETRY_ATTEMPTS {
         match session.uid_fetch(uid.to_string(), FETCH_BODY_PEEK) {
             Ok(messages) => {
+                // An unsolicited FETCH about another message (another client
+                // changed its flags) can arrive in the same response.
                 return messages
                     .iter()
-                    .next()
+                    .find(|fetch| fetch.uid == Some(uid))
                     .and_then(FetchedMessage::from_fetch)
                     .ok_or_else(|| AppError::NotFound(format!("IMAP UID {uid}: body not found")));
             }
