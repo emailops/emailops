@@ -49,6 +49,8 @@ interface VirtualEmailListProps {
   /** Unified ("All accounts") mode: per-account color bar. Returns undefined
    *  outside unified mode so rows render exactly as before. */
   getAccountBadge?: (email: Email) => { colorClass: string; label: string; chip?: boolean } | undefined;
+  /** Address of the account each row belongs to (see `EmailRow.ownerEmail`). */
+  getOwnerEmail?: (email: Email) => string | undefined;
 }
 
 /**
@@ -81,6 +83,7 @@ export function VirtualEmailList({
   onChatAboutThread,
   compact = false,
   getAccountBadge,
+  getOwnerEmail,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox', 'common']);
 
@@ -370,6 +373,7 @@ export function VirtualEmailList({
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
                 accountBadge={getAccountBadge?.(email)}
+                ownerEmail={getOwnerEmail?.(email)}
                 isChecked={selectedIds.has(email.id)}
                 selectionActive={selectionActive}
                 onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}

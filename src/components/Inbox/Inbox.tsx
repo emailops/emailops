@@ -249,15 +249,18 @@ export function Inbox({
   const activeFilter = useFilterStore((s) => s.activeFilter);
   // Search results mix every account, so they also get a readable chip.
   const showAccountChip = Boolean(searchQuery);
+  const accountEmailById = useMemo(() => new Map(allAccounts.map((a) => [a.id, a.email])), [allAccounts]);
   const getAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
-    const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
       colorClass: accountColorClass(allAccounts, email.accountId),
-      label: emailById.get(email.accountId) ?? email.accountId,
+      label: accountEmailById.get(email.accountId) ?? email.accountId,
       chip: showAccountChip,
     });
-  }, [isUnified, allAccounts, showAccountChip]);
+  }, [isUnified, allAccounts, accountEmailById, showAccountChip]);
+  // Each row is judged against its own account, never the active one: the
+  // unified view mixes rows from several.
+  const getOwnerEmail = useCallback((email: Email) => accountEmailById.get(email.accountId), [accountEmailById]);
 
   // A selection belongs to the list it was made in: switching account,
   // mailbox, filter or search clears it.
@@ -628,6 +631,7 @@ export function Inbox({
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
         getAccountBadge={getAccountBadge}
+        getOwnerEmail={getOwnerEmail}
       />
     </div>
   );

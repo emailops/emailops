@@ -84,7 +84,12 @@
     "unstar": "Remove star",
     "archive": "Archive",
     "moveArchivedToInbox": "Move to Inbox",
-    "hideFromFilters": "Hide from smart filters"
+    "hideFromFilters": "Hide from smart filters",
+    "toSelf": "you",
+    "noRecipients": "To: (no recipients)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "and {{count}} more",
+    "addRecipientFilter": "Add recipient as smart filter"
   },
   "header": {
     "totalCount": "{{count}} emails",
