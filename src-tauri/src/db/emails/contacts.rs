@@ -1,6 +1,64 @@
 use super::*;
 
+/// One row per `sender_email`, with the bare `sender` column taken from the
+/// row holding `MAX(timestamp)` (SQLite's documented min/max bare-column rule).
+/// Grouping by the column as stored lets the planner walk
+/// `idx_emails_sender_stats` in order instead of sorting.
+const SENDER_NAMES_SQL: &str = "SELECT sender_email, sender, MAX(timestamp)
+     FROM emails
+     WHERE account_id = ?1 AND is_deleted = 0 AND mailbox <> 'spam'
+       AND sender <> '' AND instr(sender, '@') = 0
+     GROUP BY sender_email";
+
 impl Database {
+    /// The name each address uses when it writes to the account: its latest
+    /// display name that is neither empty nor itself an address, keyed by the
+    /// lowercased address. Inbox rows use it to name the recipients of the
+    /// user's own messages, whose stored headers often keep only the address
+    /// (Outlook, IMAP). Spam is left out so a forged sender cannot put a name
+    /// on a real address.
+    pub fn get_sender_names(&self, account_id: &str) -> Result<HashMap<String, String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(SENDER_NAMES_SQL)?;
+        let rows = stmt.query_map(params![account_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        // Addresses that differ only in case group apart in SQL; the latest wins.
+        let mut latest: HashMap<String, (String, i64)> = HashMap::new();
+        for row in rows {
+            let (address, name, timestamp) = row?;
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let entry = latest
+                .entry(address.trim().to_lowercase())
+                .or_insert_with(|| (String::new(), i64::MIN));
+            if timestamp > entry.1 {
+                *entry = (name.to_string(), timestamp);
+            }
+        }
+        Ok(latest.into_iter().map(|(address, (name, _))| (address, name)).collect())
+    }
+
+    /// `EXPLAIN QUERY PLAN` rows for [`Database::get_sender_names`], so a test
+    /// can pin how the planner drives it.
+    #[cfg(test)]
+    pub(crate) fn explain_sender_names(&self) -> Vec<String> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {SENDER_NAMES_SQL}")).unwrap();
+        let mut rows = stmt.query(params!["acc"]).unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            plan.push(row.get::<_, String>(3).unwrap());
+        }
+        plan
+    }
+
     pub fn get_contacts(&self, account_id: &str) -> Result<Vec<Contact>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
@@ -1084,5 +1142,93 @@ mod tests {
             .expect("contact present");
         assert_eq!(detail.contact.email, "john@old.com");
         assert_eq!(detail.aliases, vec!["john@new.com".to_string()]);
+    }
+
+    #[test]
+    fn sender_names_keep_the_latest_real_name_of_each_address() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+        let mail = |id: &str, account: &str, name: &str, address: &str, mailbox: &str, ts: i64| {
+            insert_contact_email(&db, id, account, id, name, address, "[]", mailbox, ts);
+        };
+        // The latest real name wins; an empty name or a bare address is no name.
+        mail("e1", "acc1", "Luis", "luis@example.org", "inbox", 1_000);
+        mail("e2", "acc1", "Luis Gil", "luis@example.org", "archive", 2_000);
+        mail("e3", "acc1", "", "luis@example.org", "inbox", 3_000);
+        mail("e4", "acc1", "luis@example.org", "luis@example.org", "inbox", 4_000);
+        // Addresses that differ only in case are one person: the latest wins.
+        mail("e5", "acc1", "Ana", "Ana@Example.com", "inbox", 1_000);
+        mail("e6", "acc1", "Ana Ruiz", "ana@example.com", "inbox", 5_000);
+        // A forged sender in Spam must not name a real address.
+        mail("e7", "acc1", "Bank Support", "carla@example.net", "spam", 9_000);
+        // Deleted mail and other accounts do not count.
+        mail("e8", "acc1", "Old Name", "old@example.com", "inbox", 1_000);
+        db.connection()
+            .execute("UPDATE emails SET is_deleted = 1 WHERE id = 'e8'", [])
+            .unwrap();
+        mail("e9", "acc2", "Someone Else", "luis@example.org", "inbox", 9_000);
+
+        let names = db.get_sender_names("acc1").unwrap();
+
+        let expected: std::collections::HashMap<String, String> = [
+            ("luis@example.org".to_string(), "Luis Gil".to_string()),
+            ("ana@example.com".to_string(), "Ana Ruiz".to_string()),
+        ]
+        .into();
+        assert_eq!(names, expected);
+    }
+
+    /// The read runs once per account and sync, over every message of the
+    /// account: it must walk the sender index in order, never sort.
+    #[test]
+    fn sender_names_walk_the_sender_index_without_sorting() {
+        let db = Database::new_for_testing().unwrap();
+        let plan = db.explain_sender_names().join("\n");
+        assert!(plan.contains("idx_emails_sender_stats"), "{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    }
+
+    /// Timing on a synthetic account the size of a large mailbox. Run by hand:
+    /// `cargo test --no-default-features --lib sender_names_on_a_large_account -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing on 50k synthetic emails; run by hand"]
+    fn sender_names_on_a_large_account() {
+        const EMAILS: usize = 50_000;
+        const SENDERS: usize = 5_000;
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.com");
+        {
+            let conn = db.connection();
+            let tx = conn.unchecked_transaction().unwrap();
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO emails
+                       (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                        recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+                     VALUES (?1, 'acc1', ?1, 'subj', ?2, ?3, 'example.com', '[]', '[]', 'snip', ?4, 0,
+                             'primary', 'inbox', 0)",
+                )
+                .unwrap();
+            for i in 0..EMAILS {
+                let sender = i % SENDERS;
+                stmt.execute(rusqlite::params![
+                    format!("e{i}"),
+                    format!("Person {sender}"),
+                    format!("person{sender}@example.com"),
+                    i as i64
+                ])
+                .unwrap();
+            }
+            drop(stmt);
+            tx.commit().unwrap();
+        }
+
+        let started = std::time::Instant::now();
+        let names = db.get_sender_names("acc1").unwrap();
+        let elapsed = started.elapsed();
+        println!("get_sender_names: {} names in {elapsed:?}", names.len());
+        println!("plan:\n{}", db.explain_sender_names().join("\n"));
+        assert_eq!(names.len(), SENDERS);
+        assert!(elapsed < std::time::Duration::from_millis(250), "{elapsed:?}");
     }
 }

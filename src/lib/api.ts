@@ -1632,6 +1632,11 @@ export async function listContactsByCompany(accountId: string): Promise<CompanyC
   return invoke('list_contacts_by_company', { accountId });
 }
 
+/** Lowercased address → the name it uses when it writes to the account. */
+export async function getSenderNames(accountId: string): Promise<Record<string, string>> {
+  return invoke('get_sender_names', { accountId });
+}
+
 /** The account's organization domain ("Mi organización"); `null` for a free
  *  personal provider such as gmail.com. */
 export async function getOrganizationDomain(accountId: string): Promise<string | null> {
