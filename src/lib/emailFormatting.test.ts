@@ -119,6 +119,15 @@ describe('rowParty', () => {
     expect(rowParty(received, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2 })).toEqual({ mode: 'from' });
   });
 
+  // The Sent view lists an Inbox copy whose sender is the account (an IMAP
+  // reply-all to yourself has no sent flag); its query already decided it is
+  // the user's, so the row must not fall back to the user's own name there.
+  it('names the recipients of every row listed in the Sent view', () => {
+    const inboxCopy = message({ mailbox: 'inbox', isSent: false, recipients: ['ana@example.com'] });
+    expect(rowParty(inboxCopy, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2 }).mode).toBe('from');
+    expect(rowParty(inboxCopy, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2, inSentView: true }).mode).toBe('to');
+  });
+
   it('names the recipients of an own message, To before Cc', () => {
     const party = rowParty(message({ recipients: ['Ana <ana@example.com>'], cc: ['luis@example.org'] }), {
       ownerEmail: OWNER,

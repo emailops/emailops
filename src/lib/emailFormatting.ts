@@ -89,6 +89,11 @@ export type RowParty =
  * Decide what a list row names. Pure: no i18n, no stores — `EmailRow` words
  * the result. `nameOf` receives a lowercased address and returns the name it
  * uses when it writes to the row's account, if any.
+ *
+ * `inSentView`: the row is listed by the Sent view, whose query already
+ * counts it as sent (sent flag, Sent folder or sender = account). That covers
+ * an Inbox copy of the user's own reply-all, which carries no sent flag and
+ * would otherwise show the user's own name in Sent.
  */
 export function rowParty(
   email: Email,
@@ -96,9 +101,15 @@ export function rowParty(
     ownerEmail,
     nameOf,
     maxNames,
-  }: { ownerEmail: string | undefined; nameOf: (address: string) => string | undefined; maxNames: number },
+    inSentView = false,
+  }: {
+    ownerEmail: string | undefined;
+    nameOf: (address: string) => string | undefined;
+    maxNames: number;
+    inSentView?: boolean;
+  },
 ): RowParty {
-  if (!isOwnMessage(email, ownerEmail)) return { mode: 'from' };
+  if (!inSentView && !isOwnMessage(email, ownerEmail)) return { mode: 'from' };
 
   const seen = new Set<string>();
   const toEntries = (list: string[]): PartyEntry[] =>

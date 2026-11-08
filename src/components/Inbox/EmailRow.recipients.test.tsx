@@ -187,6 +187,22 @@ describe('EmailRow of a received message', () => {
     expect(party().cell.textContent).toBe('Sam Rivera');
   });
 
+  it('names the recipients of the same message when the Sent view lists it', () => {
+    act(() => {
+      root.render(
+        <EmailRow
+          email={{ ...sent, mailbox: 'inbox', isSent: false }}
+          isSelected={false}
+          onClick={() => {}}
+          ownerEmail={OWNER}
+          nameOf={nameOf}
+          inSentView
+        />,
+      );
+    });
+    expect(party().names).toBe('Para: Ana, Luis Gil');
+  });
+
   it('keeps the sender items of the menu', () => {
     renderRow(received);
     const menu = openMenu();

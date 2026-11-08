@@ -53,6 +53,8 @@ interface VirtualEmailListProps {
   getOwnerEmail?: (email: Email) => string | undefined;
   /** See `EmailRow.nameOf`. */
   nameOf?: (accountId: string, address: string) => string | undefined;
+  /** The list is the Sent view (see `rowParty`). */
+  inSentView?: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ export function VirtualEmailList({
   getAccountBadge,
   getOwnerEmail,
   nameOf,
+  inSentView = false,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox', 'common']);
 
@@ -378,6 +381,7 @@ export function VirtualEmailList({
                 accountBadge={getAccountBadge?.(email)}
                 ownerEmail={getOwnerEmail?.(email)}
                 nameOf={nameOf}
+                inSentView={inSentView}
                 isChecked={selectedIds.has(email.id)}
                 selectionActive={selectionActive}
                 onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}

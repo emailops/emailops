@@ -59,6 +59,8 @@ interface EmailRowProps {
   /** The name an address uses when it writes to the account, if known.
    *  Receives a lowercased address. */
   nameOf?: (accountId: string, address: string) => string | undefined;
+  /** The row is listed by the Sent view (see `rowParty`). */
+  inSentView?: boolean;
 }
 
 export function EmailRow({
@@ -78,6 +80,7 @@ export function EmailRow({
   onCheck,
   ownerEmail,
   nameOf,
+  inSentView = false,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox', 'common']);
   // Who the row names: the sender, or the recipients of a message the user
@@ -86,6 +89,7 @@ export function EmailRow({
     ownerEmail,
     nameOf: (address) => nameOf?.(email.accountId, address),
     maxNames: compact ? 1 : 2,
+    inSentView,
   });
   const label = rowLabel(party, email, t);
   const avatar =

@@ -4356,7 +4356,8 @@ on one machine and carries real mailbox content. The skill still defaulted to `p
 Snoozed, search, smart filters) decides per row whether the user sent the message, with one rule,
 `isOwnMessage`: the owner is the address of the row's account, not the active account; in Inbox and
 Spam only the provider's `is_sent` flag counts; elsewhere `is_sent`, the Sent mailbox or a sender
-equal to the owner. An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
+equal to the owner. Every row of the Sent view counts as own, since its query already lists Inbox
+copies whose sender is the account (a reply-all to yourself over IMAP has no sent flag). An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
 as "you" in the reader's language), and its avatar, drag image and row-menu filter items follow the
 first recipient who is not the user. A recipient's name comes from the stored header, else the
 latest real name that address uses as a sender in the same account (Spam excluded), else the

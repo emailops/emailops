@@ -266,6 +266,8 @@ export function Inbox({
   // A selection belongs to the list it was made in: switching account,
   // mailbox, filter or search clears it.
   const listScope = useEmailStore((s) => s.listScope);
+  // A search or smart filter replaces the Sent list with its own results.
+  const inSentView = listScope === 'sent' && !searchQuery && !activeFilter;
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const clearSelection = useSelectionStore((s) => s.clear);
   const hasSelection = useSelectionStore((s) => s.ids.size > 0);
@@ -637,6 +639,7 @@ export function Inbox({
         getAccountBadge={getAccountBadge}
         getOwnerEmail={getOwnerEmail}
         nameOf={nameOf}
+        inSentView={inSentView}
       />
     </div>
   );
