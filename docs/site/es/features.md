@@ -66,6 +66,12 @@ archiva en su propia carpeta de archivo, que aparece junto a sus demás carpetas
 archivado solo sale de la bandeja de entrada: la búsqueda, los filtros inteligentes y las
 funciones de IA lo siguen alcanzando.
 
+<!-- claim:feat-list-sent-rows -->
+En todas las listas, la fila de un correo que enviaste nombra a quién iba dirigido («Para: Ana,
+Luis +1») en lugar de tu nombre, y su tooltip lista todos los destinatarios. El nombre de cada
+destinatario sale del propio correo o de cómo firma esa persona cuando te escribe; si no hay
+ninguno, la fila muestra la dirección.
+
 <!-- claim:feat-organize-3 -->
 Marca la casilla al principio de una fila para seleccionarla. Con una o más seleccionadas, una
 barra sobre la lista actúa sobre todas a la vez — archivar, posponer, eliminar, marcar como leídas

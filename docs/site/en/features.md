@@ -63,6 +63,12 @@ for Gmail and Outlook accounts and in **All accounts**; an IMAP account archives
 Archive folder, which appears with its other folders. Archived mail is only out of the inbox:
 search, the smart filters and the AI features still reach it.
 
+<!-- claim:feat-list-sent-rows -->
+In every list, a row for a message you sent names who it went to (“To: Ana, Luis +1”) instead
+of your own name, and its tooltip lists every recipient. A recipient's name comes from the
+message itself or from how that person signs when they write to you; failing that, the row
+shows the address.
+
 <!-- claim:feat-organize-3 -->
 Tick the box at the start of a row to select it. With one or more selected, a toolbar above the
 list acts on all of them at once — archive, snooze, delete, mark as read or unread, star — and

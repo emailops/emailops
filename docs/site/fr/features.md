@@ -69,6 +69,12 @@ compte IMAP archive dans son propre dossier d'archives, qui apparaît avec ses a
 courrier archivé quitte seulement la boîte de réception : la recherche, les filtres intelligents
 et les fonctions d'IA y ont toujours accès.
 
+<!-- claim:feat-list-sent-rows -->
+Dans toutes les listes, la ligne d'un message que vous avez envoyé indique à qui il était
+adressé (« À : Ana, Luis +1 ») au lieu de votre propre nom, et son info-bulle liste tous les
+destinataires. Le nom de chaque destinataire vient du message lui-même ou de la façon dont cette
+personne signe quand elle vous écrit ; à défaut, la ligne affiche l'adresse.
+
 <!-- claim:feat-organize-3 -->
 Cochez la case au début d'une ligne pour la sélectionner. Dès qu'une ou plusieurs lignes sont
 sélectionnées, une barre au-dessus de la liste agit sur toutes à la fois — archiver, mettre en

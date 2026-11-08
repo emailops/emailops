@@ -67,6 +67,12 @@ in seinen eigenen Archivordner, der bei seinen übrigen Ordnern erscheint. Archi
 aus dem Posteingang heraus: Suche, intelligente Filter und die KI-Funktionen erreichen sie
 weiterhin.
 
+<!-- claim:feat-list-sent-rows -->
+In jeder Liste nennt die Zeile einer Nachricht, die Sie gesendet haben, die Empfänger („An: Ana,
+Luis +1“) statt Ihres eigenen Namens, und ihr Tooltip listet alle Empfänger auf. Der Name eines
+Empfängers stammt aus der Nachricht selbst oder daraus, wie diese Person unterschreibt, wenn sie
+Ihnen schreibt; sonst zeigt die Zeile die Adresse.
+
 <!-- claim:feat-organize-3 -->
 Setzen Sie das Häkchen am Anfang einer Zeile, um sie auszuwählen. Sobald eine oder mehrere ausgewählt
 sind, wirkt eine Leiste über der Liste auf alle zugleich — archivieren, zurückstellen, löschen,

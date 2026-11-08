@@ -51,6 +51,8 @@ interface VirtualEmailListProps {
   getAccountBadge?: (email: Email) => { colorClass: string; label: string; chip?: boolean } | undefined;
   /** Address of the account each row belongs to (see `EmailRow.ownerEmail`). */
   getOwnerEmail?: (email: Email) => string | undefined;
+  /** See `EmailRow.nameOf`. */
+  nameOf?: (accountId: string, address: string) => string | undefined;
 }
 
 /**
@@ -84,6 +86,7 @@ export function VirtualEmailList({
   compact = false,
   getAccountBadge,
   getOwnerEmail,
+  nameOf,
 }: VirtualEmailListProps) {
   const { t } = useTranslation(['inbox', 'common']);
 
@@ -374,6 +377,7 @@ export function VirtualEmailList({
                 compact={compact}
                 accountBadge={getAccountBadge?.(email)}
                 ownerEmail={getOwnerEmail?.(email)}
+                nameOf={nameOf}
                 isChecked={selectedIds.has(email.id)}
                 selectionActive={selectionActive}
                 onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSenderNames } from '@/hooks/useSenderNames';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
 import { selectPageFailed } from '@/lib/listPaging';
@@ -304,6 +305,9 @@ export function Inbox({
     if (searchQuery || activeFilter) return filteredEmails;
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+  // Rows of the user's own messages name their recipients the way those
+  // people sign when they write in.
+  const nameOf = useSenderNames(visibleEmails);
 
   // Whether any of the loaded messages are flagged, regardless of the current
   // setting — the toggle only appears when it would do something.
@@ -632,6 +636,7 @@ export function Inbox({
         compact={fullWidth}
         getAccountBadge={getAccountBadge}
         getOwnerEmail={getOwnerEmail}
+        nameOf={nameOf}
       />
     </div>
   );
