@@ -4349,3 +4349,26 @@ public cases run in `make cli-eval` and `make verify` on every change, while a p
 on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
 **Rejected:**
 - *Asking "public or private?" each time*: the answer is almost always public.
+
+## 2026-11-08 — List rows of the user's own messages name the recipients
+
+**Decision:** Every mail list row (Inbox, Sent, Starred, Archive, Trash, Spam, custom folders,
+Snoozed, search, smart filters) decides per row whether the user sent the message, with one rule,
+`isOwnMessage`: the owner is the address of the row's account, not the active account; in Inbox and
+Spam only the provider's `is_sent` flag counts; elsewhere `is_sent`, the Sent mailbox or a sender
+equal to the owner. Every row of the Sent view counts as own, since its query already lists Inbox
+copies whose sender is the account (a reply-all to yourself over IMAP has no sent flag). An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
+as "you" in the reader's language), and its avatar, drag image and row-menu filter items follow the
+first recipient who is not the user. A recipient's name comes from the stored header, else the
+latest real name that address uses as a sender in the same account (Spam excluded), else the
+address. The tag board's "Me" label shares the same rule.
+**Context:** Issue #256: Sent repeated the user's own name on every row, and mixed lists gave no
+sign that a message was the user's. Outlook and IMAP store recipient addresses without names, so a
+header-only label would show bare addresses on those providers.
+**Rejected:**
+- *A computed label on the backend `Email`*: it touches the tuned list queries and `EMAIL_COLUMNS`
+  that thread and message reads share.
+- *Reusing `get_contacts` / `list_contacts` for names*: byte-wise `MAX(sender)`, a 500-row cap,
+  case-sensitive grouping and Spam included, or three full scans.
+- *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
+- *Changing sync to store Outlook recipient names*: a separate change.

@@ -84,7 +84,12 @@
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
     "moveArchivedToInbox": "Déplacer vers la boîte de réception",
-    "hideFromFilters": "Masquer des filtres intelligents"
+    "hideFromFilters": "Masquer des filtres intelligents",
+    "toSelf": "vous",
+    "noRecipients": "À : (aucun destinataire)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "et {{count}} de plus",
+    "addRecipientFilter": "Ajouter le destinataire comme filtre intelligent"
   },
   "header": {
     "totalCount": "{{count}} courriels",

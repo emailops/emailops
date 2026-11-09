@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSenderNames } from '@/hooks/useSenderNames';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
 import { selectPageFailed } from '@/lib/listPaging';
@@ -249,19 +250,24 @@ export function Inbox({
   const activeFilter = useFilterStore((s) => s.activeFilter);
   // Search results mix every account, so they also get a readable chip.
   const showAccountChip = Boolean(searchQuery);
+  const accountEmailById = useMemo(() => new Map(allAccounts.map((a) => [a.id, a.email])), [allAccounts]);
   const getAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
-    const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
       colorClass: accountColorClass(allAccounts, email.accountId),
-      label: emailById.get(email.accountId) ?? email.accountId,
+      label: accountEmailById.get(email.accountId) ?? email.accountId,
       chip: showAccountChip,
     });
-  }, [isUnified, allAccounts, showAccountChip]);
+  }, [isUnified, allAccounts, accountEmailById, showAccountChip]);
+  // Each row is judged against its own account, never the active one: the
+  // unified view mixes rows from several.
+  const getOwnerEmail = useCallback((email: Email) => accountEmailById.get(email.accountId), [accountEmailById]);
 
   // A selection belongs to the list it was made in: switching account,
   // mailbox, filter or search clears it.
   const listScope = useEmailStore((s) => s.listScope);
+  // A search or smart filter replaces the Sent list with its own results.
+  const inSentView = listScope === 'sent' && !searchQuery && !activeFilter;
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const clearSelection = useSelectionStore((s) => s.clear);
   const hasSelection = useSelectionStore((s) => s.ids.size > 0);
@@ -301,6 +307,9 @@ export function Inbox({
     if (searchQuery || activeFilter) return filteredEmails;
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+  // Rows of the user's own messages name their recipients the way those
+  // people sign when they write in.
+  const nameOf = useSenderNames(visibleEmails);
 
   // Whether any of the loaded messages are flagged, regardless of the current
   // setting — the toggle only appears when it would do something.
@@ -628,6 +637,9 @@ export function Inbox({
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
         getAccountBadge={getAccountBadge}
+        getOwnerEmail={getOwnerEmail}
+        nameOf={nameOf}
+        inSentView={inSentView}
       />
     </div>
   );

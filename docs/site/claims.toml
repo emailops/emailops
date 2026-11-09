@@ -767,6 +767,11 @@ checks = [
   { manual = 'That the AI features (chat tools, embeddings, classification, lenses) reach archived mail rests on the shared live-mailbox list (DECISIONS 2026-10-02); no single test or demo screen shows it, and the demo has no Gmail or Outlook account.', covers = ["the AI features still reach it"] },
 ]
 
+[feat-list-sent-rows]
+checks = [
+  { manual = 'Who a row names, the To/Cc tooltip, "you" and the name chain (header, then the name the address uses when it writes to the account, then the address) are covered by src/lib/emailFormatting.test.ts, src/components/Inbox/EmailRow.recipients.test.tsx (vitest) and db::emails::contacts::tests::sender_names_keep_the_latest_real_name_of_each_address; the demo harness has no case for it yet.' },
+]
+
 [feat-organize-3]
 checks = [
   { app = true },
