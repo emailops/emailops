@@ -247,6 +247,7 @@ macro_rules! app_commands {
             commands::contacts::list_contacts,
             commands::contacts::get_contact_detail,
             commands::contacts::list_contacts_by_company,
+            commands::contacts::get_sender_names,
             commands::contacts::get_organization_domain,
             commands::drafts::list_drafts,
             commands::drafts::get_draft,

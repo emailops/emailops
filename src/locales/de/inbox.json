@@ -84,7 +84,12 @@
     "unstar": "Stern entfernen",
     "archive": "Archivieren",
     "moveArchivedToInbox": "In den Posteingang verschieben",
-    "hideFromFilters": "Aus den intelligenten Filtern ausblenden"
+    "hideFromFilters": "Aus den intelligenten Filtern ausblenden",
+    "toSelf": "dich",
+    "noRecipients": "An: (keine Empfänger)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "und {{count}} weitere",
+    "addRecipientFilter": "Empfänger als Smart-Filter hinzufügen"
   },
   "header": {
     "totalCount": "{{count}} E-Mails",

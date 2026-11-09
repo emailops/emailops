@@ -4313,3 +4313,92 @@ A false online costs one failed sync, a false offline leaves the user with no ma
 - *Retrying the same probe*: the block is permanent.
 - *A setting to turn the probe off*: the affected user cannot discover it.
 - *Removing the gate*: the banner loses its signal and every offline tick becomes a sync error.
+
+## 2026-11-04 — A draft revision the provider refuses as malformed is not sent again
+
+**Decision:** When the provider answers a draft push with a malformed-request error (Gmail's
+400, typed as `InvalidInput`), the sync does not push that revision of the draft again; the
+user's next edit makes it eligible. The refusal is kept in memory only, so a restart costs one
+more attempt per such draft. Every Gmail 400 now reaches callers as `invalid_input`, not `sync`.
+**Context:** A refused draft stayed dirty and was pushed on every 60 s sync. In the 30 days to
+04/11/2026 Gmail counted 1,436 `drafts.create` calls, 96 % of them 400s, in bursts on four days.
+A 400 for the same content fails the same way every time.
+**Rejected:**
+- *Backoff for every push failure*: it still sends requests that cannot succeed, and it delays
+  the retry of transient failures.
+- *Persisting the refusal in the database*: a migration to save one attempt after a restart.
+
+## 2026-11-04 — Agent guardrails are enforced by tracked settings and hooks, not prose
+
+**Decision:** The repo's never-do rules for agents are enforced mechanically. A tracked
+`.claude/settings.json` denies `git add -A`/`--all`/`.`, a bare `cargo clean` and reads of the
+`.env`, `.env.local` and `.env.signing` files, and asks before `git reset --hard`, `rm -rf` and
+any other `cargo clean`. Deny and ask rules win over any allow rule in a developer's
+`settings.local.json`. The pre-commit hook runs `scripts/privacy_scan.py`, which blocks staged
+mail stores, app data dirs, and added lines containing an entry of the clone-local
+`.git/info/private-strings`.
+**Context:** CLAUDE.md said "never a bare `cargo clean`", while the local allowlist
+pre-approved `git:*` and `cargo clean`. Nothing ran before a commit to catch a mail store or a
+real address; the privacy-reviewer subagent runs only when an agent remembers to call it. In the
+same change, `ensure_demo_db.sh` started deciding on a content stamp instead of mtimes (the
+2026-10-01 demo DB schema entry described the mtime check), and vitest joined the `push` gate
+set.
+**Rejected:**
+- *Keeping the rules as prose only*: the allowlist contradicted them, and agents follow allow
+  rules, not prose.
+- *An allowlist of synthetic email domains in the privacy scan*: tracked files already use more
+  than 100 distinct test domains (`acme.com`, `x.com`, generic `gmail.com` addresses), so it
+  would block ordinary test edits. A denylist of the developer's real strings is exact.
+- *User-level `~/.claude/settings.json` only*: it would not reach other contributors' sessions
+  or a fresh clone.
+
+## 2026-11-05 — CLAUDE.md files hold rules; procedures and history live in docs/
+
+**Decision:** The three CLAUDE.md files keep only the rules an agent must follow while editing,
+each with the test or tool that enforces it. Release procedure and packaging gotchas live in
+`docs/RELEASE.md`; the incident history behind the frontend rules lives in
+`docs/FRONTEND-LESSONS.md`. A rule that clippy or biome already enforces gets one line, and a
+rule shared by backend and frontend is written once, in the root file.
+**Context:** The root CLAUDE.md loads in every session and the sub-area files in most of them;
+together they were about 67 KB, with about ten rules repeated across files and two that
+contradicted each other (a regression test "when practical" against "no exceptions").
+**Rejected:**
+- *Deleting the history*: it explains why the email-frame and CSP rules exist, and a reader
+  changing that code needs it.
+- *Moving the CLI validation loop to the skills only*: it is used outside `fix-ai-bug` and
+  `build-ai-feature`.
+
+## 2026-11-05 — AI regression cases graduate to the public eval suite by default
+
+**Decision:** When `fix-ai-bug` turns a repro green and the repro is worth keeping, it becomes a
+case in the public `src-tauri/evals/` suite, keyed to the synthetic demo persona, without asking.
+A repro that depends on real-mailbox content is re-themed onto demo data. `private-evals/` is
+used only when the behaviour cannot be reproduced on the demo DB, and only after asking.
+**Context:** The developer redirected a private graduation to the public suite on 17/09/2026:
+public cases run in `make cli-eval` and `make verify` on every change, while a private case runs
+on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
+**Rejected:**
+- *Asking "public or private?" each time*: the answer is almost always public.
+
+## 2026-11-08 — List rows of the user's own messages name the recipients
+
+**Decision:** Every mail list row (Inbox, Sent, Starred, Archive, Trash, Spam, custom folders,
+Snoozed, search, smart filters) decides per row whether the user sent the message, with one rule,
+`isOwnMessage`: the owner is the address of the row's account, not the active account; in Inbox and
+Spam only the provider's `is_sent` flag counts; elsewhere `is_sent`, the Sent mailbox or a sender
+equal to the owner. Every row of the Sent view counts as own, since its query already lists Inbox
+copies whose sender is the account (a reply-all to yourself over IMAP has no sent flag). An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
+as "you" in the reader's language), and its avatar, drag image and row-menu filter items follow the
+first recipient who is not the user. A recipient's name comes from the stored header, else the
+latest real name that address uses as a sender in the same account (Spam excluded), else the
+address. The tag board's "Me" label shares the same rule.
+**Context:** Issue #256: Sent repeated the user's own name on every row, and mixed lists gave no
+sign that a message was the user's. Outlook and IMAP store recipient addresses without names, so a
+header-only label would show bare addresses on those providers.
+**Rejected:**
+- *A computed label on the backend `Email`*: it touches the tuned list queries and `EMAIL_COLUMNS`
+  that thread and message reads share.
+- *Reusing `get_contacts` / `list_contacts` for names*: byte-wise `MAX(sender)`, a 500-row cap,
+  case-sensitive grouping and Spam included, or three full scans.
+- *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
+- *Changing sync to store Outlook recipient names*: a separate change.

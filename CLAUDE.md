@@ -31,7 +31,7 @@ Common development operations live in the root `Makefile`. **Before reaching for
 - **App run:** `make dev` (repo-local data dir) / `make dev-fresh` (throwaway data dir) / `make dev-trace` (tracing feature enabled)
 - **Demo data:** `make demo-db` / `make demo-embed` / `make demo` (run app against demo DB) — plus `-es` variants for Spanish demo data
 - **Quality gates:** `make gates SET=commit|push|rust|frontend|all` (one summary line per gate, full output in files — `scripts/gates.sh`, which the lefthook pre-commit clippy/rustfmt/typecheck and pre-push hooks also call), `make check`, `make lint`, `make fmt`, `make test`, plus `-fast` variants (`test-fast`, `lint-fast`, `clippy-fast`, `check-fast`) that skip the embedded llama.cpp feature for faster iteration
-- **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Linux / Windows Release Builds" below
+- **Release / signing:** `make bootstrap-mac`, `make build-mac`, `make verify-mac`; Linux/Windows equivalents: `make bootstrap-linux`/`bootstrap-windows`, `build-linux`/`build-windows`, `verify-linux`/`verify-windows`, `dist-linux`/`dist-windows` — see "Release Builds" below
 - **Hooks / deps:** `make install`, `make hooks`, `make audit`, `make clean`
 - **Disk:** `make disk-report` (read-only) / `make disk-clean` (dry run; `ARGS="--apply"` frees orphaned and 3-day-idle worktree build dirs, `--release` also the per-arch release builds) — `/Volumes/Build` shares free space with the data volume
 
@@ -39,15 +39,25 @@ When you do need to run something the Makefile does not cover, prefer extending 
 
 **Keep the Makefile thin — it is an index, not an implementation.** A target's recipe should be a one-or-two-line invocation. Any recipe that needs multi-line shell logic (conditionals, loops, file generation, output capture) belongs in a standalone script under `scripts/`, called by a thin Makefile target (existing examples: `scripts/cli_bench.sh`, `scripts/eval_all.sh`, `scripts/fetch_bundled_models.sh`).
 
+## Worktrees and Shared State
+
+Agent work runs in worktrees under `.claude/worktrees/<name>`, one branch and one agent per checkout. Checkouts share more than git objects:
+
+- **Demo DB.** `make cli-eval`, `make demo` and `make verify` use the checkout's `.emailops-demo-data/`; when a worktree links it to the main checkout's, every checkout shares one demo DB. `scripts/ensure_demo_db.sh` rebuilds it only when the generator or the migrations change. A branch that adds a migration upgrades the shared DB and older branches then refuse it — rebuild it with `make demo-db` from the branch you are running.
+- **Build target.** `src-tauri/target` is a symlink into `/Volumes/Build` (`scripts/build_target.sh`), and a worktree may point at main's warm target. Free space with `make clean` or `make disk-clean`; never `cargo clean` or `rm -rf` what a worktree's target points to — it may be main's cache.
+- **Fresh worktrees** lack the bundled model (`src-tauri/resources/models/*.gguf`; `cargo test` and clippy fail on the missing resource path — run `make fetch-bundled-models` or link main's) and `node_modules` (symlink main's or `npm ci`).
+- **`make dev` and `make verify` never share a checkout.** They share the source tree and target, and a WebDriver build rewrites the tracked `src-tauri/gen/schemas`. Run verify from a different worktree than the developer's `make dev`.
+- **Production data dir.** A dev build pointed at it applies the branch's new migrations, and the installed release then refuses the DB until a release ships them. Ask before pointing a dev build at it.
+- **Git-local state** is shared by every worktree: the stash stack (never a bare `git stash`), `.git/info/exclude`, `.git/info/private-strings` and `.claude/settings.local.json`.
+
 ## Agent self-validation with `emailops-cli`
 
 **Mandatory skill routing.** A screenshot, trace fragment or pasted answer showing wrong chat/AI behaviour means the first tool call of the turn is `Skill fix-ai-bug`, before any grep, CLI run or edit. A request to add or change an AI surface means the first tool call is `Skill build-ai-feature`. Do not reproduce the loop by hand: the skills carry the repro, gate and report format the developer expects.
 
-**When the user reports a bug in chat, drafts, classification, lenses, retrieval, memory, or any other AI feature, drive the fix through the `fix-ai-bug` skill** (`.claude/skills/fix-ai-bug/SKILL.md`). It codifies the loop in this section — frame → CLI repro → root-cause → fix (with confirmation gated to genuine design forks) → re-run until green → gated graduation into `private-evals/` — and reports back in a chat-style format that hides the raw `--trace` payload by default. Invoke it whenever a bug report lands, even from a screenshot or trace fragment.
+- **`fix-ai-bug`** (`.claude/skills/fix-ai-bug/SKILL.md`): frame → CLI repro → root cause → fix → re-run until green → graduate the repro into an eval case. Graduation goes to the public `src-tauri/evals/` suite on the demo persona by default; `private-evals/` only when the case cannot be reproduced on the demo DB, and only after asking.
+- **`build-ai-feature`** (`.claude/skills/build-ai-feature/SKILL.md`): pick the seam → check context-budget and KV-prefix cache fit → CLI baseline → TDD the pure planner → thin executor (+ frontend toggle) → mandatory eval gate.
 
-**When the user wants to add a new AI feature or change an existing AI surface** (a new chat tool, a planner/route, a prompt edit, a shortcut fast-path, a classifier/extractor, or a retrieval/draft/memory tweak), **drive the work through the `build-ai-feature` skill** (`.claude/skills/build-ai-feature/SKILL.md`). It runs the build loop — frame → pick the seam → check setup/config fit (context budget + KV-prefix prompt cache) → CLI baseline → TDD the pure planner → wire the thin executor (+ frontend toggle/gating) → mandatory eval gate → gated eval-case graduation — and reports a chat-style before/after delta.
-
-`emailops-cli` (gated behind the `cli` cargo feature) is a headless front-end over the same `services::*` entry points the Tauri commands call — no `AppHandle`, no webview. Use it to **drive real features and assert on structured output** while developing, instead of guessing whether a change works. It operates on the real data dir (SQLite WAL → read commands are safe while the app is open; run heavy write commands — `sync`/`classify`/`embed` — with the app closed).
+`emailops-cli` (gated behind the `cli` cargo feature) is a headless front-end over the same `services::*` entry points the Tauri commands call — no `AppHandle`, no webview. Use it to **drive real features and assert on structured output** while developing, instead of guessing whether a change works. `make cli-*` runs it on `$EMAILOPS_DATA_DIR` (default: the checkout's `.emailops-data/`); `doctor --json` reports the data dir in use. Reads are safe while the app is open (SQLite WAL); run heavy writes — `sync`/`classify`/`embed` — with the app closed.
 
 Every command supports `--json`, which prints one **stable envelope** to stdout so you can parse a single shape regardless of success or failure (logs always go to stderr):
 
@@ -58,7 +68,7 @@ Every command supports `--json`, which prints one **stable envelope** to stdout 
 
 `error` is the same `{code, params, message}` shape `AppError` serializes to at the Tauri boundary. Exit codes are grouped by remediation: `0` ok, `2` invalid input, `3` not found, `4` auth, `5` network/sync, `6` AI, `130` cancelled, `1` otherwise — so a shell/agent can branch on failure class without parsing text.
 
-**Always drive the CLI with `--json` from an agent.** The `--json` envelope is unstyled by contract — no ANSI color, no markdown/table re-rendering, no live-preview redraw — so it never adds presentation tokens to your context. Human (pretty) output is the opposite: chat answers are re-rendered through a terminal markdown renderer (aligned tables, styled prose) and lists/traces are colorized, but **only** on an interactive TTY (`RenderStyle::Rich`). Pretty output that is piped/redirected, or run with `NO_COLOR`, degrades to plain text with zero escape codes (`RenderStyle::Plain`). The styling lives entirely in `src-tauri/src/cli/render.rs` + the pretty renderers in `cli/output.rs`; it cannot leak into the `--json` path.
+**Always drive the CLI with `--json` from an agent.** The envelope is unstyled by contract (no ANSI, no markdown re-rendering); pretty output is styled only on an interactive TTY and degrades to plain text when piped or with `NO_COLOR` (`src-tauri/src/cli/render.rs`).
 
 Recommended loop when validating a change:
 
@@ -75,29 +85,11 @@ make cli-eval ARGS="--tier smoke --json"           # re-run chat eval cases thro
 
 Prefer the `make cli-*` targets over ad-hoc `cargo run` invocations (see "Local Workflow"). The CLI shares the `Command` enum and dispatch with the interactive REPL (bare `emailops-cli`), so anything you can script you can also drive interactively.
 
-## macOS Release Builds
+## Release Builds
 
-Use the Makefile release targets; do not hand-roll `npm run tauri build` commands for signed builds.
+Build, sign and verify releases only through the Makefile targets (`build-mac`/`verify-mac`, `build-linux`/`build-windows`, `verify-*`, `dist-*`, `cask`); never hand-roll `npm run tauri build`. `docs/RELEASE.md` holds the full procedure, the per-platform packaging gotchas and the release invariants — read it before touching a release target, `scripts/build_platform.sh`, signing, or the `dynamic-backends` feature.
 
-- One-time setup: run `make bootstrap-mac`, then create `.env.signing` from `.env.signing.example` with the Apple signing identity, certificate, Apple ID, app-specific password, and team ID.
-- macOS release: run `make build-mac && make verify-mac`. This builds the signed and notarized `universal-apple-darwin` bundle (one DMG for every Mac) and includes the embedded local AI provider plus bundled embedding model. **The embedded AI provider is unusable on Intel Macs** — its Metal kernels need an Apple7-family GPU, and cargo features apply per build rather than per slice, so the x86_64 slice unavoidably contains a runtime it cannot execute (`Decode Error -3` on every AI turn). That exclusion is enforced at runtime by `ai::gpu_plan::embedded_runtime_supported`, which gates the capability probe, the provider loader, model auto-select and both provider pickers. It is load-bearing: do not weaken it. See the comment above `bootstrap-mac` in the Makefile.
-- There is deliberately **no separate Intel build**. macOS ships one universal DMG; Intel users get the full app minus embedded AI, and can configure Ollama or OpenRouter from Settings. A separate trimmed x86_64 bundle would save ~100 MB of download but doubles the release pipeline and forces the download page to guess the user's chip, which `navigator.platform` cannot do reliably.
-- Always run the matching `verify-*` target before publishing a DMG; it checks codesigning, architectures, Gatekeeper assessment, notarization stapling (app and DMG), that the app carries no Hardened Runtime exception entitlements, and (on macOS) that both slices are present so the single DMG really does launch everywhere. `scripts/verify_mac.sh <app> <dmg>` also checks a downloaded release.
-- Homebrew: after the DMGs are uploaded to the GitHub release, run `make cask` to regenerate `homebrew/Casks/emailops.rb` from the release assets (GitHub-computed sha256 digests, per-arch URLs) and copy it into the `emailops/homebrew-tap` repo. Full flow and invariants: `homebrew/README.md`. Never replace a DMG asset on an already-tagged release — the cask pins its sha256.
-
-## Linux / Windows Release Builds
-
-Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_platform.sh`, `scripts/dist_platform.sh`, `scripts/bootstrap_platform.sh` — one script per concern, dispatched by platform argument); do not hand-roll `npm run tauri build` commands.
-
-- One-time setup: run `make bootstrap-linux` (or `bootstrap-windows`). It only **checks** prerequisites and prints the exact install command for anything missing — it never runs `sudo apt-get` itself, so it's safe to run on a machine you don't want silently modified.
-- Linux: `make build-linux && make verify-linux`. Builds `.deb` + `.AppImage` for `x86_64-unknown-linux-gnu`. Set `LINUX_BUNDLES=deb` or `LINUX_BUNDLES=appimage` to build only one. The release workflow builds the `.deb` on Ubuntu 22.04 and the AppImage on 24.04. The AppImage carries the build host's WebKitGTK, and 22.04's crashes on COLRv1 emoji fonts; see `docs/DECISIONS.md` (16/10/2026).
-- Windows: `make build-windows && make verify-windows`. Builds `.msi` + NSIS `.exe` for `x86_64-pc-windows-msvc`. The Makefile requires a POSIX shell — run these from Git Bash or MSYS2, not `cmd.exe`/PowerShell.
-- Set `CARGO_FEATURES=vulkan DYNAMIC_BACKENDS=1` on either build target to ship the Vulkan GPU backend as a loadable module the binary probes for at runtime (falls back to CPU when no compatible driver is present) — this is what CI's release job uses, and is the recommended default (covers AMD/Intel/NVIDIA off the user's normal driver). A plain `make build-linux`/`build-windows` with no env vars produces a CPU-only artifact. See `docs/DECISIONS.md` ("Windows and Linux releases build with Vulkan via dynamic backends") for why dynamic backends exist instead of a statically-linked GPU build.
-- Set `CARGO_FEATURES=cuda DYNAMIC_BACKENDS=1` (Windows or Linux) for an NVIDIA-only alternative — faster to build (needs the CUDA Toolkit, not the Vulkan SDK) but measured slower at runtime than Vulkan for the same model/quant on the same GPU, so it's offered alongside Vulkan, not in place of it. CI ships this as a separate `release-windows-cuda` job in `release.yml`, gated the same manual/tag-only way as everything else in that workflow. **No Windows build uses `--jobs 1`.** The PDB race (C1041) it worked around is handled by the Ninja generator, the pinned MSVC linker and the short `CARGO_TARGET_DIR`, and it serializes every Rust crate as well as CMake (a CUDA build runs ~8x slower). Don't bring it back without a fresh C1041 in a CI log. See `docs/DECISIONS.md` ("Windows CUDA ships as an additional, opt-in release asset alongside Vulkan" and "Windows Vulkan builds without --jobs 1").
-- `make dist-linux` / `make dist-windows` stage artifacts under `release/` with the same stable-name convention as `dist-mac` (`EmailOps-linux.AppImage`, `EmailOps-linux.deb`, `EmailOps-windows.msi`, `EmailOps-windows-setup.exe`), so the GitHub release always has a permanent latest-download URL. `dist_platform.sh` takes an optional variant suffix (`bash scripts/dist_platform.sh windows cuda` → `EmailOps-windows-cuda.msi`) for a platform that ships more than one installer of the same type.
-- Release downloads are signed in CI: Windows installers and binaries are code-signed, and Linux packages get GPG-signed checksums. Only dedicated signing jobs, which never build, can use the signing credentials — keep it that way. A local `make build-windows` stays unsigned. See `docs/DECISIONS.md` (2026-10-07 entries).
-- **The `DYNAMIC_BACKENDS=1` path has non-obvious packaging gotchas** (CI's `ubuntu-latest` image preinstalls build prerequisites, which hides them): the direct shared-library dependencies of the main binary (`libggml-base`/`libggml`/`libllama`/`libllama-common`, distinct from the dlopen'd backend modules like `libggml-vulkan.so`) must be staged into the bundle and given a Linux rpath separately, and a vendored crate's build script has a stale-symlink idempotency bug that makes a second build fail unless those symlinks are cleaned first. Read the comments in `scripts/build_platform.sh` before touching this path — they explain each workaround inline. `bootstrap-linux` checks for `libclang`/`xdg-open`/`libfuse2` (needed by `bindgen` and by `linuxdeploy`'s AppImage bundling respectively).
-- This path currently has no per-PR CI coverage — only the manually-triggered release workflow exercises it (the tag-push trigger is disabled). A regression here is caught only at actual release time; be extra careful with changes to `scripts/build_platform.sh` or the `dynamic-backends` Cargo feature.
+- `ai::gpu_plan::embedded_runtime_supported` keeps the embedded AI runtime off Intel Macs: the universal DMG's x86_64 slice carries Metal kernels it cannot run. It is load-bearing — do not weaken it.
 
 ## Architecture Principles
 
@@ -107,6 +99,7 @@ Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_p
 - No telemetry, no cloud sync, no external API calls except to email providers or AI providers (only when user chooses to use remote LLMs)
 - **NEVER include real names, email addresses, subjects, or other real personal data in git-tracked files** — not in test fixtures, not in code comments, not in regression test cases, not in commit messages, not in PR descriptions. When a real-world failure surfaces a personal-data string, paraphrase it into a synthetic equivalent that preserves the technical shape (length, multibyte boundaries, regex pattern, etc.) but drops the identifying content. Real bench output goes under `src-tauri/reports/` which is gitignored — keep it there.
 - **Check it with the `privacy-reviewer` subagent** (`.claude/agents/privacy-reviewer.md`) before every commit (scope `staged`), before a push or PR (scope `branch`, plus the PR title/body as `text`), and whenever a real personal-data string may have reached a tracked file. Resolve every `LEAK` with the synthetic replacement it proposes and ask the developer about every `UNSURE` before going on.
+- The pre-commit hook also runs `scripts/privacy_scan.py`, a deterministic floor under the reviewer: it blocks staged mail stores (`*.db*`, `*.sqlite`, `*.eml`, `*.mbox`), app data dirs, and added lines containing an entry of the clone-local `.git/info/private-strings` (real addresses and names, never versioned).
 
 ### Separation of Concerns
 - Tauri commands are thin wrappers that delegate to service modules
@@ -114,11 +107,7 @@ Use the Makefile release targets (`scripts/build_platform.sh`, `scripts/verify_p
 - Frontend handles UI state only, backend handles data state
 
 ### Error Handling
-- Use `thiserror` for custom error types in Rust
-- Propagate errors with `?` operator, handle at command boundary
-- Return user-friendly error messages to frontend
-- Log detailed errors locally for debugging
-- NEVER discard or ignore errors, errors should be always logged and handled. If relevant they should be notified to users.
+- NEVER discard or ignore errors: log them, handle them, and surface them to users when relevant. Rust specifics (`thiserror`, `?`, typed errors up to the command boundary) live in `src-tauri/CLAUDE.md`.
 
 ## Project Structure
 
@@ -161,7 +150,7 @@ Every user-facing operation must emit log entries so they appear in the output p
 - NEVER include claude or other agent as author or co-author in commits
 - Before committing, pushing or opening a PR, run the `privacy-reviewer` subagent (see Privacy First) alongside the gates.
 - After implementing a feature, bug fix, or any moderate change, run the quality gates through the `gate-runner` subagent (`.claude/agents/gate-runner.md`, which runs `make gates`) with the `commit` set (clippy with and without `--features desktop`, rustfmt, biome, tsc — the exact CI flags live in `scripts/gates.sh`) and act on its report. Fix every reported issue before handing the change back to the developer — do not rely on the developer to discover lint/type/format failures. The `no-invoke-outside-api`, JSX-literal and docs guards run in the lefthook pre-commit hook itself.
-- For changes that affect Rust behavior, also run the `gate-runner` `push` set (`cargo test`, both clippy variants, `cargo-outdated` — matches the pre-push hook) before declaring the work done.
+- For changes that affect Rust behavior, also run the `gate-runner` `push` set (`cargo test`, both clippy variants, `cargo-outdated`, `vitest` — matches the pre-push hook) before declaring the work done.
 
 ### Branch Naming
 - `feature/description` - New features
@@ -189,12 +178,11 @@ Language-specific testing guidance: `src-tauri/CLAUDE.md` (Rust) and `src/CLAUDE
 
 ## Security Checklist
 
-- [ ] OAuth tokens stored in OS keychain via `keyring` crate
-- [ ] No secrets in code or config files
-- [ ] Validate all input from frontend before processing
-- [ ] Sanitize email content before rendering (XSS prevention)
-- [ ] Use HTTPS for all external API calls
-- [ ] No logging of sensitive data (tokens, email content)
+Beyond Privacy First and HTML / WebView Safety above:
+- No secrets in code or config files
+- Validate all input from the frontend before processing it
+- Use HTTPS for every external API call
+- Never log secrets, tokens or email content
 
 ## Performance Guidelines
 

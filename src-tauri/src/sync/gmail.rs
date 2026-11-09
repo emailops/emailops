@@ -1592,6 +1592,16 @@ impl GmailClient {
                             format_gmail_error(status, &body)
                         )));
                     }
+                    // Gmail refuses the request itself (a thread id it does not
+                    // know, a header it rejects): sent again unchanged, it fails
+                    // the same way. Typed so callers do not repeat it.
+                    if status == StatusCode::BAD_REQUEST {
+                        return Err(AppError::InvalidInput(format!(
+                            "Failed to {}: {}",
+                            operation,
+                            format_gmail_error(status, &body)
+                        )));
+                    }
                     let should_retry =
                         is_retryable_gmail_error(status, &body) && policy.may_retry_status(status.as_u16());
 
@@ -3208,6 +3218,48 @@ mod tests {
             .await
             .expect("signature");
         assert_eq!(none, None);
+    }
+
+    // Gmail answers 400 to a draft it cannot take (a thread id it does not
+    // know, a header it refuses). Typed, so the draft sync can tell that
+    // sending the same content again is pointless.
+    #[tokio::test]
+    async fn a_draft_gmail_refuses_as_malformed_is_invalid_input() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/drafts"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": {
+                    "code": 400,
+                    "message": "Invalid thread_id value",
+                    "errors": [{ "reason": "invalidArgument" }]
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-draft-refused".into())).with_base_url(server.uri());
+
+        let err = EmailProvider::create_draft(
+            &client,
+            "ada@example.com",
+            &["bob@example.com".to_string()],
+            &[],
+            "Hello",
+            &EmailBody::plain("hi"),
+            &[],
+            None,
+        )
+        .await
+        .expect_err("Gmail refuses the draft");
+        assert!(
+            matches!(&err, AppError::InvalidInput(message) if message.contains("Invalid thread_id value")),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]

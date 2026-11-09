@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- An IMAP server reply EmailOps cannot read no longer crashes the sync. If a
+- **A draft Gmail refuses is no longer sent again every minute.** Each sync used
+  to repeat the refused upload; now the draft waits until you edit it, and the
+  Logs panel shows Gmail's reason once.
+- **An IMAP server reply EmailOps cannot read no longer crashes the sync.** If a
   command fails because of one, Logs shows the shape of the reply with its text
   masked. A server whose list of supported features ends in a space now moves
   mail with its own move command when it has one, instead of a copy and a

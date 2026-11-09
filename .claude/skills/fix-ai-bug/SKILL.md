@@ -1,6 +1,6 @@
 ---
 name: fix-ai-bug
-description: Reproduce a bug the user reported in chat, drafts, classification, lenses, retrieval, or any other AI feature — using a CLI-driven repro (eval case, integration test, or shell script) against the local data dir by default. All read-only DB inspections (doctor, accounts, emails, show, search, chat --trace, raw sqlite3) run via `make cli-*` without asking the user — those commands are pre-authorised in `.claude/settings.local.json`. Run the repro to surface the failure, explain the root cause, propose a fix (gated on confirmation only when there is real ambiguity), then re-run until the repro turns green. If the repro is a good fit for a permanent regression case in private-evals/ (deterministic, depends on private data, exercises a regressable class of bug), ASK the user before adding it — never copy in silently. The final report uses a chat-style format (Session / User: / A:) and never dumps the raw trace unless the user asks. Use whenever the user reports unexpected AI behavior — even if they only paste a screenshot or trace fragment.
+description: Reproduce a bug the user reported in chat, drafts, classification, lenses, retrieval, or any other AI feature — using a CLI-driven repro (eval case, integration test, or shell script) against the local data dir by default. All read-only DB inspections (doctor, accounts, emails, show, search, chat --trace, raw sqlite3) run via `make cli-*` without asking the user — those commands are pre-authorised in `.claude/settings.local.json`. Run the repro to surface the failure, explain the root cause, propose a fix (gated on confirmation only when there is real ambiguity), then re-run until the repro turns green. A repro worth keeping becomes a public eval case on the demo persona; private-evals/ only when it cannot be reproduced on the demo DB, and only after asking. The final report uses a chat-style format (Session / User: / A:) and never dumps the raw trace unless the user asks. Use whenever the user reports unexpected AI behavior — even if they only paste a screenshot or trace fragment.
 argument-hint: <optional bug summary or pasted trace>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
@@ -57,7 +57,7 @@ moment you need the data.
 | Show one email (headers + body) | `make cli-fast ARGS="show <id> --json"` |
 | What does search return for X? | `make cli-fast ARGS="search '<q>' --json --trace"` |
 | What does the chat answer end-to-end? | `make cli-run ARGS="chat '<prompt>' --json --trace --fresh"` |
-| Raw SQL when the CLI doesn't cover it | `sqlite3 "$HOME/Library/Application Support/com.emailops.app/emailops.db" "<query>"` |
+| Raw SQL when the CLI doesn't cover it | `sqlite3 "<data_dir from doctor --json>/emailops.db" "<query>"` |
 
 `cli-fast` skips the `llamacpp` feature build — faster iteration when you do
 not need the chat model loaded. Use `cli-run` whenever the path under
@@ -177,46 +177,42 @@ Before declaring done, run the matching local gate:
 - Full hook suite (only if explicitly requested or the change is large) →
   `npx lefthook run pre-commit`.
 
-## Phase 5b — Offer to graduate the repro into private-evals
+## Phase 5b — Graduate the repro into an eval case (public by default)
 
-`private-evals/` is the gitignored home for regression cases that ride on the
-user's private data (personal names, subjects, IDs that the public
-`src-tauri/evals/chat/cases/` would violate). When the repro you just turned
-green is a good fit, **ask the user** before adding it — never copy into
-`private-evals/` silently.
+A repro is worth a permanent case when **all** of these hold:
 
-A repro is worth graduating when **all** of these hold:
-
-- It's **deterministic enough to replay** — same prompt + same account + same
+- It's **deterministic enough to replay** — same prompt + same data + same
   fix path → same outcome. Stochastic-only failures (random sampling, race
   conditions) are not a fit.
-- It **depends on private-data content** (a specific sender, subject, or
-  email id) that cannot land in the public `src-tauri/evals/chat/cases/`.
-  Repros driven purely by synthetic prompts belong in the public cases
-  directory instead — see `src-tauri/CLAUDE.md` "AI replies verified by an
-  eval".
 - It **exercises a class of bug that can regress** — model upgrade, prompt
   rewrite, parser change, retrieval/ranking tweak, tool-schema change. Pure
   one-off typos rarely need a permanent case.
 
-If those hold, ask the user with a concrete one-liner:
+**Default: the public suite.** Add the case to `src-tauri/evals/chat/cases/`
+(or the matching public directory for the feature), keyed to the synthetic
+demo persona, with a `category` from `src-tauri/evals/chat/README.md`. It is
+the eval-side regression test of the fix, so add it without asking and say so.
+When the repro depends on real-mailbox specifics, re-theme it onto demo-DB
+content — seed what the case needs in `scripts/generate_demo_db.py` — rather
+than reaching for private data. Re-run it with
+`make cli-eval ARGS="--case <id> --json"` (it runs on the demo data dir) and
+confirm it passes. Nothing from the real mailbox goes into the case.
 
-> This repro looks like a good fit for `private-evals/chat/cases/<id>.yaml`
-> (account=<email>, asserts <metric/expectation>). Add it as a regression
-> case? (y/n)
+**`private-evals/` only when the behaviour cannot be reproduced on the demo
+DB.** It is the gitignored home for cases that ride on the developer's private
+data. Ask first, with a concrete one-liner:
 
-Only proceed on a yes. If yes:
+> This repro only reproduces on your mailbox; add it as
+> `private-evals/chat/cases/<id>.yaml` (asserts <metric/expectation>)? (y/n)
 
-- Pick the right subdirectory based on the feature
-  (`private-evals/chat/cases/`, `private-evals/chat/shortcuts/`,
-  `private-evals/agent_search/`, etc.). Read `private-evals/CLAUDE.md` for
-  the case schema and conventions before writing the YAML.
-- Re-run via `cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval --case <id> --json` (no `--cases-dir` override — the CLI auto-resolves
-  `private-evals/chat/cases/` when present). Confirm the case passes.
-- Note in the final report: `Regression case: private-evals/<path> (passing)`.
+Only proceed on a yes. Read `private-evals/CLAUDE.md` for the case schema,
+pick the subdirectory for the feature (`private-evals/chat/cases/`,
+`private-evals/chat/shortcuts/`, `private-evals/agent_search/`, …), and re-run
+via `cargo run --manifest-path src-tauri/Cargo.toml --features cli,eval --bin emailops-cli -- eval --case <id> --json`
+(no `--cases-dir` override — the CLI auto-resolves `private-evals/chat/cases/`
+when present). If the criteria don't hold, skip graduation silently.
 
-If the user says no — or the criteria don't hold — skip the graduation step
-silently. Don't lobby.
+Note the case in the final report: `Regression case: <path> (passing)`.
 
 ## Phase 6 — Report
 
@@ -256,10 +252,10 @@ End with one grep-friendly line so the user can find it later:
 Fix: <file:line>. Repro: <command or test name>. Status: GREEN.
 ```
 
-If the user accepted graduation in Phase 5b, add a second line:
+If Phase 5b added a case, add a second line:
 
 ```
-Regression case: private-evals/<path>.yaml (passing).
+Regression case: <path>.yaml (passing).
 ```
 
 Then **explicitly offer the trace**: "Want the raw `--trace` payload, the

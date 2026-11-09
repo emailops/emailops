@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StarIcon } from '@/components/common/MailIcons';
@@ -5,7 +6,7 @@ import { TagChips } from '@/components/common/TagChips';
 import { bulkMoveTargets } from '@/lib/bulkActions';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { emailsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
-import { senderName } from '@/lib/emailFormatting';
+import { type PartyEntry, type RowParty, rowParty, senderName } from '@/lib/emailFormatting';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
@@ -14,7 +15,7 @@ import { junkChip, useJunkStore } from '@/stores/junkStore';
 import { useSelectionStore } from '@/stores/selectionStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Email, EmailCategory, EmailTag } from '@/types';
-import { EmailActionsMenu, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
+import { EmailActionsMenu, type MenuParty, type RulePrefill, useMoveTargets } from './EmailActionsMenu';
 import { SnoozeBadge } from './SnoozeBadge';
 
 export type { RulePrefill } from './EmailActionsMenu';
@@ -52,6 +53,14 @@ interface EmailRowProps {
    *  Shift-click (`range`: from the last toggled row) call this instead of
    *  opening the conversation. */
   onCheck?: (opts: { range: boolean }) => void;
+  /** Address of the account this row belongs to: decides whether the user
+   *  sent the message, in which case the row names its recipients. */
+  ownerEmail?: string;
+  /** The name an address uses when it writes to the account, if known.
+   *  Receives a lowercased address. */
+  nameOf?: (accountId: string, address: string) => string | undefined;
+  /** The row is listed by the Sent view (see `rowParty`). */
+  inSentView?: boolean;
 }
 
 export function EmailRow({
@@ -69,8 +78,39 @@ export function EmailRow({
   isChecked = false,
   selectionActive = false,
   onCheck,
+  ownerEmail,
+  nameOf,
+  inSentView = false,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox', 'common']);
+  // Who the row names: the sender, or the recipients of a message the user
+  // sent. The avatar, the drag image and the menu's filter items follow it.
+  const party = rowParty(email, {
+    ownerEmail,
+    nameOf: (address) => nameOf?.(email.accountId, address),
+    maxNames: compact ? 1 : 2,
+    inSentView,
+  });
+  const label = rowLabel(party, email, t);
+  const avatar =
+    party.mode === 'to' && party.primary
+      ? { name: party.primary.source === 'self' ? '' : party.primary.name, email: party.primary.address }
+      : { name: email.sender, email: email.senderEmail };
+  const menuParty: MenuParty | null | undefined =
+    party.mode === 'from'
+      ? undefined
+      : party.primary && party.primary.source !== 'self'
+        ? { address: party.primary.address, kind: 'recipient' }
+        : null;
+  const partyCell = (className: string) => (
+    <PartyCell
+      text={label.text}
+      more={label.more}
+      moreLabel={label.moreLabel}
+      title={label.title}
+      className={className}
+    />
+  );
   // Search and smart-filter rows are dated by their thread's latest activity.
   const receivedTime = formatReceptionTime(email.threadLatestAt ?? email.timestamp);
   // Hide classification chips when the master AI switch is off — the tags
@@ -143,7 +183,11 @@ export function EmailRow({
       (rows) => bulkMoveTargets(rows, accounts, folders, foldersAccountId) !== null,
     );
     writeEmailDragPayload(e.dataTransfer, { emailIds, accountId: email.accountId, mailbox });
-    setEmailDragImage(e, { sender: senderName(email), subject: email.subject, count: emailIds.length });
+    setEmailDragImage(e, {
+      label: label.more ? `${label.text} ${label.more}` : label.text,
+      subject: email.subject,
+      count: emailIds.length,
+    });
   };
 
   useEffect(() => {
@@ -217,15 +261,12 @@ export function EmailRow({
             aria-hidden="true"
           />
           <StarToggle email={email} />
-          <Avatar name={email.sender} email={email.senderEmail} size="sm" />
-          <span
-            className={`text-sm truncate w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
+          <Avatar name={avatar.name} email={avatar.email} size="sm" />
+          {partyCell(
+            `text-sm w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
               email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
-            }`}
-            title={senderName(email)}
-          >
-            {senderName(email)}
-          </span>
+            }`,
+          )}
           {accountChip}
           {email.category !== 'primary' && <CategoryBadge category={email.category} />}
           <div className="flex-1 min-w-0 flex items-baseline gap-2 text-sm">
@@ -271,6 +312,7 @@ export function EmailRow({
           </span>
           <EmailActionsMenu
             email={email}
+            actsOn={menuParty}
             onAddSenderFilter={onAddSenderFilter}
             onHideSenderFromFilters={onHideSenderFromFilters}
             onCreateAttachmentRule={onCreateAttachmentRule}
@@ -314,18 +356,16 @@ export function EmailRow({
           // (as in Gmail), so the row keeps its width and measured height.
           <div className="relative flex-shrink-0 w-9 h-9 flex items-center justify-center">
             <div className={selectionActive || isChecked ? 'invisible' : 'group-hover:invisible'}>
-              <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
+              <Avatar name={avatar.name} email={avatar.email} size="md" unread={!email.isRead} />
             </div>
             <div className="absolute inset-0 flex items-center justify-center">{checkbox}</div>
           </div>
         ) : (
-          <Avatar name={email.sender} email={email.senderEmail} size="md" unread={!email.isRead} />
+          <Avatar name={avatar.name} email={avatar.email} size="md" unread={!email.isRead} />
         )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`text-sm truncate ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`}>
-              {senderName(email)}
-            </span>
+            {partyCell(`text-sm ${email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'}`)}
             {accountChip}
             {email.category !== 'primary' && <CategoryBadge category={email.category} />}
             <span className="ml-auto" />
@@ -334,6 +374,7 @@ export function EmailRow({
             <StarToggle email={email} />
             <EmailActionsMenu
               email={email}
+              actsOn={menuParty}
               onAddSenderFilter={onAddSenderFilter}
               onHideSenderFromFilters={onHideSenderFromFilters}
               onCreateAttachmentRule={onCreateAttachmentRule}
@@ -368,6 +409,77 @@ export function EmailRow({
       </div>
       {copyMessage && <div className="mt-2 text-xs text-gray-500 pl-12">{copyMessage}</div>}
     </div>
+  );
+}
+
+interface RowLabel {
+  /** Sender name, or "To: Ana, Luis" for a message the user sent. */
+  text: string;
+  /** "+2" for the recipients that did not fit, or null. */
+  more: string | null;
+  moreLabel: string | undefined;
+  /** Sender name, or every recipient as "Name <address>", To and Cc apart. */
+  title: string;
+}
+
+/** Words what `rowParty` decided. The user is "you" in the reader's language,
+ *  and the whole "To: …" line is interpolated, never pasted together. */
+function rowLabel(party: RowParty, email: Email, t: TFunction<['inbox', 'common']>): RowLabel {
+  if (party.mode === 'from') {
+    const name = senderName(email);
+    return { text: name, more: null, moreLabel: undefined, title: name };
+  }
+  const short = (e: PartyEntry) => (e.source === 'self' ? t('inbox:emailRow.toSelf') : e.name || e.address);
+  const full = (e: PartyEntry) => {
+    const name = e.source === 'self' ? t('inbox:emailRow.toSelf') : e.name;
+    return name ? `${name} <${e.address}>` : e.address;
+  };
+  const text =
+    party.shown.length > 0
+      ? t('inbox:emailView.toLine', { recipients: party.shown.map(short).join(', ') })
+      : t('inbox:emailRow.noRecipients');
+  const lines = [
+    party.to.length > 0 ? t('inbox:emailView.toLine', { recipients: party.to.map(full).join(', ') }) : null,
+    party.cc.length > 0 ? t('inbox:emailView.ccLine', { recipients: party.cc.map(full).join(', ') }) : null,
+  ].filter((line) => line !== null);
+  return {
+    text,
+    more: party.more > 0 ? t('inbox:emailRow.moreRecipients', { count: party.more }) : null,
+    moreLabel: party.more > 0 ? t('inbox:emailRow.moreRecipientsLabel', { count: party.more }) : undefined,
+    title: lines.length > 0 ? lines.join('\n') : text,
+  };
+}
+
+/** The row's name cell. The "+N" never shrinks, so a long first name is cut
+ *  before the count of the others. */
+function PartyCell({
+  text,
+  more,
+  moreLabel,
+  title,
+  className,
+}: {
+  text: string;
+  more: string | null;
+  moreLabel: string | undefined;
+  title: string;
+  className: string;
+}) {
+  return (
+    <span data-testid="row-party" className={`flex items-baseline min-w-0 ${className}`} title={title}>
+      <span data-testid="row-party-names" className="truncate min-w-0">
+        {text}
+      </span>
+      {/* "+2" is read out as "and 2 more". */}
+      {more && (
+        <>
+          <span data-testid="row-party-more" className="flex-shrink-0 ml-1 text-xs text-gray-500" aria-hidden="true">
+            {more}
+          </span>
+          <span className="sr-only"> {moreLabel}</span>
+        </>
+      )}
+    </span>
   );
 }
 
@@ -457,6 +569,7 @@ function Avatar({ name, email, size, unread }: AvatarProps) {
   const sizeClasses = size === 'md' ? 'w-9 h-9 text-sm' : 'w-6 h-6 text-[11px]';
   return (
     <div
+      data-testid="row-avatar"
       className={`relative flex-shrink-0 ${sizeClasses} rounded-full ${color} text-white font-semibold flex items-center justify-center select-none`}
       aria-hidden="true"
     >

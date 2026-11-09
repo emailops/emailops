@@ -84,7 +84,12 @@
     "unstar": "Quitar destacado",
     "archive": "Archivar",
     "moveArchivedToInbox": "Mover a Recibidos",
-    "hideFromFilters": "Ocultar de los filtros inteligentes"
+    "hideFromFilters": "Ocultar de los filtros inteligentes",
+    "toSelf": "ti",
+    "noRecipients": "Para: (sin destinatarios)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "y {{count}} más",
+    "addRecipientFilter": "Añadir destinatario como filtro inteligente"
   },
   "header": {
     "totalCount": "{{count}} correos",
