@@ -117,9 +117,11 @@ funktioniert; das Konto zieht im Hintergrund nach. Alles andere — Labels, Filt
 Sie nicht angefasst haben — bleibt genau so, wie es ist.
 
 <!-- claim:priv-what-emailops-3 -->
-Jede Nachricht, die Sie aus EmailOps senden, endet mit einer kurzen Zeile „Gesendet mit
-EmailOps“, die auf getemailops.com verlinkt. Der Link trägt `utm_source=email_footer`; das
-teilt der Analyse der Website nur mit, dass ein Besuch aus einer E-Mail-Fußzeile kam, und
+Sofern Sie es nicht abschalten, endet jede Nachricht, die Sie aus EmailOps senden, mit einer
+kurzen Zeile „Gesendet mit EmailOps“, die auf getemailops.com verlinkt; deaktivieren Sie
+**„Gesendet mit EmailOps“ am Ende meiner gesendeten Nachrichten hinzufügen** unter
+**Einstellungen → Signaturen**, um ohne sie zu senden. Der Link trägt `utm_source=email_footer`;
+das teilt der Analyse der Website nur mit, dass ein Besuch aus einer E-Mail-Fußzeile kam, und
 enthält nichts, was Sie oder den Empfänger identifiziert.
 
 ## Keine Telemetrie

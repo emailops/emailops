@@ -147,6 +147,11 @@ In the plain-text version of a message, a signature that ends it is preceded by 
 `-- ` line, so other mail apps can recognise it. When the account has a signature for that kind
 of message, AI drafts leave your name and contact details out and let the signature sign.
 
+<!-- claim:feat-signatures-4 -->
+Below the signature, **Add "Sent with EmailOps" at the end of the messages I send** decides
+whether the messages you send end with that line. It is on by default and applies to every
+account; messages already sent keep their footer.
+
 ## Smart filters
 
 <!-- claim:feat-smart-filters-1 -->

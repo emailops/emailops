@@ -46,6 +46,7 @@ pub use redownload::{redownload_email, redownload_email_with_provider, redownloa
 pub(crate) use send::validate_new_email;
 pub use send::{
     outgoing_body, send_new_email, send_new_email_with_provider, send_outgoing, send_reply, send_reply_with_provider,
+    APPEND_FOOTER_PREF,
 };
 pub use snooze::{
     due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
