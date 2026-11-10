@@ -2132,6 +2132,14 @@ function AppInner() {
               draftId: state.draftId,
               ccAddresses: state.ccAddresses,
               bccAddresses: state.bccAddresses,
+              // Files the modal stored for the draft: the tab keeps saving them.
+              attachments: state.draftFiles.map((file) => ({
+                id: '',
+                draftId: state.draftId ?? '',
+                filePath: file.filePath,
+                filename: file.filename ?? '',
+                mimeType: file.mimeType ?? '',
+              })),
               fileAttachments: state.attachments,
             });
           }}

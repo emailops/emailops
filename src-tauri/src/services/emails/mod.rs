@@ -34,6 +34,7 @@ pub use compose::{
     check_webview_draft_attachments, compose_draft, delete_draft, plan_compose, pull_provider_drafts,
     refresh_provider_drafts, send_draft, ComposeInput, ComposePlan,
 };
+pub use draft_files::{store_composer_file, sweep_abandoned_draft_files};
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;

@@ -52,6 +52,11 @@ Unterhaltung. Jedes Verfassen-Fenster hat **Cc** und **Bcc**: Blindkopien erreic
 Empfänger, ohne dass die anderen sie sehen, und eine Nachricht kann auch nur an Cc oder Bcc
 gehen.
 
+<!-- claim:compose-drafts-keep-files -->
+Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlossen: Schließt du
+das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
+Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->

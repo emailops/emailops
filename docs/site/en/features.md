@@ -48,6 +48,11 @@ conversation. The subject of a reply or a forward can be edited before it goes, 
 stays in its conversation. Every composer has **Cc** and **Bcc**: blind copies reach their
 recipients without the others seeing them, and a message can go to Cc or Bcc alone.
 
+<!-- claim:compose-drafts-keep-files -->
+What you write is saved as a draft as you type, attached files included, so closing a composer
+or the app keeps it; a forward is kept too. A message holds up to 32 files of at most 25 MB
+each.
+
 ## Forwarding
 
 <!-- claim:reading-pane-forward -->

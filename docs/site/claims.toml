@@ -549,6 +549,12 @@ checks = [
   { manual = 'The composer side (Reply-To in the To field, Bcc alone, the edited subject) is covered by src/components/EmailView/ReplyCompose.bccSubject.test.tsx and replyRecipients.test.ts (vitest); the demo has no message with a Reply-To.' },
 ]
 
+[compose-drafts-keep-files]
+checks = [
+  { tests = ['services::emails::draft_files::tests::a_file_attached_in_a_composer_is_kept_with_the_draft', 'services::emails::draft_files::tests::an_empty_or_oversized_file_is_refused'], covers = ["attached files included", "at most 25 MB each"] },
+  { manual = 'The composer side (a reply or forward saved with its files, a forward kept as a draft, the 32-file limit) is covered by src/components/EmailView/ReplyCompose.files.test.tsx and src/lib/attachmentIntake.test.ts (vitest).' },
+]
+
 [reading-pane-forward]
 checks = [
   { app = true },

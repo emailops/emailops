@@ -1686,6 +1686,12 @@ export interface DraftAttachmentInput {
   mimeType?: string | null;
 }
 
+/** Store a file attached in a composer so its draft keeps it; the result goes
+ *  into the draft's next save. */
+export async function storeDraftFile(accountId: string, file: EmailAttachment): Promise<DraftAttachmentInput> {
+  return invoke('store_draft_file', { accountId, file });
+}
+
 export interface SaveDraftRequest {
   id?: string;
   emailId?: string | null;

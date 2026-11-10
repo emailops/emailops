@@ -50,6 +50,11 @@ reenvío se puede editar antes de enviarlo, y la respuesta sigue en su conversac
 compositores tienen **Cc** y **Cco**: las copias ocultas llegan sin que el resto de
 destinatarios las vea, y un mensaje puede ir solo en Cc o en Cco.
 
+<!-- claim:compose-drafts-keep-files -->
+Lo que escribes se guarda como borrador mientras escribes, con los archivos adjuntos, así que
+cerrar el compositor o la aplicación lo conserva; un reenvío también se guarda. Un mensaje
+admite hasta 32 archivos de 25 MB como máximo cada uno.
+
 ## Reenviar
 
 <!-- claim:reading-pane-forward -->

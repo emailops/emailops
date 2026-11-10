@@ -53,6 +53,11 @@ Chaque fenêtre de rédaction propose **Cc** et **Cci** : les copies cachées pa
 destinataires sans que les autres les voient, et un message peut partir uniquement en Cc ou en
 Cci.
 
+<!-- claim:compose-drafts-keep-files -->
+Ce que vous écrivez est enregistré comme brouillon au fil de la saisie, pièces jointes
+comprises : fermer la fenêtre de rédaction ou l'application le conserve, et un transfert est
+conservé aussi. Un message contient jusqu'à 32 fichiers de 25 Mo au plus chacun.
+
 ## Transférer
 
 <!-- claim:reading-pane-forward -->
