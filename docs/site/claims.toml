@@ -713,6 +713,11 @@ checks = [
   { app = true },
 ]
 
+[feat-search-3]
+checks = [
+  { tests = ['db::emails::list::tests::a_quoted_phrase_matches_its_words_in_order', 'db::emails::list::tests::words_joined_by_or_list_mail_with_either', 'db::emails::list::tests::a_minus_word_takes_mail_away', 'db::emails::list::tests::brackets_group_before_and', 'db::emails::text_query::tests::only_uppercase_operators_are_operators'] },
+]
+
 [feat-junk-bulk-1]
 checks = [
   { app = true },

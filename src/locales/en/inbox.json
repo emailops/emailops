@@ -179,11 +179,14 @@
     "title": "Search Tips",
     "senderHint": "sender name/email",
     "recipientHint": "recipient name/email",
+    "ccHint": "copied name/email",
     "subjectHint": "subject text",
+    "attachmentHint": "with files (-has:attachment: without)",
     "unreadHint": "unread emails",
     "afterHint": "YYYY-MM-DD",
     "beforeHint": "YYYY-MM-DD",
-    "tagHint": "classification tag"
+    "tagHint": "classification tag",
+    "booleanHint": "exact phrase, either word, without a word, grouping"
   },
   "translation": {
     "detectedLabel": "This email is in {{language}}",

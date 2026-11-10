@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Boolean search and two more operators.** In the search box, quotes find an
+  exact phrase, `OR` finds either word, `-word` or `NOT word` leaves mail with
+  that word out, and brackets group: `(invoice OR receipt) -draft`. `cc:` finds
+  mail copied to someone, and `has:attachment` or `-has:attachment` keeps only
+  mail with or without attachments.
+
 ### Fixed
 
 - **A draft Gmail refuses is no longer sent again every minute.** Each sync used

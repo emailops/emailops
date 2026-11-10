@@ -13,7 +13,7 @@ use crate::db::{AccountScope, Database};
 use crate::models::error::Result;
 use crate::models::{Email, ThreadCursor};
 use crate::services::emails::{widen_stars_to_threads, widen_unread_to_threads};
-use crate::services::search::{build_effective_query, matches_parsed_filters};
+use crate::services::search::matches_parsed_filters;
 
 /// One page of a list, as the frontend and the CLI ask for it.
 #[derive(Debug, Clone)]
@@ -80,11 +80,13 @@ pub fn plan_list(raw: &str, parsed: Option<&ParsedSearchQuery>, view: ListView, 
     match parsed {
         None => plan.words = raw.trim().to_string(),
         Some(parsed) => {
-            plan.words = build_effective_query(parsed);
+            plan.words = parsed.text.clone();
             plan.subject = parsed.subject_filter.clone();
             plan.to = parsed.to_filter.clone();
+            plan.cc = parsed.cc_filter.clone();
             plan.domain = parsed.domain_filter.clone();
             plan.attachment_ext = parsed.attachment_ext.clone();
+            plan.has_attachment = parsed.has_attachment;
             plan.tags = parsed
                 .tag_filters
                 .iter()
@@ -516,6 +518,37 @@ mod tests {
         ] {
             assert_eq!(origin_of(query), want, "{query}");
         }
+    }
+
+    #[test]
+    fn the_plan_takes_the_boolean_text_cc_and_attachment_operators() {
+        let query = "from:ana (factura OR recibo) -borrador cc:bea -has:attachment";
+        let parsed = parse_search_query_patterns(query);
+        let plan = plan_list(query, parsed.as_ref(), ListView::Inbox, false);
+
+        assert_eq!(plan.words, "(factura OR recibo) -borrador");
+        assert_eq!(plan.cc.as_deref(), Some("bea"));
+        assert_eq!(plan.has_attachment, Some(false));
+    }
+
+    #[test]
+    fn a_boolean_query_next_to_an_operator_lists_what_it_names() {
+        let db = db();
+        insert(&db, "e1", "a", "t1", 300);
+        insert(&db, "e2", "a", "t2", 200);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                 VALUES ('m1', 'e1', 'a', 'factura.pdf', 'application/pdf')",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(
+            walk(&db, Some("a"), "has:attachment factura OR nada", |_, _| {}),
+            ["e1"]
+        );
+        assert_eq!(walk(&db, Some("a"), "-has:attachment factura -nada", |_, _| {}), ["e2"]);
     }
 
     #[test]
