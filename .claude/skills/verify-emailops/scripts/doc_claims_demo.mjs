@@ -1097,6 +1097,25 @@ export default (h) => async function demoCases() {
   await sleep(400);
   await saveSig(); await sleep(1500);
   const emptied = await js(() => (document.querySelector('[data-testid="signatures-settings"] [contenteditable="true"]')?.innerText || '').trim() === '');
+  // The "Sent with EmailOps" switch, found by its label: cleared, it stays
+  // cleared when Settings reopens; then it is ticked again (shared demo DB).
+  const [footerLabel] = bold('feat-signatures-4');
+  const footerBox = (want) => js((l, v) => {
+    const box = [...document.querySelectorAll('input[type=checkbox]')]
+      .find((e) => e.offsetParent !== null && e.closest('label')?.innerText.replace(/\s+/g, ' ').trim() === l);
+    if (!box) return null;
+    if (typeof v === 'boolean' && box.checked !== v) box.click();
+    return box.checked;
+  }, footerLabel, want);
+  const footerTab = bold('priv-what-emailops-3')[1].split('→').pop().trim();
+  const footerDefault = await footerBox(null);
+  const footerHelp = await js(() => document.querySelector('[data-testid="sent-footer-setting"]')?.innerText.replace(/\s+/g, ' ') || '');
+  await footerBox(false); await sleep(1000);
+  await closeSettings();
+  await tab(footerTab);
+  const footerAfterReopen = await footerBox(null);
+  await footerBox(true); await sleep(1000);
+  const footerRestored = await footerBox(null);
   await closeSettings();
   await claim('feat-signatures-2', 'imágenes', {
     covers: ['Add image puts a logo or a picture of your handwritten signature into it.', 'SVG and other files are refused with the reason.', 'A wide image is scaled down to 600 px'],
@@ -1107,6 +1126,26 @@ export default (h) => async function demoCases() {
     return ok(addImage === add && /PNG, JPEG, GIF or WebP/.test(svgRefused) && imgWidth === px && emptied,
       `«${add}»: SVG rechazado con el motivo; PNG de 1600 px → ${imgWidth} px; firma vaciada`,
       `botón «${addImage}», motivo SVG=${/PNG, JPEG, GIF or WebP/.test(svgRefused)}, ancho=${imgWidth}, vaciada=${emptied}`);
+  });
+  await claim('feat-signatures-4', 'pie «Sent with EmailOps»', {
+    covers: ['Below the signature, Add "Sent with EmailOps" at the end of the messages I send', 'It is on by default and applies to every account'],
+    how: 'En Ajustes → Signatures busca la casilla por la etiqueta que cita la doc, debajo del editor de firma: marcada de fábrica, con la ayuda «Applies to every account»; desmarcada, sigue desmarcada al reabrir Ajustes. Al final se vuelve a marcar.',
+  }, async ({ doc }) => {
+    const [label] = doc.bold();
+    const [, state, scope] = doc.match(/It is (on|off) by default and applies to (every account)/);
+    const shown = label === footerLabel && footerDefault === (state === 'on') && footerHelp.toLowerCase().includes(scope);
+    return ok(shown && footerAfterReopen === false && footerRestored === true,
+      `«${footerLabel}» marcada de fábrica, desmarcada tras reabrir Ajustes, vuelta a marcar`,
+      `de fábrica=${footerDefault}, ayuda «${footerHelp}», tras reabrir=${footerAfterReopen}, restaurada=${footerRestored}`);
+  });
+  await claim('priv-what-emailops-3', 'apagar el pie', {
+    covers: ['clear Add "Sent with EmailOps" at the end of the messages I send in Settings → Signatures'],
+    how: 'Reabre Ajustes en la pestaña de la ruta que cita la doc; la casilla que nombra está ahí y, desmarcada, se queda así (la misma comprobación que feat-signatures-4).',
+  }, async () => {
+    const [label] = bold('priv-what-emailops-3');
+    return ok(label === footerLabel && footerAfterReopen === false,
+      `«${label}» en ${footerTab}: desmarcada se mantiene`,
+      `etiqueta «${label}» vs «${footerLabel}», pestaña «${footerTab}», tras reabrir=${footerAfterReopen}`);
   });
 
   // Unsubscribe: the confirmation names what will be contacted. Never confirmed.

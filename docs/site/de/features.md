@@ -161,6 +161,12 @@ In der Nur-Text-Fassung einer Nachricht steht vor einer abschließenden Signatur
 Nachricht, lassen KI-Entwürfe Ihren Namen und Ihre Kontaktdaten weg und überlassen das
 Unterschreiben der Signatur.
 
+<!-- claim:feat-signatures-4 -->
+Unter der Signatur legt **„Gesendet mit EmailOps“ am Ende meiner gesendeten Nachrichten
+hinzufügen** fest, ob Ihre gesendeten Nachrichten mit dieser Zeile enden. Die Option ist
+standardmäßig aktiv und gilt für alle Konten; bereits gesendete Nachrichten behalten ihre
+Fußzeile.
+
 ## Intelligente Filter
 
 <!-- claim:feat-smart-filters-1 -->

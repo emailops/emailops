@@ -155,6 +155,11 @@ estándar `-- `, para que otras aplicaciones de correo la reconozcan. Cuando la 
 para ese tipo de mensaje, los borradores de la IA no incluyen tu nombre ni tus datos de contacto y
 dejan que firme la firma.
 
+<!-- claim:feat-signatures-4 -->
+Debajo de la firma, **Añadir «Enviado con EmailOps» al final de los mensajes que envío** decide
+si los mensajes que envías terminan con esa línea. Viene activado y se aplica a todas las
+cuentas; los mensajes ya enviados conservan su pie.
+
 ## Filtros inteligentes
 
 <!-- claim:feat-smart-filters-1 -->
