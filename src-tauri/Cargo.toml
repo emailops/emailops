@@ -81,7 +81,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "7"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
 # so it never touches default/release desktop builds.
-reedline = { version = "0.52", optional = true }
+reedline = { version = "0.53", optional = true }
 # Secure (no-echo) password prompt for `emailops-cli accounts add imap` (cli
 # feature only). Optional so it never touches default/release desktop builds.
 rpassword = { version = "7", optional = true }
@@ -95,7 +95,9 @@ unicode-normalization = "0.1.25"
 regex = "1"
 sqlite-vec = "0.1.9"
 async-trait = "0.1"
-imap = { version = "2", features = ["native-tls"] }
+# Fork of 2.4.1: a server line the parser rejects no longer panics the sync (see
+# docs/DECISIONS.md). Bump `rev` by pinning a commit of its emailops/2.4-panic-free branch.
+imap = { git = "https://github.com/emailops/rust-imap", rev = "baa933d5c37e145499fca1e1cbb779b3f944b6a1", features = ["native-tls"] }
 native-tls = "0.2"
 lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "builder"] }
 mailparse = "0.18"
