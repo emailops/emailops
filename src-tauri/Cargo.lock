@@ -515,12 +515,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
-name = "base64"
 version = "0.21.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
@@ -3313,10 +3307,9 @@ dependencies = [
 [[package]]
 name = "imap"
 version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c617c55def8c42129e0dd503f11d7ee39d73f5c7e01eff55768b3879ff1d107d"
+source = "git+https://github.com/emailops/rust-imap?rev=baa933d5c37e145499fca1e1cbb779b3f944b6a1#baa933d5c37e145499fca1e1cbb779b3f944b6a1"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.23.1",
  "bufstream",
  "chrono",
  "imap-proto",
@@ -5670,14 +5663,15 @@ dependencies = [
 
 [[package]]
 name = "reedline"
-version = "0.52.1"
+version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc0282eb061a7d039435f10075f22988e0dd7468901ee247a803021786afc662"
+checksum = "9b061d8059603bc95c569166a79ca60c01ccc8f8b6065035aed66a3753fdb06c"
 dependencies = [
- "chrono",
  "crossterm",
+ "crossterm_winapi",
  "fd-lock",
  "nu-ansi-term",
+ "rustix 1.1.5",
  "serde",
  "strip-ansi-escapes",
  "strum 0.28.0",

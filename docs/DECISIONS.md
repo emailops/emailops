@@ -4268,6 +4268,36 @@ mail and searched another.
 **Rejected:**
 - *A "Search in Spam and Trash" action*: an extra step for what opening the view already says.
 
+## 2026-11-02 — IMAP runs on a fork of `imap` 2.4.1 that survives lines its parser rejects
+
+**Decision:** The app depends on `emailops/rust-imap`, pinned to a commit of its
+`emailops/2.4-panic-free` branch: tag `v2.4.1` plus our fixes. There, a completion for
+another command is an error, not a panic. An untagged line the parser rejects stays in the
+raw response and the rest of the response is read, so a typed command reports it only once
+the session is back in step. A rejected line that announces a literal, or that is no
+response at all, stops the session: what follows can be message text, so later commands fail
+without writing. In the app, a panic in a blocking IMAP task reaches the error without its
+text, and a rejected line is logged with letters and digits masked.
+**Context:** Issue #243: an account whose sync panicked on every pass and never imported a
+message. `imap` 2.4.1 aborts the read on a line it cannot parse and leaves the tagged
+completion on the stream, so the next command hits an `assert_eq!` on the tag. The first
+step of a sync swallows a failed `CAPABILITY` and carries on, which is exactly that sequence.
+Upstream only replaced the assert on the 3.0 alpha line, and its `main` still aborts on such
+a line. The fork does not cover `imap-proto` 0.10.2, which still panics on a few lines
+(`INTERNALDATE NIL`), hence the containment in the app. The masked log showed the line that
+server sends: a `CAPABILITY` reply ending in a space, which the parser rejects whole. So
+`advertises` reads that reply raw, like `SEARCH`, or MOVE and UIDPLUS would never be used there.
+**Rejected:**
+- *Vendoring the crate into this repo*: a fork keeps upstream's history and stays usable by
+  anyone hitting the same bug.
+- *`async-imap`*: a sync-to-async rewrite that still drops the session on a line it cannot
+  parse.
+- *Dropping a rejected line and answering without it*: `* SEARCH 1 2 3 ` with a trailing space
+  would read as "no mail", which is how a sync silently stops fetching. Typed commands stay
+  strict, and the raw readers in `sync/imap_search.rs` already pick out what they need.
+- *Having the app drop the session after each swallowed failure*: the session stops itself in
+  the library, so a caller that carries on cannot read message text as commands.
+
 ## 2026-11-03 — A blocked connectivity probe falls back to the account mail hosts
 
 **Decision:** The connectivity probe keeps its HEAD request to `https://1.1.1.1/`. When that
