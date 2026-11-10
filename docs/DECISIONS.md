@@ -4403,6 +4403,25 @@ header-only label would show bare addresses on those providers.
 - *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
 - *Changing sync to store Outlook recipient names*: a separate change.
 
+## 2026-11-09 — On IMAP, deleting a conversation moves each message to Trash once
+
+**Decision:** When a Delete takes a conversation on an IMAP account, rows of that conversation
+that share a Message-ID are treated as copies of one message: one of them is moved to Trash (the
+received copy when there is a choice) and the others are only deleted locally, after it. When a copy
+is already in Trash, none is moved again. Gmail and Outlook keep moving every row.
+**Context:** Issue #277: a message sent to yourself is listed in Inbox and Sent as two UIDs. Proton
+Mail Bridge keeps them as one message, and moving the second UID to a Trash that already holds the
+message makes Bridge delete it for good. IMAP gives no portable way to tell one message under two
+UIDs from two real copies, so the rule holds for every IMAP server: on one that stores two copies,
+the Sent copy stays in Sent on the server while EmailOps no longer lists it.
+**Rejected:**
+- *Searching the server's Trash for the Message-ID before each move*: two more round trips per
+  message, and the same outcome on servers that store two copies.
+- *Detecting Proton Mail Bridge and applying the rule only there*: no stable signal for it in the
+  IMAP session, and other label-based servers can behave the same way.
+- *The same rule for Gmail and Outlook*: a second move there is harmless, and on Outlook the Sent
+  Items copy is a real second item the user expects to go.
+
 ## 2026-11-10 — The "Sent with EmailOps" footer is on by default and can be turned off
 
 **Decision:** One global switch in Settings → Signatures (`compose.append_footer`) decides

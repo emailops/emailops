@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   masked. A server whose list of supported features ends in a space now moves
   mail with its own move command when it has one, instead of a copy and a
   delete.
+- **Deleting a conversation on Proton Mail Bridge no longer erases a message
+  for good.** A message you sent to yourself is listed in both Inbox and Sent;
+  deleting its conversation moved it to Trash twice, and Bridge then deleted
+  it permanently. On IMAP accounts each message now goes to Trash once.
 
 ## [0.6.18] — 2026-11-03
 
