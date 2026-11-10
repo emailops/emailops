@@ -2138,6 +2138,82 @@ async fn send_new_email_with_provider_inserts_optimistic_row() {
 }
 
 #[tokio::test]
+async fn a_reply_carries_the_app_footer_unless_the_user_turned_it_off() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-ft", "me@example.com")).unwrap();
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+    // One thread per case: the optimistic copies share a timestamp, so their
+    // order inside one thread is not defined.
+    for (orig, pref, footer) in [
+        ("orig-ft-1", None, true),
+        ("orig-ft-2", Some("false"), false),
+        ("orig-ft-3", Some("true"), true),
+    ] {
+        db.insert_email(&make_email_with(orig, "acc-ft", 1000, "sender@example.com", "inbox"))
+            .unwrap();
+        if let Some(value) = pref {
+            db.set_preference(emailops_lib::services::emails::APPEND_FOOTER_PREF, value)
+                .unwrap();
+        }
+        emailops_lib::services::emails::send_reply_with_provider(
+            &db,
+            orig,
+            &emailops_lib::sync::provider::EmailBody::plain("On my way"),
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            &provider,
+        )
+        .await
+        .expect("send_reply_with_provider");
+
+        let sent = provider.sent();
+        assert_eq!(sent.last().unwrap().body.append_footer, footer, "pref {pref:?}");
+        let thread = db.get_thread("acc-ft", &format!("thread-{orig}")).unwrap();
+        let reply = thread
+            .iter()
+            .find(|e| e.mailbox == "sent")
+            .expect("optimistic Sent copy");
+        let body = db.get_email_body(&reply.id).unwrap();
+        assert_eq!(
+            body.contains("getemailops.com"),
+            footer,
+            "the local Sent copy matches what went out (pref {pref:?}): {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_new_message_goes_out_without_the_app_footer_when_turned_off() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-ftn", "me@example.com")).unwrap();
+    db.set_preference(emailops_lib::services::emails::APPEND_FOOTER_PREF, "false")
+        .unwrap();
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+    emailops_lib::services::emails::send_new_email_with_provider(
+        &db,
+        "acc-ftn",
+        vec!["them@example.com".to_string()],
+        vec![],
+        "Project kickoff",
+        &emailops_lib::sync::provider::EmailBody::plain("Let's begin"),
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_new_email_with_provider");
+
+    assert!(!provider.sent()[0].body.append_footer);
+    let row = &db.get_pending_sent_emails("acc-ftn").unwrap()[0];
+    let body = db.get_email_body(&row.id).unwrap();
+    assert!(!body.contains("getemailops.com"), "{body}");
+}
+
+#[tokio::test]
 async fn send_reply_with_gmail_meta_uses_provider_ids_not_pending() {
     let db = test_db();
     db.insert_account(&make_account("acc-optg", "me@example.com")).unwrap();

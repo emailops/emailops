@@ -980,6 +980,22 @@ mod tests {
         assert_eq!(fake.sent().len(), 1, "never twice");
     }
 
+    // The footer switch is read when the message leaves, not when it is
+    // queued: turning it off during the undo window applies to that message.
+    #[tokio::test]
+    async fn the_app_footer_follows_the_switch_at_delivery_time() {
+        let (db, fake) = setup();
+        queue(&db, new_message(), OutboxSchedule::Undo { delay_secs: 10 }).await;
+        db.set_preference(crate::services::emails::APPEND_FOOTER_PREF, "false")
+            .unwrap();
+
+        dispatch_due_outbox(&db, NOW + 10, &FakeProviders(Arc::clone(&fake)))
+            .await
+            .unwrap();
+
+        assert!(!fake.sent()[0].body.append_footer);
+    }
+
     #[tokio::test]
     async fn a_sent_row_is_kept_for_a_week_then_pruned_by_a_later_pass() {
         let (db, fake) = setup();
