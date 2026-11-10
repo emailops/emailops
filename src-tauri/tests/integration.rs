@@ -629,6 +629,7 @@ fn make_draft(account_id: &str) -> SaveDraftRequest {
         account_id: account_id.to_string(),
         to_addresses: vec!["recipient@example.com".to_string()],
         cc_addresses: Vec::new(),
+        bcc_addresses: Vec::new(),
         subject: "Draft Subject".to_string(),
         body: "Draft body text.".to_string(),
         body_html: None,
@@ -692,6 +693,7 @@ fn save_draft_roundtrips_fields() {
         account_id: "acc-d".to_string(),
         to_addresses: vec!["a@x.com".to_string(), "b@y.com".to_string()],
         cc_addresses: Vec::new(),
+        bcc_addresses: Vec::new(),
         subject: "Hello".to_string(),
         body: "World".to_string(),
         body_html: None,
@@ -753,6 +755,7 @@ fn save_draft_with_multiple_recipients_roundtrips() {
         account_id: "acc-d".to_string(),
         to_addresses: vec!["x@a.com".to_string(), "y@b.com".to_string(), "z@c.com".to_string()],
         cc_addresses: Vec::new(),
+        bcc_addresses: Vec::new(),
         subject: "Multi-recipient".to_string(),
         body: "body".to_string(),
         body_html: None,
@@ -834,6 +837,7 @@ fn compose_input(account_id: &str, draft_id: Option<&str>, subject: &str, body: 
         email_id: None,
         to: vec!["recipient@example.com".to_string()],
         cc: Vec::new(),
+        bcc: Vec::new(),
         subject: subject.to_string(),
         body: body.to_string(),
         body_html: None,
@@ -1033,6 +1037,7 @@ async fn when_both_sides_edited_a_draft_the_local_one_wins_and_is_pushed() {
         provider_draft_id: provider_id.clone(),
         to_addresses: vec!["recipient@example.com".to_string()],
         cc_addresses: Vec::new(),
+        bcc_addresses: Vec::new(),
         subject: "Plan".to_string(),
         body: "edited elsewhere".to_string(),
         body_html: None,
@@ -1105,6 +1110,7 @@ async fn a_clean_draft_edited_upstream_is_pulled() {
         provider_draft_id: draft.provider_draft_id.clone().expect("pushed"),
         to_addresses: vec!["recipient@example.com".to_string()],
         cc_addresses: Vec::new(),
+        bcc_addresses: Vec::new(),
         subject: "Plan".to_string(),
         body: "edited elsewhere".to_string(),
         body_html: None,
@@ -1137,6 +1143,7 @@ async fn fake_provider_send_reply_records_all_fields() {
             None,
             &["them@example.com".to_string()],
             &["cc@example.com".to_string()],
+            &[],
             &emailops_lib::sync::provider::ReplyTarget {
                 provider_message_id: "provider-item-id",
                 thread_id: "thread-xyz",
@@ -1191,6 +1198,7 @@ async fn a_reply_hands_the_provider_the_parents_reference_chain() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         Vec::new(),
         &provider,
@@ -1234,6 +1242,7 @@ async fn a_reply_addresses_the_parent_by_its_provider_id() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         Vec::new(),
         &provider,
@@ -1280,6 +1289,7 @@ async fn a_reply_from_another_account_hands_over_only_the_rfc_headers() {
         Some("acc-send"),
         None,
         None,
+        Vec::new(),
         None,
         Vec::new(),
         &provider,
@@ -1319,6 +1329,7 @@ async fn a_reply_subject_is_prefixed_regardless_of_provider() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         Vec::new(),
         &provider,
@@ -1348,6 +1359,7 @@ async fn a_reply_subject_is_not_prefixed_twice() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         Vec::new(),
         &provider,
@@ -1383,6 +1395,7 @@ async fn a_drafted_reply_is_sent_as_a_reply() {
             account_id: "acc-draft".to_string(),
             to_addresses: vec!["them@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Re: Quarterly numbers".to_string(),
             body: "sending later".to_string(),
             body_html: None,
@@ -1434,6 +1447,7 @@ async fn a_drafted_reply_keeps_its_own_subject() {
             account_id: "acc-subj3".to_string(),
             to_addresses: vec!["them@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Edited by the user".to_string(),
             body: "body".to_string(),
             body_html: None,
@@ -1485,6 +1499,7 @@ async fn fake_provider_send_new_email_records_attachments() {
             "me@example.com",
             None,
             &["x@y.com".to_string()],
+            &[],
             &[],
             "Report",
             &EmailBody::plain("see attached"),
@@ -1920,6 +1935,7 @@ async fn send_reply_with_provider_routes_to_provider() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -1950,6 +1966,7 @@ async fn send_reply_with_provider_sends_the_account_name_as_sender_name() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -1975,6 +1992,7 @@ async fn send_new_email_with_provider_omits_a_sender_name_equal_to_the_address()
         "acc-n2",
         vec!["x@example.com".to_string()],
         vec![],
+        Vec::new(),
         "Hello",
         &emailops_lib::sync::provider::EmailBody::plain("hi"),
         vec![],
@@ -2001,6 +2019,7 @@ async fn send_reply_with_provider_uses_explicit_to() {
         None,
         Some(vec!["override@dest.com".to_string()]),
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -2035,6 +2054,7 @@ async fn send_reply_with_provider_forwards_attachments() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![attachment],
         &provider,
@@ -2066,6 +2086,7 @@ async fn send_reply_with_provider_inserts_optimistic_row_in_thread_and_sent_view
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -2121,6 +2142,7 @@ async fn send_new_email_with_provider_inserts_optimistic_row() {
         "acc-optn",
         vec!["them@dest.com".to_string()],
         vec![],
+        Vec::new(),
         "Project kickoff",
         &emailops_lib::sync::provider::EmailBody::plain("Let's begin"),
         vec![],
@@ -2163,6 +2185,7 @@ async fn a_reply_carries_the_app_footer_unless_the_user_turned_it_off() {
             None,
             None,
             None,
+            Vec::new(),
             None,
             vec![],
             &provider,
@@ -2199,6 +2222,7 @@ async fn a_new_message_goes_out_without_the_app_footer_when_turned_off() {
         "acc-ftn",
         vec!["them@example.com".to_string()],
         vec![],
+        Vec::new(),
         "Project kickoff",
         &emailops_lib::sync::provider::EmailBody::plain("Let's begin"),
         vec![],
@@ -2233,6 +2257,7 @@ async fn send_reply_with_gmail_meta_uses_provider_ids_not_pending() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -2263,6 +2288,7 @@ async fn send_failure_does_not_insert_optimistic_row() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &FailingEmailProvider,
@@ -2287,6 +2313,7 @@ async fn send_reply_with_provider_fails_when_email_missing() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &provider,
@@ -2307,6 +2334,7 @@ async fn send_new_email_with_provider_records_message() {
         "acc-n",
         vec!["to1@dest.com".to_string(), "to2@dest.com".to_string()],
         vec!["cc@dest.com".to_string()],
+        Vec::new(),
         "Test Subject",
         &emailops_lib::sync::provider::EmailBody::plain("Test body"),
         vec![],
@@ -2325,6 +2353,66 @@ async fn send_new_email_with_provider_records_message() {
     assert!(sent[0].thread_id.is_none(), "new email has no thread_id");
 }
 
+/// A message may go only to blind copies (#270).
+#[tokio::test]
+async fn a_new_message_with_only_a_bcc_reaches_the_provider() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-b", "from@example.com")).unwrap();
+
+    let provider = FakeEmailProvider::new("from@example.com", "Me");
+    emailops_lib::services::emails::send_new_email_with_provider(
+        &db,
+        "acc-b",
+        vec![],
+        vec![],
+        vec!["hidden@example.com".to_string()],
+        "Quiet note",
+        &emailops_lib::sync::provider::EmailBody::plain("body"),
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("a Bcc-only message is valid");
+
+    let sent = provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].to_emails.is_empty());
+    assert_eq!(sent[0].bcc_emails, vec!["hidden@example.com"]);
+}
+
+#[tokio::test]
+async fn a_reply_carries_its_bcc() {
+    let db = test_db();
+    db.insert_account(&make_account("acc-rb", "me@example.com")).unwrap();
+    db.insert_email(&make_email_with(
+        "e-rb",
+        "acc-rb",
+        1_700_000_000,
+        "sender@example.com",
+        "inbox",
+    ))
+    .unwrap();
+
+    let provider = FakeEmailProvider::new("me@example.com", "Me");
+    emailops_lib::services::emails::send_reply_with_provider(
+        &db,
+        "e-rb",
+        &emailops_lib::sync::provider::EmailBody::plain("reply"),
+        None,
+        Some(vec!["sender@example.com".to_string()]),
+        None,
+        vec!["hidden@example.com".to_string()],
+        None,
+        vec![],
+        &provider,
+    )
+    .await
+    .expect("send_reply_with_provider");
+
+    let sent = provider.sent();
+    assert_eq!(sent[0].bcc_emails, vec!["hidden@example.com"]);
+}
+
 #[tokio::test]
 async fn send_applies_ui_language_to_footer() {
     // The "Sent with EmailOps" footer must follow the user's UI-language
@@ -2340,6 +2428,7 @@ async fn send_applies_ui_language_to_footer() {
         "acc-es",
         vec!["to@dest.com".to_string()],
         vec![],
+        Vec::new(),
         "Hola",
         &emailops_lib::sync::provider::EmailBody::plain("cuerpo"),
         vec![],
@@ -2367,6 +2456,7 @@ async fn send_new_email_with_provider_fails_for_unknown_account() {
         "no-such-account",
         vec!["to@dest.com".to_string()],
         vec![],
+        Vec::new(),
         "Subject",
         &emailops_lib::sync::provider::EmailBody::plain("Body"),
         vec![],
@@ -3770,6 +3860,7 @@ impl EmailProvider for FailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _target: &emailops_lib::sync::provider::ReplyTarget<'_>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
@@ -3784,6 +3875,7 @@ impl EmailProvider for FailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
@@ -4166,6 +4258,7 @@ async fn send_reply_failing_provider_returns_error() {
         None,
         None,
         None,
+        Vec::new(),
         None,
         vec![],
         &FailingEmailProvider,
@@ -4185,6 +4278,7 @@ async fn send_new_email_failing_provider_returns_error() {
         "acc-fp2",
         vec!["to@dest.com".to_string()],
         vec![],
+        Vec::new(),
         "Subject",
         &emailops_lib::sync::provider::EmailBody::plain("Body"),
         vec![],
@@ -4232,6 +4326,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _target: &emailops_lib::sync::provider::ReplyTarget<'_>,
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
@@ -4246,6 +4341,7 @@ impl EmailProvider for ListFailingEmailProvider {
         _from_name: Option<&str>,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &emailops_lib::sync::provider::EmailBody,
         _attachments: &[EmailAttachment],
@@ -4523,6 +4619,7 @@ async fn send_new_email_empty_to_returns_validation_error() {
         "acc-val",
         vec![], // ← empty To
         vec![],
+        Vec::new(),
         "Hello",
         &emailops_lib::sync::provider::EmailBody::plain("body"),
         vec![],
@@ -4552,6 +4649,7 @@ async fn send_new_email_newline_in_subject_returns_validation_error() {
         "acc-inj",
         vec!["to@dest.com".to_string()],
         vec![],
+        Vec::new(),
         injected_subject,
         &emailops_lib::sync::provider::EmailBody::plain("body"),
         vec![],
@@ -6703,6 +6801,7 @@ async fn outbox_undo_send_cancels_or_sends_once_the_window_closes() {
         reply_to_email_id: None,
         to: vec!["ben@example.com".to_string()],
         cc: vec![],
+        bcc: vec![],
         subject: "Lunch".to_string(),
         body: "Friday?".to_string(),
         body_html: None,

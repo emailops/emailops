@@ -42,6 +42,17 @@ par compte. Les dossiers IMAP personnalisés sont également synchronisés, et v
 créer, les renommer, les supprimer et y déplacer des messages par glisser-déposer depuis
 l'application.
 
+## Répondre
+
+<!-- claim:reading-pane-reply -->
+**Répondre** s'adresse à l'expéditeur, ou à l'adresse que le message indique dans son en-tête
+*Reply-To*, comme le font les listes de diffusion ou l'adresse *no-reply* d'une boutique.
+**Répondre à tous** ajoute tous les autres participants de la conversation. L'objet d'une
+réponse ou d'un transfert se modifie avant l'envoi, et la réponse reste dans sa conversation.
+Chaque fenêtre de rédaction propose **Cc** et **Cci** : les copies cachées parviennent à leurs
+destinataires sans que les autres les voient, et un message peut partir uniquement en Cc ou en
+Cci.
+
 ## Transférer
 
 <!-- claim:reading-pane-forward -->

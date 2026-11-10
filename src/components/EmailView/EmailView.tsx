@@ -23,7 +23,7 @@ import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Draft, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
-import { forwardQuote, forwardSubject, loadForwardTexts } from './forward';
+import { forwardQuote, loadForwardTexts } from './forward';
 import { ReplyCompose } from './ReplyCompose';
 import { ThreadEmailItem } from './ThreadEmailItem';
 
@@ -272,6 +272,25 @@ export function EmailView({
   const isReplyOpenRef = useRef(isReplyOpen);
   isReplyOpenRef.current = isReplyOpen;
   const isThread = threadEmails.length > 1;
+
+  // Where a reply to each message goes when it names a Reply-To. Read once
+  // per thread; until it arrives (or if it fails) replies go to the senders.
+  const [threadReplyTo, setThreadReplyTo] = useState<Record<string, string[]>>({});
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per thread, keyed on threadKey
+  useEffect(() => {
+    setThreadReplyTo({});
+    if (!latestEmailForEffect) return;
+    let current = true;
+    api
+      .getThreadReplyTo(latestEmailForEffect.accountId, latestEmailForEffect.threadId)
+      .then((map) => {
+        if (current) setThreadReplyTo(map);
+      })
+      .catch((err) => addLog('error', 'sync', `Could not read the thread's Reply-To addresses: ${errorText(err)}`));
+    return () => {
+      current = false;
+    };
+  }, [threadKey]);
 
   const threadSearchActive = threadSearchOpen && threadSearchQuery.trim().length > 0;
   const threadMatches = useMemo(
@@ -820,6 +839,7 @@ export function EmailView({
               accounts={accounts}
               defaultAccountId={activeAccountId || latestEmail.accountId}
               mode={replyMode}
+              replyTo={threadReplyTo}
               restoredDraft={replyMode === 'forward' ? null : threadDraft}
               adoptDraftId={replyMode === 'forward' ? undefined : chatDraftId}
               onDraftSaved={setThreadDraft}
@@ -842,6 +862,8 @@ export function EmailView({
                 fromAccountId,
                 toEmails,
                 ccEmails,
+                bccEmails,
+                subject,
                 body: replyText,
                 bodyHtml,
                 inlineImages,
@@ -858,8 +880,9 @@ export function EmailView({
                   replyToEmailId: isForward ? null : latestEmail.id,
                   to: toEmails,
                   cc: ccEmails,
-                  // A reply takes its parent's subject ("Re: …") backend-side.
-                  subject: isForward ? forwardSubject(latestEmail.subject) : '',
+                  bcc: bccEmails,
+                  // A reply's subject is normalized to "Re: …" backend-side.
+                  subject,
                   body: replyText,
                   bodyHtml: bodyHtml ?? null,
                   inlineImages: inlineImages ?? [],
@@ -897,6 +920,7 @@ export function EmailView({
                         attachments,
                         bodyHtml,
                         inlineImages,
+                        bccEmails,
                       );
                     } else {
                       await api.sendReply(
@@ -908,6 +932,8 @@ export function EmailView({
                         bodyHtml,
                         inlineImages,
                         attachments,
+                        bccEmails,
+                        subject,
                       );
                     }
                     // The reply is out: its draft goes now, before the thread

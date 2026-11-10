@@ -15,6 +15,7 @@ const base: ComposeDraftState = {
   accountId: 'acct-1',
   toAddresses: [],
   ccAddresses: [],
+  bccAddresses: [],
   subject: '',
   plainBody: '',
   bodyHtml: '',
@@ -33,6 +34,8 @@ describe('shouldAutosaveDraft', () => {
 
   it('is true once there is a recipient', () => {
     expect(shouldAutosaveDraft({ ...base, toAddresses: ['a@b.com'] })).toBe(true);
+    expect(shouldAutosaveDraft({ ...base, ccAddresses: ['a@b.com'] })).toBe(true);
+    expect(shouldAutosaveDraft({ ...base, bccAddresses: ['a@b.com'] })).toBe(true);
   });
 
   it('is true once there is a subject or body', () => {
@@ -53,6 +56,7 @@ describe('buildSaveDraftRequest', () => {
       draftId: 'd1',
       toAddresses: ['a@b.com'],
       ccAddresses: ['c@b.com'],
+      bccAddresses: ['h@example.com'],
       subject: 'Hi',
       plainBody: 'hello',
       bodyHtml: '   ',
@@ -60,6 +64,7 @@ describe('buildSaveDraftRequest', () => {
     expect(req.id).toBe('d1');
     expect(req.toAddresses).toEqual(['a@b.com']);
     expect(req.ccAddresses).toEqual(['c@b.com']);
+    expect(req.bccAddresses).toEqual(['h@example.com']);
     expect(req.body).toBe('hello');
     expect(req.bodyHtml).toBeNull();
   });
@@ -184,6 +189,7 @@ describe('createDebouncedDraftSaver', () => {
     accountId: 'acct-1',
     toAddresses: ['a@example.com'],
     ccAddresses: [],
+    bccAddresses: [],
     subject,
     plainBody: 'body',
     bodyHtml: '<p>body</p>',
@@ -264,6 +270,8 @@ describe('replySubject', () => {
 describe('canSend', () => {
   const ready = {
     to: ['a@example.com'],
+    cc: [],
+    bcc: [],
     subject: 'Report',
     requireSubject: true,
     plainBody: '',
@@ -289,6 +297,8 @@ describe('canSend', () => {
   it('needs a recipient, and a subject where the composer asks for one', () => {
     const content = { ...ready, plainBody: 'Hi' };
     expect(canSend({ ...content, to: [] })).toBe(false);
+    expect(canSend({ ...content, to: [], cc: ['c@example.com'] })).toBe(true);
+    expect(canSend({ ...content, to: [], bcc: ['h@example.com'] })).toBe(true);
     expect(canSend({ ...content, subject: ' ' })).toBe(false);
     expect(canSend({ ...content, subject: '', requireSubject: false })).toBe(true);
   });

@@ -360,6 +360,12 @@ export async function getThread(accountId: string, threadId: string): Promise<Em
   return invoke('get_thread', { accountId, threadId });
 }
 
+/** Email id → the `Reply-To` addresses a reply to that message goes to
+ *  instead of its sender; messages without one are left out. */
+export async function getThreadReplyTo(accountId: string, threadId: string): Promise<Record<string, string[]>> {
+  return invoke('get_thread_reply_to', { accountId, threadId });
+}
+
 /** Each message of a thread with what it adds to it, oldest first. */
 export async function getThreadNewContent(accountId: string, threadId: string): Promise<ThreadMessageText[]> {
   return invoke('get_thread_new_content', { accountId, threadId });
@@ -451,6 +457,7 @@ export interface OutgoingMessage {
   replyToEmailId?: string | null;
   to: string[];
   cc: string[];
+  bcc?: string[];
   /** For a reply, empty = the parent's subject ("Re: …"). */
   subject: string;
   /** Plain-text body. */
@@ -528,6 +535,9 @@ export async function sendReply(
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
   attachments?: EmailAttachment[],
+  bccEmails?: string[],
+  /** Unset replies to the parent's subject. */
+  subject?: string,
 ): Promise<void> {
   return invoke('send_reply', {
     emailId,
@@ -535,6 +545,8 @@ export async function sendReply(
     fromAccountId,
     toEmails,
     ccEmails,
+    bccEmails,
+    subject,
     bodyHtml,
     inlineImages,
     attachments,
@@ -561,11 +573,13 @@ export async function sendNewEmail(
   attachments?: EmailAttachment[],
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
+  bccEmails?: string[],
 ): Promise<void> {
   return invoke('send_new_email', {
     accountId,
     toEmails,
     ccEmails,
+    bccEmails,
     subject,
     body,
     attachments,
@@ -1678,6 +1692,7 @@ export interface SaveDraftRequest {
   accountId: string;
   toAddresses: string[];
   ccAddresses?: string[];
+  bccAddresses?: string[];
   subject: string;
   body: string;
   bodyHtml?: string | null;

@@ -4438,3 +4438,21 @@ said it was always there. Keeping it on by default leaves every existing install
   asked to vary it by account.
 - *Reading the switch when the message is queued*: turning it off during the undo window would
   not apply to that message.
+
+## 2026-11-11 — Blind copies travel in the envelope; only Gmail and drafts keep the header
+
+**Decision:** Bcc addresses always go in the delivery envelope. A message sent over SMTP (IMAP
+accounts) carries no `Bcc` header, so its Sent copy on the server does not list them. Gmail's
+`raw` message and every provider draft keep the header: Gmail delivers from the headers and
+removes `Bcc` itself, and a draft must come back from the provider with its blind copies, or the
+read-back after each push would drop them. Outlook gets `bccRecipients`. A reply goes to the
+`Reply-To` captured at sync when the message names a valid one, else to `From`.
+**Context:** Issue #270 asked for Bcc in every composer, Cc- or Bcc-only messages, editable
+reply and forward subjects, and replies that honour `Reply-To`.
+**Rejected:**
+- *Building the SMTP message twice, with and without the header, to keep Bcc in the IMAP Sent
+  copy*: each build mints its own Message-ID, so the Sent copy would no longer match the local
+  row stored at send time.
+- *Reply All from the selected message only, keeping its To and Cc roles and excluding only the
+  sending identity* (asked in the issue's comment): it changes who Reply All reaches in every
+  thread; left out of this change.

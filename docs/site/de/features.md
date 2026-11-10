@@ -41,6 +41,17 @@ Die Ansicht **Alle Konten** führt jedes aktivierte Postfach in einer Liste zusa
 Ansichten je Konto. Eigene IMAP-Ordner werden ebenfalls synchronisiert, und Sie können sie
 direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-drop verschieben.
 
+## Antworten
+
+<!-- claim:reading-pane-reply -->
+**Antworten** geht an den Absender oder an die Adresse, die die Nachricht in ihrem
+*Reply-To*-Header nennt, wie es Mailinglisten oder die *No-Reply*-Adresse eines Shops tun.
+**Allen antworten** nimmt alle anderen Beteiligten der Unterhaltung hinzu. Den Betreff einer
+Antwort oder Weiterleitung kann man vor dem Senden ändern, und die Antwort bleibt in ihrer
+Unterhaltung. Jedes Verfassen-Fenster hat **Cc** und **Bcc**: Blindkopien erreichen ihre
+Empfänger, ohne dass die anderen sie sehen, und eine Nachricht kann auch nur an Cc oder Bcc
+gehen.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->

@@ -61,6 +61,7 @@ function extractEmail(raw: string): string {
   return (match ? match[1] : raw).trim().toLowerCase();
 }
 
+type RecipientField = 'to' | 'cc' | 'bcc';
 export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewProps) {
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
@@ -87,6 +88,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
+  const [bccRecipients, setBccRecipients] = useState<string[]>(tab.bccAddresses ?? []);
+  const [showBcc, setShowBcc] = useState((tab.bccAddresses ?? []).length > 0);
   const [attachments, setAttachments] = useState<EmailAttachment[]>(tab.fileAttachments ?? []);
   // File-path attachments carried from the draft (e.g. added via the CLI).
   // Shown as chips; preserved across auto-saves; sent via send_draft.
@@ -100,6 +103,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   // AI draft state. Request id in a ref so the once-registered listener below
   // matches the right response without re-binding per request — same contract
   // as ComposeModal, which this view replaces when the user maximizes.
@@ -107,7 +111,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
   // Auto-save, seeded with this tab's backing draft id when editing an existing
@@ -121,7 +125,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
     );
   }
 
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const contextDomain = (() => {
     const domains = allRecipients.filter((r) => !selfEmails.includes(r.toLowerCase())).map(getDomain);
     if (domains.length === 0) return undefined;
@@ -142,14 +146,14 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
       try {
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
   // Debounced auto-save ~0.8s after the last edit. Upserts the backing draft
@@ -164,6 +168,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
       // recipient the user means; the saved draft must not drop it.
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
@@ -183,8 +188,10 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   }, [
     toRecipients,
     ccRecipients,
+    bccRecipients,
     toInput,
     ccInput,
+    bccInput,
     subject,
     bodyHtml,
     fromAccountId,
@@ -196,22 +203,23 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
     tab.replyToEmailId,
   ]);
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = extractEmail(email);
     if (!trimmed || !trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients((prev) => [...prev, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients((prev) => [...prev, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList((prev) => [...prev, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients((prev) => prev.filter((r) => r !== email));
-    else setCcRecipients((prev) => prev.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
   const handleFiles = useCallback((files: FileList | null) => {
@@ -233,7 +241,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   // A file dropped anywhere on the composer is attached, not opened.
   const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -248,7 +256,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
@@ -299,6 +307,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
     subject,
     requireSubject: true,
     plainBody: outgoing.plainText,
@@ -331,10 +341,13 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
     // Same rule as ComposeModal: an address left in the input box counts.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     const ready = canSend({
       to,
+      cc,
+      bcc,
       subject,
       requireSubject: true,
       plainBody: plain,
@@ -353,6 +366,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
         replyToEmailId: tab.replyToEmailId ?? null,
         to,
         cc,
+        bcc,
         subject: subject.trim(),
         body: plain,
         bodyHtml: prepared.bodyHtml,
@@ -401,6 +415,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
           message.bodyHtml ?? undefined,
           inlineImages,
           message.attachments,
+          message.bcc,
+          message.subject,
         );
       } else {
         await api.sendNewEmail(
@@ -412,6 +428,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
           message.attachments,
           message.bodyHtml ?? undefined,
           inlineImages,
+          message.bcc,
         );
       }
       // Drop the backing draft (local + provider copy) now that it's sent, so it
@@ -453,7 +470,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   };
 
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -578,16 +595,30 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
 
         {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-        {!showCc && (
-          <button
-            type="button"
-            onClick={() => setShowCc(true)}
-            className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
-          >
-            + {t('compose:cc')}
-          </button>
+        {(!showCc || !showBcc) && (
+          <div className="flex gap-3 mb-2 ml-16">
+            {!showCc && (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="text-xs text-primary-500 hover:text-primary-600"
+              >
+                + {t('compose:cc')}
+              </button>
+            )}
+            {!showBcc && (
+              <button
+                type="button"
+                onClick={() => setShowBcc(true)}
+                className="text-xs text-primary-500 hover:text-primary-600"
+              >
+                + {t('compose:bcc')}
+              </button>
+            )}
+          </div>
         )}
         {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+        {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
 
         <div className="flex items-center gap-2 mb-3">
           <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:subject')}</span>

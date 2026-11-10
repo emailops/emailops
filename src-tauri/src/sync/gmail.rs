@@ -1,4 +1,5 @@
 use crate::services::app_handle::AppHandle;
+use crate::util::email_addr::split_address_list;
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
@@ -664,6 +665,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -675,6 +677,8 @@ impl GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject: &normalized_subject,
             in_reply_to: target.message_id.filter(|v| !v.trim().is_empty()),
             references: target.references.filter(|v| !v.trim().is_empty()),
@@ -708,6 +712,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -717,6 +722,8 @@ impl GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject,
             in_reply_to: None,
             references: None,
@@ -748,6 +755,7 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -760,6 +768,8 @@ impl GmailClient {
             from_name: None,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject,
             in_reply_to,
             references,
@@ -781,12 +791,22 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
+        let payload = self.draft_payload(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )?;
         let url = format!("{}/users/me/drafts", self.base_url);
         let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let draft: GmailDraftId = response.json().await?;
@@ -799,12 +819,22 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
+        let payload = self.draft_payload(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )?;
         let url = format!("{}/users/me/drafts/{}", self.base_url, provider_draft_id);
         let response = self
             .send_request_with_retry("update draft", |client, token| {
@@ -918,6 +948,15 @@ impl GmailClient {
             // listing: if the draft was saved in between, storing the listed id
             // would pin us to content we never fetched.
             let message_id = msg.id.clone();
+            // Only a draft or a sent copy carries `Bcc`; the message parse
+            // does not keep it.
+            let bcc = msg
+                .payload
+                .headers
+                .iter()
+                .find(|h| h.name.eq_ignore_ascii_case("Bcc"))
+                .map(|h| split_address_list(&h.value))
+                .unwrap_or_default();
             let (email, _cat, atts) = self.parse_message(msg).await?;
             // The parsed body is HTML; split it so the composer renders the rich
             // source instead of escaping it as literal text.
@@ -927,6 +966,7 @@ impl GmailClient {
                 provider_draft_id: draft_id.clone(),
                 to_addresses: email.recipients,
                 cc_addresses: email.cc,
+                bcc_addresses: bcc,
                 subject: email.subject,
                 body,
                 body_html,
@@ -1975,6 +2015,7 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1985,6 +2026,7 @@ impl EmailProvider for GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
             target,
             subject,
             body,
@@ -1999,12 +2041,22 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<provider::SentMessageMeta> {
-        self.send_new_email(from_email, from_name, to_emails, cc_emails, subject, body, attachments)
-            .await
+        self.send_new_email(
+            from_email,
+            from_name,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+        )
+        .await
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -2016,13 +2068,23 @@ impl EmailProvider for GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        self.create_draft(from_email, to_emails, cc_emails, subject, body, attachments, reply)
-            .await
+        self.create_draft(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )
+        .await
     }
 
     async fn update_draft(
@@ -2031,6 +2093,7 @@ impl EmailProvider for GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -2041,6 +2104,7 @@ impl EmailProvider for GmailClient {
             from_email,
             to_emails,
             cc_emails,
+            bcc_emails,
             subject,
             body,
             attachments,
@@ -2592,46 +2656,6 @@ fn format_gmail_error(status: StatusCode, body: &str) -> String {
     parsed_message
         .filter(|message| !message.trim().is_empty())
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
-}
-
-/// Split an address-list header into its entries, each kept verbatim
-/// (`"Name" <a@b>` or `a@b`, the shape Gmail rows store). Commas inside a
-/// quoted display name, an `<addr>` or a `(comment)` do not split.
-fn split_address_list(raw: &str) -> Vec<String> {
-    let mut entries = Vec::new();
-    let mut current = String::new();
-    let (mut in_quotes, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
-    for c in raw.chars() {
-        if escaped {
-            escaped = false;
-        } else if in_quotes {
-            match c {
-                '\\' => escaped = true,
-                '"' => in_quotes = false,
-                _ => {}
-            }
-        } else {
-            match c {
-                '"' => in_quotes = true,
-                '<' => angle += 1,
-                '>' => angle = angle.saturating_sub(1),
-                '(' => comment += 1,
-                ')' => comment = comment.saturating_sub(1),
-                ',' if angle == 0 && comment == 0 => {
-                    entries.push(std::mem::take(&mut current));
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        current.push(c);
-    }
-    entries.push(current);
-    entries
-        .into_iter()
-        .map(|e| e.trim().to_string())
-        .filter(|e| !e.is_empty())
-        .collect()
 }
 
 fn parse_email_address(from: &str) -> (String, String) {
@@ -3249,6 +3273,7 @@ mod tests {
             "ada@example.com",
             &["bob@example.com".to_string()],
             &[],
+            &[],
             "Hello",
             &EmailBody::plain("hi"),
             &[],
@@ -3302,6 +3327,41 @@ mod tests {
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
+    /// Gmail's `raw` has no envelope: the blind copy must be in the `Bcc`
+    /// header, which Gmail removes before delivering (#270).
+    #[tokio::test]
+    async fn a_send_hands_gmail_the_bcc_header() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m","threadId":"t"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client
+            .send_new_email(
+                "me@example.com",
+                None,
+                &[],
+                &[],
+                &["hidden@example.com".to_string()],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await
+            .expect("send");
+
+        let request = &server.received_requests().await.unwrap()[0];
+        let payload: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        let mime = base64_url_decode(payload["raw"].as_str().unwrap()).unwrap();
+        assert!(mime.contains("Bcc: hidden@example.com"), "{mime}");
+    }
+
     /// A 5xx on `messages.send` does not mean the mail was not sent; the
     /// retry loop used to send it again.
     #[tokio::test]
@@ -3328,6 +3388,7 @@ mod tests {
                 "me@example.com",
                 None,
                 &["them@example.com".to_string()],
+                &[],
                 &[],
                 "hi",
                 &EmailBody::plain("body"),
@@ -3406,6 +3467,7 @@ mod tests {
                 None,
                 &["them@example.com".to_string()],
                 &[],
+                &[],
                 &crate::sync::provider::ReplyTarget {
                     provider_message_id: "",
                     thread_id: "",
@@ -3439,6 +3501,7 @@ mod tests {
             .draft_payload(
                 "me@example.com",
                 &["them@example.com".to_string()],
+                &[],
                 &[],
                 "Re: hi",
                 &EmailBody::plain("draft"),
@@ -3641,6 +3704,40 @@ mod tests {
                "payload":{{"mimeType":"text/plain","headers":[{{"name":"Subject","value":"{subject}"}},
                {{"name":"To","value":"dest@example.com"}}],"body":{{"size":0}}}}}}}}"#
         )
+    }
+
+    /// The read-back after each push stores what the pull returns, so a pulled
+    /// draft without its `Bcc` would lose the blind copies (#270).
+    #[tokio::test]
+    async fn a_pulled_draft_keeps_its_blind_copies() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(drafts_list_page(&[("d-1", "m-1")], None), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        let with_bcc = full_draft_body("d-1", "m-1", "Hello").replace(
+            r#"{"name":"To","value":"dest@example.com"}"#,
+            r#"{"name":"To","value":"dest@example.com"},{"name":"Bcc","value":"hidden@example.com"}"#,
+        );
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts/d-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(with_bcc, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pulled = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(pulled.changed[0].bcc_addresses, vec!["hidden@example.com".to_string()]);
     }
 
     #[tokio::test]

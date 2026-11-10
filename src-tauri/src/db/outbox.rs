@@ -289,6 +289,7 @@ mod tests {
             reply_to_email_id: None,
             to: vec!["ana@example.com".into()],
             cc: vec!["ben@example.com".into()],
+            bcc: Vec::new(),
             subject: "Plans".into(),
             body: "See you".into(),
             body_html: Some("<p>See you</p>".into()),

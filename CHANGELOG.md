@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bcc, editable reply subjects and replies to Reply-To.** Every composer has
+  a Bcc field, and a message can go to Cc or Bcc alone. Drafts keep their blind
+  copies. The subject of a reply or a forward can be edited before it goes. A
+  reply goes to the address a message names in its Reply-To header, such as a
+  mailing list's, instead of its sender.
+
 ### Fixed
 
 - **A draft Gmail refuses is no longer sent again every minute.** Each sync used
