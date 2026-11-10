@@ -17,6 +17,21 @@ fn footer_language(db: &Arc<Database>) -> Result<crate::services::i18n::Language
     Ok(crate::services::i18n::resolve_ui_language(db)?.unwrap_or_default())
 }
 
+/// The Settings → Signatures switch for the "Sent with EmailOps" footer:
+/// `"false"` sends without it; unset or `"true"` keeps it (the default).
+pub const APPEND_FOOTER_PREF: &str = "compose.append_footer";
+
+/// The footer as the message leaves: in the user's UI language, or none when
+/// the switch is off. Read at delivery, so a message waiting in the outbox
+/// follows the switch as it stands when it goes out.
+fn with_footer_preferences(db: &Arc<Database>, body: &EmailBody) -> Result<EmailBody> {
+    let body = body.clone().with_language(footer_language(db)?);
+    if db.get_preference(APPEND_FOOTER_PREF)?.as_deref() == Some("false") {
+        return Ok(body.without_footer());
+    }
+    Ok(body)
+}
+
 /// Insert the optimistic local Sent copy right after the provider accepted
 /// the send, so the message shows in the thread and Sent views immediately
 /// instead of after the next sync. Best-effort by design: the mail IS sent
@@ -208,7 +223,7 @@ async fn deliver_reply(
 
     let to = to_emails.unwrap_or_else(|| vec![email.sender_email.clone()]);
     let cc = cc_emails.unwrap_or_default();
-    let body = body.clone().with_language(footer_language(db)?);
+    let body = with_footer_preferences(db, body)?;
 
     emit_account_log(
         "info",
@@ -393,7 +408,7 @@ async fn deliver_new_email(
     };
     emit_account_log("info", "sync", &account.email, &log_msg);
 
-    let body = body.clone().with_language(footer_language(db)?);
+    let body = with_footer_preferences(db, body)?;
     let recipients: Vec<String> = to_emails.iter().chain(&cc_emails).cloned().collect();
     let (attachments, shared_docs) =
         crate::services::shared_docs::resolve_doc_refs(db, &account, attachments, &recipients)?;

@@ -44,6 +44,7 @@ All business logic for email read/write operations that cross the provider bound
 - `generate_draft(db, email_id, account_id, app, ai_queue) -> Result<String>`
 - `send_reply(db, email_id, body, from_account_id, to, cc, app) -> Result<String>` (returns sending account id for a post-send sync)
 - `send_new_email(db, account_id, to, cc, subject, body, attachments, app) -> Result<String>` (returns sending account id for a post-send sync)
+- `APPEND_FOOTER_PREF` (`compose.append_footer`) — the Settings → Signatures switch for the "Sent with EmailOps" footer. Both send paths read it at delivery (`"false"` = `EmailBody::without_footer()`), so the outbox follows the switch as it stands when a message leaves
 - `redownload_email(db, email_id, app_data_dir, app) -> Result<Email>` / `redownload_email_with_provider(db, email_id, provider)` — re-fetch the content; mailbox, sent flag, read state and triage are kept from the stored row
 - `mark_as_read(db, email_id, app) -> Result<()>` / `delete_email(db, email_id, app) -> Result<()>` — command entry points that resolve the provider themselves; the `*_with_provider` variants take an injected provider (`None` = local-only) and are what tests drive
 

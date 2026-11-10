@@ -162,6 +162,11 @@ standard `-- `, pour que les autres applications de messagerie la reconnaissent.
 une signature pour ce type de message, les brouillons de l'IA omettent votre nom et vos
 coordonnées et laissent la signature signer.
 
+<!-- claim:feat-signatures-4 -->
+Sous la signature, **Ajouter « Envoyé avec EmailOps » à la fin des messages que j'envoie**
+décide si les messages que vous envoyez se terminent par cette ligne. Elle est activée par
+défaut et s'applique à tous les comptes ; les messages déjà envoyés gardent leur pied de message.
+
 ## Filtres intelligents
 
 <!-- claim:feat-smart-filters-1 -->

@@ -699,6 +699,8 @@
     "useForNew": "Insérer dans les nouveaux messages",
     "useForReplies": "Insérer dans les réponses et transferts",
     "placementHelp": "Dans une réponse, la signature se place sous votre texte ; dans un transfert, au-dessus du message transféré.",
+    "sentFooter": "Ajouter « Envoyé avec EmailOps » à la fin des messages que j'envoie",
+    "sentFooterHelp": "S'applique à tous les comptes. Les messages déjà envoyés gardent leur pied de message.",
     "imagesHelp": "Les images voyagent dans chaque message. Les images larges sont réduites à 600 px ; chacune peut peser 200 Ko au maximum, la signature entière 512 Ko.",
     "save": "Enregistrer la signature",
     "saving": "Enregistrement…",

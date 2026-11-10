@@ -859,6 +859,13 @@ checks = [
   { tests = ['services::emails::drafts::tests::sign_off_is_left_to_the_app_when_the_signature_applies', 'services::emails::drafts::tests::sign_off_follows_the_option_for_the_draft_kind', 'services::emails::drafts::tests::per_draft_section_carries_the_sign_off_rule_with_a_signature', 'services::emails::drafts::tests::sign_off_is_the_first_name_without_a_signature'], covers = ["When the account has a signature for that kind of message, AI drafts leave your name and contact details out and let the signature sign."] },
 ]
 
+[feat-signatures-4]
+checks = [
+  { app = true },
+  { tests = ['services::outbox::tests::the_app_footer_follows_the_switch_at_delivery_time', 'sync::mime_builder::tests::without_footer_suppresses_the_footer'], covers = ["decides whether the messages you send end with that line"] },
+  { manual = 'Turning the switch off changes only what is sent from then on; nothing rewrites a message already in Sent, and the demo cannot send to show it.', covers = ["messages already sent keep their footer"] },
+]
+
 [feat-interface-3]
 checks = [
   { judge = "Open Settings → About. Does it show the running version and links to the website, the source code on GitHub and Sponsor the project ♥, and does the sponsor link point at the project's GitHub Sponsors page?", evidence = ["file:src/components/Settings/AboutSettings.tsx", "file:src/locales/en/settings.json"], covers = ["Settings → About shows the version you are running, with links to the website, the source code on GitHub and Sponsor the project ♥, which opens the project's GitHub Sponsors page."] },
@@ -1414,7 +1421,9 @@ checks = [
 
 [priv-what-emailops-3]
 checks = [
+  { app = true },
   { tests = ['sync::mime_builder::tests::footer_follows_body_language'], covers = ["ends with a short \"Sent with EmailOps\" line"] },
+  { tests = ['services::outbox::tests::the_app_footer_follows_the_switch_at_delivery_time', 'sync::mime_builder::tests::without_footer_suppresses_the_footer'], covers = ["Unless you turn it off", "to send without it"] },
   { file = 'src-tauri/src/sync/provider.rs', quoted = 'utm_source=email_footer' },
 ]
 

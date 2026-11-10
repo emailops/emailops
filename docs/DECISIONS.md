@@ -4402,3 +4402,20 @@ header-only label would show bare addresses on those providers.
   case-sensitive grouping and Spam included, or three full scans.
 - *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
 - *Changing sync to store Outlook recipient names*: a separate change.
+
+## 2026-11-10 — The "Sent with EmailOps" footer is on by default and can be turned off
+
+**Decision:** One global switch in Settings → Signatures (`compose.append_footer`) decides
+whether messages the user sends end with the "Sent with EmailOps" line. Unset means on; only
+`"false"` turns it off. The send service reads it when a message is delivered, so a message
+waiting in the outbox follows the switch as it stands when it leaves, and the local Sent copy
+matches what went out. Messages that never carried the footer (drafts pushed to the provider,
+unsubscribe requests, shared-document notices) are unaffected.
+**Context:** The developer wanted a way to stop adding the line; the published privacy page
+said it was always there. Keeping it on by default leaves every existing install unchanged.
+**Rejected:**
+- *Off by default*: changes what every user sends without them asking for it.
+- *A per-account switch*: the footer's language is already global (the UI language), and no one
+  asked to vary it by account.
+- *Reading the switch when the message is queued*: turning it off during the undo window would
+  not apply to that message.
