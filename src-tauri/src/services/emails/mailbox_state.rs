@@ -26,6 +26,7 @@ use crate::services::app_handle::AppHandle;
 use crate::services::logger;
 use crate::sync::provider::{provider_supports_mailbox_writes, EmailProvider};
 
+use super::folders::refile_moved_row;
 use super::optimistic::LOCAL_SENT_ID_PREFIX;
 
 /// Command entry point for "mark as read". Resolving the provider is
@@ -397,7 +398,13 @@ pub async fn delete_email_with_provider(
 
     if let Some(provider) = pushable(provider, &email) {
         match provider.trash_message(&email.id, email.message_id.as_deref()).await {
-            Ok(()) => {}
+            // Re-keyed in Trash (IMAP): the row follows it, or the Trash sync
+            // stores the message a second time.
+            Ok(Some(location)) => {
+                refile_moved_row(db, &email.id, &location.id, &location.mailbox)?;
+                return db.delete_email(&location.id);
+            }
+            Ok(None) => {}
             // Already deleted, or moved and re-keyed, in another client: there
             // is nothing left under this id to trash, and keeping the row
             // would leave a message the user can never get rid of.
@@ -433,7 +440,7 @@ mod tests {
     use crate::services::emails::mailbox_state::{
         delete_email_with_provider as delete, mark_as_read_with_provider as mark_read,
     };
-    use crate::sync::provider::{FakeEmailProvider, FakeMailboxOp};
+    use crate::sync::provider::{FakeEmailProvider, FakeMailboxOp, MessageLocation};
 
     use super::{
         plan_read_push_retries, retry_pending_read_pushes, retry_pending_star_pushes, PendingReadPush, PushVia,
@@ -500,6 +507,22 @@ mod tests {
             0,
             None,
             Some("inbox"),
+            None,
+            false,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect()
+    }
+
+    fn deleted_view_ids(db: &Arc<Database>, account_id: &str) -> Vec<String> {
+        db.get_emails(
+            AccountScope::Account(account_id),
+            50,
+            0,
+            None,
+            Some("deleted"),
             None,
             false,
         )
@@ -887,6 +910,47 @@ mod tests {
             }]
         );
         assert!(inbox_ids(&db, "acc-1").is_empty(), "row no longer listed");
+    }
+
+    #[tokio::test]
+    async fn delete_files_the_row_under_the_id_the_message_has_in_trash() {
+        // Regression: IMAP gives a trashed message a new UID in Trash. The row
+        // kept its inbox id, so the Trash sync stored the message again and
+        // the Deleted view listed it twice.
+        let db = test_db("acc-1");
+        db.insert_emails_batch(&[email("m-1", "acc-1", true)]).unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.set_trash_location(MessageLocation {
+            id: "TRASH::9".to_string(),
+            mailbox: "trash".to_string(),
+        });
+
+        delete(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert_eq!(deleted_view_ids(&db, "acc-1"), vec!["TRASH::9".to_string()]);
+        assert!(
+            db.email_exists("TRASH::9").unwrap(),
+            "the Trash sync finds it stored and adds no copy"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_keeps_one_row_when_the_trash_sync_stored_the_copy_first() {
+        let db = test_db("acc-1");
+        let mut in_trash = email("TRASH::9", "acc-1", true);
+        in_trash.mailbox = "trash".to_string();
+        in_trash.message_id = Some("<m-1@example.com>".to_string());
+        db.insert_emails_batch(&[email("m-1", "acc-1", true), in_trash])
+            .unwrap();
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.set_trash_location(MessageLocation {
+            id: "TRASH::9".to_string(),
+            mailbox: "trash".to_string(),
+        });
+
+        delete(&db, "m-1", Some(&provider)).await.unwrap();
+
+        assert_eq!(deleted_view_ids(&db, "acc-1"), vec!["TRASH::9".to_string()]);
     }
 
     #[tokio::test]

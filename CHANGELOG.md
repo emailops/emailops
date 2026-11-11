@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A deleted IMAP message shows once in Deleted.** Deleting a message on an
+  IMAP account listed it twice in Deleted: once where it had been and once as
+  the copy the next sync found in the server's Trash. The message now moves to
+  Trash in EmailOps too, keeping its tags and AI data.
 - **Gmail attachments kept with the message open again.** A small attachment,
   or one on a message you sent from EmailOps, failed to open, download or
   forward with a "not found" error: EmailOps asked Gmail for it instead of
