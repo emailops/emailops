@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A deleted IMAP message shows once in Deleted.** Deleting a message on an
+  IMAP account listed it twice in Deleted: once where it had been and once as
+  the copy the next sync found in the server's Trash. The message now moves to
+  Trash in EmailOps too, keeping its tags and AI data.
 - **IMAP accounts connect when the first address of their server does not
   answer.** EmailOps tried only the first address a mail server's name
   resolves to, so one unreachable address, IPv6 or IPv4, failed every sync. It

@@ -1683,11 +1683,18 @@ impl EmailProvider for OutlookClient {
     /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
     /// `DELETE /me/messages/{id}`: the app's delete action is the reversible
     /// one, so the message stays recoverable from the account's own clients.
-    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+    ///
+    /// Graph re-keys the moved message too, but its new id is not followed
+    /// yet: `None` keeps the row under the old one.
+    async fn trash_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
         let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
         let payload = serde_json::json!({ "destinationId": "deleteditems" });
         self.send_post_json_no_resend(&url, &payload, "trash message").await?;
-        Ok(())
+        Ok(None)
     }
 
     async fn list_mailbox_messages(

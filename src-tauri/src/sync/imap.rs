@@ -908,13 +908,14 @@ impl ImapClient {
             .map(|candidate| (*candidate).to_string())
     }
 
-    /// The blocking half of [`EmailProvider::trash_message`].
+    /// The blocking half of [`EmailProvider::trash_message`]: the message's
+    /// UID in Trash, when it could be found.
     fn trash_uid_blocking(
         session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
         source: &ImapFolder,
         uid: u32,
         message_id_header: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<Option<u32>> {
         // Resolved before the source is selected: the legacy fallback probes
         // candidate names with SELECT.
         let trash_path = Self::resolve_trash_path_blocking(session)
@@ -932,7 +933,16 @@ impl ImapClient {
                 ));
             }
         }
-        Self::move_uid_blocking(session, uid, &trash_path)
+        Self::move_uid_blocking(session, uid, &trash_path)?;
+        let mut new_uid = None;
+        if let Some(header) = message_id_header {
+            if imap_search::select(session, &trash_path).is_ok() {
+                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                    new_uid = found.into_iter().max();
+                }
+            }
+        }
+        Ok(new_uid)
     }
 
     /// The blocking half of [`EmailProvider::archive_message`]: the archive
@@ -2282,13 +2292,21 @@ impl EmailProvider for ImapClient {
     /// which it can name a different message. When the Message-ID is known the
     /// UID is checked against it first, so a stale id can never trash the
     /// wrong message.
-    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
+    ///
+    /// The moved message gets a new UID in Trash. It is found again by
+    /// Message-ID and answered under the `TRASH::` id the Trash sync pass
+    /// gives it, so that pass recognises it instead of storing a second copy.
+    async fn trash_message(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
         let (source, uid_str) = self.parse_message_ref(message_id);
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
         if source == ImapFolder::Trash {
-            return Ok(());
+            return Ok(None);
         }
         // Quotes inside a Message-ID would break the SEARCH syntax; such ids
         // don't occur in practice, so the check is skipped for them.
@@ -2298,7 +2316,7 @@ impl EmailProvider for ImapClient {
             .map(str::to_string);
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = Self::trash_uid_blocking(&mut session, &source, uid, header.as_deref());
@@ -2306,7 +2324,11 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(task_failed)?
+        .map_err(task_failed)??;
+        Ok(new_uid.map(|u| provider::MessageLocation {
+            id: self.located_id(&ImapFolder::Trash, u),
+            mailbox: ImapFolder::Trash.mailbox_value(),
+        }))
     }
 
     /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
