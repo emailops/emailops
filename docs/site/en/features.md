@@ -319,12 +319,21 @@ Searches can be narrowed with operators, on their own or next to free text:
 |---|---|
 | `from:ana` | sender address or name |
 | `to:ana` | recipient |
+| `cc:ana` | someone in Cc |
 | `subject:invoice` | subject line |
 | `before:2026-09-01` / `after:2026-09-01` | received date |
 | `id:<email id>` | one specific email |
 | `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
 | `domain:example.com` | the sender's domain |
 | `ext:pdf` | an attachment of that file type |
+| `has:attachment` / `-has:attachment` | mail with / without attachments |
+
+<!-- claim:feat-search-3 -->
+In the free text, a quoted phrase finds its words in that order, `OR` between two words finds
+either, a `-` (or `NOT`) before a word leaves out the mail that has it, and brackets group:
+`(invoice OR receipt) -draft`. Words side by side must all match, and they group before `OR`:
+`invoice OR receipt march` means invoice, or receipt and march. Operators are written in
+capitals; a lowercase "or" is an ordinary word.
 
 ## Junk and bulk mail {#junk-and-bulk-mail}
 

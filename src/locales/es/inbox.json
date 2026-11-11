@@ -179,11 +179,14 @@
     "title": "Consejos de búsqueda",
     "senderHint": "nombre/correo del remitente",
     "recipientHint": "nombre/correo del destinatario",
+    "ccHint": "nombre/correo en copia",
     "subjectHint": "texto del asunto",
+    "attachmentHint": "con adjuntos (-has:attachment: sin ellos)",
     "unreadHint": "correos no leídos",
     "afterHint": "AAAA-MM-DD",
     "beforeHint": "AAAA-MM-DD",
-    "tagHint": "etiqueta de clasificación"
+    "tagHint": "etiqueta de clasificación",
+    "booleanHint": "frase exacta, una u otra palabra, sin una palabra, agrupar"
   },
   "translation": {
     "detectedLabel": "Este correo está en {{language}}",

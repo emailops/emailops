@@ -6,6 +6,7 @@
 
 use super::crud::mailbox_scope_sql;
 use super::search::{from_match_sql, FromMatch, TagQuery};
+use super::text_query::{text_filter, TextFilter};
 use super::*;
 use crate::db::AccountScope;
 use crate::models::ThreadCursor;
@@ -101,8 +102,11 @@ pub struct ListPlan {
     pub from_exact: Option<String>,
     pub from_name: Option<String>,
     pub to: Option<String>,
+    pub cc: Option<String>,
     pub domain: Option<String>,
     pub attachment_ext: Option<String>,
+    /// `has:attachment` (`Some(true)`) or `-has:attachment` (`Some(false)`).
+    pub has_attachment: Option<bool>,
     pub tags: Vec<TagQuery>,
     pub after: Option<i64>,
     pub before: Option<i64>,
@@ -120,8 +124,10 @@ impl Default for ListPlan {
             from_exact: None,
             from_name: None,
             to: None,
+            cc: None,
             domain: None,
             attachment_ext: None,
+            has_attachment: None,
             tags: Vec::new(),
             after: None,
             before: None,
@@ -169,13 +175,16 @@ pub(crate) fn build_list_query(
 
     let mut text_queries = Vec::new();
     if !plan.words.is_empty() {
-        let query = sanitize_fts_query(&plan.words);
         // A word of only symbols can match nothing; dropping the condition
         // instead would match every conversation.
-        if query.is_empty() {
-            return None;
+        match text_filter(&plan.words)? {
+            TextFilter::Match(query) => text_queries.push(query),
+            TextFilter::Condition(expr) => {
+                let mut matches = Vec::new();
+                conditions.push(expr.sql("e2", &mut idx, &mut matches));
+                binds.extend(matches.into_iter().map(|m| Box::new(m) as Box<dyn rusqlite::ToSql>));
+            }
         }
-        text_queries.push(query);
     }
     if let Some(subject) = &plan.subject {
         match subject_fts_query(subject) {
@@ -253,6 +262,11 @@ pub(crate) fn build_list_query(
         binds.push(Box::new(format!("%{to}%")));
         idx += 1;
     }
+    if let Some(cc) = &plan.cc {
+        conditions.push(format!("e2.cc_json LIKE ?{idx}"));
+        binds.push(Box::new(format!("%{cc}%")));
+        idx += 1;
+    }
     if let Some(domain) = &plan.domain {
         conditions.push(format!("e2.sender_domain = ?{idx}"));
         binds.push(Box::new(domain.to_lowercase()));
@@ -264,6 +278,15 @@ pub(crate) fn build_list_query(
         ));
         binds.push(Box::new(format!("%.{}", ext.to_lowercase())));
         idx += 1;
+    }
+    match plan.has_attachment {
+        Some(true) => {
+            conditions.push("EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = e2.id)".to_string())
+        }
+        Some(false) => {
+            conditions.push("NOT EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = e2.id)".to_string())
+        }
+        None => {}
     }
     for tag in tags {
         let mut condition = format!(
@@ -805,6 +828,101 @@ mod tests {
         };
 
         assert_eq!(page(&db, &plan), ["q"]);
+    }
+
+    fn body_mail(db: &Database, id: &str, body: &str, ts: i64) {
+        insert_search_email(db, id, "acc", id, "Ada", "ada@empresa.example", "s", body, ts);
+    }
+
+    #[test]
+    fn words_joined_by_or_list_mail_with_either() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "inv", "the invoice", 300);
+        body_mail(&db, "rec", "the receipt", 200);
+        body_mail(&db, "other", "the contract", 100);
+
+        assert_eq!(page(&db, &words("invoice OR receipt")), ["inv", "rec"]);
+    }
+
+    #[test]
+    fn a_minus_word_takes_mail_away() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "draft", "invoice draft", 200);
+        body_mail(&db, "final", "invoice final", 100);
+
+        assert_eq!(page(&db, &words("invoice -draft")), ["final"]);
+        assert_eq!(page(&db, &words("-draft")), ["final"]);
+    }
+
+    #[test]
+    fn a_quoted_phrase_matches_its_words_in_order() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "in_order", "the quarterly report is ready", 200);
+        body_mail(&db, "apart", "the report for the quarterly review", 100);
+
+        assert_eq!(page(&db, &words(r#""quarterly report""#)), ["in_order"]);
+        assert_eq!(page(&db, &words("quarterly report")), ["in_order", "apart"]);
+    }
+
+    #[test]
+    fn brackets_group_before_and() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "inv_march", "invoice march", 300);
+        body_mail(&db, "rec_march", "receipt march", 200);
+        body_mail(&db, "inv_april", "invoice april", 100);
+
+        assert_eq!(
+            page(&db, &words("(invoice OR receipt) march")),
+            ["inv_march", "rec_march"]
+        );
+        assert_eq!(
+            page(&db, &words("invoice OR receipt march")),
+            ["inv_march", "rec_march", "inv_april"]
+        );
+    }
+
+    #[test]
+    fn cc_narrows_the_list_to_mail_copied_to_that_address() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "copied", "b", 200);
+        body_mail(&db, "not", "b", 100);
+        db.connection()
+            .execute(
+                r#"UPDATE emails SET cc_json = '["Bea <bea@empresa.example>"]' WHERE id = 'copied'"#,
+                [],
+            )
+            .unwrap();
+
+        let plan = ListPlan {
+            cc: Some("bea@empresa".into()),
+            ..ListPlan::default()
+        };
+        assert_eq!(page(&db, &plan), ["copied"]);
+    }
+
+    #[test]
+    fn has_attachment_keeps_or_drops_mail_with_files() {
+        let db = Database::new_for_testing().unwrap();
+        body_mail(&db, "with", "b", 200);
+        body_mail(&db, "without", "b", 100);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
+                 VALUES ('m1', 'with', 'acc', 'notes.txt', 'text/plain')",
+                [],
+            )
+            .unwrap();
+
+        let with = ListPlan {
+            has_attachment: Some(true),
+            ..ListPlan::default()
+        };
+        let without = ListPlan {
+            has_attachment: Some(false),
+            ..ListPlan::default()
+        };
+        assert_eq!(page(&db, &with), ["with"]);
+        assert_eq!(page(&db, &without), ["without"]);
     }
 
     #[test]

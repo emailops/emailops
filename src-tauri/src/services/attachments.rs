@@ -527,9 +527,14 @@ pub fn plan_retroactive_apply(
 
 /// The bytes of a recorded attachment, cheapest source first: the file it was
 /// downloaded to (inside the data dir, next to the database), the copy stored
-/// inline with its row (IMAP, small attachments), and last the provider, as
-/// the attachment viewer does.
-pub async fn fetch_meta_bytes(db: &Arc<Database>, meta: &crate::models::EmailAttachmentMeta) -> Result<Vec<u8>> {
+/// inline with its row (IMAP, small Gmail parts, the copy kept of a sent
+/// message), and last the provider. Such a row may have no provider id, so the
+/// order matters: it is never sent to the provider.
+pub async fn fetch_meta_bytes(
+    db: &Arc<Database>,
+    meta: &crate::models::EmailAttachmentMeta,
+    app: Option<AppHandle>,
+) -> Result<Vec<u8>> {
     if let (Some(file_path), Some(data_dir)) = (meta.file_path.as_deref(), db.db_path().parent()) {
         // A downloaded file the user has since deleted is not an error: the
         // other sources still have it.
@@ -548,7 +553,7 @@ pub async fn fetch_meta_bytes(db: &Arc<Database>, meta: &crate::models::EmailAtt
     let account = db
         .get_account(&meta.account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {} not found", meta.account_id)))?;
-    let provider = build_provider(&account, None).await?;
+    let provider = build_provider(&account, app).await?;
     provider
         .fetch_attachment_bytes(&meta.email_id, &meta.provider_attachment_id)
         .await
@@ -1869,6 +1874,35 @@ pub(crate) mod tests {
         let msg = err.to_string();
         assert!(msg.contains("standard"), "missing standard hint: {}", msg);
         assert!(msg.contains("url-safe"), "missing url-safe hint: {}", msg);
+    }
+
+    /// A Gmail attachment whose bytes came with the message (a small part, or
+    /// the copy kept when the message was sent) has no provider id: reading it
+    /// uses those bytes, never a Gmail request for an empty attachment id. The
+    /// account has no tokens, so reaching the provider would fail the test.
+    #[tokio::test]
+    async fn fetch_meta_bytes_reads_a_row_that_holds_its_bytes_and_no_provider_id() {
+        use base64::Engine;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        make_account(&db, "acc-gmail", "gmail", "me@gmail.example");
+        let email = make_email("acc-gmail", "msg-1", "me@gmail.example", "Plan");
+        db.insert_email(&email).expect("insert email");
+        let payload: &[u8] = b"\xfb\xff\xbf plan";
+        db.insert_email_attachment_metas_batch(&[(
+            email.id.clone(),
+            "acc-gmail".into(),
+            String::new(),
+            "plan.pdf".into(),
+            "application/pdf".into(),
+            payload.len() as i64,
+            Some(base64::engine::general_purpose::URL_SAFE.encode(payload)),
+        )])
+        .expect("insert meta");
+        let meta = db.get_email_attachment_metas(&email.id).expect("metas").remove(0);
+
+        let bytes = fetch_meta_bytes(&db, &meta, None).await.expect("bytes from the row");
+
+        assert_eq!(bytes, payload);
     }
 
     /// End-to-end: `process_attachments_for_email` persists an inline
