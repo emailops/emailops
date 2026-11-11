@@ -109,6 +109,10 @@ fn attachment_search_folders(plan: &folder_plan::FolderPlan) -> Vec<(ImapFolder,
 /// message landing on the watermark day is not missed, `BEFORE` outward so the
 /// boundary day is not excluded. Already-stored messages that the padding pulls
 /// back in are dropped by `emails_exist_batch` on the caller's side.
+///
+/// Messages flagged `\Deleted` are left out: a move that could not expunge
+/// leaves its original flagged in the source folder, and listing it again
+/// would bring it back as a new message once its row is re-keyed.
 fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64>) -> String {
     fn day(ts: i64) -> String {
         chrono::DateTime::from_timestamp(ts, 0)
@@ -124,11 +128,8 @@ fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64
     if let Some(before) = before_timestamp {
         clauses.push(format!("BEFORE {}", day(before.saturating_add(86_400))));
     }
-    if clauses.is_empty() {
-        "ALL".to_string()
-    } else {
-        clauses.join(" ")
-    }
+    clauses.push("UNDELETED".to_string());
+    clauses.join(" ")
 }
 
 /// Cut one page out of an INBOX `SEARCH` result, newest UID first.
@@ -856,7 +857,8 @@ impl ImapClient {
         } else {
             // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
             // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
-            // folder are left alone.
+            // folder are left alone. Without it a plain EXPUNGE would remove
+            // them too, so it runs only when no other message is flagged.
             imap_search::uid_copy(session, &uid_set, target)?;
             session
                 .uid_store(&uid_set, "+FLAGS (\\Deleted)")
@@ -865,16 +867,23 @@ impl ImapClient {
                 session
                     .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
                     .map(|_| ())
+                    .map_err(|e| e.to_string())
             } else {
-                session.expunge().map(|_| ())
+                match imap_search::uid_search(session, "DELETED") {
+                    Ok(flagged) if plain_expunge_is_safe(uid, &flagged) => {
+                        session.expunge().map(|_| ()).map_err(|e| e.to_string())
+                    }
+                    Ok(_) => Err("other messages in the folder are flagged \\Deleted too".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
             };
             if let Err(e) = expunged {
                 // The copy landed and the original is flagged \Deleted —
                 // functionally moved. Log rather than fail the operation.
                 crate::services::logger::log(
-                    "debug",
+                    "warn",
                     "sync",
-                    format!("IMAP EXPUNGE after move failed (message copied + flagged): {e}"),
+                    format!("IMAP EXPUNGE after move skipped or failed (message copied + flagged): {e}"),
                 );
             }
         }
@@ -2691,6 +2700,13 @@ impl ImapClient {
     }
 }
 
+/// Whether a plain `EXPUNGE` may remove the original of `uid` after a COPY.
+/// Pure. It removes every message flagged `\Deleted` in the folder, flagged by
+/// any client, so only when none but `uid` is.
+fn plain_expunge_is_safe(uid: u32, flagged_deleted: &[u32]) -> bool {
+    flagged_deleted.iter().all(|&flagged| flagged == uid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2731,6 +2747,17 @@ mod tests {
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+
+    // ── move_uid_blocking ─────────────────────────────────────────────────
+
+    /// A plain `EXPUNGE` removes every `\Deleted` message in the folder, not
+    /// just the one moved: it may run only when no other one is flagged.
+    #[test]
+    fn a_plain_expunge_runs_only_when_no_other_message_is_flagged_deleted() {
+        for (flagged, safe) in [(vec![7], true), (vec![], true), (vec![7, 9], false), (vec![9], false)] {
+            assert_eq!(plain_expunge_is_safe(7, &flagged), safe, "flagged {flagged:?}");
         }
     }
 
@@ -3169,8 +3196,16 @@ mod tests {
     }
 
     #[test]
-    fn search_query_is_all_when_unbounded() {
-        assert_eq!(build_search_query(None, None), "ALL");
+    fn search_query_lists_every_message_not_flagged_deleted_when_unbounded() {
+        assert_eq!(build_search_query(None, None), "UNDELETED");
+    }
+
+    #[test]
+    fn the_listing_skips_a_message_whose_move_left_it_flagged_deleted() {
+        // A move that could not expunge leaves the original flagged \Deleted
+        // in the source folder. Once its row is re-keyed to the target folder,
+        // listing it again would download it back as a new message.
+        assert!(build_search_query(Some(1_770_940_800), Some(1_770_940_800)).ends_with(" UNDELETED"));
     }
 
     fn imap_client_synced_from(sync_from: Option<i64>) -> ImapClient {
@@ -3196,14 +3231,14 @@ mod tests {
         // message ever, because the Sent search was a flat `ALL`.
         assert_eq!(
             imap_client_synced_from(Some(1_770_940_800)).sent_search_query(),
-            "SINCE 12-Feb-2026"
+            "SINCE 12-Feb-2026 UNDELETED"
         );
     }
 
     #[test]
     fn an_all_mail_account_keeps_an_unbounded_sent_pass() {
         // "All mail" must not regress into a bounded search.
-        assert_eq!(imap_client_synced_from(None).sent_search_query(), "ALL");
+        assert_eq!(imap_client_synced_from(None).sent_search_query(), "UNDELETED");
     }
 
     #[test]
@@ -3211,7 +3246,10 @@ mod tests {
         // IMAP SEARCH SINCE/BEFORE are day-granular and compare the server's
         // INTERNALDATE in its own timezone, so both bounds are padded by a day.
         // 2026-02-13T00:00:00Z -> SINCE 12-Feb-2026.
-        assert_eq!(build_search_query(Some(1_770_940_800), None), "SINCE 12-Feb-2026");
+        assert_eq!(
+            build_search_query(Some(1_770_940_800), None),
+            "SINCE 12-Feb-2026 UNDELETED"
+        );
     }
 
     #[test]
@@ -3220,12 +3258,12 @@ mod tests {
         // server returns the whole mailbox and the newest-first cap throws the
         // older half away.
         let query = build_search_query(Some(1_684_333_491), Some(1_770_940_800));
-        assert_eq!(query, "SINCE 16-May-2023 BEFORE 14-Feb-2026");
+        assert_eq!(query, "SINCE 16-May-2023 BEFORE 14-Feb-2026 UNDELETED");
     }
 
     #[test]
     fn search_query_clamps_padded_since_at_epoch() {
-        assert_eq!(build_search_query(Some(0), None), "SINCE 01-Jan-1970");
+        assert_eq!(build_search_query(Some(0), None), "SINCE 01-Jan-1970 UNDELETED");
     }
 
     #[test]
