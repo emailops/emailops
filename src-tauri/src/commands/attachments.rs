@@ -440,41 +440,18 @@ pub async fn reextract_email_attachments(
     state.db.get_email_attachment_metas(&email_id)
 }
 
-/// Fetch attachment bytes from the provider and return them as a base64 string.
-/// The frontend uses this for on-demand downloads when the file is not cached locally.
+/// The bytes of one attachment, as standard base64, for the viewer, downloads
+/// and forwards. Read by the attachment's row, from its file, its stored bytes
+/// or the provider: a row that holds its bytes may have no provider id.
 #[tauri::command]
 pub async fn fetch_email_attachment_bytes(
     app: AppHandle,
     state: State<'_, AppState>,
     account_id: String,
-    email_id: String,
-    provider_attachment_id: String,
+    meta_id: String,
 ) -> Result<String, AppError> {
-    use crate::services::emails::build_provider;
-
-    // Verify the email belongs to this account before exposing any of its
-    // attachment data — both the cached inline path and the provider fetch.
-    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
-
-    // IMAP attachments are stored inline in the DB (no provider fetch needed).
-    // When provider_attachment_id is empty, look up the inline_data by email+filename.
-    // The filename is encoded in provider_attachment_id for IMAP as "INLINE::<filename>".
-    if let Some(filename) = provider_attachment_id.strip_prefix("INLINE::") {
-        let inline = state
-            .db
-            .get_attachment_inline_data(&email_id, filename)?
-            .ok_or_else(|| AppError::NotFound(format!("Inline data not found for {filename}")))?;
-        return Ok(inline);
-    }
-
-    let account = state
-        .db
-        .get_account(&account_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))?;
-    let provider = build_provider(&account, Some(app)).await?;
-    let bytes = provider
-        .fetch_attachment_bytes(&email_id, &provider_attachment_id)
-        .await?;
+    let meta = ensure_meta_in_account(&state.db, &account_id, &meta_id)?;
+    let bytes = services::attachments::fetch_meta_bytes(&state.db, &meta, Some(app)).await?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
