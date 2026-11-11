@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   did not fit the prompt, its end and the instruction after it were dropped
   without a word, and the draft ignored them. Now the brief is never cut: the
   draft is not generated, and the log says how many characters to remove.
+- **AI replies follow your instructions with any prompt template.** With a
+  reply template of your own that leaves out `{instructions}` (Settings → AI
+  drafts), the instructions you typed for Generate or Regenerate never reached
+  the model. They are now added after the template, as the language and
+  sign-off rules already were.
 - **Gmail attachments kept with the message open again.** A small attachment,
   or one on a message you sent from EmailOps, failed to open, download or
   forward with a "not found" error: EmailOps asked Gmail for it instead of

@@ -15,6 +15,8 @@
 # required: text the draft must contain, in any case.
 # past_threads: earlier conversations with the correspondent. The account's
 #   messages in them are the voice samples the prompt shows.
+# prompt_template: the user's reply template (Settings → AI drafts); omitted =
+#   the default one.
 #
 # Run: make eval-draft-cases ARGS="--repeat 3"
 #      (add --case <id-substring> to run a subset, --model <name> to switch)
@@ -284,6 +286,29 @@
   expect_language: en
   account: { email: ulises@example.com, name: Ulises Ortega }
   instructions: Dile que el jueves me va bien y pregúntale si hace falta llevar portátil.
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Workshop on Thursday
+      body: |
+        Hi Ulises,
+
+        Are you able to join the workshop on Thursday?
+
+        Thanks,
+        Ana
+
+- id: instructions_custom_template_without_placeholder
+  kind: reply
+  expect_language: en
+  required: ["laptop"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  prompt_template: |
+    You are an email assistant for {persona}. Writing style: {style}
+
+    {thread_context}
+    Write the reply (body only, no subject line, no signature):
+  instructions: Say Thursday works and ask whether I need to bring a laptop.
   thread:
     - from_name: Ana Pérez
       from_email: ana@example.org
