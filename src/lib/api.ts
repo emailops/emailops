@@ -754,8 +754,11 @@ export async function getSyncStatus(accountId: string): Promise<SyncStatus> {
 // Search commands
 export interface ParsedSearchQuery {
   keywords: string[];
+  /** The free text as typed: phrases, brackets and AND / OR / NOT kept. */
+  text: string;
   fromFilter: string | null;
   toFilter: string | null;
+  ccFilter: string | null;
   subjectFilter: string | null;
   hasAttachment: boolean | null;
   isUnread: boolean | null;

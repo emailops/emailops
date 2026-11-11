@@ -327,12 +327,22 @@ Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
 |---|---|
 | `from:ana` | Absenderadresse oder -name |
 | `to:ana` | Empfänger |
+| `cc:ana` | jemand in Kopie (Cc) |
 | `subject:rechnung` | Betreff |
 | `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
 | `id:<E-Mail-ID>` | eine bestimmte E-Mail |
 | `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
 | `domain:example.com` | die Domain des Absenders |
 | `ext:pdf` | ein Anhang dieses Dateityps |
+| `has:attachment` / `-has:attachment` | E-Mails mit / ohne Anhang |
+
+<!-- claim:feat-search-3 -->
+Im freien Text sucht eine Wortfolge in Anführungszeichen ihre Wörter in dieser Reihenfolge,
+`OR` zwischen zwei Wörtern findet eines von beiden, ein `-` (oder `NOT`) vor einem Wort lässt
+die E-Mails weg, die es enthalten, und Klammern gruppieren: `(rechnung OR quittung) -entwurf`.
+Nebeneinanderstehende Wörter müssen alle vorkommen und werden vor `OR` gruppiert: `rechnung OR
+quittung märz` heißt Rechnung, oder Quittung und März. Operatoren werden großgeschrieben; ein
+kleingeschriebenes „or“ ist ein normales Wort.
 
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 

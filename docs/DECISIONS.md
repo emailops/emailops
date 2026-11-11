@@ -4438,3 +4438,21 @@ said it was always there. Keeping it on by default leaves every existing install
   asked to vary it by account.
 - *Reading the switch when the message is queued*: turning it off during the undo window would
   not apply to that message.
+
+## 2026-11-10 — Search text is a boolean query with uppercase operators
+
+**Decision:** The free text of a list search is read as a boolean query: quoted phrases match
+exactly, `AND` / `OR` / `NOT` count only in capitals, `-word` is `NOT word`, brackets group,
+and `NOT` binds tighter than words side by side (an implicit `AND`), which bind tighter than
+`OR`. A malformed query never fails: a stray operator or bracket is dropped. The field
+operators (`from:`, `to:`, `cc:`, `subject:`, `has:attachment`…) stay outside the boolean
+query and narrow its result.
+**Context:** Issue #268. FTS5 already has this grammar and precedence; its `NOT` is binary,
+so a negation with nothing to subtract from (`-draft`, `a OR -b`) runs as a condition with one
+MATCH per part instead of one MATCH.
+**Rejected:**
+- *Lowercase operators*: "terms and conditions" and Spanish "o" would turn into operators.
+- *Boolean groups over field operators (`from:a OR from:b`)*: each field has its own SQL and
+  index path; a general expression compiler is a larger change than the request needed.
+- *Relevance ordering and searching Trash from the list*: the list stays in conversation order
+  and searches what its view lists.

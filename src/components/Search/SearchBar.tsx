@@ -335,7 +335,8 @@ export function SearchBar({ accountId, view, onSelectEmail, onApplySearch, onClo
               onKeyDown={handleInputKeyDown}
               // Limited to the operators the list understands.
               placeholder={t('inbox:searchBox.fullPlaceholder', {
-                operators: 'from:, to:, subject:, before:YYYY-MM-DD, after:YYYY-MM-DD, id:, tag:, tag:intent=…',
+                operators:
+                  'from:, to:, cc:, subject:, has:attachment, before:YYYY-MM-DD, after:YYYY-MM-DD, id:, tag:, tag:intent=…',
               })}
               className="flex-1 px-4 py-4 text-lg outline-none"
             />
@@ -407,8 +408,16 @@ export function SearchBar({ accountId, view, onSelectEmail, onApplySearch, onClo
                 {t('inbox:searchTips.recipientHint')}
               </div>
               <div>
+                <code className="text-primary-600">cc:</code> {/* // i18n-ignore: literal query syntax */}{' '}
+                {t('inbox:searchTips.ccHint')}
+              </div>
+              <div>
                 <code className="text-primary-600">subject:</code> {/* // i18n-ignore: literal query syntax */}{' '}
                 {t('inbox:searchTips.subjectHint')}
+              </div>
+              <div>
+                <code className="text-primary-600">has:attachment</code> {/* // i18n-ignore: literal query syntax */}{' '}
+                {t('inbox:searchTips.attachmentHint')}
               </div>
               <div>
                 <code className="text-primary-600">is:unread</code> {/* // i18n-ignore: literal query syntax */}{' '}
@@ -425,6 +434,10 @@ export function SearchBar({ accountId, view, onSelectEmail, onApplySearch, onClo
               <div>
                 <code className="text-primary-600">tag:</code> {/* // i18n-ignore: literal query syntax */}{' '}
                 {t('inbox:searchTips.tagHint')}
+              </div>
+              <div className="col-span-2">
+                <code className="text-primary-600">"…" OR -… ( )</code> {/* // i18n-ignore: literal query syntax */}{' '}
+                {t('inbox:searchTips.booleanHint')}
               </div>
               <div>
                 {/* // i18n-ignore (next line): today / this week / this month are literal query values */}
@@ -517,8 +530,11 @@ function ParsedQueryDisplay({ query }: { query: ParsedSearchQuery }) {
   const filters = [];
   if (query.fromFilter) filters.push(`from: ${query.fromFilter}`);
   if (query.toFilter) filters.push(`to: ${query.toFilter}`);
+  if (query.ccFilter) filters.push(`cc: ${query.ccFilter}`);
   if (query.subjectFilter) filters.push(`subject: ${query.subjectFilter}`);
   if (query.isUnread) filters.push('unread only');
+  if (query.hasAttachment === true) filters.push('has:attachment');
+  if (query.hasAttachment === false) filters.push('-has:attachment');
   const numericDate: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'numeric', day: 'numeric' };
   if (query.afterTimestamp) filters.push(`after: ${formatDateIntl(query.afterTimestamp, locale, numericDate)}`);
   if (query.beforeTimestamp) filters.push(`before: ${formatDateIntl(query.beforeTimestamp, locale, numericDate)}`);
