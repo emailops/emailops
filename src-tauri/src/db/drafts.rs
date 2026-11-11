@@ -369,6 +369,16 @@ impl Database {
         Ok(dropped)
     }
 
+    /// Every file path some draft attachment points at.
+    pub fn draft_attachment_paths(&self) -> Result<std::collections::HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT file_path FROM draft_attachments")?;
+        let paths = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(paths)
+    }
+
     pub fn list_draft_attachments(&self, draft_id: &str) -> Result<Vec<DraftAttachment>> {
         let conn = self.reader();
         Ok(attachments_for(&conn, draft_id)?)

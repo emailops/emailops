@@ -4474,3 +4474,26 @@ reply and forward subjects, and replies that honour `Reply-To`.
 - *Reply All from the selected message only, keeping its To and Cc roles and excluding only the
   sending identity* (asked in the issue's comment): it changes who Reply All reaches in every
   thread; left out of this change.
+
+## 2026-11-11 — A composer stores each attached file for its draft as it arrives
+
+**Decision:** A file attached in any composer (new message, tab, reply, forward) is written at
+once under `attachments/<account>/drafts/` through the `store_draft_file` command, and the
+draft names it from its next save. The draft owns it from then on: the file goes when the draft
+is sent, deleted or drops it. A draft holding files is always sent through the outbox queue,
+which reads them from the draft, so the composer never sends a copy of its own. A webview save
+may name such a stored file; any other path must already be on the draft. Files no draft took
+(the composer closed before saving, or the app quit) are removed at startup once a day old. A
+forward is kept as a draft of the sending account, outside its thread. A message takes at most
+32 files of 25 MB each, and the composer reads at most 50 MB at once.
+**Context:** Issue #274: the autosaved draft kept the text and lost the files, and forwards were
+not saved at all.
+**Rejected:**
+- *Sending the new files' bytes with every draft save*: a large file would cross IPC on each
+  autosave until a save took it, and matching saved rows back to the composer's files needs a
+  key the composer does not have.
+- *Keeping the bytes in the composer and saving them only on close*: a crash or a force quit
+  still loses them.
+- *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
+  local and provider copies, keeping the original when the From account changes, an "open as
+  independent copy" action): each is a change of its own; left out.

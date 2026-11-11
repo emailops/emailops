@@ -303,6 +303,101 @@ pub(super) async fn fill_missing_files(
     Ok(complete)
 }
 
+/// Largest file a composer may attach to a draft (#274).
+pub const MAX_DRAFT_FILE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Store a file the user attached in a composer, so the draft keeps it: at a
+/// generated name under `attachments/<account>/drafts/`, where it goes with the
+/// draft like a pulled one. Returns the input a draft save takes.
+pub fn store_composer_file(
+    db: &Database,
+    account_id: &str,
+    file: &crate::sync::provider::EmailAttachment,
+) -> Result<crate::models::DraftAttachmentInput> {
+    // A name, never a path: the webview's filename is only a label.
+    let filename = file.filename.rsplit(['/', '\\']).next().unwrap_or_default().trim();
+    let filename = if filename.is_empty() { "attachment" } else { filename };
+    let bytes = decode_inline_base64(&file.data)?;
+    if bytes.is_empty() {
+        return Err(AppError::InvalidInput(format!("\"{filename}\" is empty")));
+    }
+    if bytes.len() > MAX_DRAFT_FILE_BYTES {
+        return Err(AppError::InvalidInput(format!("\"{filename}\" is larger than 25 MB")));
+    }
+    let file_path = new_pulled_path(account_id, filename);
+    if !is_pulled_file(&file_path) {
+        return Err(AppError::InvalidInput(format!("Invalid account id: {account_id}")));
+    }
+    let dir = data_dir(db).ok_or_else(|| AppError::IoError("This database has no data directory".to_string()))?;
+    let path = dir.join(&file_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::IoError(format!("Failed to create attachment directory: {e}")))?;
+    }
+    std::fs::write(&path, &bytes).map_err(|e| AppError::IoError(format!("Failed to write attachment file: {e}")))?;
+    quarantine_saved_file(&path);
+    Ok(crate::models::DraftAttachmentInput {
+        file_path,
+        filename: Some(filename.to_string()),
+        mime_type: Some(file.mime_type.clone()),
+    })
+}
+
+/// Whether a webview save may name this path: one of the draft files stored
+/// here. Anything else must already be on the draft.
+pub(crate) fn is_stored_draft_file(file_path: &str) -> bool {
+    is_pulled_file(file_path)
+}
+
+/// Files under `attachments/*/drafts/` older than this and on no draft are
+/// left over from a composer that never saved them, and are removed.
+pub const ABANDONED_DRAFT_FILE_SECS: i64 = 24 * 60 * 60;
+
+/// The abandoned files among `files` (`(path, modified unix secs)`): on no
+/// draft and older than [`ABANDONED_DRAFT_FILE_SECS`].
+fn abandoned_draft_files(
+    files: &[(String, i64)],
+    referenced: &std::collections::HashSet<String>,
+    now: i64,
+) -> Vec<String> {
+    files
+        .iter()
+        .filter(|(path, modified)| !referenced.contains(path) && *modified < now - ABANDONED_DRAFT_FILE_SECS)
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
+/// Remove the abandoned draft files of every account. Returns how many went.
+pub fn sweep_abandoned_draft_files(db: &Database, now: i64) -> Result<usize> {
+    let Some(dir) = data_dir(db) else { return Ok(0) };
+    let Ok(accounts) = std::fs::read_dir(dir.join("attachments")) else {
+        return Ok(0);
+    };
+    let mut files = Vec::new();
+    for account in accounts.flatten() {
+        let Ok(entries) = std::fs::read_dir(account.path().join("drafts")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(now, |d| d.as_secs() as i64);
+            let path = format!(
+                "attachments/{}/drafts/{}",
+                account.file_name().to_string_lossy(),
+                entry.file_name().to_string_lossy()
+            );
+            files.push((path, modified));
+        }
+    }
+    let abandoned = abandoned_draft_files(&files, &db.draft_attachment_paths()?, now);
+    remove_pulled_files(db, &abandoned);
+    Ok(abandoned.len())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -1007,5 +1102,88 @@ mod tests {
         ] {
             assert!(!is_pulled_file(own), "{own}");
         }
+    }
+
+    fn composer_file(name: &str, bytes: &[u8]) -> crate::sync::provider::EmailAttachment {
+        crate::sync::provider::EmailAttachment {
+            filename: name.to_string(),
+            mime_type: "application/pdf".to_string(),
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            content_id: None,
+            is_inline: false,
+        }
+    }
+
+    /// #274: a file attached in a composer is kept with the draft, so closing
+    /// the composer no longer loses it.
+    #[tokio::test]
+    async fn a_file_attached_in_a_composer_is_kept_with_the_draft() {
+        let (tmp, db) = database();
+        let account = account(&db, "imap");
+
+        let stored = super::store_composer_file(&db, "a1", &composer_file("../plan.pdf", REPORT)).expect("store");
+        assert!(is_pulled_file(&stored.file_path), "{}", stored.file_path);
+        assert_eq!(stored.filename.as_deref(), Some("plan.pdf"), "a name, never a path");
+        assert_eq!(std::fs::read(tmp.path().join(&stored.file_path)).unwrap(), REPORT);
+
+        let input = ComposeInput {
+            draft_id: None,
+            account_id: "a1".to_string(),
+            email_id: None,
+            to: vec!["dest@example.com".to_string()],
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: "Plan".to_string(),
+            body: "attached".to_string(),
+            body_html: None,
+            attachments: Some(vec![stored.clone()]),
+        };
+        crate::services::emails::check_webview_draft_attachments(input.attachments.as_deref().unwrap_or_default(), &[])
+            .expect("a stored draft file may be named by a new draft");
+        let draft = compose_draft(&db, &account, input, None).await.expect("save");
+        assert_eq!(draft.attachments.len(), 1);
+
+        delete_draft(&db, &account, &draft.id, None).await.expect("delete");
+        assert!(
+            !tmp.path().join(&stored.file_path).exists(),
+            "the file goes with its draft"
+        );
+    }
+
+    #[test]
+    fn an_empty_or_oversized_file_is_refused() {
+        let (_tmp, db) = database();
+        account(&db, "imap");
+        assert!(super::store_composer_file(&db, "a1", &composer_file("empty.txt", b"")).is_err());
+        let big = vec![0u8; super::MAX_DRAFT_FILE_BYTES + 1];
+        assert!(super::store_composer_file(&db, "a1", &composer_file("big.bin", &big)).is_err());
+    }
+
+    #[test]
+    fn only_files_on_no_draft_and_a_day_old_are_abandoned() {
+        let now = 10 * super::ABANDONED_DRAFT_FILE_SECS;
+        let old = now - super::ABANDONED_DRAFT_FILE_SECS - 1;
+        let files = vec![
+            ("attachments/a1/drafts/kept.pdf".to_string(), old),
+            ("attachments/a1/drafts/left.pdf".to_string(), old),
+            ("attachments/a1/drafts/fresh.pdf".to_string(), now - 60),
+        ];
+        let referenced = std::collections::HashSet::from(["attachments/a1/drafts/kept.pdf".to_string()]);
+
+        assert_eq!(
+            super::abandoned_draft_files(&files, &referenced, now),
+            vec!["attachments/a1/drafts/left.pdf".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_sweep_removes_a_stored_file_no_draft_took() {
+        let (tmp, db) = database();
+        account(&db, "imap");
+        let stored = super::store_composer_file(&db, "a1", &composer_file("plan.pdf", REPORT)).expect("store");
+
+        let later = crate::services::clock::now_secs() + super::ABANDONED_DRAFT_FILE_SECS + 60;
+        assert_eq!(super::sweep_abandoned_draft_files(&db, later).expect("sweep"), 1);
+        assert!(!tmp.path().join(&stored.file_path).exists());
     }
 }

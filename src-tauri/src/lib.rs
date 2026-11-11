@@ -255,6 +255,7 @@ macro_rules! app_commands {
             commands::drafts::refresh_drafts,
             commands::drafts::list_draft_attachments,
             commands::drafts::save_draft,
+            commands::drafts::store_draft_file,
             commands::drafts::send_draft,
             commands::drafts::delete_draft,
             commands::filters::refresh_filter_stats,
@@ -701,6 +702,20 @@ pub fn run() {
                         STARTUP_BACKUPS_KEPT,
                         services::clock::now_secs(),
                     ));
+                    // Files a composer stored for a draft that was never saved.
+                    match services::emails::sweep_abandoned_draft_files(&db_clone, services::clock::now_secs()) {
+                        Ok(0) => {}
+                        Ok(n) => services::logger::log(
+                            "info",
+                            "system",
+                            format!("Removed {n} attached file(s) no draft kept"),
+                        ),
+                        Err(e) => services::logger::log(
+                            "warn",
+                            "system",
+                            format!("Could not remove attached files no draft kept: {e}"),
+                        ),
+                    }
                 });
             }
 

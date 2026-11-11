@@ -17,7 +17,6 @@
   "generatingDraft": "Génération du brouillon…",
   "openInTab": "Ouvrir dans un onglet",
   "attachFiles": "Joindre des fichiers",
-  "attachFromDraftHint": "Les pièces jointes de ce brouillon ont été ajoutées depuis la CLI - supprimez-les pour joindre de nouveaux fichiers ici",
   "sameDomain": "même domaine",
   "yourReply": "votre réponse",
   "body": "Message",
@@ -37,7 +36,7 @@
   "discardHint": "Cette action est irréversible.",
   "closeWithFiles": {
     "title": "Fermer sans vos fichiers ?",
-    "body": "Votre texte reste dans les brouillons, mais les pièces jointes ne sont pas enregistrées avec lui.",
+    "body": "Votre texte reste dans les Brouillons, mais un fichier encore en cours d'ajout, ou un document d'EO Docs, n'est pas enregistré avec lui.",
     "keep": "Continuer la rédaction"
   },
   "attachFile": "Joindre un fichier",
@@ -178,5 +177,14 @@
     "sending": "Envoi…"
   },
   "attachFromComputer": "Depuis l'ordinateur",
-  "attachFromEoDocs": "Depuis EO Docs"
+  "attachFromEoDocs": "Depuis EO Docs",
+  "intake": {
+    "empty": "« {{name}} » est vide et n'a pas été joint.",
+    "tooLarge": "« {{name}} » dépasse 25 Mo et n'a pas été joint.",
+    "tooMany": "« {{name}} » n'a pas été joint : un message contient au plus 32 fichiers.",
+    "pendingTooLarge": "« {{name}} » n'a pas été joint : attendez la fin de l'ajout des fichiers (50 Mo à la fois).",
+    "failed": "« {{name}} » n'a pas pu être joint : {{error}}"
+  },
+  "removeAttachment": "Retirer {{name}}",
+  "draftFilesNotSaved": "Le brouillon contenant les pièces jointes n'a pas pu être enregistré, rien n'a donc été envoyé. Réessayez."
 }

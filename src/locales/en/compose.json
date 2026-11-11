@@ -17,7 +17,6 @@
   "generatingDraft": "Generating draft…",
   "openInTab": "Open in tab",
   "attachFiles": "Attach files",
-  "attachFromDraftHint": "This draft's attachments were added from the CLI - remove them to attach new files here",
   "sameDomain": "same domain",
   "yourReply": "your reply",
   "body": "Message",
@@ -37,7 +36,7 @@
   "discardHint": "This can't be undone.",
   "closeWithFiles": {
     "title": "Close without your files?",
-    "body": "Your text stays in Drafts, but attached files are not saved with it.",
+    "body": "Your text stays in Drafts, but a file still being attached, or a document from EO Docs, is not saved with it.",
     "keep": "Keep editing"
   },
   "attachFile": "Attach file",
@@ -178,5 +177,14 @@
     "sending": "Sending…"
   },
   "attachFromComputer": "From this computer",
-  "attachFromEoDocs": "From EO Docs"
+  "attachFromEoDocs": "From EO Docs",
+  "intake": {
+    "empty": "\"{{name}}\" is empty and was not attached.",
+    "tooLarge": "\"{{name}}\" is larger than 25 MB and was not attached.",
+    "tooMany": "\"{{name}}\" was not attached: a message holds at most 32 files.",
+    "pendingTooLarge": "\"{{name}}\" was not attached: wait for the files being added to finish (50 MB at a time).",
+    "failed": "\"{{name}}\" could not be attached: {{error}}"
+  },
+  "removeAttachment": "Remove {{name}}",
+  "draftFilesNotSaved": "The draft holding the attached files could not be saved, so nothing was sent. Try again."
 }

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies. The subject of a reply or a forward can be edited before it goes. A
   reply goes to the address a message names in its Reply-To header, such as a
   mailing list's, instead of its sender.
+- **Drafts keep their attachments, and forwards are drafts too.** A file you
+  attach is saved with the draft as soon as it is added, so closing the
+  composer or the app no longer loses it, and a forward is saved as a draft
+  like a reply. A message takes up to 32 files of at most 25 MB each; an empty
+  file is refused with a message.
 - **Boolean search and two more operators.** In the search box, quotes find an
   exact phrase, `OR` finds either word, `-word` or `NOT word` leaves mail with
   that word out, and brackets group: `(invoice OR receipt) -draft`. `cc:` finds

@@ -175,18 +175,37 @@ mod ipc_attachment_guard_tests {
     fn rejects_any_path_on_a_new_draft() {
         assert!(check_webview_draft_attachments(&[input("/etc/hosts")], &[]).is_err());
     }
+
+    /// A composer may name a file it stored for drafts, and nothing that only
+    /// looks like one.
+    #[test]
+    fn accepts_a_stored_draft_file_and_no_path_that_escapes_it() {
+        assert!(check_webview_draft_attachments(&[input("attachments/a1/drafts/0b1c.pdf")], &[]).is_ok());
+        for path in [
+            "attachments/a1/drafts/../../../.ssh/id_ed25519",
+            "attachments/../drafts/x.pdf",
+            "/attachments/a1/drafts/x.pdf",
+            "attachments/a1/inbox/x.pdf",
+        ] {
+            assert!(check_webview_draft_attachments(&[input(path)], &[]).is_err(), "{path}");
+        }
+    }
 }
 
 /// Guard for draft saves that come from the webview (the `save_draft` IPC
-/// command). The GUI composer sends new attachments as inline bytes, never as
-/// paths; file-path attachments are added only by the CLI. So the webview may
-/// only re-submit — or drop — the paths the draft already has. Without this,
-/// script running in the webview could name any local file and have it read
-/// and uploaded to the provider as an attachment (CASA/DASA 1.4.3).
+/// command). The GUI composer stores a file it attaches through
+/// `store_draft_file`, which writes it under `attachments/<account>/drafts/`;
+/// other file-path attachments are added only by the CLI. So the webview may
+/// only name such a stored file, or re-submit — or drop — the paths the draft
+/// already has. Without this, script running in the webview could name any
+/// local file and have it read and uploaded to the provider as an attachment
+/// (CASA/DASA 1.4.3).
 pub fn check_webview_draft_attachments(requested: &[DraftAttachmentInput], existing: &[DraftAttachment]) -> Result<()> {
     match requested
         .iter()
-        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path))
+        // A file the user attached in a composer is stored before the save
+        // that first names it.
+        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path) && !draft_files::is_stored_draft_file(&r.file_path))
     {
         Some(_) => Err(AppError::InvalidInput(
             "draft attachments can only keep files the draft already has".to_string(),
