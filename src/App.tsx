@@ -368,6 +368,7 @@ function AppInner() {
       setViewMode('inbox');
       openComposeTab(message.accountId, message.to, message.subject, restoredBodyHtml(message), {
         ccAddresses: message.cc,
+        bccAddresses: message.bcc,
         fileAttachments: message.attachments,
         replyToEmailId: message.replyToEmailId ?? undefined,
       });
@@ -1658,6 +1659,7 @@ function AppInner() {
                     {
                       draftId: fresh.id,
                       ccAddresses: fresh.ccAddresses,
+                      bccAddresses: fresh.bccAddresses,
                       attachments: fresh.attachments,
                       // A reply draft is sent as a reply, threaded on its message.
                       replyToEmailId: fresh.emailId ?? undefined,
@@ -2129,6 +2131,7 @@ function AppInner() {
             openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml, {
               draftId: state.draftId,
               ccAddresses: state.ccAddresses,
+              bccAddresses: state.bccAddresses,
               fileAttachments: state.attachments,
             });
           }}

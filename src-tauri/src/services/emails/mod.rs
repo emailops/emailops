@@ -12,6 +12,7 @@ mod optimistic;
 mod provider;
 mod reconcile;
 mod redownload;
+mod reply_to;
 mod send;
 mod snooze;
 mod spam;
@@ -96,6 +97,8 @@ pub fn get_emails(
 pub fn get_folders(db: &Arc<Database>, account_id: &str) -> Result<Vec<crate::models::Folder>> {
     db.list_folders(account_id, Some(crate::models::FolderRole::Custom))
 }
+
+pub use reply_to::thread_reply_to;
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
     db.get_thread(account_id, thread_id)

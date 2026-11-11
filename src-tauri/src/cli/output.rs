@@ -1378,6 +1378,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: to.into_iter().map(String::from).collect(),
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Confirmar reunión Alina".to_string(),
             body: "Hola Alina".to_string(),
             body_html: None,

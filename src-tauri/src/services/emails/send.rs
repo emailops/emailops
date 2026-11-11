@@ -179,6 +179,7 @@ pub async fn send_reply_with_provider(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    bcc_emails: Vec<String>,
     subject: Option<&str>,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
@@ -190,6 +191,7 @@ pub async fn send_reply_with_provider(
         from_account_id,
         to_emails,
         cc_emails,
+        bcc_emails,
         subject,
         attachments,
         provider,
@@ -208,6 +210,7 @@ async fn deliver_reply(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    bcc_emails: Vec<String>,
     subject: Option<&str>,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
@@ -223,6 +226,7 @@ async fn deliver_reply(
 
     let to = to_emails.unwrap_or_else(|| vec![email.sender_email.clone()]);
     let cc = cc_emails.unwrap_or_default();
+    let bcc = bcc_emails;
     let body = with_footer_preferences(db, body)?;
 
     emit_account_log(
@@ -238,7 +242,7 @@ async fn deliver_reply(
     // already-prefixed subject is untouched. Outlook's `/reply` sets the prefix
     // server-side and ignores ours.
     let subject = crate::sync::mime_builder::reply_subject(subject.unwrap_or(&email.subject));
-    let recipients: Vec<String> = to.iter().chain(&cc).cloned().collect();
+    let recipients: Vec<String> = to.iter().chain(&cc).chain(&bcc).cloned().collect();
     let (attachments, shared_docs) =
         crate::services::shared_docs::resolve_doc_refs(db, &account, attachments, &recipients)?;
 
@@ -248,6 +252,7 @@ async fn deliver_reply(
             crate::services::accounts::sender_display_name(&account),
             &to,
             &cc,
+            &bcc,
             &crate::sync::provider::ReplyTarget::for_parent(&email, &account.id),
             &subject,
             &body,
@@ -298,6 +303,7 @@ pub async fn send_reply(
     from_account_id: Option<&str>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    bcc_emails: Vec<String>,
     subject: Option<&str>,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     app: AppHandle,
@@ -321,6 +327,7 @@ pub async fn send_reply(
         Some(&account_id),
         to_emails,
         cc_emails,
+        bcc_emails,
         subject,
         attachments,
         provider.as_ref(),
@@ -334,11 +341,16 @@ pub async fn send_reply(
 }
 
 /// Reject a new message that must never reach a provider.
-pub(crate) fn validate_new_email(to_emails: &[String], subject: &str) -> Result<()> {
-    // Guard: at least one recipient required.
-    if to_emails.is_empty() {
+pub(crate) fn validate_new_email(
+    to_emails: &[String],
+    cc_emails: &[String],
+    bcc_emails: &[String],
+    subject: &str,
+) -> Result<()> {
+    // Guard: at least one recipient required, in To, Cc or Bcc.
+    if to_emails.is_empty() && cc_emails.is_empty() && bcc_emails.is_empty() {
         return Err(AppError::InvalidInput(
-            "At least one recipient (To) is required".to_string(),
+            "At least one recipient (To, Cc or Bcc) is required".to_string(),
         ));
     }
     // Guard: reject headers with embedded newlines to prevent header injection.
@@ -357,6 +369,7 @@ pub async fn send_new_email_with_provider(
     account_id: &str,
     to_emails: Vec<String>,
     cc_emails: Vec<String>,
+    bcc_emails: Vec<String>,
     subject: &str,
     body: &EmailBody,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
@@ -367,6 +380,7 @@ pub async fn send_new_email_with_provider(
         account_id,
         to_emails,
         cc_emails,
+        bcc_emails,
         subject,
         body,
         attachments,
@@ -384,12 +398,13 @@ async fn deliver_new_email(
     account_id: &str,
     to_emails: Vec<String>,
     cc_emails: Vec<String>,
+    bcc_emails: Vec<String>,
     subject: &str,
     body: &EmailBody,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
     provider: &dyn EmailProvider,
 ) -> Result<SentMessageMeta> {
-    validate_new_email(&to_emails, subject)?;
+    validate_new_email(&to_emails, &cc_emails, &bcc_emails, subject)?;
 
     let account = db
         .get_account(account_id)?
@@ -409,7 +424,7 @@ async fn deliver_new_email(
     emit_account_log("info", "sync", &account.email, &log_msg);
 
     let body = with_footer_preferences(db, body)?;
-    let recipients: Vec<String> = to_emails.iter().chain(&cc_emails).cloned().collect();
+    let recipients: Vec<String> = to_emails.iter().chain(&cc_emails).chain(&bcc_emails).cloned().collect();
     let (attachments, shared_docs) =
         crate::services::shared_docs::resolve_doc_refs(db, &account, attachments, &recipients)?;
     let meta = provider
@@ -418,6 +433,7 @@ async fn deliver_new_email(
             crate::services::accounts::sender_display_name(&account),
             &to_emails,
             &cc_emails,
+            &bcc_emails,
             subject,
             &body,
             &attachments,
@@ -458,6 +474,7 @@ pub async fn send_new_email(
     account_id: &str,
     to_emails: Vec<String>,
     cc_emails: Vec<String>,
+    bcc_emails: Vec<String>,
     subject: &str,
     body: &EmailBody,
     attachments: Vec<crate::sync::provider::EmailAttachment>,
@@ -465,7 +482,7 @@ pub async fn send_new_email(
 ) -> Result<String> {
     // Also checked inside `deliver_new_email`; repeated here so an invalid
     // message fails before the provider build refreshes any OAuth token.
-    validate_new_email(&to_emails, subject)?;
+    validate_new_email(&to_emails, &cc_emails, &bcc_emails, subject)?;
 
     let account = db
         .get_account(account_id)?
@@ -479,6 +496,7 @@ pub async fn send_new_email(
         account_id,
         to_emails,
         cc_emails,
+        bcc_emails,
         subject,
         body,
         attachments,
@@ -560,6 +578,7 @@ pub async fn send_outgoing(
                 Some(&message.account_id),
                 Some(message.to.clone()),
                 Some(message.cc.clone()),
+                message.bcc.clone(),
                 Some(&message.subject),
                 message.attachments.clone(),
                 provider.as_ref(),
@@ -573,6 +592,7 @@ pub async fn send_outgoing(
                 &message.account_id,
                 message.to.clone(),
                 message.cc.clone(),
+                message.bcc.clone(),
                 &message.subject,
                 &body,
                 message.attachments.clone(),
@@ -605,6 +625,7 @@ mod production_entry_point_tests {
             "missing-account",
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             "Hello",
             &EmailBody::plain("body"),
             Vec::new(),
@@ -622,6 +643,7 @@ mod production_entry_point_tests {
             &db,
             "missing-account",
             vec!["dest@example.com".to_string()],
+            Vec::new(),
             Vec::new(),
             "Hello\r\nBcc: someone@example.com",
             &EmailBody::plain("body"),

@@ -543,6 +543,12 @@ checks = [
   { manual = 'Renaming, deleting and dragging between folders are not exercised: the demo mailbox has no custom folder.' },
 ]
 
+[reading-pane-reply]
+checks = [
+  { tests = ['services::emails::reply_to::tests::a_thread_answers_each_message_at_its_reply_to', 'sync::mime_builder::tests::a_blind_copy_is_delivered_without_a_header_by_default', 'sync::gmail::tests::a_send_hands_gmail_the_bcc_header', 'sync::outlook_payload::tests::every_payload_carries_the_blind_copies'], covers = ["the address the message names in its *Reply-To* header", "blind copies reach their recipients without the others seeing them"] },
+  { manual = 'The composer side (Reply-To in the To field, Bcc alone, the edited subject) is covered by src/components/EmailView/ReplyCompose.bccSubject.test.tsx and replyRecipients.test.ts (vitest); the demo has no message with a Reply-To.' },
+]
+
 [reading-pane-forward]
 checks = [
   { app = true },

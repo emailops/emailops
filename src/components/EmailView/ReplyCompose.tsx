@@ -31,6 +31,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
 import { AiInstructionBar } from './AiInstructionBar';
+import { forwardSubject } from './forward';
 import { SendWarningBanner } from './SendWarningBanner';
 
 interface ReplyComposeProps {
@@ -42,6 +43,9 @@ interface ReplyComposeProps {
     fromAccountId: string;
     toEmails: string[];
     ccEmails: string[];
+    bccEmails: string[];
+    /** As shown in the panel: "Re: …" or "Fwd: …", possibly edited. */
+    subject: string;
     body: string;
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
@@ -62,6 +66,9 @@ interface ReplyComposeProps {
   onDraftSaved?: (draft: Draft) => void;
   initialBody: string;
   mode: 'reply' | 'reply-all' | 'forward';
+  /** Email id → its `Reply-To` addresses, where a reply to it goes instead of
+   *  its sender. */
+  replyTo?: Record<string, string[]>;
   /** Attachments carried over from the message being forwarded. Pre-attached
    *  rather than offered, because a forward that silently drops the boarding
    *  pass is worse than useless. */
@@ -80,6 +87,8 @@ interface ReplyComposeProps {
    *  editor. */
   onGenerateDraft?: (instructions: string) => void;
 }
+
+const NO_REPLY_TO: Record<string, string[]> = {};
 
 function getDomain(email: string): string {
   return extractEmail(email).split('@')[1]?.toLowerCase() || '';
@@ -102,12 +111,20 @@ function extractEmail(raw: string): string {
  * Falls back to the most recent other party in the thread when my message has
  * no usable recipients. Only a note the user only ever sent to themselves is
  * addressed back to them.
+ *
+ * `replyTo` maps an email id to its `Reply-To` addresses: a message that has
+ * one is answered there, not at its sender.
  */
-export function computeReplyRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+export function computeReplyRecipients(
+  email: Email,
+  threadEmails: Email[],
+  selfEmails: string[],
+  replyTo: Record<string, string[]> = {},
+): string[] {
   const self = new Set(selfEmails.map((e) => e.trim().toLowerCase()));
   const sender = extractEmail(email.senderEmail);
 
-  if (!self.has(sender)) return [sender];
+  if (!self.has(sender)) return replyTo[email.id]?.length ? replyTo[email.id] : [sender];
 
   // My own message: reply to whoever it was addressed to.
   const mine = [...email.recipients, ...email.cc].map(extractEmail).filter((r) => r.includes('@') && !self.has(r));
@@ -127,16 +144,24 @@ export function computeReplyRecipients(email: Email, threadEmails: Email[], self
 }
 
 /**
- * Recipients for Reply All: the senders and recipients of every message in
- * the thread, minus the user's own addresses. Only the latest email misses
- * participants from earlier in the thread. A note only ever sent to myself
- * leaves nobody, and goes back to its recipients as Reply does.
+ * Recipients for Reply All: the senders (or their `Reply-To`) and recipients
+ * of every message in the thread, minus the user's own addresses. Only the
+ * latest email misses participants from earlier in the thread. A note only
+ * ever sent to myself leaves nobody, and goes back to its recipients as Reply
+ * does.
  */
-export function computeReplyAllRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+export function computeReplyAllRecipients(
+  email: Email,
+  threadEmails: Email[],
+  selfEmails: string[],
+  replyTo: Record<string, string[]> = {},
+): string[] {
   const all = new Set<string>();
   // The latest email too, in case threadEmails is empty.
   for (const msg of [...threadEmails, email]) {
-    all.add(extractEmail(msg.senderEmail));
+    for (const answerTo of replyTo[msg.id]?.length ? replyTo[msg.id] : [msg.senderEmail]) {
+      all.add(extractEmail(answerTo));
+    }
     for (const r of [...msg.recipients, ...msg.cc]) {
       const clean = extractEmail(r);
       if (clean.includes('@')) all.add(clean);
@@ -145,8 +170,10 @@ export function computeReplyAllRecipients(email: Email, threadEmails: Email[], s
   for (const self of selfEmails) {
     all.delete(self);
   }
-  return all.size > 0 ? [...all] : computeReplyRecipients(email, threadEmails, selfEmails);
+  return all.size > 0 ? [...all] : computeReplyRecipients(email, threadEmails, selfEmails, replyTo);
 }
+
+type RecipientField = 'to' | 'cc' | 'bcc';
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
@@ -188,6 +215,7 @@ export function ReplyCompose({
   adoptDraftId,
   initialBody,
   mode,
+  replyTo = NO_REPLY_TO,
   initialAttachments = [],
   attachmentsLoading = false,
   isLoadingDraft = false,
@@ -249,14 +277,21 @@ export function ReplyCompose({
       return [];
     }
     if (mode === 'reply') {
-      return computeReplyRecipients(email, threadEmails, selfEmails);
+      return computeReplyRecipients(email, threadEmails, selfEmails, replyTo);
     }
-    return computeReplyAllRecipients(email, threadEmails, selfEmails);
+    return computeReplyAllRecipients(email, threadEmails, selfEmails, replyTo);
   })();
 
   const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>(() => restoredDraft?.ccAddresses ?? []);
   const [showCc, setShowCc] = useState(() => (restoredDraft?.ccAddresses.length ?? 0) > 0);
+  const [bccRecipients, setBccRecipients] = useState<string[]>(() => restoredDraft?.bccAddresses ?? []);
+  const [showBcc, setShowBcc] = useState(() => (restoredDraft?.bccAddresses?.length ?? 0) > 0);
+  // Prefilled as it will go out; the user may edit it. The threading headers
+  // still tie a reply to its thread.
+  const [subject, setSubject] = useState(
+    () => restoredDraft?.subject ?? (mode === 'forward' ? forwardSubject(email.subject) : replySubject(email.subject)),
+  );
 
   // A reply (not a forward, which is a new message) is kept as a draft tied to
   // the email it answers, in that email's account, so reopening the thread
@@ -285,7 +320,13 @@ export function ReplyCompose({
   // What the panel opened with. Opening Reply prefills the recipients (and an
   // AI draft may fill the body), so only a change from this is the user
   // writing something worth keeping.
-  const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: typedText(bodyHtml) });
+  const openedWith = useRef({
+    to: toRecipients,
+    cc: ccRecipients,
+    bcc: bccRecipients,
+    subject,
+    body: typedText(bodyHtml),
+  });
   const sentRef = useRef(false);
 
   // Reply and Reply All share this panel: moving between them readdresses it,
@@ -307,14 +348,17 @@ export function ReplyCompose({
     const edited =
       typedText(bodyHtml) !== opened.body ||
       toRecipients.join() !== opened.to.join() ||
-      ccRecipients.join() !== opened.cc.join();
+      ccRecipients.join() !== opened.cc.join() ||
+      bccRecipients.join() !== opened.bcc.join() ||
+      subject !== opened.subject;
     if (!edited) return;
     const state = {
       emailId: restoredDraft?.emailId ?? email.id,
       accountId: restoredDraft?.accountId ?? email.accountId,
       toAddresses: toRecipients,
       ccAddresses: ccRecipients,
-      subject: restoredDraft?.subject ?? replySubject(email.subject),
+      bccAddresses: bccRecipients,
+      subject,
       plainBody: htmlToPlainText(bodyHtml),
       bodyHtml,
       isSending,
@@ -326,7 +370,18 @@ export function ReplyCompose({
       return;
     }
     debouncedRef.current.schedule(state);
-  }, [keepsDraft, isLoadingDraft, bodyHtml, toRecipients, ccRecipients, isSending, email, restoredDraft]);
+  }, [
+    keepsDraft,
+    isLoadingDraft,
+    bodyHtml,
+    toRecipients,
+    ccRecipients,
+    bccRecipients,
+    subject,
+    isSending,
+    email,
+    restoredDraft,
+  ]);
 
   // Leaving the thread must not drop the edit still inside the quiet period.
   useEffect(() => {
@@ -377,13 +432,14 @@ export function ReplyCompose({
   // Autocomplete state
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
 
   // Unusual recipient detection
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
 
   // Context domain for autocomplete boosting
@@ -408,32 +464,34 @@ export function ReplyCompose({
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
         // Filter out already-added recipients
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients([...toRecipients, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients([...ccRecipients, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList([...list, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients(toRecipients.filter((r) => r !== email));
-    else setCcRecipients(ccRecipients.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    const { list, setList } = recipientFields[field];
+    setList(list.filter((r) => r !== email));
   };
 
   const handleFiles = useCallback((files: FileList | null) => {
@@ -455,7 +513,7 @@ export function ReplyCompose({
   // A file dropped anywhere on the composer is attached, not opened.
   const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -470,7 +528,7 @@ export function ReplyCompose({
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
@@ -484,8 +542,11 @@ export function ReplyCompose({
     // recipient the user means — it must not be dropped from the send.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
     const ready = canSend({
       to,
+      cc,
+      bcc,
       subject: '',
       requireSubject: false,
       plainBody: plain,
@@ -514,6 +575,8 @@ export function ReplyCompose({
         fromAccountId,
         toEmails: to,
         ccEmails: cc,
+        bccEmails: bcc,
+        subject,
         body: plain,
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
@@ -535,6 +598,8 @@ export function ReplyCompose({
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
     subject: '',
     requireSubject: false,
     plainBody: outgoing.plainText,
@@ -543,7 +608,7 @@ export function ReplyCompose({
   });
 
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -654,17 +719,45 @@ export function ReplyCompose({
       {/* To field */}
       {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-      {/* Cc toggle + field */}
-      {!showCc && (
-        <button
-          type="button"
-          onClick={() => setShowCc(true)}
-          className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-10"
-        >
-          + {t('compose:cc')}
-        </button>
+      {/* Cc / Bcc toggles + fields */}
+      {(!showCc || !showBcc) && (
+        <div className="flex gap-3 mb-2 ml-10">
+          {!showCc && (
+            <button
+              type="button"
+              onClick={() => setShowCc(true)}
+              className="text-xs text-primary-500 hover:text-primary-600"
+            >
+              + {t('compose:cc')}
+            </button>
+          )}
+          {!showBcc && (
+            <button
+              type="button"
+              onClick={() => setShowBcc(true)}
+              className="text-xs text-primary-500 hover:text-primary-600"
+            >
+              + {t('compose:bcc')}
+            </button>
+          )}
+        </div>
       )}
       {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+      {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
+
+      {/* Subject */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-8 flex-shrink-0" />
+        <input
+          type="text"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder={t('compose:subject')}
+          aria-label={t('compose:subject')}
+          data-testid="reply-subject"
+          className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+        />
+      </div>
 
       {/* Unusual recipient warning */}
       {unusualRecipients.length > 0 && (

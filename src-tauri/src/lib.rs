@@ -169,6 +169,7 @@ macro_rules! app_commands {
             commands::emails::delete_folder,
             commands::emails::move_email,
             commands::emails::get_thread,
+            commands::emails::get_thread_reply_to,
             commands::emails::get_email_body,
             commands::emails::get_thread_new_content,
             commands::emails::mark_as_read,

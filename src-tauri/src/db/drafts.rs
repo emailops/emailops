@@ -10,19 +10,23 @@ use super::Database;
 /// Explicit column list shared by every draft SELECT so ordinal reads in
 /// `row_to_draft` stay in lockstep. `attachments` is filled separately.
 const DRAFT_COLUMNS: &str = "id, email_id, account_id, to_addresses_json, cc_addresses_json, \
-     subject, body, body_html, ai_generated, status, provider_draft_id, created_at, updated_at";
+     subject, body, body_html, ai_generated, status, provider_draft_id, created_at, updated_at, \
+     bcc_addresses_json";
 
 fn row_to_draft(row: &rusqlite::Row<'_>) -> rusqlite::Result<Draft> {
     let to_json: String = row.get(3)?;
     let to_addresses: Vec<String> = serde_json::from_str(&to_json).unwrap_or_default();
     let cc_json: String = row.get(4)?;
     let cc_addresses: Vec<String> = serde_json::from_str(&cc_json).unwrap_or_default();
+    let bcc_json: String = row.get(13)?;
+    let bcc_addresses: Vec<String> = serde_json::from_str(&bcc_json).unwrap_or_default();
     Ok(Draft {
         id: row.get(0)?,
         email_id: row.get(1)?,
         account_id: row.get(2)?,
         to_addresses,
         cc_addresses,
+        bcc_addresses,
         subject: row.get(5)?,
         body: row.get(6)?,
         body_html: row.get(7)?,
@@ -134,6 +138,7 @@ fn upsert_pulled_row(
     let updated_at = draft.updated_at.unwrap_or(now);
     let to_json = serde_json::to_string(&draft.to_addresses).unwrap_or_else(|_| "[]".to_string());
     let cc_json = serde_json::to_string(&draft.cc_addresses).unwrap_or_else(|_| "[]".to_string());
+    let bcc_json = serde_json::to_string(&draft.bcc_addresses).unwrap_or_else(|_| "[]".to_string());
     let change_token = draft.provider_message_id.as_deref().filter(|_| record_token);
 
     let existing: Option<String> = conn
@@ -151,16 +156,18 @@ fn upsert_pulled_row(
         // provider still belongs to its thread. An existing link is kept.
         "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                              subject, body, body_html, ai_generated, status,
-                             provider_draft_id, provider_message_id, created_at, updated_at)
+                             provider_draft_id, provider_message_id, created_at, updated_at,
+                             bcc_addresses_json)
          VALUES (?1,
                  (SELECT id FROM emails WHERE account_id = ?2
                     AND message_id IN (?12, trim(?12, '<>')) LIMIT 1),
                  ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
-                 COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11)
+                 COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11, ?13)
          ON CONFLICT(id) DO UPDATE SET
             email_id = COALESCE(drafts.email_id, excluded.email_id),
             to_addresses_json = excluded.to_addresses_json,
             cc_addresses_json = excluded.cc_addresses_json,
+            bcc_addresses_json = excluded.bcc_addresses_json,
             subject = excluded.subject,
             body = excluded.body,
             body_html = excluded.body_html,
@@ -181,6 +188,7 @@ fn upsert_pulled_row(
             now,
             updated_at,
             draft.in_reply_to,
+            bcc_json,
         ],
     )?;
     Ok((id, written > 0))
@@ -246,17 +254,19 @@ impl Database {
         let id = req.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let to_json = serde_json::to_string(&req.to_addresses).unwrap_or_else(|_| "[]".to_string());
         let cc_json = serde_json::to_string(&req.cc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let bcc_json = serde_json::to_string(&req.bcc_addresses).unwrap_or_else(|_| "[]".to_string());
 
         conn.execute(
             "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                                  subject, body, body_html, ai_generated, status,
-                                 provider_draft_id, created_at, updated_at, dirty)
+                                 provider_draft_id, created_at, updated_at, dirty, bcc_addresses_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 'draft', ?9,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10, ?11)
+                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                 email_id = excluded.email_id,
                 to_addresses_json = excluded.to_addresses_json,
                 cc_addresses_json = excluded.cc_addresses_json,
+                bcc_addresses_json = excluded.bcc_addresses_json,
                 subject = excluded.subject,
                 body = excluded.body,
                 body_html = excluded.body_html,
@@ -277,6 +287,7 @@ impl Database {
                 req.provider_draft_id,
                 now,
                 i64::from(mark_dirty),
+                bcc_json,
             ],
         )?;
 
@@ -301,7 +312,7 @@ impl Database {
             .query_row(
                 &format!("SELECT {DRAFT_COLUMNS}, dirty FROM drafts WHERE id = ?1"),
                 params![draft_id],
-                |row| Ok((row_to_draft(row)?, row.get::<_, i64>(13)?)),
+                |row| Ok((row_to_draft(row)?, row.get::<_, i64>(14)?)),
             )
             .optional()?;
         match found {
@@ -518,6 +529,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
             cc_addresses: vec!["cc@example.com".to_string()],
+            bcc_addresses: vec!["bcc@example.com".to_string()],
             subject: "Confirmar reunión".to_string(),
             body: "Hola Alina, confirmo.".to_string(),
             body_html: Some("<p>Hola Alina, confirmo.</p>".to_string()),
@@ -537,6 +549,7 @@ mod tests {
         assert_eq!(got.account_id, "acct-1");
         assert_eq!(got.to_addresses, vec!["alina@example.com".to_string()]);
         assert_eq!(got.cc_addresses, vec!["cc@example.com".to_string()]);
+        assert_eq!(got.bcc_addresses, vec!["bcc@example.com".to_string()]);
         assert_eq!(got.subject, "Confirmar reunión");
         assert_eq!(got.body, "Hola Alina, confirmo.");
         assert_eq!(got.body_html.as_deref(), Some("<p>Hola Alina, confirmo.</p>"));
@@ -565,6 +578,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Edited".to_string(),
             body: "Edited body".to_string(),
             body_html: None,
@@ -629,6 +643,7 @@ mod tests {
             provider_draft_id: id.to_string(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: subject.to_string(),
             body: "body".to_string(),
             body_html: None,
@@ -768,6 +783,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Subject".to_string(),
             body: body.to_string(),
             body_html: None,
@@ -793,6 +809,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: Vec::new(),
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Subject".to_string(),
             body: "v2".to_string(),
             body_html: None,

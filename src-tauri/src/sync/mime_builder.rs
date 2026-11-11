@@ -44,6 +44,14 @@ pub struct SendMimeParams<'a> {
     pub from_name: Option<&'a str>,
     pub to_emails: &'a [String],
     pub cc_emails: &'a [String],
+    /// Blind copies: always in the SMTP envelope, in the headers only with
+    /// `keep_bcc`.
+    pub bcc_emails: &'a [String],
+    /// Keep the `Bcc` header in the serialized message. Only for a message that
+    /// goes to a provider which delivers from the headers and strips `Bcc`
+    /// itself (Gmail's `raw`); a message sent over SMTP must drop it, or every
+    /// recipient sees the blind copies. Drafts always keep it.
+    pub keep_bcc: bool,
     pub subject: &'a str,
     pub in_reply_to: Option<&'a str>,
     /// The parent's own `References` header, so this reply can continue the
@@ -74,14 +82,14 @@ pub fn build_lettre_message(params: &SendMimeParams<'_>) -> Result<LettreMessage
     assemble(base_builder(params)?, params)
 }
 
-/// Build the MIME for a provider draft. Unlike a message to send, a draft may
-/// have no recipients yet. lettre derives the SMTP envelope from To/Cc and
+/// Build the MIME for a provider draft, `Bcc` header kept. Unlike a message to
+/// send, a draft may have no recipients yet. lettre derives the SMTP envelope from To/Cc/Bcc and
 /// refuses an empty one, so a draft gets an explicit envelope addressed to
 /// its own sender. The envelope is never serialized: the headers keep exactly
 /// the recipients the draft has, none included.
 pub fn build_draft_mime(params: &SendMimeParams<'_>) -> Result<String> {
-    let builder = base_builder(params)?;
-    let builder = if params.to_emails.is_empty() && params.cc_emails.is_empty() {
+    let builder = base_builder(params)?.keep_bcc();
+    let builder = if params.to_emails.is_empty() && params.cc_emails.is_empty() && params.bcc_emails.is_empty() {
         let sender: lettre::Address = params
             .from_email
             .parse()
@@ -213,6 +221,15 @@ fn base_builder(params: &SendMimeParams<'_>) -> Result<lettre::message::MessageB
             .parse()
             .map_err(|e| AppError::SyncError(format!("Invalid cc address {cc}: {e}")))?);
     }
+    for bcc in params.bcc_emails {
+        builder = builder.bcc(
+            bcc.parse()
+                .map_err(|e| AppError::SyncError(format!("Invalid bcc address {bcc}: {e}")))?,
+        );
+    }
+    if params.keep_bcc {
+        builder = builder.keep_bcc();
+    }
     if let Some(mid) = params.in_reply_to {
         builder = builder.in_reply_to(mid.to_string());
         builder = builder.references(reply_references(params.references, mid));
@@ -314,6 +331,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &cc,
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "hello",
             in_reply_to: None,
             references: None,
@@ -330,6 +349,8 @@ mod tests {
             from_name,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "hello",
             in_reply_to: None,
             references: None,
@@ -515,6 +536,65 @@ mod tests {
         assert!(lower.contains("application/pdf"));
     }
 
+    fn with_bcc(keep_bcc: bool) -> LettreMessage {
+        let (to, bcc) = (
+            vec!["you@example.com".to_string()],
+            vec!["hidden@example.com".to_string()],
+        );
+        build_lettre_message(&SendMimeParams {
+            from_email: "me@example.com",
+            from_name: None,
+            to_emails: &to,
+            cc_emails: &[],
+            bcc_emails: &bcc,
+            keep_bcc,
+            subject: "hello",
+            in_reply_to: None,
+            references: None,
+            body: &EmailBody::plain("hi"),
+            attachments: &[],
+        })
+        .expect("build_lettre_message")
+    }
+
+    /// Over SMTP the envelope delivers the blind copy; a `Bcc` header would
+    /// show it to every recipient.
+    #[test]
+    fn a_blind_copy_is_delivered_without_a_header_by_default() {
+        let message = with_bcc(false);
+        let envelope: Vec<String> = message.envelope().to().iter().map(|a| a.to_string()).collect();
+        assert!(envelope.contains(&"hidden@example.com".to_string()), "{envelope:?}");
+        assert!(!String::from_utf8_lossy(&message.formatted()).contains("hidden@example.com"));
+    }
+
+    /// Gmail's `raw` has no envelope: Gmail reads the blind copies from the
+    /// header and removes it before delivery.
+    #[test]
+    fn a_message_for_gmail_keeps_its_bcc_header() {
+        let mime = String::from_utf8_lossy(&with_bcc(true).formatted()).into_owned();
+        assert!(mime.contains("Bcc: hidden@example.com"), "{mime}");
+    }
+
+    #[test]
+    fn a_draft_with_only_a_blind_copy_keeps_it() {
+        let bcc = vec!["hidden@example.com".to_string()];
+        let mime = build_draft_mime(&SendMimeParams {
+            from_email: "me@example.com",
+            from_name: None,
+            to_emails: &[],
+            cc_emails: &[],
+            bcc_emails: &bcc,
+            keep_bcc: false,
+            subject: "hello",
+            in_reply_to: None,
+            references: None,
+            body: &EmailBody::plain("hi"),
+            attachments: &[],
+        })
+        .expect("build_draft_mime");
+        assert!(mime.contains("Bcc: hidden@example.com"), "{mime}");
+    }
+
     #[test]
     fn in_reply_to_sets_threading_headers() {
         let to = vec!["you@example.com".to_string()];
@@ -523,6 +603,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "Re: hi",
             in_reply_to: Some("<abc-123@gmail.com>"),
             references: None,
@@ -555,6 +637,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "Re: hi",
             in_reply_to: Some("<parent@example.com>"),
             references: Some("<root@example.com> <middle@example.com>"),
@@ -613,6 +697,8 @@ mod tests {
                 from_name: None,
                 to_emails: &to,
                 cc_emails: &[],
+                bcc_emails: &[],
+                keep_bcc: false,
                 subject: "hello",
                 in_reply_to: None,
                 references: None,
@@ -644,6 +730,8 @@ mod tests {
             from_name: None,
             to_emails: &[],
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject,
             in_reply_to: None,
             references: None,
@@ -674,6 +762,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "x",
             in_reply_to: None,
             references: None,
@@ -699,6 +789,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "x",
             in_reply_to: None,
             references: None,
@@ -722,6 +814,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "Facturas T1 subidas y nuevo número de IVA",
             in_reply_to: None,
             references: None,
@@ -752,6 +846,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "Hello World",
             in_reply_to: None,
             references: None,
@@ -773,6 +869,8 @@ mod tests {
             from_name: None,
             to_emails: &to,
             cc_emails: &[],
+            bcc_emails: &[],
+            keep_bcc: false,
             subject: "hello",
             in_reply_to: None,
             references: None,

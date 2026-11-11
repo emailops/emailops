@@ -337,6 +337,7 @@ async fn mail_envelope(
         &account.id,
         to.clone(),
         Vec::new(),
+        Vec::new(),
         &mail_text::subject(mail_language(db)?, &doc.title),
         &body,
         vec![attachment],

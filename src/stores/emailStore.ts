@@ -427,6 +427,8 @@ export interface ComposeTab {
   toAddresses: string[];
   /** Cc recipients. Present when editing a draft that had a Cc list. */
   ccAddresses?: string[];
+  /** Bcc recipients, likewise. */
+  bccAddresses?: string[];
   subject: string;
   /** Rich-text HTML body. Maximizing from the compose modal hands the
    *  editor's HTML straight to the tab so formatting and inline images
@@ -509,6 +511,7 @@ interface EmailStore {
     opts?: {
       draftId?: string;
       ccAddresses?: string[];
+      bccAddresses?: string[];
       attachments?: DraftAttachment[];
       fileAttachments?: EmailAttachment[];
       replyToEmailId?: string;
@@ -775,6 +778,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       accountId,
       toAddresses,
       ccAddresses: opts?.ccAddresses,
+      bccAddresses: opts?.bccAddresses,
       subject,
       bodyHtml,
       draftId: opts?.draftId,

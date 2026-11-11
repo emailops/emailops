@@ -205,6 +205,8 @@ export interface Draft {
   accountId: string;
   toAddresses: string[];
   ccAddresses: string[];
+  /** Empty for drafts saved before blind copies were kept. */
+  bccAddresses: string[];
   subject: string;
   body: string;
   bodyHtml: string | null;

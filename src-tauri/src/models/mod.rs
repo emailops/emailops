@@ -731,6 +731,8 @@ pub struct Draft {
     pub to_addresses: Vec<String>,
     #[serde(default)]
     pub cc_addresses: Vec<String>,
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     #[serde(default)]
@@ -756,6 +758,8 @@ pub struct SaveDraftRequest {
     pub to_addresses: Vec<String>,
     #[serde(default)]
     pub cc_addresses: Vec<String>,
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     #[serde(default)]
@@ -802,6 +806,9 @@ pub struct ProviderDraft {
     pub provider_draft_id: String,
     pub to_addresses: Vec<String>,
     pub cc_addresses: Vec<String>,
+    /// Empty when the provider does not report a draft's blind copies.
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     pub body_html: Option<String>,

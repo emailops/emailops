@@ -47,6 +47,7 @@ pub struct ComposeInput {
     pub email_id: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
     pub body_html: Option<String>,
@@ -117,6 +118,7 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
         account_id: input.account_id.clone(),
         to_addresses: input.to.clone(),
         cc_addresses: input.cc.clone(),
+        bcc_addresses: input.bcc.clone(),
         subject: input.subject.clone(),
         body: input.body.clone(),
         body_html: input.body_html.as_deref().map(super::sanitize_outgoing_html),
@@ -260,7 +262,12 @@ async fn push_draft(
     let attachments = load_attachments(db, &draft.attachments)?;
     let body = draft_body(&draft.body, draft.body_html.as_deref());
     let from = account.email.as_str();
-    let (to, cc, subject) = (&draft.to_addresses, &draft.cc_addresses, draft.subject.as_str());
+    let (to, cc, bcc, subject) = (
+        &draft.to_addresses,
+        &draft.cc_addresses,
+        &draft.bcc_addresses,
+        draft.subject.as_str(),
+    );
     // A reply draft goes up as a reply, so the provider copy keeps its thread.
     let parent = match draft.email_id.as_deref() {
         Some(email_id) => db.get_email(email_id)?,
@@ -277,7 +284,17 @@ async fn push_draft(
     let sent: Result<String> = async {
         let updated = match linked {
             Some(existing) => match provider
-                .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
+                .update_draft(
+                    existing,
+                    from,
+                    to,
+                    cc,
+                    bcc,
+                    subject,
+                    &body,
+                    &attachments,
+                    reply.as_ref(),
+                )
                 .await
             {
                 Ok(id) => Some(id),
@@ -290,7 +307,7 @@ async fn push_draft(
             Some(id) => Ok(id),
             None => {
                 provider
-                    .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
+                    .create_draft(from, to, cc, bcc, subject, &body, &attachments, reply.as_ref())
                     .await
             }
         }
@@ -417,6 +434,7 @@ pub async fn send_draft(
                 Some(&account.id),
                 Some(draft.to_addresses.clone()),
                 Some(draft.cc_addresses.clone()),
+                draft.bcc_addresses.clone(),
                 Some(&draft.subject),
                 attachments,
                 provider,
@@ -429,6 +447,7 @@ pub async fn send_draft(
                 &account.id,
                 draft.to_addresses.clone(),
                 draft.cc_addresses.clone(),
+                draft.bcc_addresses.clone(),
                 &draft.subject,
                 &body,
                 attachments,
@@ -721,6 +740,7 @@ mod tests {
             email_id: None,
             to: vec!["dest@example.com".to_string()],
             cc: Vec::new(),
+            bcc: Vec::new(),
             subject: subject.to_string(),
             body: body.to_string(),
             body_html: None,
@@ -800,6 +820,7 @@ mod tests {
                 account_id: "a1".to_string(),
                 to_addresses: vec!["dest@example.com".to_string()],
                 cc_addresses: Vec::new(),
+                bcc_addresses: Vec::new(),
                 subject: "Pulled".to_string(),
                 body: "hello".to_string(),
                 body_html: Some(UNSAFE_HTML.to_string()),
@@ -860,6 +881,28 @@ mod tests {
         assert_eq!(updated.provider_draft_id, draft.provider_draft_id);
         assert_eq!(provider.provider_drafts().len(), 1, "update, not a second create");
         assert_eq!(provider.provider_drafts()[0].subject, "First edited");
+    }
+
+    /// The read-back after a push replaces the local row with the provider's
+    /// copy, so a blind copy the provider dropped would be lost (#270).
+    #[tokio::test]
+    async fn a_pushed_draft_keeps_its_bcc_and_sends_it() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let mut with_bcc = input("a1", "Quiet", "body");
+        with_bcc.bcc = vec!["hidden@example.com".to_string()];
+
+        let draft = compose_draft(&db, &account, with_bcc, Some(&provider))
+            .await
+            .expect("compose");
+        assert_eq!(provider.provider_drafts()[0].bcc_addresses, vec!["hidden@example.com"]);
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        let stored = db.get_draft(&draft.id).expect("get").expect("draft");
+        assert_eq!(stored.bcc_addresses, vec!["hidden@example.com"]);
+
+        send_draft(&db, &account, &draft.id, &provider).await.expect("send");
+        assert_eq!(provider.sent()[0].bcc_emails, vec!["hidden@example.com"]);
     }
 
     #[tokio::test]
@@ -1264,6 +1307,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Server draft".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1302,6 +1346,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Server draft".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1361,6 +1406,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "First".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1382,6 +1428,7 @@ mod tests {
             provider_draft_id: "srv-2".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Second".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1419,6 +1466,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Shared".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1464,6 +1512,7 @@ mod tests {
             provider_draft_id: provider_draft_id.clone(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Edited in Gmail".to_string(),
             body: "body two".to_string(),
             body_html: None,
@@ -1491,6 +1540,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Before".to_string(),
             body: "hi".to_string(),
             body_html: None,
@@ -1506,6 +1556,7 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "After".to_string(),
             body: "hi again".to_string(),
             body_html: None,

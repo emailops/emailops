@@ -517,6 +517,7 @@ async fn mail_envelope_to(from: &Install, to: &str, env: &Envelope) {
             None,
             &[to.into()],
             &[],
+            &[],
             "x",
             &EmailBody::plain("x"),
             &[EmailAttachment {
@@ -951,6 +952,7 @@ async fn a_document_attached_to_an_email_is_shared_with_its_recipients() {
         &alice.account.id,
         vec!["bob@example.org".into()],
         vec![],
+        vec![],
         "Our proposal",
         &EmailBody::plain("Here it is, edit away."),
         vec![doc_ref_attachment(&doc.id)],
@@ -989,6 +991,7 @@ async fn an_attached_document_of_another_account_stops_the_send() {
         &alice.db,
         &alice.account.id,
         vec!["carl@example.net".into()],
+        vec![],
         vec![],
         "Hi",
         &EmailBody::plain("x"),

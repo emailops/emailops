@@ -109,6 +109,7 @@ pub async fn save_draft(state: State<'_, AppState>, app: AppHandle, req: SaveDra
         email_id: req.email_id,
         to: req.to_addresses,
         cc: req.cc_addresses,
+        bcc: req.bcc_addresses,
         subject: req.subject,
         body: req.body,
         body_html: req.body_html,

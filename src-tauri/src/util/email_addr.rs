@@ -184,6 +184,46 @@ pub fn parse_addr_list(json_str: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(json_str).unwrap_or_default()
 }
 
+/// Split an address-list header into its entries, each kept verbatim
+/// (`"Name" <a@b>` or `a@b`, the shape Gmail rows store). Commas inside a
+/// quoted display name, an `<addr>` or a `(comment)` do not split.
+pub fn split_address_list(raw: &str) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut current = String::new();
+    let (mut in_quotes, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
+    for c in raw.chars() {
+        if escaped {
+            escaped = false;
+        } else if in_quotes {
+            match c {
+                '\\' => escaped = true,
+                '"' => in_quotes = false,
+                _ => {}
+            }
+        } else {
+            match c {
+                '"' => in_quotes = true,
+                '<' => angle += 1,
+                '>' => angle = angle.saturating_sub(1),
+                '(' => comment += 1,
+                ')' => comment = comment.saturating_sub(1),
+                ',' if angle == 0 && comment == 0 => {
+                    entries.push(std::mem::take(&mut current));
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        current.push(c);
+    }
+    entries.push(current);
+    entries
+        .into_iter()
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
 /// Split `Name <email@host>` into `(name, lowercased_email)`. Falls back to
 /// treating the whole string as an address when no angle brackets are present.
 pub fn split_name_addr(raw: &str) -> (String, String) {

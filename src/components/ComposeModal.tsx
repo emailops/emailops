@@ -44,6 +44,7 @@ export interface ComposeMaximizeState {
   /** Includes a valid address still sitting in the input box. */
   toAddresses: string[];
   ccAddresses: string[];
+  bccAddresses: string[];
   subject: string;
   /** Rich-text HTML body so the maximized tab can keep formatting + inline images. */
   bodyHtml: string;
@@ -67,6 +68,8 @@ interface LoadingFile {
   name: string;
   progress: number; // 0–100
 }
+
+type RecipientField = 'to' | 'cc' | 'bcc';
 
 function getDomain(email: string): string {
   return extractEmail(email).split('@')[1]?.toLowerCase() || '';
@@ -112,13 +115,16 @@ export function ComposeModal({
   );
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [showCc, setShowCc] = useState(false);
+  const [bccRecipients, setBccRecipients] = useState<string[]>([]);
+  const [showBcc, setShowBcc] = useState(false);
   const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
   const [loadingFiles, setLoadingFiles] = useState<LoadingFile[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
   // Serializes debounced auto-saves so this composer upserts one draft row
@@ -185,12 +191,14 @@ export function ComposeModal({
     };
   }, [addLog]);
 
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
   const isLoadingAttachments = loadingFiles.length > 0;
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
     subject,
     requireSubject: true,
     plainBody: outgoing.plainText,
@@ -224,32 +232,33 @@ export function ComposeModal({
       try {
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = extractEmail(email);
     if (!trimmed || !trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients((prev) => [...prev, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients((prev) => [...prev, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList((prev) => [...prev, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients((prev) => prev.filter((r) => r !== email));
-    else setCcRecipients((prev) => prev.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
   const handleFiles = useCallback((files: FileList | null) => {
@@ -293,7 +302,7 @@ export function ComposeModal({
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -308,7 +317,7 @@ export function ComposeModal({
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
@@ -349,6 +358,7 @@ export function ComposeModal({
       // recipient the user means; the saved draft must not drop it.
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
@@ -363,7 +373,19 @@ export function ComposeModal({
       return;
     }
     debouncedRef.current.schedule(state);
-  }, [toRecipients, ccRecipients, toInput, ccInput, subject, bodyHtml, fromAccountId, isSending, sent]);
+  }, [
+    toRecipients,
+    ccRecipients,
+    bccRecipients,
+    toInput,
+    ccInput,
+    bccInput,
+    subject,
+    bodyHtml,
+    fromAccountId,
+    isSending,
+    sent,
+  ]);
 
   // Closing the composer must not drop the edit still inside the quiet period.
   useEffect(() => {
@@ -381,6 +403,7 @@ export function ComposeModal({
       accountId: fromAccountId,
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       bodyHtml,
       draftId,
@@ -395,10 +418,13 @@ export function ComposeModal({
     // tokenized) so it isn't silently dropped from the outgoing message.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     const ready = canSend({
       to,
+      cc,
+      bcc,
       subject,
       requireSubject: true,
       plainBody: plain,
@@ -418,6 +444,7 @@ export function ComposeModal({
         replyToEmailId: null,
         to,
         cc,
+        bcc,
         subject: subject.trim(),
         body: plain,
         bodyHtml: prepared.bodyHtml,
@@ -444,8 +471,9 @@ export function ComposeModal({
             attachments,
             prepared.bodyHtml,
             prepared.inlineImages,
+            bcc,
           );
-          addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
+          addLog('success', 'sync', `Email sent to ${[...to, ...cc, ...bcc].join(', ')}`);
           setSent(true);
           // Drop the auto-saved draft (local + provider copy) now that it's
           // sent, so it doesn't linger in Drafts or get re-pulled on the next sync.
@@ -495,7 +523,7 @@ export function ComposeModal({
   };
 
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -641,17 +669,31 @@ export function ComposeModal({
           {/* To */}
           {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-          {/* Cc toggle */}
-          {!showCc && (
-            <button
-              type="button"
-              onClick={() => setShowCc(true)}
-              className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
-            >
-              + {t('compose:cc')}
-            </button>
+          {/* Cc / Bcc toggles */}
+          {(!showCc || !showBcc) && (
+            <div className="flex gap-3 mb-2 ml-16">
+              {!showCc && (
+                <button
+                  type="button"
+                  onClick={() => setShowCc(true)}
+                  className="text-xs text-primary-500 hover:text-primary-600"
+                >
+                  + {t('compose:cc')}
+                </button>
+              )}
+              {!showBcc && (
+                <button
+                  type="button"
+                  onClick={() => setShowBcc(true)}
+                  className="text-xs text-primary-500 hover:text-primary-600"
+                >
+                  + {t('compose:bcc')}
+                </button>
+              )}
+            </div>
           )}
           {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+          {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
 
           {/* Unusual recipient warning */}
           {unusualRecipients.length > 0 && (

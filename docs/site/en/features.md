@@ -39,6 +39,15 @@ An **All accounts** view merges every enabled mailbox into one list, alongside t
 per-account views. Custom IMAP folders are synced too, and you can create, rename, delete
 and drag messages between folders from inside the app.
 
+## Replying
+
+<!-- claim:reading-pane-reply -->
+**Reply** answers the sender, or the address the message names in its *Reply-To* header, as a
+mailing list or a shop's no-reply address does. **Reply all** adds everyone else in the
+conversation. The subject of a reply or a forward can be edited before it goes, and a reply
+stays in its conversation. Every composer has **Cc** and **Bcc**: blind copies reach their
+recipients without the others seeing them, and a message can go to Cc or Bcc alone.
+
 ## Forwarding
 
 <!-- claim:reading-pane-forward -->

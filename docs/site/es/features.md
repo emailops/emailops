@@ -40,6 +40,16 @@ La vista **Todas las cuentas** fusiona cada buzón activo en una sola lista, jun
 por cuenta. Las carpetas IMAP personalizadas también se sincronizan, y puedes crearlas,
 renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 
+## Responder
+
+<!-- claim:reading-pane-reply -->
+**Responder** contesta al remitente, o a la dirección que el mensaje indica en su cabecera
+*Reply-To*, como hacen las listas de correo o la dirección *no-reply* de una tienda.
+**Responder a todos** añade al resto de la conversación. El asunto de una respuesta o de un
+reenvío se puede editar antes de enviarlo, y la respuesta sigue en su conversación. Todos los
+compositores tienen **Cc** y **Cco**: las copias ocultas llegan sin que el resto de
+destinatarios las vea, y un mensaje puede ir solo en Cc o en Cco.
+
 ## Reenviar
 
 <!-- claim:reading-pane-forward -->
